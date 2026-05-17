@@ -536,6 +536,136 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
     assert conversation_participant["delivery_origin"] == "https://new.example"
 
 
+@pytest.mark.asyncio
+async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'backend:acme.com', 'alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example')
+        """,
+        session_id,
+        alice_agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'chat', 'backend:acme.com', 'did:aw:alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, 'chat', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'chat', 'participant')
+        """,
+        session_id,
+        alice_agent_id,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-chat",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://old.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://local.example"
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        return httpx.Response(421, json={"detail": "still wrong origin"})
+
+    app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "same origin failure",
+            "conversation_id": str(session_id),
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        }
+    ).decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            f"/v1/chat/sessions/{session_id}/messages",
+            json={
+                "body": "same origin failure",
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload.encode()),
+                "signed_payload": signed_payload,
+            },
+        )
+
+    assert resp.status_code == 421, resp.text
+    assert len(remote_requests) == 1
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = 'did:aw:bob'",
+        session_id,
+    )
+    assert chat_participant["delivery_origin"] == "https://old.example"
+
+
 def _federated_chat_payload(
     *,
     sender_sk,
