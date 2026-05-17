@@ -7,17 +7,19 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import Address, KeyResolution
+from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.identity_metadata import routable_chat_address
 from aweb.routes import chat as chat_routes
 from aweb.routes.chat import router as chat_router
+from aweb.routes.federation import router as federation_router
 
 
 def _make_keypair():
@@ -47,6 +49,7 @@ def _signed_identity_headers(agent_sk, agent_did_key, did_aw: str, body_bytes=b"
 def _build_test_app(aweb_db, registry):
     app = FastAPI()
     app.include_router(chat_router)
+    app.include_router(federation_router)
 
     class _DbShim:
         def get_manager(self, name="aweb"):
@@ -121,6 +124,461 @@ def test_routable_chat_address_policy():
         )
         == "otherco.com/gsk"
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_to_external_address_posts_federated_chat_and_projects_locally(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-chat",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://local.example"
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        data = json.loads(request.content)
+        envelope = data["envelope"]
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    session_id = str(uuid4())
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello remote chat",
+            "conversation_id": session_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+            "wait_seconds": 30,
+        }
+    ).decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/chat/sessions",
+            json={
+                "session_id": session_id,
+                "to_addresses": ["otherco.com/bob"],
+                "message": "hello remote chat",
+                "wait_seconds": 30,
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload.encode()),
+                "signed_payload": signed_payload,
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["session_id"] == session_id
+    assert resp.json()["message_id"] == message_id
+    assert len(remote_requests) == 1
+    remote_body = json.loads(remote_requests[0].content)
+    assert str(remote_requests[0].url) == "https://remote.example/v1/federation/messages"
+    assert remote_body["envelope"]["type"] == "chat"
+    assert remote_body["envelope"]["sender_delivery_origin"] == "https://local.example"
+    assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
+    assert remote_body["envelope"]["wait_seconds"] == 30
+    participant = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT delivery_origin
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = 'did:aw:bob'
+        """,
+        UUID(session_id),
+    )
+    assert participant["delivery_origin"] == "https://remote.example"
+
+
+@pytest.mark.asyncio
+async def test_chat_continuation_to_remote_participant_uses_stored_delivery_origin(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'backend:acme.com', 'alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example')
+        """,
+        session_id,
+        alice_agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'chat', 'backend:acme.com', 'did:aw:alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, 'chat', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'chat', 'participant')
+        """,
+        session_id,
+        alice_agent_id,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-chat",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://local.example"
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        envelope = json.loads(request.content)["envelope"]
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "continuing remote chat",
+            "conversation_id": str(session_id),
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        }
+    ).decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            f"/v1/chat/sessions/{session_id}/messages",
+            json={
+                "body": "continuing remote chat",
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload.encode()),
+                "signed_payload": signed_payload,
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversation_id"] == str(session_id)
+    assert len(remote_requests) == 1
+    envelope = json.loads(remote_requests[0].content)["envelope"]
+    assert envelope["type"] == "chat"
+    assert envelope["conversation_id"] == str(session_id)
+    assert envelope["target_delivery_origin"] == "https://remote.example"
+
+
+def _federated_chat_payload(
+    *,
+    sender_sk,
+    sender_did_key: str,
+    sender_did_aw: str = "did:aw:alice",
+    sender_address: str = "alpha.example/alice",
+    sender_delivery_origin: str = "https://sender.example",
+    target_address: str = "beta.example/bob",
+    target_did_aw: str = "did:aw:bob",
+    target_did_key: str = "did:key:bob",
+    target_delivery_origin: str = "https://recipient.example",
+    body: str = "hello from another server",
+    message_id: str | None = None,
+    conversation_id: str | None = None,
+):
+    message_id = message_id or str(uuid4())
+    conversation_id = conversation_id or str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": body,
+            "conversation_id": conversation_id,
+            "from": sender_address,
+            "from_did": sender_did_key,
+            "from_stable_id": sender_did_aw,
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": target_address,
+            "to_did": target_did_key,
+            "to_stable_id": target_did_aw,
+            "type": "chat",
+        }
+    ).decode()
+    return {
+        "envelope": {
+            "version": 1,
+            "type": "chat",
+            "sender_did_aw": sender_did_aw,
+            "sender_current_did_key": sender_did_key,
+            "sender_address": sender_address,
+            "sender_delivery_origin": sender_delivery_origin,
+            "target_address": target_address,
+            "target_did_aw": target_did_aw,
+            "target_current_did_key": target_did_key,
+            "target_delivery_origin": target_delivery_origin,
+            "body": body,
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "signed_payload": signed_payload,
+            "conversation_id": conversation_id,
+        },
+        "signature": sign_message(sender_sk, signed_payload.encode()),
+    }
+
+
+@pytest.mark.asyncio
+async def test_receive_federated_chat_stores_session_message_and_reply_route(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        """
+    )
+    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-local-chat",
+            domain="beta.example",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://recipient.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_chat_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/federation/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    session_id = resp.json()["session_id"]
+    assert session_id == payload["envelope"]["conversation_id"]
+    message = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT from_did, body, signature, signed_payload FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(payload["envelope"]["message_id"]),
+    )
+    assert message["from_did"] == "did:aw:alice"
+    assert message["body"] == payload["envelope"]["body"]
+    assert message["signature"] == payload["signature"]
+    assert message["signed_payload"] == payload["envelope"]["signed_payload"]
+    participants = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT did, agent_id, address, delivery_origin
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+        ORDER BY did
+        """,
+        UUID(session_id),
+    )
+    by_did = {row["did"]: row for row in participants}
+    assert by_did["did:aw:alice"]["delivery_origin"] == "https://sender.example"
+    assert by_did["did:aw:bob"]["agent_id"] == bob_agent_id
+    assert by_did["did:aw:bob"]["delivery_origin"] is None
+
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("reply must not resolve sender address"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        envelope = json.loads(request.content)["envelope"]
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="beta.example/bob",
+            team_id="backend:beta.example",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    reply_message_id = str(uuid4())
+    reply_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    reply_signed_payload = canonical_json_bytes(
+        {
+            "body": "reply over stored route",
+            "conversation_id": session_id,
+            "from": "beta.example/bob",
+            "from_did": bob_did_key,
+            "from_stable_id": "did:aw:bob",
+            "message_id": reply_message_id,
+            "timestamp": reply_timestamp,
+            "to": "alpha.example/alice",
+            "to_did": alice_did_key,
+            "to_stable_id": "did:aw:alice",
+            "type": "chat",
+        }
+    ).decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            f"/v1/chat/sessions/{session_id}/messages",
+            json={
+                "body": "reply over stored route",
+                "from_did": bob_did_key,
+                "message_id": reply_message_id,
+                "timestamp": reply_timestamp,
+                "signature": sign_message(bob_sk, reply_signed_payload.encode()),
+                "signed_payload": reply_signed_payload,
+            },
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert len(remote_requests) == 1
+    remote_envelope = json.loads(remote_requests[0].content)["envelope"]
+    assert str(remote_requests[0].url) == "https://sender.example/v1/federation/messages"
+    assert remote_envelope["target_address"] == "alpha.example/alice"
+    assert remote_envelope["target_delivery_origin"] == "https://sender.example"
+    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
 
 
 @pytest.mark.asyncio
@@ -258,7 +716,7 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_accepts_external_to_address_without_local_agent(aweb_cloud_db):
+async def test_create_chat_session_external_address_without_delivery_origin_fails_closed(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -317,55 +775,12 @@ async def test_create_chat_session_accepts_external_to_address_without_local_age
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    session_id = UUID(body["session_id"])
-    assert {participant["did"] for participant in body["participants"]} == {"did:aw:alice", "did:aw:bob"}
-    assert {participant["address"] for participant in body["participants"]} == {"acme.com/alice", "otherco.com/bob"}
-
-    participant = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT did, agent_id, alias, address
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:aw:bob'
-        """,
-        session_id,
-    )
-    assert participant["agent_id"] is None
-    assert participant["alias"] == "bob"
-    assert participant["address"] == "otherco.com/bob"
-
-    async def _bob_auth():
-        return MessagingAuth(
-            did_key="did:key:bob",
-            did_aw="did:aw:bob",
-            address="otherco.com/bob",
-            team_id="ops:otherco.com",
-            alias="bob",
-        )
-
-    app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        reply = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "reply"})
-
-    assert reply.status_code == 200, reply.text
-    stored = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT from_did, from_alias, from_address
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-        ORDER BY created_at DESC
-        LIMIT 1
-        """,
-        session_id,
-    )
-    assert stored["from_did"] == "did:aw:bob"
-    assert stored["from_alias"] == "bob"
-    assert stored["from_address"] == "otherco.com/bob"
+    assert resp.status_code == 424, resp.text
+    assert "no federated delivery origin" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_hosted_handle_alias_uses_canonical_address(aweb_cloud_db):
+async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_closed(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -424,10 +839,8 @@ async def test_create_chat_session_hosted_handle_alias_uses_canonical_address(aw
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert {participant["did"] for participant in body["participants"]} == {"did:aw:alice", "did:aw:c3po"}
-    assert {participant["address"] for participant in body["participants"]} == {"acme.com/alice", "jane.aweb.ai/c3po"}
+    assert resp.status_code == 424, resp.text
+    assert "no federated delivery origin" in resp.json()["detail"]
     registry.resolve_address.assert_awaited_once_with("jane.aweb.ai", "c3po", did_key=alice_did_key)
 
 
