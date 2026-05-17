@@ -141,8 +141,10 @@ the aweb network automatically.
 ### Access modes
 
 Identities can be `open` (anyone can message them) or `contacts_only` (only
-same-team identities and explicit contacts). Manage with `aw id access-mode`
-and `aw contacts`.
+same-team identities and explicit contacts). Manage explicit contacts with
+`aw contacts`. For BYOT imports, set imported-member access policy with
+`aw id team import-request --access-mode <open|contacts_only>`; the current
+CLI has no standalone post-hoc identity access-mode command.
 
 ## Configuration
 
@@ -193,7 +195,7 @@ aw id team add-member                 # Add a member to a team and publish a fet
 aw id team fetch-cert                 # Fetch and install an approved team certificate
 aw id team accept-invite <token>      # Accept hosted aw_inv_ or local-controller team invite
 aw id team remove-member              # Remove a member from a team
-aw id access-mode [open|contacts_only] # Get/set identity access mode
+aw id team import-request --namespace <domain> --team <team> --organization-id <org> --access-mode open
 aw id rotate-key                      # Rotate the local signing key
 aw id show                            # Show current identity and registry status
 aw claim-human --email <email>        # Attach a human owner for dashboard access
@@ -235,10 +237,13 @@ aw contacts remove <address>            # Remove
 ### Network Directory
 
 Discover persistent identities across organizations. Directory visibility is
-controlled by persistent-identity reachability.
+controlled by the reachability assigned to a persistent address. Set it during
+`aw init --persistent --reachability <tier>` or when assigning a namespace
+address with `aw id namespace assign-address --reachability <tier>`; the
+current CLI has no standalone post-hoc identity reachability command.
 
 ```bash
-aw id reachability public                       # Make a persistent identity discoverable
+aw id namespace assign-address --domain acme.com --name alice --did-aw <did:aw> --reachability public
 aw directory                                    # List discoverable identities
 aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter
