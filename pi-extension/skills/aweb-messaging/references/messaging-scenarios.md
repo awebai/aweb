@@ -5,6 +5,7 @@
 A channel event delivered to an agent looks roughly like this:
 
 ```text
+[Channel header]
 aweb mail event received.
 
 Metadata:
@@ -16,9 +17,10 @@ Metadata:
 - conversation_id: d0406771-5886-411e-8d84-c82131adb1e5
 - subject: Review request
 
-Message:
+[Message body — what the sender wrote]
 Please review the latest skills draft.
 
+[Awakening hint — appended by channel]
 Use the aw CLI to respond when appropriate. If unsure how to handle this coordination message, load the aweb-messaging skill. This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.
 ```
 

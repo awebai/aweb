@@ -91,7 +91,7 @@ Harness support differs:
 
 - **Pi**: install `@awebai/pi`; the aweb channel and these skills are bundled together.
 - **Claude Code**: install the `aweb-channel` plugin from the `awebai/claude-plugins` marketplace. See <https://github.com/awebai/aweb/blob/main/docs/channel.md>.
-- **Codex**: no always-on channel install in v1; use regular coordination loops or the current aweb runner documented for Codex if available.
+- **Codex**: no always-on channel install in v1. Use regular coordination polling loops or `aw run codex` for a session-bound runner.
 
 The channel is inbound only. Use `aw mail` or `aw chat` to respond.
 
