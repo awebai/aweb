@@ -20,7 +20,11 @@ from awid.log import (
 )
 from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
-from awid_service.routes.dns_addresses import AddressListResponse, AddressResponse
+from awid_service.routes.dns_addresses import (
+    AddressDeliveryResponse,
+    AddressListResponse,
+    AddressResponse,
+)
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 
 router = APIRouter(prefix="/v1/did", tags=["did"])
@@ -326,7 +330,7 @@ async def list_did_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
-        " pa.reachability, pa.visible_to_team_id, pa.created_at"
+        " pa.reachability, pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -349,6 +353,7 @@ async def list_did_addresses(
                 current_did_key=row["current_did_key"],
                 reachability=str(row.get("reachability") or "nobody"),
                 visible_to_team_id=row.get("visible_to_team_id"),
+                delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin")),
                 created_at=row["created_at"].isoformat(),
             )
             for row in page_rows

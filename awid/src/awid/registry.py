@@ -90,6 +90,13 @@ class Namespace:
     verification_status: str
     last_verified_at: str | None
     created_at: str
+    default_delivery_origin: str | None = None
+
+
+@dataclass(frozen=True)
+class AddressDelivery:
+    origin: str | None
+    source: str = "namespace_default"
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,9 @@ class Address:
     reachability: str
     created_at: str
     visible_to_team_id: str | None = None
+    delivery: AddressDelivery = field(
+        default_factory=lambda: AddressDelivery(origin=None),
+    )
 
 
 @dataclass(frozen=True)
@@ -421,13 +431,21 @@ class RegistryClient:
         controller_did: str,
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
+        default_delivery_origin: str | None = None,
     ) -> Namespace:
         registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(controller_did, controller_signing_key)
+        default_delivery_origin = _canonical_optional_origin(default_delivery_origin)
+        extra_payload = (
+            {"default_delivery_origin": default_delivery_origin}
+            if default_delivery_origin is not None
+            else None
+        )
         headers = self._signed_namespace_headers(
             domain=domain,
             operation="register",
             signing_key=controller_signing_key,
+            extra_payload=extra_payload,
         )
         if parent_signing_key is not None:
             headers.update(
@@ -442,7 +460,15 @@ class RegistryClient:
                 "POST",
                 "/v1/namespaces",
                 headers=headers,
-                json={"domain": domain, "controller_did": controller_did},
+                json={
+                    "domain": domain,
+                    "controller_did": controller_did,
+                    **(
+                        {}
+                        if default_delivery_origin is None
+                        else {"default_delivery_origin": default_delivery_origin}
+                    ),
+                },
                 registry_url=registry_url,
             )
         )
@@ -454,6 +480,30 @@ class RegistryClient:
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _namespace_from_json(data)
+
+    async def update_namespace_delivery_origin(
+        self,
+        domain: str,
+        controller_signing_key: bytes,
+        default_delivery_origin: str | None,
+    ) -> Namespace:
+        registry_url = await self._registry_url_for_domain(domain)
+        default_delivery_origin = _canonical_optional_origin(default_delivery_origin)
+        signed_origin = default_delivery_origin or ""
+        return _namespace_from_json(
+            await self._request_json(
+                "PATCH",
+                f"/v1/namespaces/{domain}",
+                headers=self._signed_namespace_headers(
+                    domain=domain,
+                    operation="update_namespace",
+                    signing_key=controller_signing_key,
+                    extra_payload={"default_delivery_origin": signed_origin},
+                ),
+                json={"default_delivery_origin": default_delivery_origin},
+                registry_url=registry_url,
+            )
+        )
 
     async def register_team(
         self,
@@ -1207,6 +1257,7 @@ class CachedRegistryClient(RegistryClient):
         controller_did: str,
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
+        default_delivery_origin: str | None = None,
     ) -> Namespace:
         await self._invalidate_namespace_cache(domain)
         namespace = await super().register_namespace(
@@ -1214,6 +1265,22 @@ class CachedRegistryClient(RegistryClient):
             controller_did,
             controller_signing_key,
             parent_signing_key,
+            default_delivery_origin,
+        )
+        await self._invalidate_namespace_cache(domain)
+        return namespace
+
+    async def update_namespace_delivery_origin(
+        self,
+        domain: str,
+        controller_signing_key: bytes,
+        default_delivery_origin: str | None,
+    ) -> Namespace:
+        await self._invalidate_namespace_cache(domain)
+        namespace = await super().update_namespace_delivery_origin(
+            domain,
+            controller_signing_key,
+            default_delivery_origin,
         )
         await self._invalidate_namespace_cache(domain)
         return namespace
@@ -1584,6 +1651,12 @@ def _assert_signing_key_matches(expected_did: str, signing_key: bytes) -> None:
         raise ValueError("signing_key does not match the supplied controller_did")
 
 
+def _canonical_optional_origin(origin: str | None) -> str | None:
+    if origin is None:
+        return None
+    return canonical_server_origin(origin)
+
+
 def _did_key_evidence_from_json(data: dict[str, Any] | None) -> DIDKeyEvidence | None:
     if data is None:
         return None
@@ -1626,6 +1699,16 @@ def _namespace_from_json(data: dict[str, Any]) -> Namespace:
         verification_status=data["verification_status"],
         last_verified_at=data.get("last_verified_at"),
         created_at=data["created_at"],
+        default_delivery_origin=data.get("default_delivery_origin"),
+    )
+
+
+def _address_delivery_from_json(data: dict[str, Any] | None) -> AddressDelivery:
+    if data is None:
+        return AddressDelivery(origin=None)
+    return AddressDelivery(
+        origin=data.get("origin"),
+        source=data.get("source", "namespace_default"),
     )
 
 
@@ -1639,6 +1722,7 @@ def _address_from_json(data: dict[str, Any]) -> Address:
         reachability=data["reachability"],
         created_at=data["created_at"],
         visible_to_team_id=data.get("visible_to_team_id"),
+        delivery=_address_delivery_from_json(data.get("delivery")),
     )
 
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -14,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.dns_verify import DomainVerifier
 from awid_service.deps import get_db, get_domain_verifier
 from awid.dns_verify import DnsVerificationError
+from awid.log import canonical_server_origin
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
@@ -29,6 +32,8 @@ logger = logging.getLogger(__name__)
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
+
+
 def _verify_controller_signature(
     request: Request,
     *,
@@ -58,6 +63,46 @@ def _validate_domain(domain: str) -> str:
     if not domain or len(domain) > _MAX_DOMAIN_LENGTH:
         raise HTTPException(status_code=400, detail="Invalid domain")
     return domain
+
+
+def _is_development_environment() -> bool:
+    for name in ("APP_ENV", "ENVIRONMENT"):
+        value = (os.getenv(name) or "").strip().lower()
+        if value:
+            return value in {"dev", "development", "local", "test", "testing"}
+    return False
+
+
+def _is_localhost_origin(origin: str) -> bool:
+    host = (urlparse(origin).hostname or "").lower()
+    return host == "localhost" or host.endswith(".localhost")
+
+
+def _validate_delivery_origin(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        canonical = canonical_server_origin(value)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    parsed = urlparse(canonical)
+    is_development = _is_development_environment()
+    host = (parsed.hostname or "").lower()
+    if _is_localhost_origin(canonical):
+        if is_development and parsed.scheme == "http":
+            return canonical
+        raise ValueError("default_delivery_origin must not target localhost outside development")
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("default_delivery_origin must not use a literal IP address")
+
+    if parsed.scheme != "https":
+        raise ValueError("default_delivery_origin must use https")
+    return canonical
 
 
 def _verify_controller_rotation_signature(
@@ -128,6 +173,7 @@ class NamespaceRegisterRequest(BaseModel):
 
     domain: str = Field(..., min_length=1, max_length=256)
     controller_did: str | None = Field(default=None, min_length=1, max_length=256)
+    default_delivery_origin: str | None = Field(default=None, min_length=1, max_length=512)
 
     @field_validator("controller_did")
     @classmethod
@@ -135,6 +181,11 @@ class NamespaceRegisterRequest(BaseModel):
         if value is None:
             return None
         return _validate_did_key(value)
+
+    @field_validator("default_delivery_origin")
+    @classmethod
+    def validate_default_delivery_origin(cls, value: str | None) -> str | None:
+        return _validate_delivery_origin(value)
 
 
 class NamespaceRotateControllerRequest(BaseModel):
@@ -148,11 +199,23 @@ class NamespaceRotateControllerRequest(BaseModel):
         return _validate_did_key(value)
 
 
+class NamespaceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_delivery_origin: str | None = Field(..., max_length=512)
+
+    @field_validator("default_delivery_origin")
+    @classmethod
+    def validate_default_delivery_origin(cls, value: str | None) -> str | None:
+        return _validate_delivery_origin(value)
+
+
 class NamespaceResponse(BaseModel):
     namespace_id: str
     domain: str
     controller_did: str | None = None
     verification_status: str
+    default_delivery_origin: str | None = None
     last_verified_at: Optional[str] = None
     created_at: str
 
@@ -198,7 +261,17 @@ async def register_namespace(
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(body.domain)
-    caller_did = _verify_controller_signature(request, domain=domain, operation="register")
+    register_extra_payload = (
+        {"default_delivery_origin": body.default_delivery_origin}
+        if body.default_delivery_origin is not None
+        else None
+    )
+    caller_did = _verify_controller_signature(
+        request,
+        domain=domain,
+        operation="register",
+        extra_payload=register_extra_payload,
+    )
     requested_controller_did = body.controller_did or caller_did
     if body.controller_did is not None and body.controller_did != caller_did:
         raise HTTPException(
@@ -226,7 +299,7 @@ async def register_namespace(
         existing = await tx.fetch_one(
             """
             SELECT namespace_id, domain, controller_did, verification_status,
-                   last_verified_at, created_at
+                   default_delivery_origin, last_verified_at, created_at
             FROM {{tables.dns_namespaces}}
             WHERE domain = $1 AND deleted_at IS NULL
             """,
@@ -254,13 +327,14 @@ async def register_namespace(
         await tx.execute(
             """
             INSERT INTO {{tables.dns_namespaces}}
-                (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+                (namespace_id, domain, controller_did, verification_status, default_delivery_origin, last_verified_at, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
             ns_id,
             domain,
             controller_did,
             "verified",
+            body.default_delivery_origin,
             now,
             now,
         )
@@ -270,6 +344,7 @@ async def register_namespace(
         domain=domain,
         controller_did=controller_did,
         verification_status="verified",
+        default_delivery_origin=body.default_delivery_origin,
         last_verified_at=now.isoformat(),
         created_at=now.isoformat(),
     )
@@ -291,7 +366,7 @@ async def reverify_namespace(
     ns_row = await db.fetch_one(
         """
         SELECT namespace_id, domain, controller_did, verification_status,
-               last_verified_at, created_at
+               default_delivery_origin, last_verified_at, created_at
         FROM {{tables.dns_namespaces}}
         WHERE domain = $1 AND deleted_at IS NULL
         """,
@@ -323,7 +398,7 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
     row = await db.fetch_one(
         """
         SELECT namespace_id, domain, controller_did, verification_status,
-               last_verified_at, created_at
+               default_delivery_origin, last_verified_at, created_at
         FROM {{tables.dns_namespaces}}
         WHERE domain = $1 AND deleted_at IS NULL
         """,
@@ -331,6 +406,62 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Namespace not found")
+    return _namespace_response(row)
+
+
+@router.patch(
+    "/{domain}",
+    response_model=NamespaceResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_update"))],
+)
+async def update_namespace(
+    request: Request,
+    domain: str,
+    body: NamespaceUpdateRequest,
+    db_infra=Depends(get_db),
+) -> NamespaceResponse:
+    """Update namespace metadata authorized by the current namespace controller."""
+    db = db_infra.get_manager("aweb")
+    domain = _validate_domain(domain)
+    signed_origin = body.default_delivery_origin or ""
+    caller_did = _verify_controller_signature(
+        request,
+        domain=domain,
+        operation="update_namespace",
+        extra_payload={"default_delivery_origin": signed_origin},
+    )
+
+    async with db.transaction() as tx:
+        existing = await tx.fetch_one(
+            """
+            SELECT namespace_id, controller_did
+            FROM {{tables.dns_namespaces}}
+            WHERE domain = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            domain,
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        if caller_did != existing["controller_did"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the namespace controller can update namespace metadata",
+            )
+
+        row = await tx.fetch_one(
+            """
+            UPDATE {{tables.dns_namespaces}}
+            SET default_delivery_origin = $2
+            WHERE namespace_id = $1 AND deleted_at IS NULL
+            RETURNING namespace_id, domain, controller_did, verification_status,
+                      default_delivery_origin, last_verified_at, created_at
+            """,
+            existing["namespace_id"],
+            body.default_delivery_origin,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
     return _namespace_response(row)
 
 
@@ -410,7 +541,7 @@ async def rotate_namespace_controller(
                 last_verified_at = $3
             WHERE domain = $1 AND deleted_at IS NULL
             RETURNING namespace_id, domain, controller_did, verification_status,
-                      last_verified_at, created_at
+                      default_delivery_origin, last_verified_at, created_at
             """,
             domain,
             new_controller_did,
@@ -470,7 +601,7 @@ async def list_namespaces(
     query = (
         """
         SELECT namespace_id, domain, controller_did, verification_status,
-               last_verified_at, created_at
+               default_delivery_origin, last_verified_at, created_at
         FROM {{tables.dns_namespaces}}
         WHERE """
         + " AND ".join(where_clauses)
@@ -599,6 +730,7 @@ def _namespace_response(row) -> NamespaceResponse:
         domain=row["domain"],
         controller_did=row["controller_did"],
         verification_status=row["verification_status"],
+        default_delivery_origin=row.get("default_delivery_origin"),
         last_verified_at=row["last_verified_at"].isoformat() if row["last_verified_at"] else None,
         created_at=row["created_at"].isoformat(),
     )
@@ -611,6 +743,7 @@ def _namespace_reverify_response(result) -> NamespaceReverifyResponse:
         domain=response.domain,
         controller_did=response.controller_did,
         verification_status=response.verification_status,
+        default_delivery_origin=response.default_delivery_origin,
         last_verified_at=response.last_verified_at,
         created_at=response.created_at,
         old_controller_did=result.old_controller_did,

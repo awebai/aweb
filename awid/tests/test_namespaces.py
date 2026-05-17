@@ -399,6 +399,230 @@ async def test_register_namespace_notlocal_still_requires_dns_verification(clien
 
 
 @pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_is_controller_authorized(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    domain = "delivery.example"
+    delivery_origin = "https://aweb.delivery.example"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+
+    create_resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": domain,
+            "default_delivery_origin": delivery_origin,
+        },
+        headers=headers,
+    )
+
+    assert create_resp.status_code == 200, create_resp.text
+    assert create_resp.json()["default_delivery_origin"] == delivery_origin
+
+    get_resp = await client.get(f"/v1/namespaces/{domain}")
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.json()["default_delivery_origin"] == delivery_origin
+
+
+@pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_update_requires_controller(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    domain = "delivery-update.example"
+    await _register_namespace(client, signing_key, controller_did, domain)
+    delivery_origin = "https://messages.delivery-update.example"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="update_namespace",
+        default_delivery_origin=delivery_origin,
+    )
+
+    update_resp = await client.patch(
+        f"/v1/namespaces/{domain}",
+        json={"default_delivery_origin": delivery_origin},
+        headers=headers,
+    )
+
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["default_delivery_origin"] == delivery_origin
+
+    wrong_key, wrong_pub = generate_keypair()
+    wrong_did = did_from_public_key(wrong_pub)
+    other_origin = "https://other.delivery-update.example"
+    wrong_headers = _sign(
+        wrong_key,
+        wrong_did,
+        domain=domain,
+        operation="update_namespace",
+        default_delivery_origin=other_origin,
+    )
+    wrong_resp = await client.patch(
+        f"/v1/namespaces/{domain}",
+        json={"default_delivery_origin": other_origin},
+        headers=wrong_headers,
+    )
+
+    assert wrong_resp.status_code == 403
+    assert wrong_resp.json()["detail"] == "Only the namespace controller can update namespace metadata"
+
+
+@pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_rejects_non_https_public_origin(
+    client,
+    controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    bad_origin = "http://aweb.bad-delivery.example"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="bad-delivery.example",
+        operation="register",
+        default_delivery_origin=bad_origin,
+    )
+
+    resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": "bad-delivery.example",
+            "default_delivery_origin": bad_origin,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_allows_localhost_in_development(
+    client,
+    controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    delivery_origin = "http://localhost:8000"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="local-delivery.example",
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+
+    resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": "local-delivery.example",
+            "default_delivery_origin": delivery_origin,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_delivery_origin"] == delivery_origin
+
+
+@pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_rejects_localhost_outside_development(
+    client,
+    controller_identity,
+    monkeypatch,
+):
+    monkeypatch.setenv("APP_ENV", "production")
+    signing_key, controller_did = controller_identity
+    delivery_origin = "https://localhost:8000"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="prod-local-delivery.example",
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+
+    resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": "prod-local-delivery.example",
+            "default_delivery_origin": delivery_origin,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_rejects_literal_ip(
+    client,
+    controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    delivery_origin = "https://127.0.0.1:8000"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="ip-delivery.example",
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+
+    resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": "ip-delivery.example",
+            "default_delivery_origin": delivery_origin,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_address_resolution_returns_inherited_namespace_delivery(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    domain = "address-delivery.example"
+    delivery_origin = "https://inbox.address-delivery.example"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+    resp = await client.post(
+        "/v1/namespaces",
+        json={"domain": domain, "default_delivery_origin": delivery_origin},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    address = await _register_address(client, signing_key, controller_did, domain, "alice")
+    assert address["delivery"] == {
+        "origin": delivery_origin,
+        "source": "namespace_default",
+    }
+
+    get_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.json()["delivery"] == {
+        "origin": delivery_origin,
+        "source": "namespace_default",
+    }
+
+    list_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
+    assert list_resp.status_code == 200, list_resp.text
+    assert list_resp.json()["addresses"][0]["delivery"] == {
+        "origin": delivery_origin,
+        "source": "namespace_default",
+    }
+
+
+@pytest.mark.asyncio
 async def test_rotate_local_namespace_controller_skips_dns_verification(client):
     signing_key, public_key = generate_keypair()
     controller_did = did_from_public_key(public_key)

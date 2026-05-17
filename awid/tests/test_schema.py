@@ -34,6 +34,31 @@ async def test_dns_namespaces_scope_id_has_no_foreign_key(awid_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_messaging_federation_adds_namespace_delivery_only(awid_db_infra):
+    db = awid_db_infra.get_manager("aweb")
+    rows = await db.fetch_all(
+        """
+        SELECT 'dns_namespaces' AS table_name, attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = '{{tables.dns_namespaces}}'::regclass
+          AND attname = 'default_delivery_origin'
+          AND NOT attisdropped
+        UNION ALL
+        SELECT 'teams' AS table_name, attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = '{{tables.teams}}'::regclass
+          AND attname = 'coordination_origin'
+          AND NOT attisdropped
+        ORDER BY table_name, column_name
+        """
+    )
+
+    assert [(row["table_name"], row["column_name"]) for row in rows] == [
+        ("dns_namespaces", "default_delivery_origin")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_did_aw_mappings_has_no_address_fields(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
     rows = await db.fetch_all(

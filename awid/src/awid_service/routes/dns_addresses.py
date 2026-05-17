@@ -111,7 +111,7 @@ async def _require_namespace(db, domain: str):
     row = await db.fetch_one(
         """
         SELECT namespace_id, domain, controller_did, verification_status,
-               last_verified_at, created_at
+               default_delivery_origin, last_verified_at, created_at
         FROM {{tables.dns_namespaces}}
         WHERE domain = $1 AND deleted_at IS NULL
         """,
@@ -280,6 +280,11 @@ class AddressDeleteRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=512)
 
 
+class AddressDeliveryResponse(BaseModel):
+    origin: str | None = None
+    source: str = "namespace_default"
+
+
 class AddressResponse(BaseModel):
     address_id: str
     domain: str
@@ -288,6 +293,7 @@ class AddressResponse(BaseModel):
     current_did_key: str
     reachability: str
     visible_to_team_id: str | None = None
+    delivery: AddressDeliveryResponse
     created_at: str
 
 
@@ -318,6 +324,7 @@ def _address_response(row, domain: str) -> AddressResponse:
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
+        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin")),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -636,6 +643,7 @@ async def register_address(
         current_did_key=body.current_did_key,
         reachability=reachability,
         visible_to_team_id=visible_to_team_id,
+        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin")),
         created_at=now.isoformat(),
     )
 
@@ -682,7 +690,7 @@ async def get_address(
 
     query = """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, pa.created_at
+               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -773,7 +781,7 @@ async def list_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
-        " pa.visible_to_team_id, pa.created_at"
+        " pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -838,9 +846,10 @@ async def update_address(
         row = await tx.fetch_one(
             """
             SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                   pa.visible_to_team_id, pa.created_at
+                   pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
             FROM {{tables.public_addresses}} pa
             JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+            JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
             WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
             FOR UPDATE OF pa
             """,
@@ -865,11 +874,13 @@ async def update_address(
                 UPDATE {{tables.public_addresses}} pa
                 SET reachability = $1,
                     visible_to_team_id = $2
-                FROM {{tables.did_aw_mappings}} m
+                FROM {{tables.did_aw_mappings}} m,
+                     {{tables.dns_namespaces}} ns
                 WHERE pa.address_id = $3
                   AND m.did_aw = pa.did_aw
+                  AND ns.namespace_id = pa.namespace_id
                 RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                          pa.visible_to_team_id, pa.created_at
+                          pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
                 """,
                 next_reachability,
                 next_visible_to_team_id,
@@ -886,6 +897,7 @@ async def update_address(
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
+        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin")),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -1038,5 +1050,6 @@ async def reassign_address(
         current_did_key=body.current_did_key,
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
+        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin")),
         created_at=row["created_at"].isoformat(),
     )

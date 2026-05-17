@@ -73,7 +73,7 @@ async def reverify_namespace_row(
                 last_verified_at = $2
             WHERE namespace_id = $1 AND deleted_at IS NULL
             RETURNING namespace_id, domain, controller_did, verification_status,
-                      last_verified_at, created_at
+                      default_delivery_origin, last_verified_at, created_at
             """,
             ns_row["namespace_id"],
             now,
@@ -95,7 +95,7 @@ async def reverify_namespace_row(
             last_verified_at = $3
         WHERE namespace_id = $1 AND deleted_at IS NULL
         RETURNING namespace_id, domain, controller_did, verification_status,
-                  last_verified_at, created_at
+                  default_delivery_origin, last_verified_at, created_at
         """,
         ns_row["namespace_id"],
         new_controller_did,

@@ -334,6 +334,35 @@ async def test_get_namespace_uses_discovered_registry_for_domain():
 
 
 @pytest.mark.asyncio
+async def test_get_namespace_decodes_default_delivery_origin():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/example.com"
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-1",
+                "domain": "example.com",
+                "controller_did": None,
+                "verification_status": "verified",
+                "default_delivery_origin": "https://aweb.example.com",
+                "last_verified_at": None,
+                "created_at": "2026-04-04T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    namespace = await client.get_namespace("example.com")
+
+    assert namespace is not None
+    assert namespace.default_delivery_origin == "https://aweb.example.com"
+
+
+@pytest.mark.asyncio
 async def test_registry_url_for_domain_uses_public_default_without_dns_override(monkeypatch):
     async def _no_override_lookup(domain: str):
         assert domain == "example.com"
@@ -469,6 +498,119 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
 
     assert namespace.domain == "project.aweb.ai"
     assert namespace.controller_did == child_controller_did
+
+
+@pytest.mark.asyncio
+async def test_register_namespace_can_set_default_delivery_origin():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    input_origin = "https://Messages.Example.com/"
+    delivery_origin = "https://messages.example.com"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/namespaces"
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        assert auth_did_key == controller_did
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "example.com",
+                    "operation": "register",
+                    "default_delivery_origin": delivery_origin,
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=signature,
+        )
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload == {
+            "domain": "example.com",
+            "controller_did": controller_did,
+            "default_delivery_origin": delivery_origin,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-1",
+                "domain": "example.com",
+                "controller_did": controller_did,
+                "verification_status": "verified",
+                "default_delivery_origin": delivery_origin,
+                "last_verified_at": "2026-04-03T00:00:00Z",
+                "created_at": "2026-04-03T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    namespace = await client.register_namespace(
+        "example.com",
+        controller_did,
+        controller_signing_key,
+        default_delivery_origin=input_origin,
+    )
+
+    assert namespace.default_delivery_origin == delivery_origin
+
+
+@pytest.mark.asyncio
+async def test_update_namespace_delivery_origin_signs_canonical_payload():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    delivery_origin = "https://messages.example.com"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == "/v1/namespaces/example.com"
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        assert auth_did_key == controller_did
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "example.com",
+                    "operation": "update_namespace",
+                    "default_delivery_origin": delivery_origin,
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=signature,
+        )
+        assert json.loads(request.content.decode("utf-8")) == {
+            "default_delivery_origin": delivery_origin
+        }
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-1",
+                "domain": "example.com",
+                "controller_did": controller_did,
+                "verification_status": "verified",
+                "default_delivery_origin": delivery_origin,
+                "last_verified_at": "2026-04-03T00:00:00Z",
+                "created_at": "2026-04-03T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    namespace = await client.update_namespace_delivery_origin(
+        "example.com",
+        controller_signing_key,
+        delivery_origin,
+    )
+
+    assert namespace.default_delivery_origin == delivery_origin
 
 
 @pytest.mark.asyncio
@@ -788,6 +930,10 @@ async def test_resolve_address_uses_discovered_registry_for_domain():
                 "did_aw": "did:aw:z6Mksubject",
                 "current_did_key": "did:key:z6Mksubject",
                 "reachability": "public",
+                "delivery": {
+                    "origin": "https://aweb.acme.test",
+                    "source": "namespace_default",
+                },
                 "created_at": "2026-04-04T00:00:00Z",
             },
         )
@@ -802,6 +948,8 @@ async def test_resolve_address_uses_discovered_registry_for_domain():
 
     assert address is not None
     assert address.name == "support"
+    assert address.delivery.origin == "https://aweb.acme.test"
+    assert address.delivery.source == "namespace_default"
 
 
 @pytest.mark.asyncio
