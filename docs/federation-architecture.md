@@ -7,8 +7,13 @@ kept separate from the SOTs for now; if the model is accepted, the SOTs should
 be updated explicitly in a later step.
 
 Tracking epic: `aweb-aaou` — Federated messaging architecture: namespace
-delivery origins. The epic links back to this document and owns the implementation
-subtasks listed in [Implementation Plan](#implementation-plan).
+delivery origins. The epic links back to this document and owns the
+implementation subtasks listed in [Implementation Plan](#implementation-plan).
+
+Scope: federation v1 is **messaging-only**. It covers mail and chat. Tasks,
+work queues, presence, roles, instructions, team manuals, and other team-scoped
+coordination state remain local to one aweb server and are out of scope for this
+model.
 
 ## Goal
 
@@ -54,16 +59,16 @@ Local bootstrap state does carry an aweb URL (`.aw/workspace.yaml`,
 not globally discoverable by another sender. Federation needs discoverable
 delivery metadata.
 
-## Granularity
+## Scope And Granularity
 
 Mail/chat delivery should be **namespace/address-scoped**, not team-scoped.
-Team coordination remains team-scoped.
+Team coordination is deliberately not federated in v1.
 
 The important split is operation type:
 
 ```text
-Identity-scoped mail/chat to domain/name -> namespace default delivery origin
-Team-scoped tasks/work/presence/roles/instructions -> team coordination origin
+Federated mail/chat to domain/name -> namespace default delivery origin
+Tasks/work/presence/roles/instructions -> local aweb server only
 ```
 
 ### Why Not Identity
@@ -99,11 +104,11 @@ mail/chat delivery origin does not introduce a stronger authority.
 ```text
 Namespace owns the default mail/chat delivery origin.
 Address inherits the namespace delivery origin.
-Team owns team-scoped coordination origin.
 Identity can belong to many teams.
 Sender selects active team when sending.
 Recipient address selects delivery origin when receiving first contact.
 Conversation participants store the concrete return route for replies.
+Team-scoped coordination is not federated in v1.
 ```
 
 ## Proposed Registry Model
@@ -116,12 +121,6 @@ dns_namespaces.default_delivery_origin = "https://aweb.example.com"
 
 Address records inherit that value. Do not add per-address override in the first
 cut; it is easy to add later and complicates authority and migration now.
-
-Add a separate coordination origin to awid team metadata for team-scoped state:
-
-```text
-teams.coordination_origin = "https://aweb.example.com"
-```
 
 Address lookup would return identity and delivery metadata:
 
@@ -149,21 +148,8 @@ Namespace lookup would return:
 }
 ```
 
-Team lookup would return:
-
-```json
-{
-  "team_id": "backend:beta.example",
-  "domain": "beta.example",
-  "name": "backend",
-  "team_did_key": "did:key:...",
-  "visibility": "private",
-  "coordination_origin": "https://aweb.beta.example"
-}
-```
-
-The namespace controller authorizes `default_delivery_origin`. The team
-controller authorizes `coordination_origin`.
+The namespace controller authorizes `default_delivery_origin`. Team metadata is
+not changed by messaging federation v1.
 
 ## Sending Path
 
@@ -284,23 +270,17 @@ multiple namespaces, each namespace can route to a different delivery origin;
 a unified local view can poll those inboxes, but first-contact routing remains
 address-scoped.
 
-## Cross-Server Teams
+## Team Coordination Is Out Of Scope
 
-For v1 federation, a team should have one canonical coordination server for
-team-scoped state. Agents can be on different machines and can have identities
-from different namespaces, but the team's shared state has one home:
+Federation v1 does not make teams distributed. A team can have members whose
+identities and addresses live in different namespaces, but tasks, presence,
+work queues, roles, instructions, and manuals remain on the aweb server that
+hosts that team.
 
-```text
-team backend:alpha.example -> https://aweb.alpha.example
-```
-
-This keeps tasks, presence, work queues, roles, and instructions simple.
-Multi-primary team replication is a separate problem and should not be part of
-the first federation cut.
-
-Cross-server membership is still supported because membership is a certificate,
-not a local account row. A member from another namespace presents the team
-certificate to the team's home server for team-scoped operations.
+Cross-server team membership can still exist because membership is a
+certificate, not proof that the member's address inbox lives on the same server.
+That certificate may be needed to resolve or send to a non-public address. It
+does not create a cross-server task store.
 
 ## Required OSS Changes
 
@@ -309,30 +289,25 @@ certificate to the team's home server for team-scoped operations.
 Add new migrations, never editing existing `001_registry.sql`:
 
 - Add `default_delivery_origin` to `dns_namespaces`.
-- Add `coordination_origin` to `teams` for team-scoped operations.
-- Decide migration/backfill behavior for existing namespaces and teams. The
-  likely safe behavior is no implicit delivery origin by default, with
-  hosted/operator tooling setting values explicitly. Do not guess production
-  defaults.
+- Decide migration/backfill behavior for existing namespaces. The likely safe
+  behavior is no implicit delivery origin by default, with hosted/operator
+  tooling setting values explicitly. Do not guess production defaults.
 
 ### awid API
 
 Extend:
 
 - namespace create/update/read responses with `default_delivery_origin`
-- team create/update/read/list responses with `coordination_origin`
 - address read/list responses with inherited delivery metadata
 
 Add or update authorization:
 
 - namespace controller authorizes namespace default delivery origin
-- team controller authorizes team coordination origin
 
 Validation:
 
-- `default_delivery_origin` and `coordination_origin` must be canonical HTTPS
-  origins for public federation; local/dev registries may allow
-  `http://localhost`.
+- `default_delivery_origin` must be a canonical HTTPS origin for public
+  federation; local/dev registries may allow `http://localhost`.
 - Address resolution without delivery metadata must fail closed for federated
   delivery.
 
@@ -342,9 +317,7 @@ Extend data structures:
 
 - `Namespace`
 - `Address`
-- `Team`
 - namespace update requests
-- team create/update requests
 
 Extend resolver behavior so CLI and aweb server can read delivery metadata from
 normal address resolution.
@@ -398,7 +371,6 @@ Required OSS tests before shipping:
 
 - namespace lookup returns default delivery origin
 - address lookup returns inherited delivery metadata
-- team lookup returns coordination origin
 - public cross-server mail first contact
 - public cross-server chat first contact
 - reply by conversation id across servers
@@ -423,10 +395,8 @@ first implementation can prove delivery federation with one registry.
 The executable plan lives in `aw` under epic `aweb-aaou`. Subtasks:
 
 1. `aweb-aaou.1` — Federation model review gate and SOT patch plan.
-2. `aweb-aaou.2` — awid schema: namespace `default_delivery_origin` and team
-   `coordination_origin`.
-3. `aweb-aaou.3` — awid API: expose and authorize delivery and coordination
-   origins.
+2. `aweb-aaou.2` — awid schema: namespace `default_delivery_origin`.
+3. `aweb-aaou.3` — awid API: expose and authorize namespace delivery origins.
 4. `aweb-aaou.4` — Go awid client and resolver support for federation metadata.
 5. `aweb-aaou.5` — Federation envelope contract for mail and chat.
 6. `aweb-aaou.6` — aweb server: outbound remote mail delivery.
@@ -446,17 +416,15 @@ The executable plan lives in `aw` under epic `aweb-aaou`. Subtasks:
 
 After review, update:
 
-- `docs/awid-sot.md`: namespace default delivery origin, team coordination
-  origin, response shapes, auth rules, schema.
+- `docs/awid-sot.md`: namespace default delivery origin, address response
+  shape, auth rules, and schema.
 - `docs/aweb-sot.md`: federated delivery path, recipient-side auth, conversation
-  route metadata, reply semantics, typed routing split between identity-scoped
-  and team-scoped operations.
+  route metadata, reply semantics, and the explicit v1 boundary that only
+  mail/chat are federated.
 - `docs/identity-messaging-contract.md`: direct-address send protocol should
   include delivery metadata and remote recipient-server verification.
-- `docs/teams.md`: a team has one canonical coordination server for team-scoped
-  state; mail/chat addresses route by namespace delivery origin.
 - `docs/self-hosting-guide.md`: how a self-hosted operator publishes namespace
-  delivery origin and team coordination origin.
+  delivery origin.
 
 ## Open Questions
 
@@ -477,13 +445,12 @@ After review, update:
 The smallest coherent implementation is:
 
 1. `dns_namespaces.default_delivery_origin`
-2. `teams.coordination_origin`
-3. address read returns inherited delivery metadata
-4. mail remote first contact
-5. chat remote first contact
-6. conversation participant route metadata
-7. replies by existing conversation id
-8. inbound federation replay/idempotency protection
+2. address read returns inherited delivery metadata
+3. mail remote first contact
+4. chat remote first contact
+5. conversation participant route metadata
+6. replies by existing conversation id
+7. inbound federation replay/idempotency protection
 
-That gives real federation for public and authorized private addresses without
-turning team coordination into distributed state replication.
+That gives real federation for public and authorized private addresses while
+leaving team coordination local.
