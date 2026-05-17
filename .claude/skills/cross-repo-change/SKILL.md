@@ -46,6 +46,32 @@ version, both the old and new code deploy atomically.
 - Do NOT accept both old and new formats "during transition" when
   both sides deploy atomically. Pick one format.
 
+## Aweb-cloud schema mirrors
+
+`aweb-cloud` maintains its own copy of the OSS schemas. The cloud's
+`migration_paths.py` points at `backend/src/aweb_cloud/migrations/aweb/`
+and `migrations/server/` — NOT at the OSS package's migrations in the
+installed `.venv`. So when an OSS release adds or alters a schema the
+cloud uses, the cloud needs a paired mirror migration with a matching
+ALTER/CREATE.
+
+The migrations to mirror can live in DIFFERENT OSS tree subdirectories
+within the same release. Easy to miss the second one when walking commit
+by commit:
+
+- `awid/src/awid_service/migrations/*.sql` → mirror in cloud as
+  `migrations/aweb/`.
+- `server/src/aweb/migrations/aweb/*.sql` → also mirror in cloud as
+  `migrations/aweb/` (same target dir, different OSS source dir).
+
+When reviewing a cross-repo bundle, grep ALL OSS migration trees touched
+in the bundle, not just the first one you find. Pattern-blindness on the
+second mirror is the failure mode.
+
+Each mirror file should be a one-statement ALTER/CREATE matching the OSS
+content, with a header comment naming the OSS source path so the lineage
+is explicit.
+
 ## Example: aweb-aaje (proxy auth team_id format)
 
 1. OSS: changed X-Team-ID validation from UUID to colon-form,
