@@ -449,6 +449,10 @@ def _chat_payload_hang_on(payload: CreateSessionRequest | SendMessageRequest) ->
     return payload.hang_on if isinstance(payload, SendMessageRequest) else False
 
 
+def _is_stale_delivery_origin_status(status_code: int) -> bool:
+    return status_code in {404, 410, 421}
+
+
 async def _deliver_federated_chat(
     request: Request,
     payload: CreateSessionRequest | SendMessageRequest,
@@ -2042,14 +2046,43 @@ async def send_message(
     if remote_recipients:
         if len(recipient_rows) != 1 or len(remote_recipients) != 1:
             raise HTTPException(status_code=422, detail="Federated chat continuation requires exactly one remote recipient")
-        remote = await _deliver_federated_chat(
-            request,
-            payload,
-            auth=auth,
-            sender_address=sender_address,
-            route=remote_recipients[0],
-            session_id=str(session_uuid),
-        )
+        route = remote_recipients[0]
+        try:
+            remote = await _deliver_federated_chat(
+                request,
+                payload,
+                auth=auth,
+                sender_address=sender_address,
+                route=route,
+                session_id=str(session_uuid),
+            )
+        except HTTPException as exc:
+            if not _is_stale_delivery_origin_status(exc.status_code):
+                raise
+            refreshed_route = await _resolve_remote_chat_route(
+                db,
+                registry_client=getattr(request.app.state, "awid_registry_client", None),
+                recipient=route,
+                requester_did_key=auth.did_key,
+            )
+            if refreshed_route["delivery_origin"] == _target_delivery_origin(route):
+                raise exc
+            remote_recipients[0] = {
+                **route,
+                "did_aw": refreshed_route["did_aw"],
+                "did_key": refreshed_route["current_did_key"],
+                "current_did_key": refreshed_route["current_did_key"],
+                "delivery_origin": refreshed_route["delivery_origin"],
+                "requires_team_certificate": refreshed_route["requires_team_certificate"],
+            }
+            remote = await _deliver_federated_chat(
+                request,
+                payload,
+                auth=auth,
+                sender_address=sender_address,
+                route=remote_recipients[0],
+                session_id=str(session_uuid),
+            )
         remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
         remote_message_id = str(remote.get("message_id") or "").strip()
         if remote_session_id != str(session_uuid):
