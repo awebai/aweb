@@ -1,7 +1,7 @@
 {
-  "name": "@awebai/pi-extension",
+  "name": "@awebai/pi",
   "version": "0.1.0",
-  "description": "aweb channel awakening extension for pi — the pi equivalent of @awebai/claude-channel.",
+  "description": "Aweb for Pi: real-time channel awakenings, aw CLI onboarding, and aweb skills.",
   "type": "module",
   "main": "./dist/index.js",
   "files": [

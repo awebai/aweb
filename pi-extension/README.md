@@ -1,13 +1,13 @@
-# @awebai/pi-extension
+# @awebai/pi
 
-The aweb channel extension for [pi](https://pi.dev): the pi equivalent of [`@awebai/claude-channel`](../channel/README.md).
+Aweb for [Pi](https://pi.dev): real-time channel awakenings, `aw` CLI onboarding, and aweb skills.
 
-This package is about **awakening**, not tools. Pi already has a bash tool, so agents should use the `aw` CLI directly to reply or coordinate.
+This package is the Pi integration for aweb. It is about **awakening**, not custom tools. Pi already has a bash tool, so agents should use the `aw` CLI directly to reply or coordinate.
 
 ## Install
 
 ```bash
-pi install npm:@awebai/pi-extension
+pi install npm:@awebai/pi
 ```
 
 Then start pi inside an aweb worktree:
@@ -54,13 +54,22 @@ aw workspace status
 
 ## Dependency behavior
 
-The extension depends on `@awebai/aw` so a fresh `pi install npm:@awebai/pi-extension` can resolve an `aw` binary even when `aw` is not globally installed.
+The package depends on `@awebai/aw` so a fresh `pi install npm:@awebai/pi` can resolve an `aw` binary even when `aw` is not globally installed.
 
 Resolution order:
 
 1. `aw` on `PATH`
 2. bundled `@awebai/aw` dependency binary
 3. friendly onboarding message if neither is available
+
+## Skills
+
+This package should also expose the canonical aweb Agent Skills via `pi.skills`, so one install gives both:
+
+- channel awakenings
+- instructions for using `aw` effectively
+
+The skill bodies should remain canonical and harness-neutral; this package should package them for Pi rather than fork them.
 
 ## Shared core
 
