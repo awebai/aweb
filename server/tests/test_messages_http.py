@@ -1118,7 +1118,7 @@ async def test_signed_continuation_requires_matching_conversation_id(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_signed_legacy_conversation_status_is_visible_and_blocks_continuation(aweb_cloud_db):
+async def test_signed_legacy_first_mail_status_is_visible_and_allows_continuation(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
@@ -1202,6 +1202,132 @@ async def test_signed_legacy_conversation_status_is_visible_and_blocks_continuat
 
     assert history.status_code == 200, history.text
     assert history.json()["messages"][0]["verification_status"] == "verified_legacy"
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
+
+
+@pytest.mark.asyncio
+async def test_signed_legacy_latest_mail_that_is_not_first_still_blocks_continuation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    first_message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    first_signed_payload = canonical_json_bytes(
+        {
+            "type": "mail",
+            "from": "alice",
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "subject": "bound signed",
+            "body": "hello",
+            "from_did": alice_did_key,
+            "message_id": first_message_id,
+            "conversation_id": conversation_id,
+            "timestamp": timestamp,
+        }
+    )
+    first_payload = {
+        "to_did": "did:aw:bob",
+        "subject": "bound signed",
+        "body": "hello",
+        "from_did": alice_did_key,
+        "message_id": first_message_id,
+        "conversation_id": conversation_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, first_signed_payload),
+        "signed_payload": first_signed_payload.decode(),
+    }
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/messages", json=first_payload)
+    assert first.status_code == 200, first.text
+
+    legacy_message_id = str(uuid4())
+    legacy_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    legacy_signed_payload = canonical_json_bytes(
+        {
+            "type": "mail",
+            "from": "alice",
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "subject": "legacy latest",
+            "body": "legacy body",
+            "from_did": alice_did_key,
+            "message_id": legacy_message_id,
+            "timestamp": legacy_timestamp,
+        }
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_agent_id, to_agent_id,
+            from_alias, from_address, to_alias, from_did, to_did,
+            subject, body, priority, signature, signed_payload, created_at
+        )
+        VALUES (
+            $1, $2, $3, $4,
+            'alice', 'acme.com/alice', 'bob', $5, 'did:aw:bob',
+            'legacy latest', 'legacy body', 'normal', $6, $7, $8
+        )
+        """,
+        legacy_message_id,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+        alice_did_key,
+        sign_message(alice_sk, legacy_signed_payload),
+        legacy_signed_payload.decode(),
+        datetime.now(timezone.utc) + timedelta(seconds=5),
+    )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={"conversation_id": conversation_id, "subject": "reply", "body": "blocked"},
+        )
+
     assert reply.status_code == 403
     assert "conversation_id" in reply.json()["detail"]
 
