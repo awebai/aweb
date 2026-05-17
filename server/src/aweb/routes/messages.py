@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,6 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.deps import get_db
+from aweb.federation.envelope import (
+    FederationEnvelope,
+    FederationEnvelopeError,
+    verify_federation_envelope,
+)
+from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
@@ -422,6 +429,7 @@ def _validate_signed_mail_payload(
 
 def _external_recipient_from_address(address: str, resolution) -> dict:
     _, name = address.split("/", 1)
+    delivery = getattr(resolution, "delivery", None)
     return {
         "agent_id": None,
         "team_id": None,
@@ -429,6 +437,8 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "address": address,
         "did_aw": resolution.did_aw.strip(),
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+        "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
+        "reachability": (getattr(resolution, "reachability", "") or "").strip(),
         "messaging_policy": None,
         "external": True,
     }
@@ -541,6 +551,234 @@ def _signed_payload_conversation_id(signed_payload: str | None) -> str:
     if not isinstance(payload, dict):
         return ""
     return str(payload.get("conversation_id") or "").strip()
+
+
+def _request_team_certificate(request: Request) -> dict | None:
+    cert_header = (request.headers.get("X-AWID-Team-Certificate") or "").strip()
+    if not cert_header:
+        return None
+    try:
+        decoded = json.loads(base64.b64decode(cert_header))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Malformed certificate")
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=401, detail="Malformed certificate")
+    return decoded
+
+
+def _require_remote_mail_signature(payload: SendMessageRequest) -> None:
+    if not payload.signature or not payload.signed_payload:
+        raise HTTPException(
+            status_code=422,
+            detail="Federated mail delivery requires a sender-signed payload",
+        )
+    if not payload.from_did or not payload.from_did.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="from_did is required for federated mail delivery",
+        )
+    if not payload.message_id or not payload.timestamp or not payload.conversation_id:
+        raise HTTPException(
+            status_code=422,
+            detail="message_id, timestamp, and conversation_id are required for federated mail delivery",
+        )
+
+
+def _remote_delivery_origin(recipient: dict | None) -> str:
+    return str((recipient or {}).get("delivery_origin") or "").strip()
+
+
+async def _deliver_remote_mail_and_project_locally(
+    request: Request,
+    payload: SendMessageRequest,
+    db,
+    *,
+    auth: MessagingAuth,
+    registry_client,
+    sender_address: str | None,
+    sender_did: str,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    to_alias: str | None,
+    created_at: datetime | None,
+    msg_uuid: UUID | None,
+) -> SendMessageResponse:
+    delivery_origin = _remote_delivery_origin(recipient)
+    if not delivery_origin:
+        raise HTTPException(
+            status_code=424,
+            detail="Recipient address has no federated delivery origin",
+        )
+    _require_remote_mail_signature(payload)
+    sender_did_aw = (auth.did_aw or "").strip()
+    if not sender_did_aw:
+        raise HTTPException(
+            status_code=422,
+            detail="Federated mail delivery requires a stable sender did:aw",
+        )
+    sender_current_did = payload.from_did.strip()
+    if sender_current_did not in set(auth_dids(auth)):
+        raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+    target_current_did = str(recipient.get("did_key") or "").strip()
+    target_stable_id = str(recipient.get("did_aw") or recipient_did or "").strip()
+    target_address = str(recipient.get("address") or payload.to_address or "").strip()
+    if not target_current_did or not target_stable_id or not target_address:
+        raise HTTPException(
+            status_code=422,
+            detail="Federated mail delivery requires a resolved target address and identity",
+        )
+    sender_team_certificate = _request_team_certificate(request)
+    if (recipient.get("reachability") or "public") != "public" and sender_team_certificate is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Recipient address requires a team certificate for federated delivery",
+        )
+    try:
+        envelope = FederationEnvelope(
+            type="mail",
+            sender_did_aw=sender_did_aw,
+            sender_current_did_key=sender_current_did,
+            sender_address=sender_address,
+            sender_active_team_id=auth.team_id,
+            sender_team_certificate=sender_team_certificate,
+            target_address=target_address,
+            target_did_aw=target_stable_id,
+            target_current_did_key=target_current_did,
+            target_delivery_origin=delivery_origin,
+            body=payload.body,
+            message_id=payload.message_id,
+            timestamp=payload.timestamp,
+            signed_payload=payload.signed_payload,
+            conversation_id=payload.conversation_id,
+            subject=payload.subject,
+            priority=payload.priority,
+        )
+        verify_federation_envelope(
+            envelope,
+            payload.signature,
+            expected={
+                "type": "mail",
+                "target_address": target_address,
+                "target_did_aw": target_stable_id,
+                "target_current_did_key": target_current_did,
+                "target_delivery_origin": envelope.target_delivery_origin,
+                "message_id": payload.message_id,
+                "conversation_id": payload.conversation_id,
+            },
+        )
+    except FederationEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        remote = await deliver_federated_mail(
+            delivery_origin=delivery_origin,
+            envelope=envelope,
+            signature=payload.signature,
+            transport=getattr(request.app.state, "federation_mail_transport", None),
+        )
+    except FederatedMailDeliveryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    conversation_id = str(remote.get("conversation_id") or payload.conversation_id or "").strip()
+    message_id = str(remote.get("message_id") or payload.message_id or "").strip()
+    delivered_at = str(remote.get("delivered_at") or (payload.timestamp or "")).strip()
+    if conversation_id != payload.conversation_id:
+        raise HTTPException(status_code=502, detail="Federated mail response conversation_id mismatch")
+    if message_id != payload.message_id:
+        raise HTTPException(status_code=502, detail="Federated mail response message_id mismatch")
+
+    aweb_db = db.get_manager("aweb")
+    existing_projection = await aweb_db.fetch_one(
+        """
+        SELECT message_id, conversation_id, created_at
+        FROM {{tables.messages}}
+        WHERE message_id = $1
+        """,
+        msg_uuid,
+    ) if msg_uuid is not None else None
+    if existing_projection:
+        return SendMessageResponse(
+            message_id=str(existing_projection["message_id"]),
+            conversation_id=str(existing_projection["conversation_id"]),
+            status=str(remote.get("status") or "delivered"),
+            delivered_at=delivered_at or _utc_iso(existing_projection["created_at"]),
+        )
+
+    try:
+        conversation = await create_conversation(
+            db,
+            conversation_type="mail",
+            created_by_did=sender_did,
+            conversation_id=conversation_id,
+            initiator={
+                "did": sender_did,
+                "agent_id": auth.agent_id,
+                "alias": auth.alias or sender_address or sender_did,
+                "address": sender_address,
+                "transport_hint": "sender",
+            },
+            recipients=[
+                {
+                    "did": recipient_did,
+                    "agent_id": to_agent_id,
+                    "alias": to_alias or recipient.get("alias") or recipient_did,
+                    "address": target_address,
+                    "transport_hint": _recipient_transport_hint(payload),
+                }
+            ],
+            team_id=auth.team_id,
+        )
+        local_message_id, local_created_at = await deliver_message(
+            db,
+            registry_client=registry_client,
+            recipient_agent=recipient,
+            team_id=auth.team_id,
+            from_agent_id=auth.agent_id,
+            from_alias=auth.alias,
+            to_agent_id=to_agent_id,
+            to_alias=to_alias,
+            from_did=sender_did,
+            to_did=recipient_did,
+            sender_address=sender_address,
+            subject=payload.subject,
+            body=payload.body,
+            priority=payload.priority,
+            signature=payload.signature,
+            signed_payload=payload.signed_payload,
+            created_at=created_at,
+            message_id=msg_uuid,
+            conversation_id=conversation["conversation_id"],
+            skip_policy_check=True,
+        )
+    except (ValidationError, NotFoundError, ForbiddenError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    await fire_mutation_hook(
+        request,
+        "message.sent",
+        {
+            "team_id": auth.team_id,
+            "from_agent_id": auth.agent_id,
+            "from_did": sender_did,
+            "from_did_aw": sender_did_aw,
+            "to_agent_id": to_agent_id,
+            "from_alias": auth.alias or sender_did,
+            "message_id": message_id or str(local_message_id),
+            "conversation_id": conversation_id or conversation["conversation_id"],
+            "to_alias": to_alias,
+            "subject": payload.subject,
+            "priority": payload.priority,
+            "federated": True,
+        },
+    )
+
+    return SendMessageResponse(
+        message_id=message_id or str(local_message_id),
+        conversation_id=conversation_id or conversation["conversation_id"],
+        status=str(remote.get("status") or "delivered"),
+        delivered_at=delivered_at or _utc_iso(local_created_at),
+    )
 
 
 async def _bound_recipient_from_address(
@@ -1019,6 +1257,23 @@ async def send_message(
             conversation_id=payload.conversation_id,
         )
         created_at = _parse_signed_timestamp(payload.timestamp)
+
+    if (recipient or {}).get("external"):
+        return await _deliver_remote_mail_and_project_locally(
+            request,
+            payload,
+            db,
+            auth=auth,
+            registry_client=registry_client,
+            sender_address=sender_address,
+            sender_did=sender_did,
+            recipient=recipient,
+            recipient_did=recipient_did or "",
+            to_agent_id=to_agent_id,
+            to_alias=to_alias,
+            created_at=created_at,
+            msg_uuid=msg_uuid,
+        )
 
     try:
         if not (recipient or {}).get("external"):

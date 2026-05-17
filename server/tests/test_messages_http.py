@@ -8,12 +8,13 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import Address, KeyResolution
+from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import (
     IDENTITY_DID_AW_HEADER,
@@ -338,7 +339,138 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_external_address_creates_conversation(aweb_cloud_db):
+async def test_send_message_to_external_address_posts_federated_mail_and_projects_locally(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-2",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        data = json.loads(request.content)
+        envelope = data["envelope"]
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "subject": "conversation address",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    ).decode()
+    payload = {
+        "to_address": "otherco.com/bob",
+        "subject": "conversation address",
+        "body": "hello",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversation_id"] == conversation_id
+    assert resp.json()["message_id"] == message_id
+    assert len(remote_requests) == 1
+    assert str(remote_requests[0].url) == "https://remote.example/v1/federation/messages"
+    remote_body = json.loads(remote_requests[0].content)
+    assert remote_body["signature"] == payload["signature"]
+    assert remote_body["envelope"]["signed_payload"] == signed_payload
+    assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
+    assert remote_body["envelope"]["sender_did_aw"] == "did:aw:alice"
+    assert remote_body["envelope"]["sender_current_did_key"] == alice_did_key
+    assert remote_body["envelope"]["target_did_aw"] == "did:aw:bob"
+    assert remote_body["envelope"]["target_current_did_key"] == "did:key:bob"
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    by_did = {row["did"]: row for row in participants}
+    message = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT conversation_id, to_agent_id, to_did
+        FROM {{tables.messages}}
+        WHERE subject = 'conversation address'
+        """
+    )
+
+    assert str(message["conversation_id"]) == conversation_id
+    assert message["to_agent_id"] is None
+    assert message["to_did"] == "did:aw:bob"
+    assert by_did["did:aw:bob"]["agent_id"] is None
+    assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
+    assert by_did["did:aw:bob"]["transport_hint"] == "to_address"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        retry = await client.post("/v1/messages", json=payload)
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["message_id"] == message_id
+    assert len(remote_requests) == 2
+    projected_count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert projected_count == 1
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_external_address_without_delivery_origin_fails_closed(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     alice_agent_id = await _insert_agent(
@@ -374,32 +506,22 @@ async def test_send_message_to_external_address_creates_conversation(aweb_cloud_
         )
 
     app.dependency_overrides[get_messaging_auth] = _auth
-    payload = {"to_address": "otherco.com/bob", "subject": "conversation address", "body": "hello"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
+        resp = await client.post(
+            "/v1/messages",
+            json={"to_address": "otherco.com/bob", "subject": "no delivery", "body": "hello"},
+        )
 
-    assert resp.status_code == 200, resp.text
-    conversation_id = resp.json()["conversation_id"]
-    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
-    by_did = {row["did"]: row for row in participants}
-    message = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT conversation_id, to_agent_id, to_did
-        FROM {{tables.messages}}
-        WHERE subject = 'conversation address'
-        """
+    assert resp.status_code == 424
+    assert "no federated delivery origin" in resp.json()["detail"]
+    count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE subject = 'no delivery'"
     )
-
-    assert str(message["conversation_id"]) == conversation_id
-    assert message["to_agent_id"] is None
-    assert message["to_did"] == "did:aw:bob"
-    assert by_did["did:aw:bob"]["agent_id"] is None
-    assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
-    assert by_did["did:aw:bob"]["transport_hint"] == "to_address"
+    assert count == 0
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_cloud_db):
+async def test_send_message_to_external_address_remote_failure_does_not_create_local_message(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     alice_agent_id = await _insert_agent(
@@ -409,6 +531,97 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_c
         did_key=alice_did_key,
         did_aw="did:aw:alice",
         address="acme.com/alice",
+    )
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-fail",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.federation_mail_transport = httpx.MockTransport(
+        lambda request: httpx.Response(503, json={"detail": "remote unavailable"})
+    )
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "subject": "remote failure",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    ).decode()
+    payload = {
+        "to_address": "otherco.com/bob",
+        "subject": "remote failure",
+        "body": "hello",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 502
+    assert "remote unavailable" in resp.json()["detail"]
+    count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE subject = 'remote failure'"
+    )
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "default:jane.aweb.ai")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    c3po_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:jane.aweb.ai",
+        alias="c3po",
+        did_key="did:key:c3po",
+        did_aw="did:aw:c3po",
+        address="jane.aweb.ai/c3po",
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
@@ -469,7 +682,7 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_c
         """
     )
     assert row["to_did"] == "did:aw:c3po"
-    assert row["to_agent_id"] is None
+    assert str(row["to_agent_id"]) == c3po_agent_id
     assert row["to_alias"] == "c3po"
 
 
@@ -1454,6 +1667,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
             current_did_key="did:key:bob",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
         )
     )
     registry.list_did_addresses = AsyncMock(
@@ -1471,8 +1685,48 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.federation_mail_transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "message_id": json.loads(request.content)["envelope"]["message_id"],
+                "conversation_id": json.loads(request.content)["envelope"]["conversation_id"],
+                "status": "delivered",
+                "delivered_at": json.loads(request.content)["envelope"]["timestamp"],
+            },
+        )
+    )
 
-    payload = {"to_address": "otherco.com/bob", "subject": "external", "body": "hello"}
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "subject": "external",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    ).decode()
+    payload = {
+        "to_address": "otherco.com/bob",
+        "subject": "external",
+        "body": "hello",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
@@ -1547,6 +1801,7 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
             current_did_key="did:key:bob",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
         )
     )
     registry.list_did_addresses = AsyncMock(
@@ -1564,8 +1819,48 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
     )
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.federation_mail_transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "message_id": json.loads(request.content)["envelope"]["message_id"],
+                "conversation_id": json.loads(request.content)["envelope"]["conversation_id"],
+                "status": "delivered",
+                "delivered_at": json.loads(request.content)["envelope"]["timestamp"],
+            },
+        )
+    )
 
-    payload = {"to_address": "otherco.com/bob", "subject": "multi membership external", "body": "hello"}
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "subject": "multi membership external",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    ).decode()
+    payload = {
+        "to_address": "otherco.com/bob",
+        "subject": "multi membership external",
+        "body": "hello",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),

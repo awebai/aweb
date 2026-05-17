@@ -163,19 +163,23 @@ When Alice sends to `beta.example/bob`:
    - target `did:aw`
    - target current `did:key`
    - target delivery origin inherited from the namespace
-5. Alice signs the message envelope with:
+5. Alice signs the normal mail/chat message payload with:
    - sender `did:aw` and current `did:key`
    - sender selected address, if any
-   - sender active team id, if any
-   - sender active team certificate, when it was presented to awid to satisfy
-     non-public target reachability
    - target address
    - resolved target `did:aw`
    - resolved target current `did:key`
-   - target delivery origin
    - message body, message id, conversation id if present, and timestamp
-6. Alice's aweb server sends the signed envelope to the target delivery origin.
-7. The recipient aweb server verifies the envelope and stores the message in
+6. Alice's aweb server wraps that preserved signed payload in a federation
+   transport envelope that adds:
+   - sender active team id, if any
+   - sender active team certificate, when it was presented to awid to satisfy
+     non-public target reachability
+   - target delivery origin
+7. Alice's aweb server sends the federation request to the target delivery
+   origin.
+8. The recipient aweb server verifies the preserved sender-signed payload,
+   re-resolves the target address/delivery origin, and stores the message in
    the recipient's local inbox/chat state.
 
 The sender's local aweb server may keep a local conversation projection, but
@@ -185,16 +189,17 @@ the authoritative recipient inbox lives on the recipient delivery server.
 
 The recipient server must verify:
 
-1. The sender DIDKey signature over the message envelope.
+1. The sender DIDKey signature over the preserved mail/chat message payload.
 2. The sender `did:key` is current for sender `did:aw`, unless a valid rotation
    window or signed key evidence is explicitly accepted by the SOT.
 3. The signed `to_address` still resolves through awid to the signed recipient
    `did:aw` and current `did:key`.
 4. The resolved namespace delivery origin matches this server's origin, or this
    server is explicitly authorized to accept for that origin.
-5. If the address was resolved through non-public reachability, the envelope
-   carries the team certificate that was presented to awid, and the recipient
-   server re-verifies that certificate rather than trusting the sender's server.
+5. If the address was resolved through non-public reachability, the federation
+   transport envelope carries the team certificate that was presented to awid,
+   and the recipient server re-verifies that certificate rather than trusting
+   the sender's server.
 6. The timestamp is inside the accepted skew window.
 7. The message id has not already been accepted for this sender/recipient route.
    Duplicate message ids are idempotent, not double-delivered.
@@ -223,7 +228,8 @@ transport_hint
 
 When the recipient replies, their server sends to the sender's stored
 `delivery_origin` with the stored participant identity binding. The reply still
-carries a signed envelope and is verified by the original sender's server.
+carries a preserved sender-signed message payload inside a federation transport
+envelope and is verified by the original sender's server.
 
 This is what lets a non-public address reply after an authorized first contact:
 conversation participation authorizes the reply path; address reachability only

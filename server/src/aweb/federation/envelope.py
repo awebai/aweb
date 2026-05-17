@@ -1,7 +1,15 @@
-"""Signed envelope contract for federated mail/chat delivery."""
+"""Federated mail/chat delivery envelope validation.
+
+The federation transport envelope is not itself the sender-signed payload.
+Self-custodial clients already sign the canonical mail/chat message payload
+before handing it to their local server. The sender's server must preserve that
+payload and signature when forwarding cross-server; it cannot manufacture a new
+sender signature over a different federation wrapper.
+"""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 from uuid import UUID
@@ -9,7 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.log import canonical_server_origin
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import verify_did_key_signature
 
 FEDERATION_ENVELOPE_VERSION = 1
 FEDERATION_TIMESTAMP_SKEW_SECONDS = 300
@@ -22,7 +30,7 @@ class FederationEnvelopeError(ValueError):
 
 
 class FederationEnvelope(BaseModel):
-    """Canonical behavior-shaping payload signed for remote mail/chat delivery."""
+    """Transport wrapper around an existing sender-signed mail/chat payload."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -40,6 +48,7 @@ class FederationEnvelope(BaseModel):
     body: str
     message_id: str
     timestamp: str
+    signed_payload: str = Field(..., min_length=1)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=64)
     subject: str | None = None
     priority: str | None = None
@@ -82,14 +91,13 @@ class FederationEnvelope(BaseModel):
         return value
 
 
-def canonical_federation_payload(envelope: FederationEnvelope | Mapping[str, Any]) -> bytes:
-    """Return canonical bytes for the signed federation envelope."""
-    model = (
-        envelope
-        if isinstance(envelope, FederationEnvelope)
-        else FederationEnvelope.model_validate(envelope)
-    )
-    return canonical_json_bytes(model.model_dump(mode="json", exclude_none=True))
+class FederatedDeliveryRequest(BaseModel):
+    """Request body sent from one aweb server to another."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    envelope: FederationEnvelope
+    signature: str = Field(..., min_length=1, max_length=512)
 
 
 def verify_federation_envelope(
@@ -100,7 +108,7 @@ def verify_federation_envelope(
     now: datetime | None = None,
     max_skew_seconds: int = FEDERATION_TIMESTAMP_SKEW_SECONDS,
 ) -> FederationEnvelope:
-    """Validate the envelope contract and sender signature.
+    """Validate the transport envelope and the preserved sender signature.
 
     `expected` is for outer transport fields that must match the signed payload,
     such as the endpoint message type, resolved target address, message id, or
@@ -113,14 +121,15 @@ def verify_federation_envelope(
     )
     _enforce_timestamp_skew(model.timestamp, now=now, max_skew_seconds=max_skew_seconds)
     _enforce_expected_fields(model, expected or {})
+    _enforce_signed_payload_binding(model)
     try:
         verify_did_key_signature(
             did_key=model.sender_current_did_key,
-            payload=canonical_federation_payload(model),
+            payload=model.signed_payload.encode("utf-8"),
             signature_b64=signature,
         )
     except Exception as exc:
-        raise FederationEnvelopeError("Invalid federation envelope signature") from exc
+        raise FederationEnvelopeError("Invalid federation message signature") from exc
     return model
 
 
@@ -161,3 +170,42 @@ def _enforce_expected_fields(model: FederationEnvelope, expected: Mapping[str, A
         actual = payload.get(field)
         if actual != expected_value:
             raise FederationEnvelopeError(f"Federation envelope {field} does not match")
+
+
+def _signed_payload_json(model: FederationEnvelope) -> dict[str, Any]:
+    try:
+        payload = json.loads(model.signed_payload)
+    except Exception as exc:
+        raise FederationEnvelopeError("Federation signed_payload must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise FederationEnvelopeError("Federation signed_payload must be a JSON object")
+    return payload
+
+
+def _expect_signed_value(payload: Mapping[str, Any], field: str, expected: Any) -> None:
+    actual = payload.get(field)
+    if actual != expected:
+        raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
+
+
+def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
+    payload = _signed_payload_json(model)
+    _expect_signed_value(payload, "type", model.type)
+    _expect_signed_value(payload, "body", model.body)
+    _expect_signed_value(payload, "from_did", model.sender_current_did_key)
+    _expect_signed_value(payload, "message_id", model.message_id)
+    _expect_signed_value(payload, "timestamp", model.timestamp)
+    _expect_signed_value(payload, "to", model.target_address)
+    _expect_signed_value(payload, "to_did", model.target_current_did_key)
+    _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
+    if model.sender_did_aw:
+        _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)
+    if model.conversation_id is not None:
+        _expect_signed_value(payload, "conversation_id", model.conversation_id)
+    elif payload.get("conversation_id"):
+        raise FederationEnvelopeError("Federation signed_payload conversation_id does not match")
+    if model.type == "mail":
+        _expect_signed_value(payload, "subject", model.subject or "")
+        signed_priority = payload.get("priority") or "normal"
+        if signed_priority != (model.priority or "normal"):
+            raise FederationEnvelopeError("Federation signed_payload priority does not match")

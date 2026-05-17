@@ -6,10 +6,9 @@ from uuid import uuid4
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
-from awid.signing import sign_message
+from awid.signing import canonical_json_bytes, sign_message
 from aweb.federation.envelope import (
     FederationEnvelopeError,
-    canonical_federation_payload,
     require_team_certificate_for_non_public_reachability,
     verify_federation_envelope,
 )
@@ -25,7 +24,26 @@ def _timestamp(offset_seconds: int = 0) -> str:
 
 def _envelope(sender_did_key: str) -> dict:
     target_did_key = "did:key:z6Mktarget"
-    return {
+    message_id = str(uuid4())
+    timestamp = _timestamp()
+    conversation_id = str(uuid4())
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "alpha.example/alice",
+            "from_did": sender_did_key,
+            "from_stable_id": stable_id_from_did_key(sender_did_key),
+            "message_id": message_id,
+            "subject": "Federation",
+            "timestamp": timestamp,
+            "to": "beta.example/bob",
+            "to_did": target_did_key,
+            "to_stable_id": "did:aw:target",
+            "type": "mail",
+        }
+    ).decode()
+    envelope = {
         "version": 1,
         "type": "mail",
         "sender_did_aw": stable_id_from_did_key(sender_did_key),
@@ -39,14 +57,16 @@ def _envelope(sender_did_key: str) -> dict:
         "body": "hello",
         "subject": "Federation",
         "priority": "normal",
-        "message_id": str(uuid4()),
-        "timestamp": _timestamp(),
-        "conversation_id": str(uuid4()),
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signed_payload": signed_payload,
+        "conversation_id": conversation_id,
     }
+    return envelope
 
 
 def _sign(envelope: dict, signing_key: bytes) -> str:
-    return sign_message(signing_key, canonical_federation_payload(envelope))
+    return sign_message(signing_key, envelope["signed_payload"].encode())
 
 
 def test_verify_federation_envelope_accepts_signed_mail_payload():
@@ -91,7 +111,7 @@ def test_verify_federation_envelope_rejects_invalid_signature():
     envelope = _envelope(sender_did_key)
     signature = _sign(envelope, other_key)
 
-    with pytest.raises(FederationEnvelopeError, match="Invalid federation envelope signature"):
+    with pytest.raises(FederationEnvelopeError, match="Invalid federation message signature"):
         verify_federation_envelope(envelope, signature)
 
 
