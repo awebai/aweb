@@ -45,6 +45,7 @@ from aweb.routes.chat import (
     CreateSessionRequest,
     SendMessageRequest as ChatSendMessageRequest,
     _deliver_federated_chat,
+    _resolve_stored_remote_chat_route,
 )
 from aweb.service_errors import ServiceError
 
@@ -158,7 +159,8 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT p.did, p.alias, p.address AS participant_address, a.did_key, a.did_aw, a.address
+        SELECT p.did, p.alias, p.address AS participant_address, p.delivery_origin,
+               a.did_key, a.did_aw, a.address
         FROM {{tables.chat_participants}} p
         LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
         WHERE p.session_id = $1
@@ -173,6 +175,7 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
         item = dict(row)
         participant_address = (item.get("participant_address") or "").strip()
         item["address"] = (item.get("address") or "").strip() or participant_address
+        item["delivery_origin"] = (item.get("delivery_origin") or "").strip() or None
         item["external"] = bool(participant_address and not (item.get("did_aw") or item.get("did_key")))
         result.append(item)
     return result
@@ -567,11 +570,36 @@ async def chat_send(
         msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        remote_recipients = [row for row in recipient_rows if row.get("delivery_origin")]
+        if remote_recipients:
+            if len(recipient_rows) != 1 or len(remote_recipients) != 1:
+                return json.dumps({"error": "Federated chat continuation requires exactly one remote recipient"})
+            try:
+                route = await _resolve_stored_remote_chat_route(
+                    registry_client=registry_client,
+                    recipient=remote_recipients[0],
+                )
+            except Exception as exc:
+                detail = getattr(exc, "detail", None)
+                return json.dumps({"error": detail or str(exc)})
+            recipient_rows[0] = {
+                **recipient_rows[0],
+                "external": True,
+                "did_aw": route["did_aw"],
+                "did_key": route["current_did_key"],
+                "current_did_key": route["current_did_key"],
+                "delivery_origin": route["delivery_origin"],
+                "requires_team_certificate": route["requires_team_certificate"],
+            }
         to_value, to_current_did, to_stable_id = _recipient_signed_fields(recipient_rows)
         signed_fields = {
             "body": message,
             "conversation_id": str(sid),
-            "from": _signed_from(auth, actor_alias),
+            "from": (
+                sender_address
+                if remote_recipients and sender_address
+                else _signed_from(auth, actor_alias)
+            ),
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),
             "subject": "",
@@ -599,6 +627,40 @@ async def chat_send(
             )
         except HostedMessageSigningError as exc:
             return json.dumps({"error": str(exc)})
+
+        if remote_recipients:
+            payload = ChatSendMessageRequest(
+                body=message,
+                leaving=leaving,
+                hang_on=hang_on,
+                wait_seconds=wait_seconds if wait else None,
+                message_id=str(pre_message_id),
+                timestamp=_signed_timestamp(msg_created_at),
+                from_did=signed.from_did if signed else session_actor_did,
+                signature=signed.signature if signed else None,
+                signed_payload=signed.signed_payload if signed else None,
+            )
+            try:
+                remote = await _deliver_federated_chat(
+                    mcp_federation_request(
+                        public_origin=public_origin,
+                        chat_transport=federation_transport,
+                    ),
+                    payload,
+                    auth=mcp_messaging_auth(auth),
+                    sender_address=sender_address,
+                    route=recipient_rows[0],
+                    session_id=str(sid),
+                )
+            except Exception as exc:
+                detail = getattr(exc, "detail", None)
+                return json.dumps({"error": detail or str(exc)})
+            remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
+            remote_message_id = str(remote.get("message_id") or "").strip()
+            if remote_session_id != str(sid):
+                return json.dumps({"error": "Federated chat response session_id mismatch"})
+            if remote_message_id != str(pre_message_id):
+                return json.dumps({"error": "Federated chat response message_id mismatch"})
 
         msg = await send_in_session(
             db_infra,

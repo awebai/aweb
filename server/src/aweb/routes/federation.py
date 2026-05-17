@@ -19,6 +19,7 @@ from aweb.federation.envelope import (
     require_team_certificate_for_non_public_reachability,
     verify_federation_envelope,
 )
+from aweb.federation.address_lookup import envelope_address_lookup_kwargs
 from aweb.hooks import fire_mutation_hook
 from aweb.messaging.conversations import (
     create_conversation,
@@ -107,7 +108,11 @@ async def _verify_sender_current_key(registry_client, envelope: FederationEnvelo
 async def _resolve_target_address(registry_client, envelope: FederationEnvelope):
     domain, name = _split_address(envelope.target_address)
     try:
-        resolved = await registry_client.resolve_address(domain, name)
+        resolved = await registry_client.resolve_address(
+            domain,
+            name,
+            **envelope_address_lookup_kwargs(envelope),
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
     if resolved is None:

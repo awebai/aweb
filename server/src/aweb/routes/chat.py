@@ -23,6 +23,7 @@ from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError, verify_federation_envelope
+from aweb.federation.address_lookup import request_address_lookup_kwargs
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
@@ -314,6 +315,7 @@ async def _resolve_remote_chat_route(
     registry_client,
     recipient: dict[str, Any],
     requester_did_key: str | None = None,
+    address_lookup_kwargs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
     if "/" not in address:
@@ -323,9 +325,18 @@ async def _resolve_remote_chat_route(
     domain, name = address.split("/", 1)
     try:
         if requester_did_key:
-            resolution = await registry_client.resolve_address(domain, name, did_key=requester_did_key)
+            resolution = await registry_client.resolve_address(
+                domain,
+                name,
+                did_key=requester_did_key,
+                **(address_lookup_kwargs or {}),
+            )
         else:
-            resolution = await registry_client.resolve_address(domain, name)
+            resolution = await registry_client.resolve_address(
+                domain,
+                name,
+                **(address_lookup_kwargs or {}),
+            )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
     if resolution is None:
@@ -486,6 +497,12 @@ async def _deliver_federated_chat(
             sender_active_team_id=auth.team_id,
             sender_team_certificate=sender_team_certificate,
             target_address=route["address"],
+            target_address_lookup_authorization=request.headers.get(
+                "X-AWID-Address-Lookup-Authorization"
+            ),
+            target_address_lookup_timestamp=request.headers.get(
+                "X-AWID-Address-Lookup-Timestamp"
+            ),
             target_did_aw=route["did_aw"],
             target_current_did_key=route["current_did_key"],
             target_delivery_origin=route["delivery_origin"],
@@ -494,7 +511,7 @@ async def _deliver_federated_chat(
             timestamp=str(payload.timestamp),
             signed_payload=str(payload.signed_payload),
             conversation_id=session_id,
-            wait_seconds=payload.wait_seconds if isinstance(payload, CreateSessionRequest) else None,
+            wait_seconds=getattr(payload, "wait_seconds", None),
             reply_to=payload.reply_to,
             sender_leaving=_chat_payload_leaving(payload),
             hang_on=_chat_payload_hang_on(payload),
@@ -682,6 +699,7 @@ async def _targets_left(db, *, session_id: UUID, target_dids: list[str]) -> list
 async def _resolve_chat_targets(
     db,
     *,
+    request: Request,
     registry_client,
     auth: MessagingAuth,
     to_aliases: list[str],
@@ -736,7 +754,12 @@ async def _resolve_chat_targets(
         domain, name = address.split("/", 1)
         resolution = None
         if registry_client is not None:
-            resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            resolution = await registry_client.resolve_address(
+                domain,
+                name,
+                did_key=auth.did_key,
+                **request_address_lookup_kwargs(request),
+            )
         if resolution is not None and resolution.did_aw:
             row = await resolve_agent_by_did(db, resolution.did_aw)
             if row is None:
@@ -971,6 +994,7 @@ async def create_or_send(
 
     target_rows = await _resolve_chat_targets(
         db,
+        request=request,
         registry_client=registry_client,
         auth=auth,
         to_aliases=payload.to_aliases,
@@ -1088,6 +1112,7 @@ async def create_or_send(
             registry_client=registry_client,
             recipient=external_targets[0],
             requester_did_key=auth.did_key,
+            address_lookup_kwargs=request_address_lookup_kwargs(request),
         )
 
         remote = await _deliver_federated_chat(
@@ -1935,6 +1960,7 @@ class SendMessageRequest(BaseModel):
     body: str = Field(..., min_length=1)
     leaving: bool = False
     hang_on: bool = False
+    wait_seconds: int | None = Field(default=None, ge=0, le=600)
     reply_to: str | None = None
     message_id: str | None = None
     timestamp: str | None = None
@@ -2064,6 +2090,7 @@ async def send_message(
                 registry_client=getattr(request.app.state, "awid_registry_client", None),
                 recipient=route,
                 requester_did_key=auth.did_key,
+                address_lookup_kwargs=request_address_lookup_kwargs(request),
             )
             if refreshed_route["delivery_origin"] == _target_delivery_origin(route):
                 raise exc

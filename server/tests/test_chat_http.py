@@ -224,9 +224,21 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
                 "signature": sign_message(alice_sk, signed_payload.encode()),
                 "signed_payload": signed_payload,
             },
+            headers={
+                "X-AWID-Address-Lookup-Authorization": "DIDKey alice lookup-signature",
+                "X-AWID-Address-Lookup-Timestamp": "2026-05-17T00:00:00Z",
+            },
         )
 
     assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_with(
+        "otherco.com",
+        "bob",
+        did_key=alice_did_key,
+        lookup_authorization="DIDKey alice lookup-signature",
+        lookup_timestamp="2026-05-17T00:00:00Z",
+        team_certificate="",
+    )
     assert resp.json()["session_id"] == session_id
     assert resp.json()["message_id"] == message_id
     assert len(remote_requests) == 1
@@ -235,6 +247,8 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     assert remote_body["envelope"]["type"] == "chat"
     assert remote_body["envelope"]["sender_delivery_origin"] == "https://local.example"
     assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
+    assert remote_body["envelope"]["target_address_lookup_authorization"] == "DIDKey alice lookup-signature"
+    assert remote_body["envelope"]["target_address_lookup_timestamp"] == "2026-05-17T00:00:00Z"
     assert remote_body["envelope"]["wait_seconds"] == 30
     participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -680,6 +694,8 @@ def _federated_chat_payload(
     body: str = "hello from another server",
     message_id: str | None = None,
     conversation_id: str | None = None,
+    target_address_lookup_authorization: str | None = None,
+    target_address_lookup_timestamp: str | None = None,
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
@@ -699,24 +715,29 @@ def _federated_chat_payload(
             "type": "chat",
         }
     ).decode()
+    envelope = {
+        "version": 1,
+        "type": "chat",
+        "sender_did_aw": sender_did_aw,
+        "sender_current_did_key": sender_did_key,
+        "sender_address": sender_address,
+        "sender_delivery_origin": sender_delivery_origin,
+        "target_address": target_address,
+        "target_did_aw": target_did_aw,
+        "target_current_did_key": target_did_key,
+        "target_delivery_origin": target_delivery_origin,
+        "body": body,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signed_payload": signed_payload,
+        "conversation_id": conversation_id,
+    }
+    if target_address_lookup_authorization is not None:
+        envelope["target_address_lookup_authorization"] = target_address_lookup_authorization
+    if target_address_lookup_timestamp is not None:
+        envelope["target_address_lookup_timestamp"] = target_address_lookup_timestamp
     return {
-        "envelope": {
-            "version": 1,
-            "type": "chat",
-            "sender_did_aw": sender_did_aw,
-            "sender_current_did_key": sender_did_key,
-            "sender_address": sender_address,
-            "sender_delivery_origin": sender_delivery_origin,
-            "target_address": target_address,
-            "target_did_aw": target_did_aw,
-            "target_current_did_key": target_did_key,
-            "target_delivery_origin": target_delivery_origin,
-            "body": body,
-            "message_id": message_id,
-            "timestamp": timestamp,
-            "signed_payload": signed_payload,
-            "conversation_id": conversation_id,
-        },
+        "envelope": envelope,
         "signature": sign_message(sender_sk, signed_payload.encode()),
     }
 
@@ -760,12 +781,21 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
         sender_sk=alice_sk,
         sender_did_key=alice_did_key,
         target_did_key=bob_did_key,
+        target_address_lookup_authorization="DIDKey alice lookup-signature",
+        target_address_lookup_timestamp="2026-05-17T00:00:00Z",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_with(
+        "beta.example",
+        "bob",
+        lookup_authorization="DIDKey alice lookup-signature",
+        lookup_timestamp="2026-05-17T00:00:00Z",
+        team_certificate="",
+    )
     session_id = resp.json()["session_id"]
     assert session_id == payload["envelope"]["conversation_id"]
     message = await aweb_cloud_db.aweb_db.fetch_one(

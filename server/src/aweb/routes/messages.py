@@ -16,6 +16,7 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     verify_federation_envelope,
 )
+from aweb.federation.address_lookup import request_address_lookup_kwargs
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
@@ -652,6 +653,12 @@ async def _deliver_remote_mail_and_project_locally(
             sender_active_team_id=auth.team_id,
             sender_team_certificate=sender_team_certificate,
             target_address=target_address,
+            target_address_lookup_authorization=request.headers.get(
+                "X-AWID-Address-Lookup-Authorization"
+            ),
+            target_address_lookup_timestamp=request.headers.get(
+                "X-AWID-Address-Lookup-Timestamp"
+            ),
             target_did_aw=target_stable_id,
             target_current_did_key=target_current_did,
             target_delivery_origin=delivery_origin,
@@ -715,29 +722,41 @@ async def _deliver_remote_mail_and_project_locally(
         )
 
     try:
-        conversation = await create_conversation(
-            db,
-            conversation_type="mail",
-            created_by_did=sender_did,
-            conversation_id=conversation_id,
-            initiator={
-                "did": sender_did,
-                "agent_id": auth.agent_id,
-                "alias": auth.alias or sender_address or sender_did,
-                "address": sender_address,
-                "transport_hint": "sender",
-            },
-            recipients=[
-                {
-                    "did": recipient_did,
-                    "agent_id": to_agent_id,
-                    "alias": to_alias or recipient.get("alias") or recipient_did,
-                    "address": target_address,
-                    "transport_hint": _recipient_transport_hint(payload),
-                }
-            ],
-            team_id=auth.team_id,
+        existing_conversation = await aweb_db.fetch_one(
+            """
+            SELECT conversation_id
+            FROM {{tables.conversations}}
+            WHERE conversation_id = $1
+            """,
+            UUID(conversation_id),
         )
+        if existing_conversation:
+            conversation = {"conversation_id": str(existing_conversation["conversation_id"])}
+        else:
+            conversation = await create_conversation(
+                db,
+                conversation_type="mail",
+                created_by_did=sender_did,
+                conversation_id=conversation_id,
+                initiator={
+                    "did": sender_did,
+                    "agent_id": auth.agent_id,
+                    "alias": auth.alias or sender_address or sender_did,
+                    "address": sender_address,
+                    "transport_hint": "sender",
+                },
+                recipients=[
+                    {
+                        "did": recipient_did,
+                        "agent_id": to_agent_id,
+                        "alias": to_alias or recipient.get("alias") or recipient_did,
+                        "address": target_address,
+                        "delivery_origin": delivery_origin,
+                        "transport_hint": _recipient_transport_hint(payload),
+                    }
+                ],
+                team_id=auth.team_id,
+            )
         local_message_id, local_created_at = await deliver_message(
             db,
             registry_client=registry_client,
@@ -1100,7 +1119,7 @@ async def send_message(
     to_agent_id: str | None = payload.to_agent_id
     to_alias: str | None = None
 
-    if payload.to_stable_id is not None:
+    if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
@@ -1132,7 +1151,7 @@ async def send_message(
             recipient = _with_requested_address(recipient, address)
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
-    elif payload.to_did is not None:
+    elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(db, requested_recipient_did)
         if recipient is None:
@@ -1167,7 +1186,12 @@ async def send_message(
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
         if registry_client is not None:
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            resolved = await registry_client.resolve_address(
+                domain,
+                name,
+                did_key=auth.did_key,
+                **request_address_lookup_kwargs(request),
+            )
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
                 recipient = await resolve_agent_by_did(db, recipient_did)
@@ -1211,6 +1235,16 @@ async def send_message(
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
             if recipient.get("external") or payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_address recipient")
+        if payload.to_stable_id is not None and payload.to_stable_id.strip():
+            if payload.to_stable_id.strip() != str(recipient.get("did_aw") or "").strip():
+                raise HTTPException(status_code=422, detail="to_stable_id must match the to_address recipient")
+        if payload.to_did is not None and payload.to_did.strip():
+            candidate_dids = {
+                str(recipient.get("did_aw") or "").strip(),
+                str(recipient.get("did_key") or "").strip(),
+            }
+            if payload.to_did.strip() not in candidate_dids:
+                raise HTTPException(status_code=422, detail="to_did must match the to_address recipient")
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias") or address
     elif to_agent_id is not None:

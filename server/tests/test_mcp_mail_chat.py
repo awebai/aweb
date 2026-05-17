@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.registry import Address, AddressDelivery
+from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
@@ -664,6 +664,145 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
     assert str(row["conversation_id"]) == str(conversation_id)
     assert row["from_did"] == alice_did_key
     assert row["to_did"] == "did:aw:bob"
+    assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    conversation_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did_key = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES (
+            $1, $2, $3, 'did:aw:alice', 'acme.com/alice',
+            'alice', 'persistent', 'active', 'everyone'
+        )
+        """,
+        alice_agent_id,
+        team_id,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', $2, 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        conversation_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, 'sender', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'federated:https://remote.example', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_key(self, did_aw: str):
+            assert did_aw == "did:aw:bob"
+            return KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob")
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/federation/messages"
+        body = json.loads(request.content.decode("utf-8"))
+        remote_calls.append(body)
+        envelope = body["envelope"]
+        assert envelope["type"] == "mail"
+        assert envelope["conversation_id"] == str(conversation_id)
+        assert envelope["target_address"] == "otherco.com/bob"
+        assert envelope["target_did_aw"] == "did:aw:bob"
+        assert envelope["target_current_did_key"] == "did:key:bob"
+        assert envelope["target_delivery_origin"] == "https://remote.example"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did_key,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did_key,
+        )
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_Registry(),
+            hosted_signer=_signer,
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="federated reply",
+            federation_transport=httpx.MockTransport(_remote_handler),
+            public_origin="https://local.example",
+        )
+    )
+
+    assert "error" not in result, result
+    assert result["status"] == "delivered"
+    assert result["conversation_id"] == str(conversation_id)
+    assert len(remote_calls) == 1
+    assert seen[0]["payload"]["from"] == "acme.com/alice"
+    assert seen[0]["payload"]["to"] == "otherco.com/bob"
+    assert seen[0]["payload"]["to_did"] == "did:key:bob"
+    assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT conversation_id, from_did, to_did, to_agent_id, to_alias, signed_payload FROM {{tables.messages}}"
+    )
+    assert str(row["conversation_id"]) == str(conversation_id)
+    assert row["from_did"] == alice_did_key
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is None
+    assert row["to_alias"] == "bob"
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
 
@@ -1645,6 +1784,141 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == alice_did
     assert row["signature"]
+    assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    session_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES (
+            $1, $2, $3, 'did:aw:alice', 'acme.com/alice',
+            'alice', 'persistent', 'active', 'everyone'
+        )
+        """,
+        alice_agent_id,
+        team_id,
+        alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (
+            session_id, did, agent_id, alias, address, delivery_origin
+        )
+        VALUES
+            ($1, $3, $2, 'alice', 'acme.com/alice', NULL),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example')
+        """,
+        session_id,
+        alice_agent_id,
+        alice_did,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_key(self, did_aw: str):
+            assert did_aw == "did:aw:bob"
+            return KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob")
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/federation/messages"
+        body = json.loads(request.content.decode("utf-8"))
+        remote_calls.append(body)
+        envelope = body["envelope"]
+        assert envelope["type"] == "chat"
+        assert envelope["conversation_id"] == str(session_id)
+        assert envelope["target_address"] == "otherco.com/bob"
+        assert envelope["target_did_aw"] == "did:aw:bob"
+        assert envelope["target_current_did_key"] == "did:key:bob"
+        assert envelope["target_delivery_origin"] == "https://remote.example"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+            },
+        )
+
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did,
+        )
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=_Registry(),
+            hosted_signer=_signer,
+            session_id=str(session_id),
+            message="federated continuation",
+            federation_transport=httpx.MockTransport(_remote_handler),
+            public_origin="https://local.example",
+        )
+    )
+
+    assert "error" not in result, result
+    assert result["delivered"] is True
+    assert result["session_id"] == str(session_id)
+    assert len(remote_calls) == 1
+    assert seen[0]["payload"]["from"] == "acme.com/alice"
+    assert seen[0]["payload"]["to"] == "otherco.com/bob"
+    assert seen[0]["payload"]["to_did"] == "did:key:bob"
+    assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT session_id, from_did, from_address, signed_payload FROM {{tables.chat_messages}}"
+    )
+    assert str(row["session_id"]) == str(session_id)
+    assert row["from_did"] == alice_did
+    assert row["from_address"] == "acme.com/alice"
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
 

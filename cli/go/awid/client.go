@@ -191,6 +191,11 @@ type Client struct {
 	latestClientVersion     atomic.Value     // last seen X-Latest-Client-Version header (string)
 }
 
+const (
+	addressLookupAuthHeader      = "X-AWID-Address-Lookup-Authorization"
+	addressLookupTimestampHeader = "X-AWID-Address-Lookup-Timestamp"
+)
+
 // New creates a new client.
 func New(baseURL string) (*Client, error) {
 	if _, err := url.Parse(baseURL); err != nil {
@@ -360,6 +365,32 @@ func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*Resol
 		return nil, errors.New("aweb: no identity resolver configured")
 	}
 	return c.resolver.Resolve(ctx, identifier)
+}
+
+func (c *Client) addressLookupProofHeaders(address string) (map[string]string, error) {
+	address = strings.TrimSpace(address)
+	if c == nil || c.signingKey == nil || !strings.Contains(address, "/") {
+		return nil, nil
+	}
+	parts := strings.SplitN(address, "/", 2)
+	domain := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	if domain == "" || name == "" {
+		return nil, nil
+	}
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	didKey, signature, _, err := SignArbitraryPayload(c.signingKey, map[string]any{
+		"domain":    canonicalizeDomain(domain),
+		"name":      name,
+		"operation": "get_address",
+	}, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		addressLookupAuthHeader:      "DIDKey " + didKey + " " + signature,
+		addressLookupTimestampHeader: timestamp,
+	}, nil
 }
 
 // SetPinStore sets the TOFU pin store for sender identity verification.
@@ -781,6 +812,11 @@ func (c *Client) Post(ctx context.Context, path string, in any, out any) error {
 	return c.Do(ctx, http.MethodPost, path, in, out)
 }
 
+// PostWithHeaders performs an HTTP POST with additional request headers.
+func (c *Client) PostWithHeaders(ctx context.Context, path string, in any, out any, extraHeaders map[string]string) error {
+	return c.DoWithHeaders(ctx, http.MethodPost, path, in, out, extraHeaders)
+}
+
 // Patch performs an HTTP PATCH request with a JSON body and decodes the JSON response.
 func (c *Client) Patch(ctx context.Context, path string, in any, out any) error {
 	return c.Do(ctx, http.MethodPatch, path, in, out)
@@ -798,7 +834,13 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 
 // Do performs an HTTP request with optional JSON body and response decoding.
 func (c *Client) Do(ctx context.Context, method, path string, in any, out any) error {
-	resp, err := c.DoRaw(ctx, method, path, "application/json", in)
+	return c.DoWithHeaders(ctx, method, path, in, out, nil)
+}
+
+// DoWithHeaders performs an HTTP request with optional JSON body, response
+// decoding, and additional request headers.
+func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any, out any, extraHeaders map[string]string) error {
+	resp, err := c.DoRawWithHeaders(ctx, method, path, "application/json", in, extraHeaders)
 	if err != nil {
 		return err
 	}
@@ -823,6 +865,11 @@ func (c *Client) Do(ctx context.Context, method, path string, in any, out any) e
 
 // DoRaw performs an HTTP request and returns the raw response.
 func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any) (*http.Response, error) {
+	return c.DoRawWithHeaders(ctx, method, path, accept, in, nil)
+}
+
+// DoRawWithHeaders performs an HTTP request and returns the raw response.
+func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept string, in any, extraHeaders map[string]string) (*http.Response, error) {
 	var body io.Reader
 	var bodyBytes []byte
 	if in != nil {
@@ -845,6 +892,13 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", accept)
+	for key, value := range extraHeaders {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			req.Header.Set(key, value)
+		}
+	}
 	if c.teamCertHeader != "" && c.signingKey != nil {
 		// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
 		// body_sha256 binds the request body to the signature without the

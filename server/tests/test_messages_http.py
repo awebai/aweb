@@ -426,9 +426,24 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         "signed_payload": signed_payload,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", json=payload)
+        resp = await client.post(
+            "/v1/messages",
+            json=payload,
+            headers={
+                "X-AWID-Address-Lookup-Authorization": "DIDKey alice lookup-signature",
+                "X-AWID-Address-Lookup-Timestamp": "2026-05-17T00:00:00Z",
+            },
+        )
 
     assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_with(
+        "otherco.com",
+        "bob",
+        did_key=alice_did_key,
+        lookup_authorization="DIDKey alice lookup-signature",
+        lookup_timestamp="2026-05-17T00:00:00Z",
+        team_certificate="",
+    )
     assert resp.json()["conversation_id"] == conversation_id
     assert resp.json()["message_id"] == message_id
     assert len(remote_requests) == 1
@@ -437,6 +452,8 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     assert remote_body["signature"] == payload["signature"]
     assert remote_body["envelope"]["signed_payload"] == signed_payload
     assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
+    assert remote_body["envelope"]["target_address_lookup_authorization"] == "DIDKey alice lookup-signature"
+    assert remote_body["envelope"]["target_address_lookup_timestamp"] == "2026-05-17T00:00:00Z"
     assert remote_body["envelope"]["sender_did_aw"] == "did:aw:alice"
     assert remote_body["envelope"]["sender_current_did_key"] == alice_did_key
     assert remote_body["envelope"]["target_did_aw"] == "did:aw:bob"
@@ -2406,6 +2423,8 @@ def _federated_mail_payload(
     message_id: str | None = None,
     conversation_id: str | None = None,
     sender_team_certificate: dict | None = None,
+    target_address_lookup_authorization: str | None = None,
+    target_address_lookup_timestamp: str | None = None,
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
@@ -2446,6 +2465,10 @@ def _federated_mail_payload(
         "subject": subject,
         "priority": priority,
     }
+    if target_address_lookup_authorization is not None:
+        envelope["target_address_lookup_authorization"] = target_address_lookup_authorization
+    if target_address_lookup_timestamp is not None:
+        envelope["target_address_lookup_timestamp"] = target_address_lookup_timestamp
     if sender_team_certificate is not None:
         envelope["sender_active_team_id"] = sender_team_certificate.get("team_id")
         envelope["sender_team_certificate"] = sender_team_certificate
@@ -2484,12 +2507,25 @@ async def test_receive_federated_mail_stores_recipient_inbox_and_reply_route(awe
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://recipient.example"
-    payload = _federated_mail_payload(sender_sk=alice_sk, sender_did_key=alice_did_key, target_did_key=bob_did_key)
+    payload = _federated_mail_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+        target_address_lookup_authorization="DIDKey alice lookup-signature",
+        target_address_lookup_timestamp="2026-05-17T00:00:00Z",
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_with(
+        "beta.example",
+        "bob",
+        lookup_authorization="DIDKey alice lookup-signature",
+        lookup_timestamp="2026-05-17T00:00:00Z",
+        team_certificate="",
+    )
     envelope = payload["envelope"]
     assert resp.json()["message_id"] == envelope["message_id"]
     assert resp.json()["conversation_id"] == envelope["conversation_id"]

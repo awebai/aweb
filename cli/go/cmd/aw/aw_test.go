@@ -1220,6 +1220,10 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 
 	var mailBody map[string]any
 	var chatBody map[string]any
+	var mailLookupAuth string
+	var mailLookupTimestamp string
+	var chatLookupAuth string
+	var chatLookupTimestamp string
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/conversations":
@@ -1227,6 +1231,8 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
+			mailLookupAuth = r.Header.Get("X-AWID-Address-Lookup-Authorization")
+			mailLookupTimestamp = r.Header.Get("X-AWID-Address-Lookup-Timestamp")
 			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
 				t.Fatalf("decode mail body: %v", err)
 			}
@@ -1242,6 +1248,8 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
 				return
 			}
+			chatLookupAuth = r.Header.Get("X-AWID-Address-Lookup-Authorization")
+			chatLookupTimestamp = r.Header.Get("X-AWID-Address-Lookup-Timestamp")
 			if err := json.NewDecoder(r.Body).Decode(&chatBody); err != nil {
 				t.Fatalf("decode chat body: %v", err)
 			}
@@ -1316,6 +1324,12 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	}
 	if signedAddressHits.Load() != 2 {
 		t.Fatalf("signed address lookups=%d, want 2", signedAddressHits.Load())
+	}
+	if !strings.HasPrefix(mailLookupAuth, "DIDKey "+did+" ") || mailLookupTimestamp == "" {
+		t.Fatalf("mail lookup proof auth=%q timestamp=%q", mailLookupAuth, mailLookupTimestamp)
+	}
+	if !strings.HasPrefix(chatLookupAuth, "DIDKey "+did+" ") || chatLookupTimestamp == "" {
+		t.Fatalf("chat lookup proof auth=%q timestamp=%q", chatLookupAuth, chatLookupTimestamp)
 	}
 	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
 	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")

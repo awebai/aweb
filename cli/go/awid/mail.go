@@ -108,8 +108,12 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		payload.SignedPayload = sf.SignedPayload
 	}
 
+	extraHeaders, err := c.addressLookupProofHeaders(payload.ToAddress)
+	if err != nil {
+		return nil, err
+	}
 	var out SendMessageResponse
-	if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
+	if err := c.PostWithHeaders(ctx, "/v1/messages", &payload, &out, extraHeaders); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -67,6 +67,46 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
     }
 
 
+async def _remote_recipient_from_participant(registry_client, participant: dict) -> dict:
+    address = str(participant.get("address") or "").strip()
+    delivery_origin = str(participant.get("delivery_origin") or "").strip()
+    participant_did = str(participant.get("did") or "").strip()
+    did_aw = participant_did if participant_did.startswith("did:aw:") else ""
+    if not address or "/" not in address:
+        raise ValidationError("Remote mail recipient has no stored routable address")
+    if not delivery_origin:
+        raise ValidationError("Remote mail recipient has no stored delivery origin")
+    if not did_aw:
+        raise ValidationError("Remote mail recipient has no stored stable identity")
+    if registry_client is None:
+        raise ServiceError("AWID registry unavailable")
+    try:
+        resolution = await registry_client.resolve_key(did_aw)
+        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
+            resolution = await registry_client.resolve_key_fresh(did_aw)
+    except Exception as exc:
+        raise ServiceError("AWID registry unavailable") from exc
+    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip() if resolution else ""
+    if resolved_did_aw and resolved_did_aw != did_aw:
+        raise ValidationError("Remote mail recipient stable identity mismatch")
+    current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
+    if not current_did:
+        raise ValidationError("Remote mail recipient current key not found")
+    _, name = address.split("/", 1)
+    return {
+        "agent_id": None,
+        "team_id": None,
+        "alias": participant.get("alias") or name,
+        "address": address,
+        "did_aw": did_aw,
+        "did_key": current_did,
+        "delivery_origin": delivery_origin,
+        "reachability": "public",
+        "messaging_policy": None,
+        "external": True,
+    }
+
+
 def _sender_address(auth) -> str | None:
     return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
@@ -120,6 +160,7 @@ async def send_mail(
         sender_did = primary_auth_did(auth)
         signature: str | None = None
         signed_payload: str | None = None
+        remote_recipient: dict | None = None
         try:
             auth_context = await require_active_conversation_participant(
                 db_infra,
@@ -148,21 +189,41 @@ async def send_mail(
                 recipient_participant = recipients[0]
             else:
                 raise ValidationError("Mail conversation continuation requires exactly one recipient")
+            if recipient_participant.get("delivery_origin"):
+                remote_recipient = await _remote_recipient_from_participant(
+                    registry_client,
+                    recipient_participant,
+                )
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             return json.dumps({"error": exc.detail})
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
 
+        signed_to = ""
+        signed_to_did = ""
+        signed_to_stable_id = ""
+        if remote_recipient is not None:
+            signed_to = (remote_recipient.get("address") or "").strip()
+            signed_to_did = (remote_recipient.get("did_key") or "").strip()
+            signed_to_stable_id = (remote_recipient.get("did_aw") or "").strip()
         signed_fields = {
             "body": body,
             "conversation_id": conversation_ref,
-            "from": (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
+            "from": (
+                sender_address
+                if remote_recipient is not None and sender_address
+                else (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip()
+            ),
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(message_id),
             "subject": subject,
             "timestamp": _utc_iso(created_at),
-            "to": "",
-            "to_did": "",
+            "to": signed_to,
+            "to_did": signed_to_did,
             "type": "mail",
         }
+        if signed_to_stable_id:
+            signed_fields["to_stable_id"] = signed_to_stable_id
         if auth.did_aw:
             signed_fields["from_stable_id"] = auth.did_aw
         if priority != "normal":
@@ -182,7 +243,7 @@ async def send_mail(
             signed_payload = signed.signed_payload
 
         recipient_did = recipient_participant["did"]
-        recipient = {
+        recipient = remote_recipient or {
             "agent_id": recipient_participant.get("agent_id"),
             "alias": recipient_participant.get("alias") or recipient_did,
             "address": recipient_participant.get("address"),
@@ -191,6 +252,46 @@ async def send_mail(
             "messaging_policy": None,
         }
         try:
+            if remote_recipient is not None:
+                payload = SendMessageRequest(
+                    to_address=remote_recipient["address"],
+                    conversation_id=conversation_ref,
+                    subject=subject,
+                    body=body,
+                    priority=cast(MessagePriority, priority),
+                    message_id=str(message_id),
+                    timestamp=_utc_iso(created_at),
+                    from_did=sender_did,
+                    signature=signature,
+                    signed_payload=signed_payload,
+                )
+                response = await _deliver_remote_mail_and_project_locally(
+                    mcp_federation_request(
+                        public_origin=public_origin,
+                        mail_transport=federation_transport,
+                    ),
+                    payload,
+                    db_infra,
+                    auth=mcp_messaging_auth(auth),
+                    registry_client=registry_client,
+                    sender_address=sender_address,
+                    sender_did=sender_did,
+                    recipient=remote_recipient,
+                    recipient_did=recipient_did,
+                    to_agent_id=None,
+                    to_alias=recipient_participant.get("alias"),
+                    created_at=created_at,
+                    msg_uuid=message_id,
+                )
+                return json.dumps(
+                    {
+                        "message_id": response.message_id,
+                        "conversation_id": response.conversation_id,
+                        "status": response.status,
+                        "delivered_at": response.delivered_at,
+                        "to": recipient_participant.get("alias") or recipient_did,
+                    }
+                )
             message_id, created_at = await deliver_message(
                 db_infra,
                 registry_client=registry_client,
