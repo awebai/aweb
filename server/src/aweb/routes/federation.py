@@ -26,6 +26,7 @@ from aweb.messaging.conversations import (
     list_conversation_participants,
     touch_conversation_activity,
 )
+from aweb.messaging.chat import ensure_session, send_in_session
 from aweb.messaging.messages import (
     deliver_message,
     evaluate_messaging_policy,
@@ -221,6 +222,18 @@ def _require_target_origin_here(request: Request, envelope: FederationEnvelope) 
         raise HTTPException(status_code=421, detail="Federation message is addressed to a different delivery origin")
 
 
+def _delivery_response(envelope: FederationEnvelope, *, message_id: str, conversation_id: str, created_at: datetime) -> dict:
+    response = {
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "status": "delivered",
+        "delivered_at": utc_iso(created_at),
+    }
+    if envelope.type == "chat":
+        response["session_id"] = conversation_id
+    return response
+
+
 async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
@@ -245,6 +258,32 @@ async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tupl
     ):
         raise HTTPException(status_code=409, detail="Federation message_id already exists with different content")
     return str(row["conversation_id"]), row["created_at"]
+
+
+async def _idempotent_existing_chat_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT message_id, session_id, from_did, from_address, body, sender_leaving,
+               hang_on, reply_to, created_at
+        FROM {{tables.chat_messages}}
+        WHERE message_id = $1
+        """,
+        UUID(envelope.message_id),
+    )
+    if row is None:
+        return None
+    if (
+        str(row["session_id"]) != str(envelope.conversation_id)
+        or row["from_did"] != envelope.sender_did_aw
+        or (row.get("from_address") or "") != (envelope.sender_address or "")
+        or row["body"] != envelope.body
+        or bool(row["sender_leaving"]) != envelope.sender_leaving
+        or bool(row["hang_on"]) != envelope.hang_on
+        or (str(row["reply_to"]) if row.get("reply_to") else None) != envelope.reply_to
+    ):
+        raise HTTPException(status_code=409, detail="Federation message_id already exists with different content")
+    return str(row["session_id"]), row["created_at"]
 
 
 async def _claim_federated_delivery(db, envelope: FederationEnvelope) -> bool:
@@ -332,14 +371,60 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
     return conversation["conversation_id"]
 
 
+async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recipient: dict) -> str:
+    if not envelope.conversation_id:
+        raise HTTPException(status_code=422, detail="Federated chat requires conversation_id")
+
+    conversation = await get_conversation(db, conversation_id=envelope.conversation_id)
+    if conversation is not None:
+        if conversation["conversation_type"] != "chat":
+            raise HTTPException(status_code=422, detail="Federation conversation is not chat")
+        if conversation["status"] != "active":
+            raise HTTPException(status_code=403, detail="Federation conversation is not active")
+        participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
+        dids = {item["did"] for item in participants}
+        if envelope.sender_did_aw not in dids or envelope.target_did_aw not in dids:
+            raise HTTPException(status_code=403, detail="Federation conversation participants mismatch")
+
+    session_id = await ensure_session(
+        db,
+        team_id=recipient.get("team_id"),
+        participant_rows=[
+            {
+                "did": envelope.sender_did_aw,
+                "agent_id": None,
+                "alias": _participant_alias_from_address(
+                    envelope.sender_address,
+                    envelope.sender_did_aw,
+                ),
+                "address": envelope.sender_address,
+                "delivery_origin": envelope.sender_delivery_origin,
+            },
+            {
+                "did": envelope.target_did_aw,
+                "agent_id": recipient.get("agent_id"),
+                "alias": recipient.get("alias") or _participant_alias_from_address(
+                    envelope.target_address,
+                    envelope.target_did_aw,
+                ),
+                "address": envelope.target_address,
+                "delivery_origin": None,
+            },
+        ],
+        created_by=envelope.sender_did_aw,
+        session_id=UUID(envelope.conversation_id),
+    )
+    return str(session_id)
+
+
 @router.post("/messages")
 async def receive_federated_message(
     request: Request,
     payload: FederatedDeliveryRequest,
     db=Depends(get_db),
 ):
-    if payload.envelope.type != "mail":
-        raise HTTPException(status_code=422, detail="Federation endpoint currently accepts mail only")
+    if payload.envelope.type not in {"mail", "chat"}:
+        raise HTTPException(status_code=422, detail="Federation endpoint accepts mail or chat")
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
@@ -349,7 +434,7 @@ async def receive_federated_message(
             payload.envelope,
             payload.signature,
             expected={
-                "type": "mail",
+                "type": payload.envelope.type,
                 "target_address": payload.envelope.target_address,
                 "target_did_aw": payload.envelope.target_did_aw,
                 "target_current_did_key": payload.envelope.target_current_did_key,
@@ -390,49 +475,75 @@ async def receive_federated_message(
     except ForbiddenError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    existing = await _idempotent_existing_message(db, envelope)
+    existing = (
+        await _idempotent_existing_message(db, envelope)
+        if envelope.type == "mail"
+        else await _idempotent_existing_chat_message(db, envelope)
+    )
     if existing is not None:
         conversation_id, created_at = existing
-        return {
-            "message_id": envelope.message_id,
-            "conversation_id": conversation_id,
-            "status": "delivered",
-            "delivered_at": utc_iso(created_at),
-        }
+        return _delivery_response(
+            envelope,
+            message_id=envelope.message_id,
+            conversation_id=conversation_id,
+            created_at=created_at,
+        )
     if not await _claim_federated_delivery(db, envelope):
         raise HTTPException(status_code=409, detail="Federated message delivery is already in progress")
 
     try:
-        conversation_id = await _ensure_federated_mail_conversation(db, envelope, recipient)
-        message_id, created_at = await deliver_message(
-            db,
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            from_did=envelope.sender_did_aw,
-            to_did=envelope.target_did_aw,
-            from_alias=_participant_alias_from_address(
-                envelope.sender_address,
-                envelope.sender_did_aw,
-            ),
-            to_alias=recipient.get("alias") or _participant_alias_from_address(
-                envelope.target_address,
-                envelope.target_did_aw,
-            ),
-            subject=envelope.subject or "",
-            body=envelope.body,
-            priority=envelope.priority or "normal",
-            sender_address=envelope.sender_address,
-            team_id=recipient.get("team_id"),
-            from_agent_id=None,
-            to_agent_id=recipient.get("agent_id"),
-            signature=payload.signature,
-            signed_payload=envelope.signed_payload,
-            created_at=_parse_timestamp(envelope.timestamp),
-            message_id=UUID(envelope.message_id),
-            conversation_id=conversation_id,
-            skip_policy_check=True,
-        )
-        await touch_conversation_activity(db, conversation_id=conversation_id)
+        if envelope.type == "mail":
+            conversation_id = await _ensure_federated_mail_conversation(db, envelope, recipient)
+            message_id, created_at = await deliver_message(
+                db,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                from_did=envelope.sender_did_aw,
+                to_did=envelope.target_did_aw,
+                from_alias=_participant_alias_from_address(
+                    envelope.sender_address,
+                    envelope.sender_did_aw,
+                ),
+                to_alias=recipient.get("alias") or _participant_alias_from_address(
+                    envelope.target_address,
+                    envelope.target_did_aw,
+                ),
+                subject=envelope.subject or "",
+                body=envelope.body,
+                priority=envelope.priority or "normal",
+                sender_address=envelope.sender_address,
+                team_id=recipient.get("team_id"),
+                from_agent_id=None,
+                to_agent_id=recipient.get("agent_id"),
+                signature=payload.signature,
+                signed_payload=envelope.signed_payload,
+                created_at=_parse_timestamp(envelope.timestamp),
+                message_id=UUID(envelope.message_id),
+                conversation_id=conversation_id,
+                skip_policy_check=True,
+            )
+            await touch_conversation_activity(db, conversation_id=conversation_id)
+        else:
+            conversation_id = await _ensure_federated_chat_session(db, envelope, recipient)
+            msg_row = await send_in_session(
+                db,
+                session_id=UUID(conversation_id),
+                sender_did=envelope.sender_did_aw,
+                sender_agent_id=None,
+                sender_address=envelope.sender_address,
+                body=envelope.body,
+                reply_to=UUID(envelope.reply_to) if envelope.reply_to else None,
+                leaving=envelope.sender_leaving,
+                hang_on=envelope.hang_on,
+                signature=payload.signature,
+                signed_payload=envelope.signed_payload,
+                created_at=_parse_timestamp(envelope.timestamp),
+                message_id=UUID(envelope.message_id),
+            )
+            if msg_row is None:
+                raise HTTPException(status_code=500, detail="Failed to store federated chat message")
+            message_id = msg_row["message_id"]
+            created_at = msg_row["created_at"]
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         await _release_federated_delivery_claim(db, envelope)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -442,7 +553,7 @@ async def receive_federated_message(
 
     await fire_mutation_hook(
         request,
-        "message.sent",
+        "message.sent" if envelope.type == "mail" else "chat.message_sent",
         {
             "team_id": recipient.get("team_id"),
             "from_agent_id": None,
@@ -452,6 +563,7 @@ async def receive_federated_message(
             "from_alias": _participant_alias_from_address(envelope.sender_address, envelope.sender_did_aw),
             "message_id": str(message_id),
             "conversation_id": conversation_id,
+            "session_id": conversation_id if envelope.type == "chat" else None,
             "to_alias": recipient.get("alias"),
             "subject": envelope.subject or "",
             "priority": envelope.priority or "normal",
@@ -459,9 +571,9 @@ async def receive_federated_message(
         },
     )
 
-    return {
-        "message_id": str(message_id),
-        "conversation_id": conversation_id,
-        "status": "delivered",
-        "delivered_at": utc_iso(created_at),
-    }
+    return _delivery_response(
+        envelope,
+        message_id=str(message_id),
+        conversation_id=conversation_id,
+        created_at=created_at,
+    )

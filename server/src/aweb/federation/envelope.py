@@ -53,6 +53,10 @@ class FederationEnvelope(BaseModel):
     conversation_id: str | None = Field(default=None, min_length=1, max_length=64)
     subject: str | None = None
     priority: str | None = None
+    wait_seconds: int | None = None
+    reply_to: str | None = Field(default=None, min_length=1, max_length=64)
+    sender_leaving: bool = False
+    hang_on: bool = False
 
     @field_validator("sender_did_aw", "target_did_aw")
     @classmethod
@@ -82,7 +86,7 @@ class FederationEnvelope(BaseModel):
             return None
         return canonical_server_origin(value)
 
-    @field_validator("message_id", "conversation_id")
+    @field_validator("message_id", "conversation_id", "reply_to")
     @classmethod
     def _validate_uuid(cls, value: str | None) -> str | None:
         if value is None:
@@ -219,3 +223,12 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
         signed_priority = payload.get("priority") or "normal"
         if signed_priority != (model.priority or "normal"):
             raise FederationEnvelopeError("Federation signed_payload priority does not match")
+    if model.type == "chat":
+        if payload.get("wait_seconds") != model.wait_seconds:
+            raise FederationEnvelopeError("Federation signed_payload wait_seconds does not match")
+        if (payload.get("reply_to") or None) != model.reply_to:
+            raise FederationEnvelopeError("Federation signed_payload reply_to does not match")
+        if bool(payload.get("sender_leaving")) != model.sender_leaving:
+            raise FederationEnvelopeError("Federation signed_payload sender_leaving does not match")
+        if bool(payload.get("hang_on")) != model.hang_on:
+            raise FederationEnvelopeError("Federation signed_payload hang_on does not match")

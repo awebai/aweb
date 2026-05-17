@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -18,8 +19,11 @@ from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
+from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError, verify_federation_envelope
+from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
@@ -254,6 +258,274 @@ def _sender_address(auth: MessagingAuth) -> str | None:
     return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
 
+def _local_public_origin(request: Request) -> str:
+    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
+    if configured:
+        return configured
+    return get_settings().public_origin
+
+
+def _request_team_certificate(request: Request) -> dict | None:
+    cert_header = (request.headers.get("X-AWID-Team-Certificate") or "").strip()
+    if not cert_header:
+        return None
+    try:
+        decoded = json.loads(base64.b64decode(cert_header))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Malformed certificate")
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=401, detail="Malformed certificate")
+    return decoded
+
+
+def _target_delivery_origin(row: dict[str, Any] | None) -> str:
+    return str((row or {}).get("delivery_origin") or "").strip()
+
+
+def _require_remote_chat_signature(payload: CreateSessionRequest | SendMessageRequest, *, session_id: str | None) -> None:
+    if not payload.signature or not payload.signed_payload:
+        raise HTTPException(
+            status_code=422,
+            detail="Federated chat delivery requires a sender-signed payload",
+        )
+    if not payload.from_did or not payload.from_did.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="from_did is required for federated chat delivery",
+        )
+    if not payload.message_id or not payload.timestamp or not session_id:
+        raise HTTPException(
+            status_code=422,
+            detail="message_id, timestamp, and session_id are required for federated chat delivery",
+        )
+
+
+def _federation_transport(request: Request):
+    return (
+        getattr(request.app.state, "federation_chat_transport", None)
+        or getattr(request.app.state, "federation_message_transport", None)
+        or getattr(request.app.state, "federation_mail_transport", None)
+    )
+
+
+async def _resolve_remote_chat_route(
+    db,
+    *,
+    registry_client,
+    recipient: dict[str, Any],
+    requester_did_key: str | None = None,
+) -> dict[str, Any]:
+    address = str(recipient.get("address") or "").strip()
+    if "/" not in address:
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no routable address")
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    domain, name = address.split("/", 1)
+    try:
+        if requester_did_key:
+            resolution = await registry_client.resolve_address(domain, name, did_key=requester_did_key)
+        else:
+            resolution = await registry_client.resolve_address(domain, name)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+    if resolution is None:
+        raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
+    target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
+    target_current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
+    recipient_stable_id = str(recipient.get("did_aw") or "").strip()
+    recipient_did = str(recipient.get("did") or "").strip()
+    if target_stable_id not in {recipient_stable_id, recipient_did}:
+        raise HTTPException(status_code=422, detail="Remote chat recipient identity changed")
+    delivery = getattr(resolution, "delivery", None)
+    resolved_origin = str(getattr(delivery, "origin", "") or "").strip()
+    delivery_origin = _target_delivery_origin(recipient) or resolved_origin
+    if not delivery_origin:
+        raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
+    if resolved_origin and resolved_origin != delivery_origin:
+        delivery_origin = resolved_origin
+        await _update_chat_participant_delivery_origin(
+            db,
+            conversation_id=str(recipient.get("session_id") or recipient.get("conversation_id") or ""),
+            did=recipient_did or target_stable_id,
+            delivery_origin=delivery_origin,
+        )
+    return {
+        "address": address,
+        "did_aw": target_stable_id,
+        "current_did_key": target_current_did,
+        "delivery_origin": delivery_origin,
+        "reachability": str(getattr(resolution, "reachability", "") or "").strip() or "public",
+        "requires_team_certificate": (str(getattr(resolution, "reachability", "") or "").strip() or "public") != "public",
+    }
+
+
+async def _resolve_stored_remote_chat_route(
+    *,
+    registry_client,
+    recipient: dict[str, Any],
+) -> dict[str, str | bool]:
+    address = str(recipient.get("address") or "").strip()
+    did_aw = str(recipient.get("did_aw") or "").strip()
+    participant_did = str(recipient.get("did") or "").strip()
+    if not did_aw and participant_did.startswith("did:aw:"):
+        did_aw = participant_did
+    delivery_origin = _target_delivery_origin(recipient)
+    if not address or "/" not in address:
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored routable address")
+    if not did_aw:
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored stable identity")
+    if not delivery_origin:
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored delivery origin")
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    try:
+        resolution = await registry_client.resolve_key(did_aw)
+        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
+            resolution = await registry_client.resolve_key_fresh(did_aw)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip() if resolution else ""
+    if resolved_did_aw and resolved_did_aw != did_aw:
+        raise HTTPException(status_code=422, detail="Remote chat recipient stable identity mismatch")
+    current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
+    if not current_did:
+        raise HTTPException(status_code=422, detail="Remote chat recipient current key not found")
+    return {
+        "address": address,
+        "did_aw": did_aw,
+        "current_did_key": current_did,
+        "delivery_origin": delivery_origin,
+        # Existing conversation route metadata is sufficient authority to reply;
+        # recipient address reachability is not re-litigated on continuation.
+        "requires_team_certificate": False,
+    }
+
+
+async def _update_chat_participant_delivery_origin(
+    db,
+    *,
+    conversation_id: str,
+    did: str,
+    delivery_origin: str,
+) -> None:
+    if not conversation_id or not did or not delivery_origin:
+        return
+    aweb_db = db.get_manager("aweb")
+    try:
+        conversation_uuid = UUID(conversation_id)
+    except Exception:
+        return
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.chat_participants}}
+        SET delivery_origin = $3
+        WHERE session_id = $1 AND did = $2
+        """,
+        conversation_uuid,
+        did,
+        delivery_origin,
+    )
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET delivery_origin = $3
+        WHERE conversation_id = $1 AND did = $2
+        """,
+        conversation_uuid,
+        did,
+        delivery_origin,
+    )
+
+
+def _chat_payload_body(payload: CreateSessionRequest | SendMessageRequest) -> str:
+    return payload.message if isinstance(payload, CreateSessionRequest) else payload.body
+
+
+def _chat_payload_leaving(payload: CreateSessionRequest | SendMessageRequest) -> bool:
+    return payload.leaving
+
+
+def _chat_payload_hang_on(payload: CreateSessionRequest | SendMessageRequest) -> bool:
+    return payload.hang_on if isinstance(payload, SendMessageRequest) else False
+
+
+def _is_stale_delivery_origin_status(status_code: int) -> bool:
+    return status_code in {404, 410, 421}
+
+
+async def _deliver_federated_chat(
+    request: Request,
+    payload: CreateSessionRequest | SendMessageRequest,
+    *,
+    auth: MessagingAuth,
+    sender_address: str | None,
+    route: dict[str, Any],
+    session_id: str,
+) -> dict[str, Any]:
+    _require_remote_chat_signature(payload, session_id=session_id)
+    sender_did_aw = (auth.did_aw or "").strip()
+    if not sender_did_aw:
+        raise HTTPException(status_code=422, detail="Federated chat delivery requires a stable sender did:aw")
+    sender_current_did = str(payload.from_did or "").strip()
+    if sender_current_did not in set(_actor_dids(auth)):
+        raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+
+    sender_team_certificate = _request_team_certificate(request)
+    if route.get("requires_team_certificate") and sender_team_certificate is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Recipient address requires a team certificate for federated delivery",
+        )
+    try:
+        envelope = FederationEnvelope(
+            type="chat",
+            sender_did_aw=sender_did_aw,
+            sender_current_did_key=sender_current_did,
+            sender_address=sender_address,
+            sender_delivery_origin=_local_public_origin(request),
+            sender_active_team_id=auth.team_id,
+            sender_team_certificate=sender_team_certificate,
+            target_address=route["address"],
+            target_did_aw=route["did_aw"],
+            target_current_did_key=route["current_did_key"],
+            target_delivery_origin=route["delivery_origin"],
+            body=_chat_payload_body(payload),
+            message_id=str(payload.message_id),
+            timestamp=str(payload.timestamp),
+            signed_payload=str(payload.signed_payload),
+            conversation_id=session_id,
+            wait_seconds=payload.wait_seconds if isinstance(payload, CreateSessionRequest) else None,
+            reply_to=payload.reply_to,
+            sender_leaving=_chat_payload_leaving(payload),
+            hang_on=_chat_payload_hang_on(payload),
+        )
+        verify_federation_envelope(
+            envelope,
+            str(payload.signature),
+            expected={
+                "type": "chat",
+                "target_address": route["address"],
+                "target_did_aw": route["did_aw"],
+                "target_current_did_key": route["current_did_key"],
+                "target_delivery_origin": envelope.target_delivery_origin,
+                "message_id": payload.message_id,
+                "conversation_id": session_id,
+            },
+        )
+    except FederationEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        return await deliver_federated_message(
+            delivery_origin=route["delivery_origin"],
+            envelope=envelope,
+            signature=str(payload.signature),
+            transport=_federation_transport(request),
+        )
+    except FederatedMailDeliveryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 async def _local_agent_by_address(db, *, domain: str, name: str) -> dict[str, Any] | None:
     try:
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
@@ -468,6 +740,7 @@ async def _resolve_chat_targets(
         if resolution is not None and resolution.did_aw:
             row = await resolve_agent_by_did(db, resolution.did_aw)
             if row is None:
+                delivery = getattr(resolution, "delivery", None)
                 row = {
                     "agent_id": None,
                     "team_id": None,
@@ -475,6 +748,8 @@ async def _resolve_chat_targets(
                     "address": address,
                     "did_aw": resolution.did_aw.strip(),
                     "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+                    "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
+                    "reachability": (getattr(resolution, "reachability", "") or "").strip(),
                     "messaging_policy": None,
                     "external": True,
                 }
@@ -540,7 +815,7 @@ async def _resolve_session_recipient_rows(
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, alias, address
+        SELECT did, alias, address, delivery_origin
         FROM {{tables.chat_participants}}
         WHERE session_id = $1
           AND NOT (did = ANY($2::text[]))
@@ -558,11 +833,13 @@ async def _resolve_session_recipient_rows(
         participant_address = (participant.get("address") or "").strip()
         recipient_rows.append(
             {
+                "session_id": str(session_id),
                 "did": participant_did,
                 "alias": participant_alias,
                 "address": ((resolved or {}).get("address") or "").strip()
                 or participant_address
                 or _address_from_alias(participant_alias),
+                "delivery_origin": (participant.get("delivery_origin") or "").strip() or None,
                 "did_aw": ((resolved or {}).get("did_aw") or "").strip()
                 or (participant_did if participant_did.startswith("did:aw:") else ""),
                 "did_key": ((resolved or {}).get("did_key") or "").strip()
@@ -719,6 +996,7 @@ async def create_or_send(
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
             "alias": (row.get("alias") or "").strip() or _target_did(row),
             "address": (row.get("address") or "").strip() or None,
+            "delivery_origin": _target_delivery_origin(row) or None,
         }
         for row in target_rows
     ]
@@ -775,6 +1053,115 @@ async def create_or_send(
                         status_code=409,
                         detail="Signed chat message must bind the existing session_id",
                     )
+    external_targets = [row for row in target_rows if row.get("external") or _target_delivery_origin(row)]
+    if external_targets:
+        if len(target_rows) != 1 or len(external_targets) != 1:
+            raise HTTPException(status_code=422, detail="Federated chat currently requires exactly one remote address recipient")
+        if not _target_delivery_origin(external_targets[0]):
+            raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
+        if requested_session_id is None:
+            raise HTTPException(status_code=422, detail="Federated chat delivery requires session_id")
+        _require_remote_chat_signature(payload, session_id=str(requested_session_id))
+        from_did = str(payload.from_did or "").strip()
+        if from_did not in set(_actor_dids(auth)):
+            raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+        _validate_signed_chat_payload(
+            signed_payload=payload.signed_payload,
+            recipient_rows=target_rows,
+            requested_to_aliases=payload.to_aliases,
+            from_alias=auth.alias,
+            from_address=sender_address,
+            from_stable_id=auth.did_aw,
+            body=payload.message,
+            from_did=from_did,
+            message_id=str(payload.message_id),
+            timestamp=str(payload.timestamp),
+            wait_seconds=payload.wait_seconds,
+            reply_to=payload.reply_to,
+            conversation_id=str(requested_session_id),
+            sender_leaving=payload.leaving,
+        )
+        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        pre_message_id = uuid_mod.UUID(str(payload.message_id))
+        route = await _resolve_remote_chat_route(
+            db,
+            registry_client=registry_client,
+            recipient=external_targets[0],
+            requester_did_key=auth.did_key,
+        )
+
+        remote = await _deliver_federated_chat(
+            request,
+            payload,
+            auth=auth,
+            sender_address=sender_address,
+            route=route,
+            session_id=str(requested_session_id),
+        )
+        remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
+        remote_message_id = str(remote.get("message_id") or "").strip()
+        if remote_session_id != str(requested_session_id):
+            raise HTTPException(status_code=502, detail="Federated chat response session_id mismatch")
+        if remote_message_id != str(pre_message_id):
+            raise HTTPException(status_code=502, detail="Federated chat response message_id mismatch")
+
+        session_id = await ensure_session(
+            db,
+            team_id=auth.team_id,
+            participant_rows=participant_rows,
+            created_by=actor_alias,
+            session_id=requested_session_id,
+        )
+        msg_row = await send_in_session(
+            db,
+            session_id=session_id,
+            sender_did=actor_did,
+            sender_agent_id=actor_agent_id,
+            sender_address=sender_address,
+            body=payload.message,
+            reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+            leaving=payload.leaving,
+            signature=payload.signature,
+            signed_payload=payload.signed_payload,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
+        )
+        if msg_row is None:
+            raise HTTPException(status_code=500, detail="Failed to send message")
+        await fire_mutation_hook(
+            request,
+            "chat.message_sent",
+            {
+                "team_id": auth.team_id,
+                "session_id": str(session_id),
+                "conversation_id": str(session_id),
+                "message_id": str(msg_row["message_id"]),
+                "from_agent_id": actor_agent_id,
+                "from_alias": auth.alias or "",
+                "from_did": actor_did,
+                "from_did_aw": (auth.did_aw or "").strip() or None,
+                "to_aliases": [row["alias"] for row in target_rows],
+                "preview": payload.message[:80],
+                "federated": True,
+            },
+        )
+        return CreateSessionResponse(
+            session_id=str(session_id),
+            conversation_id=str(session_id),
+            message_id=str(msg_row["message_id"]),
+            participants=[
+                CreateSessionParticipant(
+                    did=str(row["did"]),
+                    alias=row["alias"],
+                    agent_id=str(row["agent_id"]) if row.get("agent_id") else None,
+                    address=row.get("address"),
+                )
+                for row in participant_rows
+            ],
+            sse_url=f"/v1/chat/sessions/{session_id}/stream",
+            targets_connected=[],
+            targets_left=[],
+        )
     session_id = await ensure_session(
         db,
         team_id=auth.team_id,
@@ -1600,6 +1987,21 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    for index, row in enumerate(recipient_rows):
+        if not _target_delivery_origin(row):
+            continue
+        route = await _resolve_stored_remote_chat_route(
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
+            recipient=row,
+        )
+        recipient_rows[index] = {
+            **row,
+            "did_aw": route["did_aw"],
+            "did_key": route["current_did_key"],
+            "current_did_key": route["current_did_key"],
+            "delivery_origin": route["delivery_origin"],
+            "requires_team_certificate": route["requires_team_certificate"],
+        }
     try:
         await require_conversation_not_legacy_bound(
             db,
@@ -1639,6 +2041,100 @@ async def send_message(
         )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
+
+    remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
+    if remote_recipients:
+        if len(recipient_rows) != 1 or len(remote_recipients) != 1:
+            raise HTTPException(status_code=422, detail="Federated chat continuation requires exactly one remote recipient")
+        route = remote_recipients[0]
+        try:
+            remote = await _deliver_federated_chat(
+                request,
+                payload,
+                auth=auth,
+                sender_address=sender_address,
+                route=route,
+                session_id=str(session_uuid),
+            )
+        except HTTPException as exc:
+            if not _is_stale_delivery_origin_status(exc.status_code):
+                raise
+            refreshed_route = await _resolve_remote_chat_route(
+                db,
+                registry_client=getattr(request.app.state, "awid_registry_client", None),
+                recipient=route,
+                requester_did_key=auth.did_key,
+            )
+            if refreshed_route["delivery_origin"] == _target_delivery_origin(route):
+                raise exc
+            remote_recipients[0] = {
+                **route,
+                "did_aw": refreshed_route["did_aw"],
+                "did_key": refreshed_route["current_did_key"],
+                "current_did_key": refreshed_route["current_did_key"],
+                "delivery_origin": refreshed_route["delivery_origin"],
+                "requires_team_certificate": refreshed_route["requires_team_certificate"],
+            }
+            remote = await _deliver_federated_chat(
+                request,
+                payload,
+                auth=auth,
+                sender_address=sender_address,
+                route=remote_recipients[0],
+                session_id=str(session_uuid),
+            )
+        remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
+        remote_message_id = str(remote.get("message_id") or "").strip()
+        if remote_session_id != str(session_uuid):
+            raise HTTPException(status_code=502, detail="Federated chat response session_id mismatch")
+        if remote_message_id != str(pre_message_id):
+            raise HTTPException(status_code=502, detail="Federated chat response message_id mismatch")
+
+        try:
+            msg_row = await send_in_session(
+                db,
+                session_id=session_uuid,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body=payload.body,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+                leaving=payload.leaving,
+                hang_on=payload.hang_on,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                created_at=msg_created_at,
+                message_id=pre_message_id,
+            )
+        except Exception as exc:
+            if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
+                raise HTTPException(status_code=409, detail="message_id already exists")
+            raise
+        if msg_row is None:
+            raise HTTPException(status_code=500, detail="Failed to send message")
+        await fire_mutation_hook(
+            request,
+            "chat.message_sent",
+            {
+                "team_id": auth.team_id,
+                "session_id": str(session_uuid),
+                "conversation_id": str(session_uuid),
+                "message_id": str(msg_row["message_id"]),
+                "from_agent_id": actor_agent_id,
+                "from_alias": auth.alias or "",
+                "from_did": actor_did,
+                "from_did_aw": (auth.did_aw or "").strip() or None,
+                "to_aliases": [row["alias"] for row in recipient_rows],
+                "preview": payload.body[:80],
+                "federated": True,
+            },
+        )
+        return SendMessageResponse(
+            message_id=str(msg_row["message_id"]),
+            conversation_id=str(session_uuid),
+            delivered=True,
+            extends_wait_seconds=HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0,
+        )
 
     try:
         msg_row = await send_in_session(

@@ -19,7 +19,7 @@ class FederatedMailDeliveryError(RuntimeError):
         self.status_code = status_code
 
 
-async def deliver_federated_mail(
+async def deliver_federated_message(
     *,
     delivery_origin: str,
     envelope: FederationEnvelope,
@@ -27,7 +27,7 @@ async def deliver_federated_mail(
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """POST a sender-signed mail envelope to a remote aweb delivery origin."""
+    """POST a sender-signed mail/chat envelope to a remote aweb delivery origin."""
     origin = canonical_server_origin(delivery_origin)
     request_body = FederatedDeliveryRequest(
         envelope=envelope,
@@ -66,6 +66,23 @@ async def deliver_federated_mail(
             status_code=502,
         )
     return data
+
+
+async def deliver_federated_mail(
+    *,
+    delivery_origin: str,
+    envelope: FederationEnvelope,
+    signature: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    return await deliver_federated_message(
+        delivery_origin=delivery_origin,
+        envelope=envelope,
+        signature=signature,
+        transport=transport,
+        timeout=timeout,
+    )
 
 
 def _response_detail(response: httpx.Response) -> str:

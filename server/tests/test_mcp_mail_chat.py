@@ -666,14 +666,17 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_rejects_legacy_bound_conversation_continuation(aweb_cloud_db, monkeypatch):
+async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
+    bob_workspace_id = uuid4()
     conversation_id = uuid4()
     message_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
     alice_did_key = did_from_public_key(alice_pub)
+    bob_sk, bob_pub = generate_keypair()
+    bob_did_key = did_from_public_key(bob_pub)
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -688,12 +691,13 @@ async def test_mcp_send_mail_rejects_legacy_bound_conversation_continuation(aweb
             (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
         VALUES
             ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
+            ($2, $3, $5, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
         """,
         alice_agent_id,
         bob_agent_id,
         team_id,
         alice_did_key,
+        bob_did_key,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -758,25 +762,35 @@ async def test_mcp_send_mail_rejects_legacy_bound_conversation_continuation(aweb
         lambda: AuthContext(
             team_id=team_id,
             agent_id=str(bob_agent_id),
+            workspace_id=str(bob_workspace_id),
             alias="bob",
-            did_key="did:key:z6MkBob",
+            did_key=bob_did_key,
             did_aw="did:aw:bob",
             address="acme.com/bob",
             trusted_proxy=True,
         ),
     )
 
-    async def _unexpected_signer(**_kwargs) -> HostedMessageSigningResult:
-        raise AssertionError("legacy-bound continuation must be rejected before signing")
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=bob_did_key,
+            signature=sign_message(bob_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=bob_did_key,
+        )
 
     result = json.loads(
         await mail_tools.send_mail(
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
-            hosted_signer=_unexpected_signer,
+            hosted_signer=_signer,
             conversation_id=str(conversation_id),
             subject="Re",
-            body="should not send",
+            body="continuing legacy first contact",
         )
     )
     inbox = json.loads(
@@ -786,7 +800,10 @@ async def test_mcp_send_mail_rejects_legacy_bound_conversation_continuation(aweb
         )
     )
 
-    assert "conversation_id" in result["error"]
+    assert result["status"] == "delivered"
+    assert result["conversation_id"] == str(conversation_id)
+    assert len(seen) == 1
+    assert seen[0]["payload"]["conversation_id"] == str(conversation_id)
     assert inbox["messages"][0]["verification_status"] == "verified_legacy"
 
 
@@ -992,7 +1009,6 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
 async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
-    workspace_id = uuid4()
     bob_agent_id = uuid4()
 
     await aweb_cloud_db.aweb_db.execute(

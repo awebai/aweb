@@ -57,6 +57,22 @@ async def latest_message_verification_status(
     conversation_id: str,
     conversation_type: Literal["mail", "chat"] | None = None,
 ) -> VerificationStatus | None:
+    latest = await _latest_message_verification_candidate(
+        db,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+    )
+    if not latest:
+        return None
+    return message_verification_status(latest)
+
+
+async def _latest_message_verification_candidate(
+    db,
+    *,
+    conversation_id: str,
+    conversation_type: Literal["mail", "chat"] | None = None,
+) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     candidates: list[dict[str, Any]] = []
     if conversation_type in (None, "mail"):
@@ -88,7 +104,27 @@ async def latest_message_verification_status(
     if not candidates:
         return None
     latest = max(candidates, key=lambda row: (row["created_at"], str(row["message_id"])))
-    return message_verification_status(latest)
+    return latest
+
+
+async def _is_first_mail_message(
+    db,
+    *,
+    conversation_id: str,
+    message_id: str,
+) -> bool:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT message_id
+        FROM {{tables.messages}}
+        WHERE conversation_id = $1::uuid
+        ORDER BY created_at ASC, message_id ASC
+        LIMIT 1
+        """,
+        conversation_id,
+    )
+    return bool(row and str(row["message_id"]) == str(message_id))
 
 
 async def require_conversation_not_legacy_bound(
@@ -97,10 +133,22 @@ async def require_conversation_not_legacy_bound(
     conversation_id: str,
     conversation_type: Literal["mail", "chat"] | None = None,
 ) -> None:
-    status = await latest_message_verification_status(
+    latest = await _latest_message_verification_candidate(
         db,
         conversation_id=conversation_id,
         conversation_type=conversation_type,
     )
+    if not latest:
+        return
+    status = message_verification_status(latest)
     if status == "verified_legacy":
+        # Pre-conversation-id clients could seed a valid signed first-contact
+        # mail. Allow exactly that bootstrap reply; later legacy signed messages
+        # still fail closed because they would make the current thread ambiguous.
+        if conversation_type == "mail" and await _is_first_mail_message(
+            db,
+            conversation_id=conversation_id,
+            message_id=str(latest["message_id"]),
+        ):
+            return
         raise ForbiddenError(LEGACY_CONVERSATION_CONTINUATION_DETAIL)
