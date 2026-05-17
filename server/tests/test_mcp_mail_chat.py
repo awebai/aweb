@@ -1009,7 +1009,6 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
 async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
-    workspace_id = uuid4()
     bob_agent_id = uuid4()
 
     await aweb_cloud_db.aweb_db.execute(

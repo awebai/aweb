@@ -20,7 +20,6 @@ from aweb.identity_auth_deps import (
     IDENTITY_DID_AW_HEADER,
     IdentityAuth,
     MessagingAuth,
-    get_identity_auth,
     get_messaging_auth,
 )
 from aweb.routes.federation import router as federation_router
