@@ -131,6 +131,23 @@ decorative for the question "did my change work."
   the validation to actually measure the thing.)
 - Container build cache reuse → tests against pre-build state when the build
   step is the change-under-test.
+- Privileged fixture setup that bypasses the supported user path → test
+  exercises the wire-level / library surface but not the supported entry
+  point. The aweb-aaou federation v1 ship surfaced this: the OSS 2-server
+  federation e2e passed 25/25 because the fixture direct-SQL-updated awid
+  `default_delivery_origin`, which the supported namespace-controller
+  CLI/API path did not yet expose. The test validated envelope flow once
+  the route was set, but proved nothing about whether real operators (or
+  hosted) could set the route through the supported surface. "Federation
+  works" was true at the library layer and false at the operator surface
+  the feature ships as.
+
+**General principle**: a test that bypasses the supported user path with
+privileged fixture setup is measuring something narrower than the feature
+ships as. The library can be correct while the feature is operationally
+inert. Sanity-check by asking: if I removed the privileged fixture step,
+does the test still pass via the supported path? If not, the supported
+path is untested even when the test is green.
 
 **When loading this section**: any review of CI gate failures or successes
 where the change touches a dependency-resolution path (Docker, lockfiles,
