@@ -6372,7 +6372,8 @@ ${message}`),
       config.stableID
     );
     if (ctx.hasUI) {
-      ctx.ui.setStatus("aweb-channel", `aweb channel: ready (${aw.source})`);
+      const theme = ctx.ui.theme;
+      ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "\u2713")} ${theme.fg("dim", "aweb connected")}`);
     }
     void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
       if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
@@ -6401,7 +6402,10 @@ ${message}`),
         content: `aweb channel stopped: ${message}`,
         display: true
       });
-      if (ctx.hasUI) ctx.ui.setStatus("aweb-channel", "aweb channel: stopped");
+      if (ctx.hasUI) {
+        const theme = ctx.ui.theme;
+        ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "\u2715")} ${theme.fg("dim", "aweb disconnected")}`);
+      }
     });
   });
 }
