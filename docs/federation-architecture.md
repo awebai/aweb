@@ -76,7 +76,7 @@ Tasks/work/presence/roles/instructions -> local aweb server only
 
 An identity can belong to multiple teams and can hold addresses in multiple
 namespaces. Putting a delivery server on `did:aw` would collapse those contexts
-into one global home server and would not compose with BYOIDT or multi-team
+into one global home server and would not compose with BYOT or multi-team
 identities.
 
 ### Why Not Team For Mail/Chat

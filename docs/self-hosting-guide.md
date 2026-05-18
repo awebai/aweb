@@ -141,6 +141,9 @@ uv run aweb serve
 `AWEB_PUBLIC_ORIGIN` is the public origin other aweb servers use for
 federated mail and chat delivery. It must be an origin only, for example
 `https://aweb.acme.internal`; do not include `/api` or another path.
+Its scheme must match how remote servers reach this deployment. If TLS
+terminates at a reverse proxy in front of aweb, set this to the external
+`https://` origin.
 
 ### Create a Persistent Identity
 
@@ -179,9 +182,9 @@ example, use `https://aweb.acme.internal`, not
 The command uses `AWID_REGISTRY_URL` when it is set; otherwise it discovers the
 registry from DNS.
 
-Hosted aweb.ai namespaces are configured by the hosted service. Customer-held
-BYOD/BYOT namespaces and self-hosted namespaces are configured by the namespace
-controller with the command above.
+Hosted aweb.ai namespaces are configured by the hosted service.
+Customer-held namespaces and self-hosted namespaces are configured by the
+namespace controller with the command above.
 
 ### Create a Team
 
