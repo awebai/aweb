@@ -2089,9 +2089,6 @@ function hydrateAddressesFromSignedPayload(msg) {
   } catch {
   }
 }
-async function ackMessage(client, messageId) {
-  await client.post(`/v1/messages/${encodeURIComponent(messageId)}/ack`);
-}
 async function verifyInboxMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
     const status2 = await verifySignedPayload(msg.signed_payload, msg.signature, msg.from_did, msg.signing_key_id || "");
@@ -2166,9 +2163,6 @@ function hydrateAddressesFromSignedPayload2(msg) {
     }
   } catch {
   }
-}
-async function markRead(client, sessionId, upToMessageId) {
-  await client.post(`/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`, { up_to_message_id: upToMessageId });
 }
 async function verifyChatMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
@@ -6024,8 +6018,6 @@ async function dispatchMailEvent(options, dispatched, event) {
       meta,
       deliveryIntent: "wake"
     });
-    ackMessage(options.client, msg.message_id).catch(() => {
-    });
   }
   if (pinsDirty)
     await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
@@ -6035,7 +6027,6 @@ async function dispatchChatEvent(options, dispatched, event) {
     return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
   let pinsDirty = false;
-  let lastMessageId;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self))
       continue;
@@ -6068,11 +6059,6 @@ async function dispatchChatEvent(options, dispatched, event) {
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake"
-    });
-    lastMessageId = msg.message_id;
-  }
-  if (lastMessageId) {
-    markRead(options.client, event.session_id, lastMessageId).catch(() => {
     });
   }
   if (pinsDirty)

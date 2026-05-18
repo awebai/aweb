@@ -1,4 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   dispatchAgentEvent,
   PinStore,
@@ -6,6 +9,20 @@ import {
   type ChannelAwakening,
   type SenderTrustManager,
 } from "../../channel-core/src/index.js";
+import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const vectors = JSON.parse(
+  readFileSync(join(testDir, "vectors.json"), "utf-8"),
+) as {
+  seed: string;
+  did: string;
+  stableID: string;
+};
+
+function b64ToBytes(value: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(value, "base64"));
+}
 
 describe("channel-core dispatchAgentEvent", () => {
   const self = {
@@ -94,6 +111,171 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "chat",
       content: "hello",
+    }));
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("mail trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "aweb.ai/aida",
+      from_did: vectors.did,
+      to: self.address,
+      to_did: self.did,
+      type: "mail",
+      subject: "hello",
+      body: "signed mail",
+      timestamp: "2025-01-01T00:00:00Z",
+      from_stable_id: vectors.stableID,
+      to_stable_id: self.stableID,
+      message_id: "mail-stable-envelope",
+      conversation_id: "conv-mail-stable",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const normalizeTrust = vi.fn(async (
+      _store,
+      status,
+      _rawAddress,
+      fromDID,
+      fromStableID,
+      toDID,
+      toStableID,
+    ) => {
+      expect(status).toBe("verified");
+      expect(fromDID).toBe(vectors.did);
+      expect(fromStableID).toBe(vectors.stableID);
+      expect(toDID).toBe(self.did);
+      expect(toStableID).toBe(self.stableID);
+      return { status, stored: false };
+    });
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: env.conversation_id,
+          from_agent_id: "agent-aida",
+          from_alias: "aida",
+          from_address: env.from,
+          to_alias: self.alias,
+          subject: env.subject,
+          body: env.body,
+          priority: "normal",
+          created_at: env.timestamp,
+          from_did: vectors.stableID,
+          from_stable_id: vectors.stableID,
+          to_did: self.stableID,
+          to_stable_id: self.stableID,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(env),
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "signed mail",
+      meta: expect.objectContaining({
+        trust_status: "verified",
+        verified: "true",
+      }),
+    }));
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("chat trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "aweb.ai/ama",
+      from_did: vectors.did,
+      to: self.address,
+      to_did: self.did,
+      type: "chat",
+      subject: "",
+      body: "signed chat",
+      timestamp: "2025-01-01T00:00:00Z",
+      from_stable_id: vectors.stableID,
+      to_stable_id: self.stableID,
+      message_id: "chat-stable-envelope",
+      conversation_id: "sess-stable",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const normalizeTrust = vi.fn(async (
+      _store,
+      status,
+      _rawAddress,
+      fromDID,
+      fromStableID,
+      toDID,
+      toStableID,
+    ) => {
+      expect(status).toBe("verified");
+      expect(fromDID).toBe(vectors.did);
+      expect(fromStableID).toBe(vectors.stableID);
+      expect(toDID).toBe(self.did);
+      expect(toStableID).toBe(self.stableID);
+      return { status, stored: false };
+    });
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: env.conversation_id,
+          from_agent: "ama",
+          from_address: env.from,
+          to_address: env.to,
+          body: env.body,
+          timestamp: env.timestamp,
+          sender_leaving: false,
+          from_did: vectors.stableID,
+          from_stable_id: vectors.stableID,
+          to_did: self.stableID,
+          to_stable_id: self.stableID,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(env),
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: env.conversation_id,
+        conversation_id: env.conversation_id,
+        message_id: env.message_id,
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "signed chat",
+      meta: expect.objectContaining({
+        trust_status: "verified",
+        verified: "true",
+      }),
     }));
     expect(client.post).not.toHaveBeenCalled();
   });
