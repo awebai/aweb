@@ -6282,6 +6282,8 @@ Skills to load when needed:
 - \`aweb-messaging\`: mail/chat policy, channel awakenings, sender verification, and push events.
 - \`aweb-team-membership\`: joining teams, active team, certificates, hosted vs BYOT, custody, reachability, and contacts.
 
+For a full walkthrough, see https://aweb.ai/docs/cli-tutorial/.
+
 If you are unsure what to do next, load \`aweb-coordination\` and start with the session loop there.`;
 }
 async function sendFirstSessionWelcome(pi, cwd, teamID, alias) {
