@@ -6157,12 +6157,15 @@ function isSelfSender(alias, address, stableID, did, self) {
 }
 
 // src/index.ts
-import { access } from "node:fs/promises";
+import { access, mkdir as mkdir2, readFile as readFile5, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { homedir as homedir2 } from "node:os";
 import { delimiter, dirname as dirname2, join as join3 } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 var require2 = createRequire(import.meta.url);
+var WELCOME_VERSION = "0.1.0";
+var WELCOME_STATE_PATH = join3(homedir2(), ".config", "aw", "pi-welcome.json");
 async function isExecutable(path) {
   try {
     await access(path, fsConstants.X_OK);
@@ -6241,6 +6244,61 @@ To enable aweb awakenings in pi:
 
 Once initialized, incoming aweb mail/chat/control events will wake this pi session with message contents and sender verification status. Use the aw CLI from pi's bash tool to respond.`;
 }
+function welcomeKey(cwd, teamID, alias) {
+  return `${WELCOME_VERSION}:${teamID}:${alias}:${cwd}`;
+}
+async function loadWelcomeState() {
+  try {
+    const content = await readFile5(WELCOME_STATE_PATH, "utf-8");
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+async function markWelcomeSeen(key) {
+  const state = await loadWelcomeState();
+  state.seen = state.seen || {};
+  state.seen[key] = (/* @__PURE__ */ new Date()).toISOString();
+  await mkdir2(dirname2(WELCOME_STATE_PATH), { recursive: true });
+  await writeFile(WELCOME_STATE_PATH, `${JSON.stringify(state, null, 2)}
+`, "utf-8");
+}
+function welcomeMessage(alias, teamID) {
+  return `aweb for Pi is ready.
+
+You are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for using the aw CLI well.
+
+First moves:
+
+1. Run \`aw workspace status\` to confirm identity, active team, claims, locks, and presence.
+2. Run \`aw mail inbox\` and \`aw chat pending\` before claiming new work.
+3. Use mail for handoffs, reviews, and status updates; use chat only when someone is blocked on a near-term answer.
+4. When a channel event wakes you, inspect metadata and sender verification before acting.
+
+Skills to load when needed:
+
+- \`aweb-coordination\`: work loop, claims, locks, handoffs, roles, and shared state.
+- \`aweb-messaging\`: mail/chat policy, channel awakenings, sender verification, and push events.
+- \`aweb-team-membership\`: joining teams, active team, certificates, hosted vs BYOT, custody, reachability, and contacts.
+
+If you are unsure what to do next, load \`aweb-coordination\` and start with the session loop there.`;
+}
+async function sendFirstSessionWelcome(pi, cwd, teamID, alias) {
+  const key = welcomeKey(cwd, teamID, alias);
+  const state = await loadWelcomeState();
+  if (state.seen?.[key]) return;
+  await markWelcomeSeen(key);
+  pi.sendMessage(
+    {
+      customType: "aweb-welcome",
+      content: welcomeMessage(alias, teamID),
+      display: true,
+      details: { version: WELCOME_VERSION, team_id: teamID, alias }
+    },
+    { deliverAs: "followUp", triggerTurn: true }
+  );
+}
 function sendAwakening(pi, awakening) {
   const options = awakening.deliveryIntent === "ambient" ? { deliverAs: "nextTurn" } : awakening.deliveryIntent === "steer" ? { deliverAs: "steer", triggerTurn: true } : { triggerTurn: true };
   pi.sendMessage(
@@ -6314,6 +6372,9 @@ ${message}`),
     if (ctx.hasUI) {
       ctx.ui.setStatus("aweb-channel", `aweb channel: ready (${aw.source})`);
     }
+    void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
+      if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    });
     const signal = abortController.signal;
     void startChannelLoop({
       client,

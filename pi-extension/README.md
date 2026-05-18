@@ -44,6 +44,8 @@ Delivery behavior:
 - waiting chat and control signals steer the active turn
 - ambient work/claim notifications are queued for the next natural turn
 
+On the first ready session for a workspace/team, the extension also injects a one-time welcome message that orients the agent to the aweb work loop and points at the bundled skills. The welcome is sentinel-gated under `~/.config/aw/pi-welcome.json` so reloads do not repeat it.
+
 The agent responds with normal shell commands, for example:
 
 ```bash
