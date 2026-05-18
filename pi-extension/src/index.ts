@@ -233,7 +233,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
 
     if (ctx.hasUI) {
       const theme = ctx.ui.theme;
-      ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "✓")} ${theme.fg("dim", "aweb connected")}`);
+      ctx.ui.setStatus("aweb-channel", theme.fg("dim", "aweb connected"));
     }
 
     void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
