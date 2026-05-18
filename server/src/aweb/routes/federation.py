@@ -357,6 +357,7 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
                 envelope.sender_did_aw,
             ),
             "address": envelope.sender_address,
+            "delivery_origin": envelope.sender_delivery_origin,
             "transport_hint": _federated_transport_hint(envelope.sender_delivery_origin),
         },
         recipients=[

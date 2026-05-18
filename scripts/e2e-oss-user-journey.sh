@@ -1575,7 +1575,7 @@ if carol_hidden_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CAROL_DIR
 else
   carol_hidden_mail_exit=$?
 fi
-if [[ "$carol_hidden_mail_exit" != "0" ]] && echo "$carol_hidden_mail_out" | grep -qi "resolve recipient\|Address not found\|404"; then
+if [[ "$carol_hidden_mail_exit" != "0" ]] && echo "$carol_hidden_mail_out" | grep -qi "resolve recipient\|Address not found\|agent not found\|404"; then
   echo "  PASS: matrix unauthorized team_members_only direct-address mail fails closed"
   pass=$((pass + 1))
 else
@@ -1593,7 +1593,7 @@ if carol_hidden_nobody_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CA
 else
   carol_hidden_nobody_mail_exit=$?
 fi
-if [[ "$carol_hidden_nobody_mail_exit" != "0" ]] && echo "$carol_hidden_nobody_mail_out" | grep -qi "resolve recipient\|Address not found\|404"; then
+if [[ "$carol_hidden_nobody_mail_exit" != "0" ]] && echo "$carol_hidden_nobody_mail_out" | grep -qi "resolve recipient\|Address not found\|agent not found\|404"; then
   echo "  PASS: conversation gate hidden direct-address first contact fails closed"
   pass=$((pass + 1))
 else

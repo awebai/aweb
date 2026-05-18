@@ -713,7 +713,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
         )
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, 'sender', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'federated:https://remote.example', 'participant')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', NULL, 'federation:https://remote.example', 'participant')
         """,
         conversation_id,
         alice_agent_id,

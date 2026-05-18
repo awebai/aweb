@@ -191,7 +191,7 @@ async def _insert_agent(
 async def _conversation_participants(aweb_db, conversation_id: str):
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, agent_id, alias, address, transport_hint, role
+        SELECT did, agent_id, alias, address, delivery_origin, transport_hint, role
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
         ORDER BY role, alias
@@ -282,6 +282,100 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app.state.awid_registry_client.resolve_address = AsyncMock(return_value=None)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "initial alias thread", "body": "hello"},
+        )
+        assert first.status_code == 200, first.text
+        conversation_id = first.json()["conversation_id"]
+        message_id = str(uuid4())
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        signed_payload = canonical_json_bytes(
+            {
+                "body": "hello again",
+                "conversation_id": conversation_id,
+                "from": "acme.com/alice",
+                "from_did": alice_did_key,
+                "from_stable_id": "did:aw:alice",
+                "message_id": message_id,
+                "priority": "normal",
+                "subject": "address reuses alias thread",
+                "timestamp": timestamp,
+                "to": "acme.com/bob",
+                "to_did": bob_did_key,
+                "to_stable_id": "did:aw:bob",
+                "type": "mail",
+            }
+        )
+        second = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_address": "acme.com/bob",
+                "to_did": bob_did_key,
+                "to_stable_id": "did:aw:bob",
+                "subject": "address reuses alias thread",
+                "body": "hello again",
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload),
+                "signed_payload": signed_payload.decode(),
+            },
+        )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] == conversation_id
+    messages = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT conversation_id, to_agent_id, to_did
+        FROM {{tables.messages}}
+        WHERE subject IN ('initial alias thread', 'address reuses alias thread')
+        ORDER BY created_at
+        """
+    )
+    assert [str(row["conversation_id"]) for row in messages] == [conversation_id, conversation_id]
+    assert str(messages[1]["to_agent_id"]) == bob_agent_id
+    assert messages[1]["to_did"] == "did:aw:bob"
+    app.state.awid_registry_client.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -353,6 +447,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         address="acme.com/alice",
     )
     registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-2",
@@ -480,6 +575,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
 
     assert retry.status_code == 200, retry.text
     assert retry.json()["message_id"] == message_id
+    assert registry.resolve_address.await_count == 1
     assert len(remote_requests) == 2
     projected_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
@@ -861,6 +957,193 @@ async def test_send_message_to_address_reuses_existing_conversation_without_addr
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_address_with_existing_conversation_id_continues_local_thread(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:otherco.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="otherco.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="otherco.com/bob",
+            team_id="ops:otherco.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_did": "did:aw:alice", "subject": "initial explicit thread", "body": "hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    registry = app.state.awid_registry_client
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("same conversation reply must not rediscover address"))
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_address": "otherco.com/bob",
+                "subject": "explicit same conversation reply",
+                "body": "hi",
+            },
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT conversation_id, from_did, to_did, to_agent_id
+        FROM {{tables.messages}}
+        WHERE subject = 'explicit same conversation reply'
+        """
+    )
+    assert str(row["conversation_id"]) == conversation_id
+    assert row["from_did"] == "did:aw:alice"
+    assert row["to_did"] == "did:aw:bob"
+    assert str(row["to_agent_id"]) == bob_agent_id
+    registry.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_signed_address_continuation_keeps_ephemeral_participant_address(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, gsk_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "devteam:test.local")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="devteam:test.local",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="test.local/alice",
+    )
+    gsk_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="devteam:test.local",
+        alias="gsk",
+        did_key=gsk_did_key,
+        did_aw="",
+        address="",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _gsk_auth():
+        return MessagingAuth(
+            did_key=gsk_did_key,
+            did_aw="",
+            address="test.local/gsk",
+            team_id="devteam:test.local",
+            alias="gsk",
+            agent_id=gsk_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _gsk_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_did": "did:aw:alice", "subject": "ephemeral initial", "body": "hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="test.local/alice",
+            team_id="devteam:test.local",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "reply",
+            "conversation_id": conversation_id,
+            "from": "test.local/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "priority": "normal",
+            "subject": "ephemeral reply",
+            "timestamp": timestamp,
+            "to": "test.local/gsk",
+            "to_did": gsk_did_key,
+            "type": "mail",
+        }
+    )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    registry = app.state.awid_registry_client
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("local continuation must not rediscover address"))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_address": "test.local/gsk",
+                "subject": "ephemeral reply",
+                "body": "reply",
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload),
+                "signed_payload": signed_payload.decode(),
+            },
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id
+        FROM {{tables.messages}}
+        WHERE subject = 'ephemeral reply'
+        """
+    )
+    assert row["to_did"] == gsk_did_key
+    assert str(row["to_agent_id"]) == gsk_agent_id
+    registry.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_mail_conversation_history_requires_participant_and_includes_sent_messages(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -883,6 +1166,7 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
         address="acme.com/bob",
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app.state.awid_registry_client.resolve_address = AsyncMock(return_value=None)
 
     async def _alice_auth():
         return MessagingAuth(
@@ -1007,6 +1291,7 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(aweb
         address="acme.com/bob",
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app.state.awid_registry_client.resolve_address = AsyncMock(return_value=None)
 
     async def _alice_auth():
         return MessagingAuth(
@@ -1057,6 +1342,137 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(aweb
         )
     assert closed.status_code == 403
     assert "closed" in closed.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_explicit_recipient_with_closed_conversation_id_rejects(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app.state.awid_registry_client.resolve_address = AsyncMock(return_value=None)
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_address": "acme.com/bob", "subject": "initial explicit closed", "body": "hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.conversations}} SET status = 'closed' WHERE conversation_id = $1",
+        UUID(conversation_id),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        closed = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_address": "acme.com/bob",
+                "subject": "closed explicit",
+                "body": "nope",
+            },
+        )
+
+    assert closed.status_code == 403
+    assert "closed" in closed.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_explicit_recipient_with_existing_conversation_id_rejects_target_mismatch(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    _, _, charlie_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="charlie",
+        did_key=charlie_did_key,
+        did_aw="did:aw:charlie",
+        address="acme.com/charlie",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    app.state.awid_registry_client.resolve_address = AsyncMock(return_value=None)
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_address": "acme.com/bob", "subject": "initial mismatch guard", "body": "hello"},
+        )
+        mismatch = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": first.json()["conversation_id"],
+                "to_address": "acme.com/charlie",
+                "subject": "must not create",
+                "body": "wrong target",
+            },
+        )
+
+    assert first.status_code == 200, first.text
+    assert mismatch.status_code == 409
+    assert "recipient does not match" in mismatch.json()["detail"]
+    count = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE conversation_id = $1",
+        UUID(first.json()["conversation_id"]),
+    )
+    assert count == 1
 
 
 @pytest.mark.asyncio
@@ -2547,7 +2963,127 @@ async def test_receive_federated_mail_stores_recipient_inbox_and_reply_route(awe
     participants = await _conversation_participants(aweb_cloud_db.aweb_db, envelope["conversation_id"])
     sender_participant = next(item for item in participants if item["did"] == "did:aw:alice")
     assert sender_participant["address"] == "alpha.example/alice"
+    assert sender_participant["delivery_origin"] == "https://sender.example"
     assert sender_participant["transport_hint"] == "federation:https://sender.example"
+
+
+@pytest.mark.asyncio
+async def test_send_message_federated_conversation_reply_uses_recorded_participant_not_address_rediscovery(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:beta.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="beta.example/bob",
+    )
+    conversation_id = str(uuid4())
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', 'default:beta.example', 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        UUID(conversation_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', NULL, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $2, 'bob', 'beta.example/bob', NULL, 'local', 'participant')
+        """,
+        UUID(conversation_id),
+        UUID(bob_agent_id),
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("federated continuation must not rediscover address"))
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        remote_calls.append(body)
+        envelope = body["envelope"]
+        assert envelope["conversation_id"] == conversation_id
+        assert envelope["target_address"] == "alpha.example/alice"
+        assert envelope["target_did_aw"] == "did:aw:alice"
+        assert envelope["target_current_did_key"] == alice_did_key
+        assert envelope["target_delivery_origin"] == "https://sender.example"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="beta.example/bob",
+            team_id="default:beta.example",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "federated continuation",
+            "conversation_id": conversation_id,
+            "from": "beta.example/bob",
+            "from_did": bob_did_key,
+            "from_stable_id": "did:aw:bob",
+            "message_id": message_id,
+            "priority": "normal",
+            "subject": "Federated reply",
+            "timestamp": timestamp,
+            "to": "alpha.example/alice",
+            "to_did": alice_did_key,
+            "to_stable_id": "did:aw:alice",
+            "type": "mail",
+        }
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_address": "alpha.example/alice",
+                "to_did": alice_did_key,
+                "to_stable_id": "did:aw:alice",
+                "subject": "Federated reply",
+                "body": "federated continuation",
+                "from_did": bob_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(bob_sk, signed_payload),
+                "signed_payload": signed_payload.decode(),
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversation_id"] == conversation_id
+    assert len(remote_calls) == 1
+    registry.resolve_address.assert_not_called()
 
 
 @pytest.mark.asyncio
