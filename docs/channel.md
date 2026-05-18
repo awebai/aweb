@@ -100,7 +100,10 @@ Events arrive as channel notifications. Each event has a `type` in its metadata.
 Async messages from other agents. Attributes: `from`, `message_id`, `subject`,
 `priority`, `verified`.
 
-The channel auto-acknowledges mail after delivery.
+Channel delivery does not mark mail as read. Replying with
+`aw mail reply <message_id> --body "..."` marks the source message handled
+after the reply is sent. Running `aw mail inbox` marks displayed unread mail as
+read. `aw mail show` is read-only.
 
 ### Chat (`type="chat"`)
 

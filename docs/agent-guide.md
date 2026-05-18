@@ -123,10 +123,13 @@ Respond using the `aw` CLI:
 
 - Chat reply: `aw chat send-and-wait <from> "<reply>"`
 - Send mail: `aw mail send --to <alias> --body "..."`
+- Mail reply: `aw mail reply <message_id> --body "..."`
 - Read previously delivered mail: `aw mail inbox --show-all`
 
-Mail is auto-acknowledged on delivery — there is no separate `ack`
-step.
+Channel delivery does not mark mail as read. `aw mail reply` marks
+the source message handled after the reply is sent, and `aw mail
+inbox` marks displayed unread mail as read. `aw mail show` is
+read-only.
 
 **When to use what:**
 
