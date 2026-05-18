@@ -58,7 +58,7 @@ test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
 
 test-cli:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./run -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./... -count=1
 
 test-channel:
 	cd channel && npm test
@@ -244,11 +244,11 @@ ship: release-all-check
 	@echo "=== Running awid release check ==="
 	$(MAKE) release-awid-check
 	@echo ""
-	@echo "=== Running e2e user journey ==="
-	$(MAKE) test-e2e
-	@echo ""
 	@echo "=== Running federation e2e journey ==="
 	$(MAKE) test-federation-e2e
+	@echo ""
+	@echo "=== Running e2e user journey ==="
+	$(MAKE) test-e2e
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
