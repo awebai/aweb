@@ -368,6 +368,7 @@ describe("dispatchEvent", () => {
       "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {
@@ -495,6 +496,7 @@ describe("dispatchEvent", () => {
         }),
       },
     });
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("skips self-authored mail by concrete address", async () => {
