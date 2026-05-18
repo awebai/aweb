@@ -6267,7 +6267,7 @@ async function markWelcomeSeen(key) {
 function welcomeMessage(alias, teamID) {
   return `aweb for Pi is ready.
 
-You are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for using the aw CLI well.
+You are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for the aw CLI.
 
 First moves:
 
