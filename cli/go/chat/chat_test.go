@@ -5723,6 +5723,56 @@ func TestParseSSEEventNoIdentityUnverified(t *testing.T) {
 	}
 }
 
+func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := "did:aw:stable-sender"
+	toDID := "did:key:z6MkpTyWJw55qh8q1UnzsepWtL4yJ534Ezx6Wmgj6mR3zPFk"
+
+	env := &awid.MessageEnvelope{
+		From:           "myco/alice",
+		FromDID:        did,
+		To:             "myco/bob",
+		ToDID:          toDID,
+		Type:           "chat",
+		Body:           "signed hello",
+		Timestamp:      "2026-01-01T00:00:00Z",
+		FromStableID:   stableID,
+		MessageID:      "11111111-1111-4111-8111-111111111111",
+		ConversationID: "22222222-2222-4222-8222-222222222222",
+	}
+	sig, err := awid.SignMessage(priv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPayload := awid.CanonicalJSON(env)
+
+	// Live stream rows can carry the participant stable DID in from_did while
+	// the signed payload carries the signing did:key. The parser must verify
+	// against the signed-payload did:key, matching ChatHistory normalization.
+	data := fmt.Sprintf(`{"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, stableID, stableID, sig, signedPayload)
+
+	ev := parseSSEEvent(&awid.SSEEvent{
+		Event: "message",
+		Data:  data,
+	})
+
+	if ev.FromDID != did {
+		t.Fatalf("from_did=%q, want signed payload did:key %q", ev.FromDID, did)
+	}
+	if ev.FromStableID != stableID {
+		t.Fatalf("from_stable_id=%q, want %q", ev.FromStableID, stableID)
+	}
+	if ev.VerificationStatus != awid.Verified {
+		t.Fatalf("verification_status=%s, want verified", ev.VerificationStatus)
+	}
+}
+
 func TestParseSSEEventUsesFromAddressForVerification(t *testing.T) {
 	t.Parallel()
 
