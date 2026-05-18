@@ -89,7 +89,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Read them and act if needed. Channel delivery does not acknowledge or mark the message handled. Reply with: aw mail reply <message_id> --body "<reply>". Running aw mail inbox explicitly marks displayed unread mail as read.
+Mail events (type="mail") are async. Read them and act if needed. Channel delivery does not acknowledge or mark the message handled. Reply with: aw mail reply <message_id> --body "<reply>". Replying marks the source message handled after the reply is sent. Running aw mail inbox explicitly marks displayed unread mail as read; aw mail show is read-only.
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.

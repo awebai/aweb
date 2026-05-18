@@ -884,6 +884,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 		SignedPayload  string `json:"signed_payload"`
 	}
 	var got captured
+	acked := false
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -921,6 +922,12 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 				"status":          "delivered",
 				"delivered_at":    "2026-05-02T00:00:01Z",
 			})
+		case "/v1/messages/msg-in/ack":
+			if r.Method != http.MethodPost {
+				t.Fatalf("ack method=%s, want POST", r.Method)
+			}
+			acked = true
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-in"})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -958,6 +965,9 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	}
 	if got.ConversationID != conversationID || got.Body != "reply" {
 		t.Fatalf("unexpected body: %+v", got)
+	}
+	if !acked {
+		t.Fatal("reply should ack the source message after sending")
 	}
 	if got.ToAddress != "otherco.com/bob" {
 		t.Fatalf("to_address=%q, want otherco.com/bob", got.ToAddress)

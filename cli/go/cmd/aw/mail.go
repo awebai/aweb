@@ -421,6 +421,9 @@ var mailReplyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
+			debugLog("ack replied mail %s: %v", messageID, ackErr)
+		}
 		logsDir := defaultLogsDir()
 		from := preferredIdentityDisplayLabel(
 			"",
