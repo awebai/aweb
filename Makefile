@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e test-federation-e2e build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	release-server-check release-server-tag release-server-push \
@@ -25,6 +25,7 @@ help:
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
+	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo ""
@@ -64,6 +65,9 @@ test-channel:
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
+
+test-federation-e2e:
+	./scripts/e2e-oss-federation.sh
 
 selfhost-up:
 	cd server && docker compose up --build -d
@@ -222,12 +226,14 @@ release-all-check:
 # channel-v*). Do NOT substitute `make test` alone — it is a strict
 # subset and will not catch packaging/build failures or e2e regressions.
 #
-# This target adds awid build-check + the e2e user journey on top of
-# release-all-check. Both are load-bearing for releases:
+# This target adds awid build-check + the e2e user journeys on top of
+# release-all-check. All are load-bearing for releases:
 #  - awid build-check (uv build + Docker image) catches awid packaging
 #    issues before the GHCR/PyPI workflows do.
 #  - test-e2e catches integration regressions across CLI + server +
 #    awid that unit/integration tests miss in isolation.
+#  - test-federation-e2e catches cross-server mail/chat federation
+#    regressions that single-server user journeys cannot see.
 #
 # Banked discipline: releases 1.18.3 / 1.18.4 / 1.18.5 / 1.18.6 each
 # ran `make test` instead of the canonical comprehensive gate. Even
@@ -240,6 +246,9 @@ ship: release-all-check
 	@echo ""
 	@echo "=== Running e2e user journey ==="
 	$(MAKE) test-e2e
+	@echo ""
+	@echo "=== Running federation e2e journey ==="
+	$(MAKE) test-federation-e2e
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
