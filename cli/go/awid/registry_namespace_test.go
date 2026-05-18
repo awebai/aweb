@@ -214,6 +214,79 @@ func TestRegistryNamespaceAndAddressDecodeDeliveryOrigin(t *testing.T) {
 	}
 }
 
+func TestUpdateNamespaceDeliveryOriginAtSignsCanonicalPayload(t *testing.T) {
+	t.Parallel()
+
+	controllerPub, controllerPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(controllerPub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/namespaces/acme.com" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		if auth == "" || timestamp == "" {
+			t.Fatal("missing auth headers")
+		}
+		parts := strings.Split(auth, " ")
+		if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != controllerDID {
+			t.Fatalf("unexpected Authorization header %q", auth)
+		}
+		payload, err := CanonicalJSONValue(map[string]string{
+			"domain":                  "acme.com",
+			"operation":               "update_namespace",
+			"default_delivery_origin": "https://aweb.acme.com",
+			"timestamp":               timestamp,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		signature, err := base64.RawStdEncoding.DecodeString(parts[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ed25519.Verify(controllerPub, []byte(payload), signature) {
+			t.Fatalf("invalid signature for %s", payload)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["default_delivery_origin"] != "https://aweb.acme.com" {
+			t.Fatalf("default_delivery_origin=%v", body["default_delivery_origin"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"namespace_id":            "ns-acme",
+			"domain":                  "acme.com",
+			"controller_did":          controllerDID,
+			"verification_status":     "verified",
+			"default_delivery_origin": "https://aweb.acme.com",
+			"last_verified_at":        "2026-04-01T00:00:00Z",
+			"created_at":              "2026-04-01T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	namespace, err := client.UpdateNamespaceDeliveryOriginAt(
+		context.Background(),
+		server.URL,
+		"acme.com",
+		controllerPriv,
+		"https://Aweb.Acme.Com/",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespace.DefaultDeliveryOrigin != "https://aweb.acme.com" {
+		t.Fatalf("DefaultDeliveryOrigin=%q", namespace.DefaultDeliveryOrigin)
+	}
+}
+
 func TestRegisterAddressAtRequiresControllerSigningKey(t *testing.T) {
 	t.Parallel()
 

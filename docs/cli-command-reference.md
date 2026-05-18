@@ -212,6 +212,7 @@ Subcommands:
 - `assign-address` Assign a namespace address to an existing did:aw using the local controller key
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
+- `set-delivery-origin` Set the namespace delivery origin for federated mail/chat
 
 Flags:
 - `-h, --help help for namespace`
@@ -259,6 +260,20 @@ Recover namespace control by rotating to a new controller key
 Flags:
 - `--domain string Namespace domain to rotate`
 - `-h, --help help for rotate-controller`
+
+## `id namespace set-delivery-origin`
+
+### `id namespace set-delivery-origin`
+
+Set the namespace delivery origin for federated mail/chat. Requires the local
+namespace controller key. Uses `AWID_REGISTRY_URL` when set; otherwise discovers
+the registry from DNS.
+
+Flags:
+- `--domain string Namespace domain`
+- `-h, --help help for set-delivery-origin`
+- `--namespace string Namespace domain`
+- `--origin string Public aweb server origin, for example https://aweb.example.com`
 
 ## `id register`
 

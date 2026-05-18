@@ -12,8 +12,13 @@ import (
 )
 
 type namespaceRegisterRequest struct {
-	Domain        string `json:"domain"`
-	ControllerDID string `json:"controller_did"`
+	Domain                string `json:"domain"`
+	ControllerDID         string `json:"controller_did"`
+	DefaultDeliveryOrigin string `json:"default_delivery_origin,omitempty"`
+}
+
+type namespaceUpdateRequest struct {
+	DefaultDeliveryOrigin string `json:"default_delivery_origin"`
 }
 
 type addressRegisterRequest struct {
@@ -96,12 +101,38 @@ func (c *RegistryClient) RegisterNamespace(
 	return namespace, registryURL, err
 }
 
+func (c *RegistryClient) RegisterNamespaceWithDeliveryOrigin(
+	ctx context.Context,
+	domain string,
+	controllerDID string,
+	signingKey ed25519.PrivateKey,
+	defaultDeliveryOrigin string,
+) (*RegistryNamespace, string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return nil, "", err
+	}
+	namespace, err := c.RegisterNamespaceWithDeliveryOriginAt(ctx, registryURL, domain, controllerDID, signingKey, defaultDeliveryOrigin)
+	return namespace, registryURL, err
+}
+
 func (c *RegistryClient) RegisterNamespaceAt(
 	ctx context.Context,
 	registryURL string,
 	domain string,
 	controllerDID string,
 	signingKey ed25519.PrivateKey,
+) (*RegistryNamespace, error) {
+	return c.RegisterNamespaceWithDeliveryOriginAt(ctx, registryURL, domain, controllerDID, signingKey, "")
+}
+
+func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	controllerDID string,
+	signingKey ed25519.PrivateKey,
+	defaultDeliveryOrigin string,
 ) (*RegistryNamespace, error) {
 	domain = canonicalizeDomain(domain)
 	controllerDID = strings.TrimSpace(controllerDID)
@@ -114,6 +145,16 @@ func (c *RegistryClient) RegisterNamespaceAt(
 	if err := requireSigningKeyMatchesDID(signingKey, controllerDID); err != nil {
 		return nil, err
 	}
+	defaultDeliveryOrigin = strings.TrimSpace(defaultDeliveryOrigin)
+	extraPayload := map[string]string(nil)
+	if defaultDeliveryOrigin != "" {
+		canonicalOrigin, err := CanonicalServerOrigin(defaultDeliveryOrigin)
+		if err != nil {
+			return nil, fmt.Errorf("default delivery origin: %w", err)
+		}
+		defaultDeliveryOrigin = canonicalOrigin
+		extraPayload = map[string]string{"default_delivery_origin": defaultDeliveryOrigin}
+	}
 
 	var out RegistryNamespace
 	if err := c.requestJSON(
@@ -121,11 +162,65 @@ func (c *RegistryClient) RegisterNamespaceAt(
 		http.MethodPost,
 		registryURL,
 		"/v1/namespaces",
-		signedNamespaceHeaders(domain, "register", signingKey, nil),
+		signedNamespaceHeaders(domain, "register", signingKey, extraPayload),
 		namespaceRegisterRequest{
-			Domain:        domain,
-			ControllerDID: controllerDID,
+			Domain:                domain,
+			ControllerDID:         controllerDID,
+			DefaultDeliveryOrigin: defaultDeliveryOrigin,
 		},
+		&out,
+	); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *RegistryClient) UpdateNamespaceDeliveryOrigin(
+	ctx context.Context,
+	domain string,
+	controllerSigningKey ed25519.PrivateKey,
+	deliveryOrigin string,
+) (*RegistryNamespace, string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return nil, "", err
+	}
+	namespace, err := c.UpdateNamespaceDeliveryOriginAt(ctx, registryURL, domain, controllerSigningKey, deliveryOrigin)
+	return namespace, registryURL, err
+}
+
+func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	controllerSigningKey ed25519.PrivateKey,
+	deliveryOrigin string,
+) (*RegistryNamespace, error) {
+	domain = canonicalizeDomain(domain)
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if controllerSigningKey == nil {
+		return nil, fmt.Errorf("controller signing key is required")
+	}
+	canonicalOrigin, err := CanonicalServerOrigin(deliveryOrigin)
+	if err != nil {
+		return nil, fmt.Errorf("delivery origin: %w", err)
+	}
+
+	var out RegistryNamespace
+	if err := c.requestJSON(
+		ctx,
+		http.MethodPatch,
+		registryURL,
+		"/v1/namespaces/"+urlPathEscape(domain),
+		signedNamespaceHeaders(
+			domain,
+			"update_namespace",
+			controllerSigningKey,
+			map[string]string{"default_delivery_origin": canonicalOrigin},
+		),
+		namespaceUpdateRequest{DefaultDeliveryOrigin: canonicalOrigin},
 		&out,
 	); err != nil {
 		return nil, err
