@@ -1,6 +1,7 @@
 {
   "name": "@awebai/claude-channel",
-  "version": "1.4.0",
+  "version": "1.4.1",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "bin": "./dist/index.js",
@@ -21,10 +22,10 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@awebai/channel-core": "file:../channel-core",
     "tldts": "^7.0.27"
   },
   "devDependencies": {
+    "@awebai/channel-core": "file:../channel-core",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@noble/ed25519": "^2.2.3",
     "@noble/hashes": "^2.0.1",
