@@ -175,6 +175,8 @@ release-awid-site:
 release-channel-check:
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
 		(echo "ERROR: channel package.json ($(CHANNEL_VERSION)) != plugin.json ($(CHANNEL_PLUGIN_VERSION))"; exit 1)
+	cd channel-core && npm ci && npm run build
+	cd channel && npm ci
 	cd channel && npm test
 	cd channel && npm run build
 	cd channel && npm pack --dry-run

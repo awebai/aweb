@@ -20,6 +20,14 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Install channel-core dependencies
+        working-directory: channel-core
+        run: npm ci
+
+      - name: Build channel-core
+        working-directory: channel-core
+        run: npm run build
+
       - name: Install dependencies
         working-directory: channel
         run: npm ci
