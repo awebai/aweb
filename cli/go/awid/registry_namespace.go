@@ -25,7 +25,7 @@ type addressRegisterRequest struct {
 	Name            string  `json:"name"`
 	DIDAW           string  `json:"did_aw"`
 	CurrentDIDKey   string  `json:"current_did_key"`
-	Reachability    string  `json:"reachability"`
+	Reachability    string  `json:"reachability,omitempty"`
 	VisibleToTeamID *string `json:"visible_to_team_id,omitempty"`
 }
 
@@ -344,9 +344,6 @@ func (c *RegistryClient) RegisterAddressAt(
 	if !strings.HasPrefix(currentDIDKey, "did:key:") {
 		return nil, fmt.Errorf("currentDIDKey must start with did:key:")
 	}
-	if reachability == "" {
-		reachability = "nobody"
-	}
 	if controllerSigningKey == nil {
 		return nil, fmt.Errorf("controller signing key is required")
 	}
@@ -468,6 +465,16 @@ func signedAddressHeaders(
 		"name":      strings.TrimSpace(name),
 		"operation": strings.TrimSpace(operation),
 		"timestamp": timestamp,
+	}, signingKey, timestamp)
+}
+
+func signedDIDDeliveryOriginHeaders(didAW, deliveryOrigin string, signingKey ed25519.PrivateKey) map[string]string {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	return signedCanonicalHeaders(map[string]string{
+		"delivery_origin": strings.TrimSpace(deliveryOrigin),
+		"did_aw":          strings.TrimSpace(didAW),
+		"operation":       "set_delivery_origin",
+		"timestamp":       timestamp,
 	}, signingKey, timestamp)
 }
 

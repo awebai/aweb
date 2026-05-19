@@ -68,7 +68,7 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
             "visible_to_team_id": None,
             "delivery": {
                 "origin": None,
-                "source": "namespace_default",
+                "source": "identity",
             },
             "created_at": now.isoformat(),
         }

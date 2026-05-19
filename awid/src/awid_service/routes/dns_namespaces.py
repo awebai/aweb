@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.dns_verify import DomainVerifier
 from awid_service.deps import get_db, get_domain_verifier
 from awid.dns_verify import DnsVerificationError
-from awid.log import canonical_server_origin
 from awid.pagination import encode_cursor, validate_pagination_params
+from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.dns_auth import verify_signed_json_request
@@ -63,56 +61,6 @@ def _validate_domain(domain: str) -> str:
     if not domain or len(domain) > _MAX_DOMAIN_LENGTH:
         raise HTTPException(status_code=400, detail="Invalid domain")
     return domain
-
-
-def _is_development_environment() -> bool:
-    for name in ("APP_ENV", "ENVIRONMENT"):
-        value = (os.getenv(name) or "").strip().lower()
-        if value:
-            return value in {"dev", "development", "local", "test", "testing"}
-    return False
-
-
-def _is_localhost_origin(origin: str) -> bool:
-    host = (urlparse(origin).hostname or "").lower()
-    return host == "localhost" or host.endswith(".localhost")
-
-
-def _allow_insecure_delivery_origin() -> bool:
-    return (os.getenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-
-
-def _validate_delivery_origin(value: str | None) -> str | None:
-    if value is None:
-        return None
-    try:
-        canonical = canonical_server_origin(value)
-    except ValueError as exc:
-        raise ValueError(str(exc)) from exc
-    parsed = urlparse(canonical)
-    is_development = _is_development_environment()
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme == "http" and is_development and _allow_insecure_delivery_origin():
-        return canonical
-    if _is_localhost_origin(canonical):
-        if is_development and parsed.scheme == "http":
-            return canonical
-        raise ValueError("default_delivery_origin must not target localhost outside development")
-
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        pass
-    else:
-        raise ValueError("default_delivery_origin must not use a literal IP address")
-
-    if parsed.scheme != "https":
-        raise ValueError("default_delivery_origin must use https")
-    return canonical
 
 
 def _verify_controller_rotation_signature(
@@ -195,7 +143,7 @@ class NamespaceRegisterRequest(BaseModel):
     @field_validator("default_delivery_origin")
     @classmethod
     def validate_default_delivery_origin(cls, value: str | None) -> str | None:
-        return _validate_delivery_origin(value)
+        return validate_delivery_origin(value)
 
 
 class NamespaceRotateControllerRequest(BaseModel):
@@ -217,7 +165,7 @@ class NamespaceUpdateRequest(BaseModel):
     @field_validator("default_delivery_origin")
     @classmethod
     def validate_default_delivery_origin(cls, value: str | None) -> str | None:
-        return _validate_delivery_origin(value)
+        return validate_delivery_origin(value)
 
 
 class NamespaceResponse(BaseModel):

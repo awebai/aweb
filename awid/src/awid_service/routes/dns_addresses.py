@@ -161,10 +161,10 @@ def _require_controller(caller_did: str, ns_row) -> None:
         )
 
 
-async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> None:
+async def _require_registered_did(tx, *, did_aw: str, current_did_key: str):
     row = await tx.fetch_one(
         """
-        SELECT current_did_key
+        SELECT current_did_key, delivery_origin
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         FOR SHARE
@@ -178,6 +178,7 @@ async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> N
         )
     if row["current_did_key"] != current_did_key:
         raise HTTPException(status_code=409, detail=_DID_CURRENT_KEY_MISMATCH_DETAIL)
+    return row
 
 
 async def _lock_address_registration_key(tx, *, namespace_id, name: str) -> None:
@@ -191,7 +192,7 @@ async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str)
     return await tx.fetch_one(
         """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, pa.created_at
+               pa.visible_to_team_id, m.delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
@@ -282,7 +283,7 @@ class AddressDeleteRequest(BaseModel):
 
 class AddressDeliveryResponse(BaseModel):
     origin: str | None = None
-    source: str = "namespace_default"
+    source: str = "identity"
 
 
 class AddressResponse(BaseModel):
@@ -324,7 +325,7 @@ def _address_response(row, domain: str) -> AddressResponse:
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin")),
+        delivery=AddressDeliveryResponse(origin=row.get("delivery_origin"), source="identity"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -579,7 +580,7 @@ async def register_address(
         if ns_locked is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
 
-        await _require_registered_did(
+        did_row = await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
@@ -643,7 +644,7 @@ async def register_address(
         current_did_key=body.current_did_key,
         reachability=reachability,
         visible_to_team_id=visible_to_team_id,
-        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin")),
+        delivery=AddressDeliveryResponse(origin=did_row.get("delivery_origin"), source="identity"),
         created_at=now.isoformat(),
     )
 
@@ -663,34 +664,10 @@ async def get_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await _require_namespace(db, domain)
-    caller_did_key = _maybe_verify_address_lookup_signature(
-        request,
-        domain=domain,
-        name=name,
-        operation="get_address",
-    )
-    caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
-    presented_cert = await _verify_presented_team_certificate(
-        db,
-        request,
-        caller_did_key=caller_did_key,
-        caller_did_aw=caller_did_aw,
-    )
-
-    params: list[object] = [ns_row["namespace_id"], name, caller_did_aw]
-    presented_team_domain_param = None
-    presented_team_id_param = None
-    # Ephemeral certificates verify, but only persistent membership expands
-    # private address visibility.
-    if presented_cert is not None and presented_cert.lifetime == "persistent":
-        params.append(presented_cert.team_domain)
-        presented_team_domain_param = len(params)
-        params.append(presented_cert.team_id)
-        presented_team_id_param = len(params)
-
-    query = """
+    row = await db.fetch_one(
+        """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+               pa.visible_to_team_id, m.delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -698,14 +675,9 @@ async def get_address(
           AND pa.name = $2
           AND pa.deleted_at IS NULL
           AND ns.deleted_at IS NULL
-          AND """ + _address_visibility_sql(
-              caller_did_aw_param=3,
-              presented_team_domain_param=presented_team_domain_param,
-              presented_team_id_param=presented_team_id_param,
-          )
-    row = await db.fetch_one(
-        query,
-        *params,
+        """,
+        ns_row["namespace_id"],
+        name,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
@@ -728,19 +700,6 @@ async def list_addresses(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await _require_namespace(db, domain)
-    caller_did_key = _maybe_verify_address_lookup_signature(
-        request,
-        domain=domain,
-        name=None,
-        operation="list_addresses",
-    )
-    caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
-    presented_cert = await _verify_presented_team_certificate(
-        db,
-        request,
-        caller_did_key=caller_did_key,
-        caller_did_aw=caller_did_aw,
-    )
 
     try:
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
@@ -749,29 +708,6 @@ async def list_addresses(
 
     params: list[object] = [ns_row["namespace_id"]]
     where_clauses = ["pa.namespace_id = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
-    is_namespace_controller = caller_did_key is not None and caller_did_key == ns_row["controller_did"]
-    if not is_namespace_controller:
-        if caller_did_aw:
-            params.append(caller_did_aw)
-            caller_did_aw_param = len(params)
-            presented_team_domain_param = None
-            presented_team_id_param = None
-            # Ephemeral certificates verify, but only persistent membership expands
-            # private address visibility.
-            if presented_cert is not None and presented_cert.lifetime == "persistent":
-                params.append(presented_cert.team_domain)
-                presented_team_domain_param = len(params)
-                params.append(presented_cert.team_id)
-                presented_team_id_param = len(params)
-            where_clauses.append(
-                _address_visibility_sql(
-                    caller_did_aw_param=caller_did_aw_param,
-                    presented_team_domain_param=presented_team_domain_param,
-                    presented_team_id_param=presented_team_id_param,
-                )
-            )
-        else:
-            where_clauses.append(_address_visibility_sql(caller_did_aw_param=None))
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
         if not isinstance(cursor_name, str):
@@ -781,7 +717,7 @@ async def list_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
-        " pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
+        " pa.visible_to_team_id, m.delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -846,7 +782,7 @@ async def update_address(
         row = await tx.fetch_one(
             """
             SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                   pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+                   pa.visible_to_team_id, m.delivery_origin, pa.created_at
             FROM {{tables.public_addresses}} pa
             JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
             JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -880,7 +816,7 @@ async def update_address(
                   AND m.did_aw = pa.did_aw
                   AND ns.namespace_id = pa.namespace_id
                 RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                          pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+                          pa.visible_to_team_id, m.delivery_origin, pa.created_at
                 """,
                 next_reachability,
                 next_visible_to_team_id,
@@ -897,7 +833,7 @@ async def update_address(
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin")),
+        delivery=AddressDeliveryResponse(origin=row.get("delivery_origin"), source="identity"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -1020,7 +956,7 @@ async def reassign_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        await _require_registered_did(
+        did_row = await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
@@ -1050,6 +986,6 @@ async def reassign_address(
         current_did_key=body.current_did_key,
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin")),
+        delivery=AddressDeliveryResponse(origin=did_row.get("delivery_origin"), source="identity"),
         created_at=row["created_at"].isoformat(),
     )

@@ -34,7 +34,7 @@ async def test_dns_namespaces_scope_id_has_no_foreign_key(awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_messaging_federation_adds_namespace_delivery_only(awid_db_infra):
+async def test_global_local_identity_routing_adds_identity_delivery_origin(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
     rows = await db.fetch_all(
         """
@@ -42,6 +42,12 @@ async def test_messaging_federation_adds_namespace_delivery_only(awid_db_infra):
         FROM pg_attribute
         WHERE attrelid = '{{tables.dns_namespaces}}'::regclass
           AND attname = 'default_delivery_origin'
+          AND NOT attisdropped
+        UNION ALL
+        SELECT 'did_aw_mappings' AS table_name, attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = '{{tables.did_aw_mappings}}'::regclass
+          AND attname = 'delivery_origin'
           AND NOT attisdropped
         UNION ALL
         SELECT 'teams' AS table_name, attname AS column_name
@@ -54,7 +60,8 @@ async def test_messaging_federation_adds_namespace_delivery_only(awid_db_infra):
     )
 
     assert [(row["table_name"], row["column_name"]) for row in rows] == [
-        ("dns_namespaces", "default_delivery_origin")
+        ("did_aw_mappings", "delivery_origin"),
+        ("dns_namespaces", "default_delivery_origin"),
     ]
 
 

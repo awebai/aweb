@@ -87,6 +87,27 @@ async def _register_identity(client, signing_key, did_key):
     return resp.json()
 
 
+async def _set_identity_delivery_origin(client, signing_key, did_key, did_aw, delivery_origin):
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = {
+        "delivery_origin": delivery_origin or "",
+        "did_aw": did_aw,
+        "operation": "set_delivery_origin",
+        "timestamp": timestamp,
+    }
+    headers = {
+        "Authorization": f"DIDKey {did_key} {sign_message(signing_key, canonical_json_bytes(payload))}",
+        "X-AWEB-Timestamp": timestamp,
+    }
+    resp = await client.put(
+        f"/v1/did/{did_aw}/delivery-origin",
+        json={"delivery_origin": delivery_origin},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 async def _rotate_identity(client, old_signing_key, did_aw, old_did_key, new_did_key):
     key_resp = await client.get(f"/v1/did/{did_aw}/key")
     assert key_resp.status_code == 200, key_resp.text
@@ -614,42 +635,53 @@ async def test_namespace_default_delivery_origin_rejects_literal_ip(
 
 
 @pytest.mark.asyncio
-async def test_address_resolution_returns_inherited_namespace_delivery(client, controller_identity):
+async def test_address_resolution_returns_identity_delivery_origin(client, controller_identity):
     signing_key, controller_did = controller_identity
+    identity_key, identity_pub = generate_keypair()
+    identity_did_key = did_from_public_key(identity_pub)
+    identity = await _register_identity(client, identity_key, identity_did_key)
     domain = "address-delivery.example"
-    delivery_origin = "https://inbox.address-delivery.example"
+    namespace_origin = "https://namespace.address-delivery.example"
+    identity_origin = "https://identity.address-delivery.example"
     headers = _sign(
         signing_key,
         controller_did,
         domain=domain,
         operation="register",
-        default_delivery_origin=delivery_origin,
+        default_delivery_origin=namespace_origin,
     )
     resp = await client.post(
         "/v1/namespaces",
-        json={"domain": domain, "default_delivery_origin": delivery_origin},
+        json={"domain": domain, "default_delivery_origin": namespace_origin},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+    await _set_identity_delivery_origin(client, identity_key, identity_did_key, identity["did_aw"], identity_origin)
 
-    address = await _register_address(client, signing_key, controller_did, domain, "alice")
-    assert address["delivery"] == {
-        "origin": delivery_origin,
-        "source": "namespace_default",
+    headers = _sign(signing_key, controller_did, domain=domain, operation="register_address", name="alice")
+    address_resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={"name": "alice", "did_aw": identity["did_aw"], "current_did_key": identity_did_key},
+        headers=headers,
+    )
+    assert address_resp.status_code == 200, address_resp.text
+    assert address_resp.json()["delivery"] == {
+        "origin": identity_origin,
+        "source": "identity",
     }
 
     get_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
     assert get_resp.status_code == 200, get_resp.text
     assert get_resp.json()["delivery"] == {
-        "origin": delivery_origin,
-        "source": "namespace_default",
+        "origin": identity_origin,
+        "source": "identity",
     }
 
     list_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert list_resp.status_code == 200, list_resp.text
     assert list_resp.json()["addresses"][0]["delivery"] == {
-        "origin": delivery_origin,
-        "source": "namespace_default",
+        "origin": identity_origin,
+        "source": "identity",
     }
 
 
@@ -1430,7 +1462,7 @@ async def test_public_address_get_allows_anonymous(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_nobody_address_get_requires_owner_signature(client, controller_identity):
+async def test_nobody_reachability_no_longer_blocks_global_address_get(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1453,17 +1485,19 @@ async def test_nobody_address_get_requires_owner_signature(client, controller_id
     assert owner_resp.json()["address_id"] == address["address_id"]
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
-    assert anon_resp.status_code == 404
+    assert anon_resp.status_code == 200, anon_resp.text
+    assert anon_resp.json()["address_id"] == address["address_id"]
 
     other_key, other_pub = generate_keypair()
     other_did_key = did_from_public_key(other_pub)
     other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
     other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
-    assert other_resp.status_code == 404
+    assert other_resp.status_code == 200, other_resp.text
+    assert other_resp.json()["address_id"] == address["address_id"]
 
 
 @pytest.mark.asyncio
-async def test_address_get_nonexistent_matches_nobody_404_shape(client, controller_identity):
+async def test_address_get_nonexistent_still_returns_404_after_reachability_removal(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1484,17 +1518,17 @@ async def test_address_get_nonexistent_matches_nobody_404_shape(client, controll
 
     hidden_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
     hidden_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=hidden_headers)
-    assert hidden_resp.status_code == 404
-    assert hidden_resp.json() == {"detail": "Address not found"}
+    assert hidden_resp.status_code == 200, hidden_resp.text
+    assert hidden_resp.json()["name"] == "alice"
 
     missing_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="missing")
     missing_resp = await client.get(f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers)
     assert missing_resp.status_code == 404
-    assert missing_resp.json() == hidden_resp.json()
+    assert missing_resp.json() == {"detail": "Address not found"}
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_filters_nobody_to_owner(client, controller_identity):
+async def test_list_addresses_includes_nobody_reachability_for_global_resolution(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1521,7 +1555,7 @@ async def test_list_addresses_filters_nobody_to_owner(client, controller_identit
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
 
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
@@ -1530,7 +1564,7 @@ async def test_list_addresses_filters_nobody_to_owner(client, controller_identit
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_namespace_controller_bypasses_visibility_filters(client, controller_identity):
+async def test_list_addresses_no_longer_has_visibility_filters_to_bypass(client, controller_identity):
     ns_key, ns_did = controller_identity
     outsider_key, outsider_pub = generate_keypair()
     outsider_did_key = did_from_public_key(outsider_pub)
@@ -1561,15 +1595,15 @@ async def test_list_addresses_namespace_controller_bypasses_visibility_filters(c
     outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
     outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
     assert outsider_resp.status_code == 200, outsider_resp.text
-    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
 
 
 @pytest.mark.asyncio
-async def test_org_only_address_get_allows_same_org_persistent_members_only(client, controller_identity):
+async def test_org_only_address_get_allows_global_resolution_without_team_visibility_gate(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1616,7 +1650,7 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
     )
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
-    assert anon_resp.status_code == 404
+    assert anon_resp.status_code == 200, anon_resp.text
 
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
@@ -1633,16 +1667,16 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
         f"/v1/namespaces/{domain}/addresses/alice",
         headers=member_without_cert_headers,
     )
-    assert member_without_cert_resp.status_code == 404
+    assert member_without_cert_resp.status_code == 200, member_without_cert_resp.text
 
     other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
     other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
-    assert other_resp.status_code == 404
+    assert other_resp.status_code == 200, other_resp.text
 
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
-    assert ephemeral_resp.status_code == 404
+    assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
@@ -1684,7 +1718,7 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
 
 
 @pytest.mark.asyncio
-async def test_private_address_get_hides_invalid_presented_certificate(client, controller_identity):
+async def test_global_address_get_ignores_invalid_legacy_presented_certificate(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1708,12 +1742,12 @@ async def test_private_address_get_hides_invalid_presented_certificate(client, c
     headers["X-AWID-Team-Certificate"] = base64.b64encode(b'{"version": 1}').decode()
     resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
 
-    assert resp.status_code == 404, resp.text
-    assert resp.json()["detail"] == "Address not found"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "alice"
 
 
 @pytest.mark.asyncio
-async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(client, controller_identity):
+async def test_org_only_legacy_reachability_does_not_require_persistent_certificate(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1748,11 +1782,11 @@ async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(cl
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
-    assert ephemeral_resp.status_code == 404
+    assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_filters_org_only_to_same_org_persistent_members(client, controller_identity):
+async def test_list_addresses_includes_org_only_without_team_cert_visibility_gate(client, controller_identity):
     ns_key, ns_did = controller_identity
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
@@ -1791,12 +1825,12 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["org-alice", "public-alice"]
 
     outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
     outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
     assert outsider_resp.status_code == 200, outsider_resp.text
-    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["org-alice", "public-alice"]
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="list_addresses")
     member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
@@ -1806,7 +1840,7 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
 
 
 @pytest.mark.asyncio
-async def test_team_members_only_address_get_allows_target_team_persistent_members_only(client, controller_identity):
+async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1868,7 +1902,7 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
     )
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
-    assert anon_resp.status_code == 404
+    assert anon_resp.status_code == 200, anon_resp.text
 
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
@@ -1882,16 +1916,16 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
     other_team_headers = _sign(other_team_key, other_team_did_key, domain=domain, operation="get_address", name="alice")
     other_team_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
     other_team_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_team_headers)
-    assert other_team_resp.status_code == 404
+    assert other_team_resp.status_code == 200, other_team_resp.text
 
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
-    assert ephemeral_resp.status_code == 404
+    assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_filters_team_members_only_to_target_team(client, controller_identity):
+async def test_list_addresses_includes_team_members_only_without_target_team_gate(client, controller_identity):
     ns_key, ns_did = controller_identity
     backend_member_key, backend_member_pub = generate_keypair()
     backend_member_did_key = did_from_public_key(backend_member_pub)
@@ -1943,13 +1977,13 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
 
     frontend_headers = _sign(frontend_member_key, frontend_member_did_key, domain=domain, operation="list_addresses")
     frontend_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
     frontend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=frontend_headers)
     assert frontend_resp.status_code == 200, frontend_resp.text
-    assert [item["name"] for item in frontend_resp.json()["addresses"]] == ["public-alice"]
+    assert [item["name"] for item in frontend_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
 
     backend_headers = _sign(backend_member_key, backend_member_did_key, domain=domain, operation="list_addresses")
     backend_headers["X-AWID-Team-Certificate"] = backend_cert["certificate_header"]
@@ -2394,3 +2428,112 @@ async def test_update_address_rejects_visible_to_team_id_with_org_only(client, c
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "visible_to_team_id is only allowed when reachability=team_members_only"
+
+
+@pytest.mark.asyncio
+async def test_multiple_aliases_resolve_to_identity_delivery_origin_despite_namespace_origins(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    identity_key, identity_pub = generate_keypair()
+    identity_did_key = did_from_public_key(identity_pub)
+    identity = await _register_identity(client, identity_key, identity_did_key)
+    identity_origin = "https://canonical.identity-alias.example"
+    await _set_identity_delivery_origin(client, identity_key, identity_did_key, identity["did_aw"], identity_origin)
+
+    domains = [
+        ("alias-one.example", "https://namespace-one.example"),
+        ("alias-two.example", "https://namespace-two.example"),
+    ]
+    for domain, namespace_origin in domains:
+        headers = _sign(
+            ns_key,
+            ns_did,
+            domain=domain,
+            operation="register",
+            default_delivery_origin=namespace_origin,
+        )
+        ns_resp = await client.post(
+            "/v1/namespaces",
+            json={"domain": domain, "default_delivery_origin": namespace_origin},
+            headers=headers,
+        )
+        assert ns_resp.status_code == 200, ns_resp.text
+        address_headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+        address_resp = await client.post(
+            f"/v1/namespaces/{domain}/addresses",
+            json={
+                "name": "alice",
+                "did_aw": identity["did_aw"],
+                "current_did_key": identity_did_key,
+                "reachability": "public",
+            },
+            headers=address_headers,
+        )
+        assert address_resp.status_code == 200, address_resp.text
+
+    for domain, _namespace_origin in domains:
+        resolved = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+        assert resolved.status_code == 200, resolved.text
+        payload = resolved.json()
+        assert payload["did_aw"] == identity["did_aw"]
+        assert payload["current_did_key"] == identity_did_key
+        assert payload["delivery"] == {"origin": identity_origin, "source": "identity"}
+
+    did_addresses = await client.get(f"/v1/did/{identity['did_aw']}/addresses")
+    assert did_addresses.status_code == 200, did_addresses.text
+    assert {item["delivery"]["origin"] for item in did_addresses.json()["addresses"]} == {identity_origin}
+
+
+@pytest.mark.parametrize("reachability", ["nobody", "org_only", "team_members_only", "public"])
+@pytest.mark.asyncio
+async def test_old_reachability_values_do_not_block_global_address_resolution(client, controller_identity, reachability):
+    ns_key, ns_did = controller_identity
+    identity_key, identity_pub = generate_keypair()
+    identity_did_key = did_from_public_key(identity_pub)
+    identity = await _register_identity(client, identity_key, identity_did_key)
+    domain = f"reachability-{reachability.replace('_', '-')}.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    if reachability == "team_members_only":
+        await _create_team(client, ns_key, ns_did, domain, "backend")
+        visible_to_team_id = f"backend:{domain}"
+    else:
+        visible_to_team_id = None
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": identity["did_aw"],
+            "current_did_key": identity_did_key,
+            "reachability": reachability,
+            "visible_to_team_id": visible_to_team_id,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    anon = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert anon.status_code == 200, anon.text
+    assert anon.json()["did_aw"] == identity["did_aw"]
+
+
+@pytest.mark.asyncio
+async def test_local_did_key_cannot_be_registered_as_global_address_identity(client, controller_identity, awid_db_infra):
+    ns_key, ns_did = controller_identity
+    local_key, local_pub = generate_keypair()
+    local_did_key = did_from_public_key(local_pub)
+    domain = "local-did-key-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="local")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={"name": "local", "did_aw": local_did_key, "current_did_key": local_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+    db = awid_db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        "SELECT 1 FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        local_did_key,
+    )
+    assert row is None

@@ -325,6 +325,7 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
+	deliveryOrigin := "https://identity.acme.example"
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -342,12 +343,17 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 				"did_aw":          stableID,
 				"current_did_key": did,
 				"reachability":    "public",
-				"created_at":      "2026-04-04T00:00:00Z",
+				"delivery": map[string]any{
+					"origin": deliveryOrigin,
+					"source": "identity",
+				},
+				"created_at": "2026-04-04T00:00:00Z",
 			})
 		case "/v1/did/" + stableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": did,
+				"delivery_origin": deliveryOrigin,
 			})
 		default:
 			http.NotFound(w, r)
@@ -375,6 +381,9 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	}
 	if identity.ControllerDID != did {
 		t.Fatalf("ControllerDID=%q", identity.ControllerDID)
+	}
+	if identity.DeliveryOrigin != deliveryOrigin {
+		t.Fatalf("DeliveryOrigin=%q, want %q", identity.DeliveryOrigin, deliveryOrigin)
 	}
 }
 
@@ -575,6 +584,7 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	memberDIDKey := ComputeDIDKey(pub)
 	currentDIDKey := ComputeDIDKey(currentPub)
 	stableID := ComputeStableID(pub)
+	deliveryOrigin := "https://identity.team-member.example"
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -593,6 +603,7 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": currentDIDKey,
+				"delivery_origin": deliveryOrigin,
 			})
 		default:
 			http.NotFound(w, r)
@@ -626,6 +637,9 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	}
 	if identity.ResolvedVia != "registry" {
 		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
+	}
+	if identity.DeliveryOrigin != deliveryOrigin {
+		t.Fatalf("DeliveryOrigin=%q, want %q", identity.DeliveryOrigin, deliveryOrigin)
 	}
 }
 
@@ -757,6 +771,7 @@ func TestRegistryResolverResolvesStableDIDViaFallbackRegistry(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
+	deliveryOrigin := "https://identity.stable.example"
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -764,6 +779,7 @@ func TestRegistryResolverResolvesStableDIDViaFallbackRegistry(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": did,
+				"delivery_origin": deliveryOrigin,
 			})
 		default:
 			http.NotFound(w, r)
@@ -788,6 +804,9 @@ func TestRegistryResolverResolvesStableDIDViaFallbackRegistry(t *testing.T) {
 	}
 	if identity.RegistryURL != server.URL {
 		t.Fatalf("RegistryURL=%q, want %q", identity.RegistryURL, server.URL)
+	}
+	if identity.DeliveryOrigin != deliveryOrigin {
+		t.Fatalf("DeliveryOrigin=%q, want %q", identity.DeliveryOrigin, deliveryOrigin)
 	}
 }
 

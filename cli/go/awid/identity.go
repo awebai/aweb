@@ -11,17 +11,18 @@ import (
 
 // ResolvedIdentity holds resolved identity information for an identity reference.
 type ResolvedIdentity struct {
-	DID           string
-	StableID      string
-	Address       string // address when known; may be empty for addressless references
-	ControllerDID string
-	Handle        string
-	PublicKey     ed25519.PublicKey
-	RegistryURL   string
-	Custody       string // "self" or "custodial"
-	Lifetime      string // "persistent" or "ephemeral"
-	ResolvedAt    time.Time
-	ResolvedVia   string // "did:key", "registry", "pin"
+	DID            string
+	StableID       string
+	Address        string // address when known; may be empty for addressless references
+	ControllerDID  string
+	Handle         string
+	PublicKey      ed25519.PublicKey
+	RegistryURL    string
+	DeliveryOrigin string
+	Custody        string // "self" or "custodial"
+	Lifetime       string // "persistent" or "ephemeral"
+	ResolvedAt     time.Time
+	ResolvedVia    string // "did:key", "registry", "pin"
 }
 
 // IdentityResolver resolves an identifier to a ResolvedIdentity.
