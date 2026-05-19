@@ -2,6 +2,9 @@
 
 Status: separate architecture model. Messaging federation v1 is implemented
 under epic `aweb-aaou`, but this model has not yet been folded into the SOT.
+Epic `aweb-aapf` supersedes this document's namespace-delivery-origin direction
+with the target identity-level delivery-origin model in
+[`global-local-identity-routing.md`](global-local-identity-routing.md).
 
 This note describes the federation model for OSS aweb and awid. It is
 kept separate from the SOTs for now; if the model is accepted, the SOTs should

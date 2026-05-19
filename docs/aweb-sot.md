@@ -21,6 +21,10 @@ For supporting reference material that does not redefine the contract:
   for the OSS stack
 - [`identity-key-verification.md`](identity-key-verification.md) —
   normative rules for verifying `GET /v1/did/{did_aw}/key` responses
+- [`global-local-identity-routing.md`](global-local-identity-routing.md) —
+  target architecture for epic `aweb-aapf`; it defines the planned
+  global/local simplification that will replace persistent/ephemeral
+  messaging reachability and conversation-auth layers after review
 - The aweb server's REST API is documented by the live FastAPI
   `/docs` OpenAPI viewer, auto-generated from route signatures.
   There is no hand-maintained `server-api-reference.md` — a previous

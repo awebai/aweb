@@ -5,7 +5,10 @@ that holds DIDs, namespaces, addresses, teams, and certificate issuance
 records. It is the implementation spec for the awid.ai service.
 
 aweb (the coordination server that depends on awid) is described in
-[`aweb-sot.md`](aweb-sot.md). Hosted deployment details live with the
+[`aweb-sot.md`](aweb-sot.md). The target architecture for epic `aweb-aapf`
+is [`global-local-identity-routing.md`](global-local-identity-routing.md),
+which plans the global/local identity simplification and removal of address
+reachability as a resolver/auth layer. Hosted deployment details live with the
 hosted deployment codebase, not in this SOT.
 
 ---

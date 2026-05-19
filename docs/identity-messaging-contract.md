@@ -6,6 +6,11 @@ reachability, recipient binding, local routing state, and hosted custody cross
 service boundaries. Keeping those boundaries explicit is part of the release
 contract.
 
+Design note: [`global-local-identity-routing.md`](global-local-identity-routing.md)
+defines the `aweb-aapf` target architecture that will replace this
+reachability-centric contract with global `did:aw` routing and learned local
+return routes after review and implementation.
+
 ## Authority Boundaries
 
 | Component | Authority | Not authority |
