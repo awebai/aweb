@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -64,6 +65,19 @@ def _sign(envelope: dict, signing_key: bytes) -> str:
     return sign_message(signing_key, envelope["signed_payload"].encode())
 
 
+def _deprecated_v1_fields() -> dict:
+    return {
+        "sender_active_team_id": "backend:alpha.example",
+        "sender_team_certificate": {
+            "team_id": "backend:alpha.example",
+            "member_did": "did:aw:alice",
+            "signature": "deprecated-and-ignored",
+        },
+        "target_address_lookup_authorization": "Bearer deprecated-private-lookup-token",
+        "target_address_lookup_timestamp": _timestamp(),
+    }
+
+
 def test_verify_federation_envelope_accepts_signed_mail_payload():
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)
@@ -86,6 +100,58 @@ def test_verify_federation_envelope_accepts_signed_mail_payload():
     )
 
     assert verified.target_delivery_origin == "https://aweb.beta.example"
+
+
+def test_verify_federation_envelope_accepts_deprecated_v1_fields_as_ignored_compatibility():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key) | _deprecated_v1_fields()
+    signature = _sign(envelope, signing_key)
+
+    verified = verify_federation_envelope(envelope, signature)
+
+    assert verified.sender_active_team_id == "backend:alpha.example"
+    assert verified.sender_team_certificate is not None
+    assert verified.target_address_lookup_authorization is not None
+    assert verified.target_address_lookup_timestamp is not None
+    assert verified.target_did_aw == "did:aw:target"
+
+
+def test_verify_federation_envelope_still_forbids_other_unknown_fields():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key) | {"unexpected_legacy_field": "nope"}
+    signature = _sign(envelope, signing_key)
+
+    with pytest.raises(ValidationError):
+        verify_federation_envelope(envelope, signature)
+
+
+def test_deprecated_sender_team_certificate_does_not_authorize_unbound_payload():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key) | _deprecated_v1_fields()
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": envelope["conversation_id"],
+            "from": "alpha.example/alice",
+            "from_did": sender_did_key,
+            "from_stable_id": stable_id_from_did_key(sender_did_key),
+            "message_id": envelope["message_id"],
+            "subject": "Federation",
+            "timestamp": envelope["timestamp"],
+            "to": "did:aw:mallory",
+            "to_did": envelope["target_current_did_key"],
+            "to_stable_id": envelope["target_did_aw"],
+            "type": "mail",
+        }
+    ).decode()
+    envelope["signed_payload"] = signed_payload
+    signature = _sign(envelope, signing_key)
+
+    with pytest.raises(FederationEnvelopeError, match="to does not match"):
+        verify_federation_envelope(envelope, signature)
 
 
 @pytest.mark.parametrize("signed_to", ["did:aw:target", "did:key:z6Mktarget"])

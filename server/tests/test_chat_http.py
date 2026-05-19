@@ -237,8 +237,13 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     assert remote_body["envelope"]["type"] == "chat"
     assert remote_body["envelope"]["sender_delivery_origin"] == "https://local.example"
     assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
-    assert "target_address_lookup_authorization" not in remote_body["envelope"]
-    assert "target_address_lookup_timestamp" not in remote_body["envelope"]
+    for deprecated_field in (
+        "sender_active_team_id",
+        "sender_team_certificate",
+        "target_address_lookup_authorization",
+        "target_address_lookup_timestamp",
+    ):
+        assert deprecated_field not in remote_body["envelope"]
     assert remote_body["envelope"]["wait_seconds"] == 30
     participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -733,6 +738,22 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
     assert chat_participant["delivery_origin"] == "https://old.example"
 
 
+def _deprecated_federation_v1_fields() -> dict:
+    return {
+        "sender_active_team_id": "backend:alpha.example",
+        "sender_team_certificate": {
+            "team_id": "backend:alpha.example",
+            "member_did": "did:aw:alice",
+            "signature": "deprecated-and-ignored",
+        },
+        "target_address_lookup_authorization": "Bearer deprecated-private-lookup-token",
+        "target_address_lookup_timestamp": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+
+
 def _federated_chat_payload(
     *,
     sender_sk,
@@ -790,7 +811,7 @@ def _federated_chat_payload(
 
 
 @pytest.mark.asyncio
-async def test_receive_federated_chat_stores_session_message_and_reply_route(aweb_cloud_db):
+async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_delivers(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     bob_sk, _, bob_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -829,6 +850,7 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
         sender_did_key=alice_did_key,
         target_did_key=bob_did_key,
     )
+    payload["envelope"].update(_deprecated_federation_v1_fields())
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)

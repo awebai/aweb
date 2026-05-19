@@ -60,6 +60,17 @@ Mail/chat continuations must use stored participant/session route state:
 
 Missing, stale, malformed, mismatched, or revoked route state fails closed.
 
+## Federation Compatibility
+
+Federation envelope version 1 has a bounded release-window tolerance for four
+fields emitted by older servers:
+`sender_active_team_id`, `sender_team_certificate`,
+`target_address_lookup_authorization`, and `target_address_lookup_timestamp`.
+New senders omit these fields. New receivers may accept them only as ignored,
+deprecated input so mixed-version public/global federation does not fail at
+schema validation. They must not affect routing, lookup, authorization, policy,
+recipient selection, or signed-payload validation.
+
 ## Forbidden Shortcuts
 
 - Do not route global direct-address mail or chat solely because a matching local
