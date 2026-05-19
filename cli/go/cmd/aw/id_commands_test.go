@@ -229,8 +229,8 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			if payload["current_did_key"] != createdDIDKey {
 				t.Fatalf("current_did_key=%v want %v", payload["current_did_key"], createdDIDKey)
 			}
-			if payload["reachability"] != "public" {
-				t.Fatalf("reachability=%v", payload["reachability"])
+			if _, ok := payload["reachability"]; ok {
+				t.Fatalf("unexpected reachability write: %v", payload["reachability"])
 			}
 			verifyCanonicalRegistryAuth(t, r, map[string]string{
 				"domain":    "acme.com",

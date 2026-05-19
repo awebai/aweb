@@ -576,8 +576,6 @@ class RegistryClient:
         name: str,
         did_aw: str,
         controller_signing_key: bytes,
-        reachability: str,
-        visible_to_team_id: str | None = None,
         current_did_key: str | None = None,
     ) -> Address:
         registry_url = await self._registry_url_for_domain(domain)
@@ -598,12 +596,6 @@ class RegistryClient:
                     "name": name,
                     "did_aw": did_aw,
                     "current_did_key": current_did_key,
-                    "reachability": reachability,
-                    **(
-                        {}
-                        if visible_to_team_id is None
-                        else {"visible_to_team_id": visible_to_team_id}
-                    ),
                 },
                 registry_url=registry_url,
             )
@@ -769,15 +761,8 @@ class RegistryClient:
         domain: str,
         name: str,
         controller_signing_key: bytes,
-        reachability: str | None = None,
-        visible_to_team_id: str | None = None,
     ) -> Address:
         registry_url = await self._registry_url_for_domain(domain)
-        payload: dict[str, Any] = {}
-        if reachability is not None:
-            payload["reachability"] = reachability
-        if visible_to_team_id is not None:
-            payload["visible_to_team_id"] = visible_to_team_id
         return _address_from_json(
             await self._request_json(
                 "PUT",
@@ -788,7 +773,7 @@ class RegistryClient:
                     operation="update_address",
                     signing_key=controller_signing_key,
                 ),
-                json=payload,
+                json={},
                 registry_url=registry_url,
             )
         )
@@ -1295,8 +1280,6 @@ class CachedRegistryClient(RegistryClient):
         name: str,
         did_aw: str,
         controller_signing_key: bytes,
-        reachability: str,
-        visible_to_team_id: str | None = None,
         current_did_key: str | None = None,
     ) -> Address:
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
@@ -1306,8 +1289,6 @@ class CachedRegistryClient(RegistryClient):
             name,
             did_aw,
             controller_signing_key,
-            reachability,
-            visible_to_team_id,
             current_did_key,
         )
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
@@ -1318,16 +1299,12 @@ class CachedRegistryClient(RegistryClient):
         domain: str,
         name: str,
         controller_signing_key: bytes,
-        reachability: str | None = None,
-        visible_to_team_id: str | None = None,
     ) -> Address:
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[])
         address = await super().update_address(
             domain,
             name,
             controller_signing_key,
-            reachability,
-            visible_to_team_id,
         )
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
         return address

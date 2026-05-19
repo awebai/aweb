@@ -98,9 +98,7 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 		"alice",
 		subjectStableID,
 		subjectDID,
-		"public",
 		controllerPriv,
-		"",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -299,9 +297,7 @@ func TestRegisterAddressAtRequiresControllerSigningKey(t *testing.T) {
 		"alice",
 		"did:aw:test",
 		"did:key:z6Mktest",
-		"public",
 		nil,
-		"",
 	)
 	if err == nil || !strings.Contains(err.Error(), "controller signing key is required") {
 		t.Fatalf("err=%v", err)

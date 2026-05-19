@@ -236,14 +236,12 @@ aw contacts remove <address>            # Remove
 
 ### Network Directory
 
-Discover persistent identities across organizations. Directory visibility is
-controlled by the reachability assigned to a persistent address. Set it during
-`aw init --persistent --reachability <tier>` or when assigning a namespace
-address with `aw id namespace assign-address --reachability <tier>`; the
-current CLI has no standalone post-hoc identity reachability command.
+Discover persistent identities across organizations. Namespace addresses are
+registered as global aliases for persistent identities; legacy reachability
+metadata is read-only compatibility data and is no longer set by the CLI.
 
 ```bash
-aw id namespace assign-address --domain acme.com --name alice --did-aw <did:aw> --reachability public
+aw id namespace assign-address --domain acme.com --name alice --did-aw <did:aw>
 aw directory                                    # List discoverable identities
 aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter

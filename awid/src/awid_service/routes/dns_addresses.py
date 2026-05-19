@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.did import stable_id_from_did_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
-from awid.team_ids import build_team_id, parse_team_id
 from awid.dns_auth import validate_did_key as _validate_dns_did_key
 from awid.dns_auth import verify_signed_json_request
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -19,22 +18,9 @@ from awid.ratelimit import rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
-_ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
-def normalize_address_reachability(value: str | None, *, default: str = "nobody") -> str:
-    normalized = (value or "").strip().lower().replace("-", "_") or default
-    if normalized not in _ADDRESS_REACHABILITY_VALUES:
-        raise ValueError(f"address_reachability must be one of {sorted(_ADDRESS_REACHABILITY_VALUES)}")
-    return normalized
-
-
-def normalize_visible_to_team_id(value: str | None) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    domain, name = parse_team_id(raw)
-    return build_team_id(domain, name)
+_NEUTRAL_REACHABILITY = "public"
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 logger = logging.getLogger(__name__)
@@ -187,40 +173,22 @@ class AddressRegisterRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     did_aw: str = Field(..., min_length=1)
     current_did_key: str = Field(..., min_length=1)
-    reachability: str = Field(default="nobody", max_length=32)
+    # Deprecated compatibility fields. They are accepted but ignored; all new
+    # address writes use neutral global metadata (public, visible_to_team_id=NULL).
+    reachability: str | None = Field(default=None, max_length=32)
     visible_to_team_id: str | None = Field(default=None, max_length=512)
 
     _check_did_aw = field_validator("did_aw")(_validate_did_aw)
     _check_did_key = field_validator("current_did_key")(_validate_did_key)
 
-    @field_validator("reachability")
-    @classmethod
-    def _validate_reachability(cls, value: str) -> str:
-        return normalize_address_reachability(value)
-
-    @field_validator("visible_to_team_id")
-    @classmethod
-    def _validate_visible_to_team_id(cls, value: str | None) -> str | None:
-        return normalize_visible_to_team_id(value)
-
 
 class AddressUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Deprecated compatibility fields. They are accepted but ignored; update
+    # normalizes address metadata to the neutral global state.
     reachability: str | None = Field(default=None, max_length=32)
     visible_to_team_id: str | None = Field(default=None, max_length=512)
-
-    @field_validator("reachability")
-    @classmethod
-    def _validate_reachability(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return normalize_address_reachability(value)
-
-    @field_validator("visible_to_team_id")
-    @classmethod
-    def _validate_visible_to_team_id(cls, value: str | None) -> str | None:
-        return normalize_visible_to_team_id(value)
 
 
 class AddressReassignRequest(BaseModel):
@@ -308,59 +276,6 @@ async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
     return row["did_aw"]
 
 
-async def _require_visible_to_team(db, visible_to_team_id: str) -> str:
-    canonical_team_id = normalize_visible_to_team_id(visible_to_team_id)
-    if canonical_team_id is None:
-        raise HTTPException(status_code=422, detail="visible_to_team_id is required")
-    team_domain, team_name = parse_team_id(canonical_team_id)
-    row = await db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.teams}}
-        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-        LIMIT 1
-        """,
-        team_domain,
-        team_name,
-    )
-    if row is None:
-        raise HTTPException(status_code=422, detail="visible_to_team_id must reference an active team")
-    return canonical_team_id
-
-
-async def _resolve_address_visibility(
-    db,
-    *,
-    reachability: str | None,
-    visible_to_team_id: str | None,
-    current_reachability: str | None = None,
-    current_visible_to_team_id: str | None = None,
-    visible_to_team_id_supplied: bool,
-) -> tuple[str, str | None]:
-    next_reachability = normalize_address_reachability(
-        reachability if reachability is not None else current_reachability,
-        default="nobody",
-    )
-    next_visible_to_team_id = (
-        visible_to_team_id if visible_to_team_id_supplied else current_visible_to_team_id
-    )
-
-    if next_reachability == "team_members_only":
-        if next_visible_to_team_id is None:
-            raise HTTPException(
-                status_code=422,
-                detail="visible_to_team_id is required when reachability=team_members_only",
-            )
-        return next_reachability, await _require_visible_to_team(db, next_visible_to_team_id)
-
-    if visible_to_team_id_supplied and visible_to_team_id is not None:
-        raise HTTPException(
-            status_code=422,
-            detail="visible_to_team_id is only allowed when reachability=team_members_only",
-        )
-    return next_reachability, None
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -417,12 +332,8 @@ async def register_address(
             namespace_id=ns_row["namespace_id"],
             name=body.name,
         )
-        reachability, visible_to_team_id = await _resolve_address_visibility(
-            tx,
-            reachability=body.reachability,
-            visible_to_team_id=body.visible_to_team_id,
-            visible_to_team_id_supplied=True,
-        )
+        reachability = _NEUTRAL_REACHABILITY
+        visible_to_team_id = None
         existing = await _fetch_active_address_for_registration(
             tx,
             namespace_id=ns_row["namespace_id"],
@@ -576,10 +487,10 @@ async def update_address(
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> AddressResponse:
-    """Update address metadata under a DNS-backed namespace.
+    """Normalize legacy address metadata under a DNS-backed namespace.
 
-    When `reachability` and `visible_to_team_id` are both omitted, this is a
-    no-op that returns the current address state unchanged.
+    Deprecated `reachability` and `visible_to_team_id` request fields are
+    ignored. The address is forced to neutral global metadata.
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
@@ -621,16 +532,9 @@ async def update_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        next_reachability = body.reachability
-        next_reachability, next_visible_to_team_id = await _resolve_address_visibility(
-            tx,
-            reachability=next_reachability,
-            visible_to_team_id=body.visible_to_team_id,
-            current_reachability=row["reachability"],
-            current_visible_to_team_id=row.get("visible_to_team_id"),
-            visible_to_team_id_supplied="visible_to_team_id" in body.model_fields_set,
-        )
-        if next_reachability != row["reachability"] or next_visible_to_team_id != row.get("visible_to_team_id"):
+        next_reachability = _NEUTRAL_REACHABILITY
+        next_visible_to_team_id = None
+        if next_reachability != row["reachability"] or row.get("visible_to_team_id") is not None:
             row = await tx.fetch_one(
                 """
                 UPDATE {{tables.public_addresses}} pa

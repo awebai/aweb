@@ -21,26 +21,21 @@ type idNamespaceAssignAddressOutput struct {
 	Name          string `json:"name"`
 	DIDAW         string `json:"did_aw"`
 	DIDKey        string `json:"did_key"`
-	Reachability  string `json:"reachability"`
 	ControllerDID string `json:"controller_did"`
 	RegistryURL   string `json:"registry_url"`
 }
 
 type idNamespaceAssignAddressOptions struct {
-	Domain          string
-	Name            string
-	DIDAW           string
-	Reachability    string
-	VisibleToTeamID string
+	Domain string
+	Name   string
+	DIDAW  string
 }
 
 var (
-	idNamespaceAssignAddressDomain          string
-	idNamespaceAssignAddressName            string
-	idNamespaceAssignAddressDIDAW           string
-	idNamespaceAssignAddressReachability    string
-	idNamespaceAssignAddressVisibleToTeamID string
-	idNamespaceAssignAddressCmd             = &cobra.Command{
+	idNamespaceAssignAddressDomain string
+	idNamespaceAssignAddressName   string
+	idNamespaceAssignAddressDIDAW  string
+	idNamespaceAssignAddressCmd    = &cobra.Command{
 		Use:   "assign-address",
 		Short: "Assign a namespace address to an existing did:aw using the local controller key",
 		RunE:  runIDNamespaceAssignAddress,
@@ -51,8 +46,6 @@ func init() {
 	idNamespaceAssignAddressCmd.Flags().StringVar(&idNamespaceAssignAddressDomain, "domain", "", "Namespace domain (e.g. aweb.ai)")
 	idNamespaceAssignAddressCmd.Flags().StringVar(&idNamespaceAssignAddressName, "name", "", "Address name (e.g. alice)")
 	idNamespaceAssignAddressCmd.Flags().StringVar(&idNamespaceAssignAddressDIDAW, "did-aw", "", "Existing did:aw to bind the address to")
-	idNamespaceAssignAddressCmd.Flags().StringVar(&idNamespaceAssignAddressReachability, "reachability", "public", "Address reachability (public|nobody|org_only|team_members_only)")
-	idNamespaceAssignAddressCmd.Flags().StringVar(&idNamespaceAssignAddressVisibleToTeamID, "visible-to-team-id", "", "Required when reachability=team_members_only")
 	idNamespaceCmd.AddCommand(idNamespaceAssignAddressCmd)
 }
 
@@ -61,11 +54,9 @@ func runIDNamespaceAssignAddress(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	out, err := executeIDNamespaceAssignAddress(ctx, idNamespaceAssignAddressOptions{
-		Domain:          idNamespaceAssignAddressDomain,
-		Name:            idNamespaceAssignAddressName,
-		DIDAW:           idNamespaceAssignAddressDIDAW,
-		Reachability:    idNamespaceAssignAddressReachability,
-		VisibleToTeamID: idNamespaceAssignAddressVisibleToTeamID,
+		Domain: idNamespaceAssignAddressDomain,
+		Name:   idNamespaceAssignAddressName,
+		DIDAW:  idNamespaceAssignAddressDIDAW,
 	})
 	if err != nil {
 		return err
@@ -87,18 +78,6 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 	if !strings.HasPrefix(didAW, "did:aw:") || strings.TrimSpace(strings.TrimPrefix(didAW, "did:aw:")) == "" {
 		return idNamespaceAssignAddressOutput{}, usageError("--did-aw must be a non-empty did:aw: identifier")
 	}
-	reachability := strings.TrimSpace(opts.Reachability)
-	if reachability == "" {
-		reachability = "public"
-	}
-	visibleToTeamID := strings.TrimSpace(opts.VisibleToTeamID)
-	if reachability == "team_members_only" && visibleToTeamID == "" {
-		return idNamespaceAssignAddressOutput{}, usageError("--visible-to-team-id is required when reachability=team_members_only")
-	}
-	if reachability != "team_members_only" && visibleToTeamID != "" {
-		return idNamespaceAssignAddressOutput{}, usageError("--visible-to-team-id is only valid when reachability=team_members_only")
-	}
-
 	exists, err := awconfig.ControllerKeyExists(domain)
 	if err != nil {
 		return idNamespaceAssignAddressOutput{}, err
@@ -142,7 +121,7 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 		return idNamespaceAssignAddressOutput{}, fmt.Errorf("registry returned no current did:key for %s", didAW)
 	}
 
-	address, err := registry.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, reachability, controllerKey, visibleToTeamID)
+	address, err := registry.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, controllerKey)
 	if err != nil {
 		var regErr *awid.RegistryError
 		if errors.As(err, &regErr) && regErr.StatusCode == http.StatusConflict {
@@ -164,7 +143,6 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 				Name:          name,
 				DIDAW:         existing.DIDAW,
 				DIDKey:        existingDIDKey,
-				Reachability:  strings.TrimSpace(existing.Reachability),
 				ControllerDID: expectedControllerDID,
 				RegistryURL:   registryURL,
 			}, nil
@@ -179,7 +157,6 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 		Name:          name,
 		DIDAW:         strings.TrimSpace(address.DIDAW),
 		DIDKey:        strings.TrimSpace(address.CurrentDIDKey),
-		Reachability:  strings.TrimSpace(address.Reachability),
 		ControllerDID: expectedControllerDID,
 		RegistryURL:   registryURL,
 	}, nil
@@ -197,7 +174,6 @@ func formatIDNamespaceAssignAddress(v any) string {
 		fmt.Fprintf(&b, "%s %s -> %s\n", out.Status, out.Address, out.DIDAW)
 	}
 	fmt.Fprintf(&b, "  did:key:       %s\n", out.DIDKey)
-	fmt.Fprintf(&b, "  reachability:  %s\n", out.Reachability)
 	fmt.Fprintf(&b, "  controller:    %s\n", out.ControllerDID)
 	fmt.Fprintf(&b, "  registry:      %s\n", out.RegistryURL)
 	return b.String()

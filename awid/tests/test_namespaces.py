@@ -1655,7 +1655,7 @@ async def test_org_only_address_get_allows_global_resolution_without_team_visibi
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
     assert owner_resp.status_code == 200, owner_resp.text
-    assert owner_resp.json()["reachability"] == "org_only"
+    assert owner_resp.json()["reachability"] == "public"
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
     member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
@@ -1714,7 +1714,7 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
     resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "org_only"
+    assert resp.json()["reachability"] == "public"
 
 
 @pytest.mark.asyncio
@@ -1865,7 +1865,7 @@ async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate
         reachability="team_members_only",
         visible_to_team_id=f"backend:{domain}",
     )
-    assert address["visible_to_team_id"] == f"backend:{domain}"
+    assert address["visible_to_team_id"] is None
 
     backend_cert = await _register_certificate(
         client,
@@ -1996,12 +1996,13 @@ async def test_list_addresses_includes_team_members_only_without_target_team_gat
 # Split the literals so residue greps can stay strict while this negative test
 # still exercises server-side rejection of the removed enum values.
 @pytest.mark.parametrize("reachability", ["contacts" + "_only", "org" + "_visible"])
-async def test_register_address_rejects_legacy_reachability_values(client, controller_identity, reachability):
+async def test_register_address_ignores_deprecated_reachability_values(client, controller_identity, reachability):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
     domain = f"legacy-{reachability.replace('_', '-')}.example"
     await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
     headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
@@ -2013,7 +2014,9 @@ async def test_register_address_rejects_legacy_reachability_values(client, contr
         },
         headers=headers,
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "public"
+    assert resp.json()["visible_to_team_id"] is None
 
 
 @pytest.mark.asyncio
@@ -2241,7 +2244,6 @@ async def test_registry_client_maps_address_already_bound_error():
                 "alice",
                 "did:aw:bound",
                 controller_key,
-                "public",
                 current_did_key="did:key:z6MkBound",
             )
     finally:
@@ -2323,7 +2325,7 @@ async def test_register_address_rejects_stale_did_key_after_rotation(client, con
 
 
 @pytest.mark.asyncio
-async def test_register_team_members_only_requires_visible_to_team_id(client, controller_identity):
+async def test_register_address_ignores_deprecated_team_members_only_without_visible_to_team_id(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2341,12 +2343,13 @@ async def test_register_team_members_only_requires_visible_to_team_id(client, co
         },
         headers=headers,
     )
-    assert resp.status_code == 422
-    assert resp.json()["detail"] == "visible_to_team_id is required when reachability=team_members_only"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "public"
+    assert resp.json()["visible_to_team_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_register_non_team_members_only_rejects_visible_to_team_id(client, controller_identity):
+async def test_register_address_ignores_deprecated_visible_to_team_id(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2366,12 +2369,13 @@ async def test_register_non_team_members_only_rejects_visible_to_team_id(client,
         },
         headers=headers,
     )
-    assert resp.status_code == 422
-    assert resp.json()["detail"] == "visible_to_team_id is only allowed when reachability=team_members_only"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "public"
+    assert resp.json()["visible_to_team_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_update_address_clears_visible_to_team_id_when_leaving_team_members_only(client, controller_identity):
+async def test_update_address_normalizes_legacy_reachability_metadata(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2397,12 +2401,12 @@ async def test_update_address_clears_visible_to_team_id_when_leaving_team_member
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "org_only"
+    assert resp.json()["reachability"] == "public"
     assert resp.json()["visible_to_team_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_update_address_rejects_visible_to_team_id_with_org_only(client, controller_identity):
+async def test_update_address_ignores_deprecated_visible_to_team_id(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2426,8 +2430,9 @@ async def test_update_address_rejects_visible_to_team_id_with_org_only(client, c
         json={"reachability": "org_only", "visible_to_team_id": f"backend:{domain}"},
         headers=headers,
     )
-    assert resp.status_code == 422
-    assert resp.json()["detail"] == "visible_to_team_id is only allowed when reachability=team_members_only"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "public"
+    assert resp.json()["visible_to_team_id"] is None
 
 
 @pytest.mark.asyncio

@@ -62,7 +62,6 @@ Flags:
 - `--name string Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)`
 - `--persistent Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports Print shell export lines after JSON output`
-- `--reachability string Persistent address reachability (nobody|org-only|team-members-only|public)`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code channel MCP server for real-time coordination`
@@ -239,8 +238,6 @@ Flags:
 - `--domain string Namespace domain (e.g. aweb.ai)`
 - `-h, --help help for assign-address`
 - `--name string Address name (e.g. alice)`
-- `--reachability string Address reachability (public|nobody|org_only|team_members_only) (default "public")`
-- `--visible-to-team-id string Required when reachability=team_members_only`
 
 ## `id namespace resolve`
 

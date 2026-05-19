@@ -194,7 +194,6 @@ async def test_register_address_resolves_current_key_before_posting():
                 "name": "support",
                 "did_aw": subject_did_aw,
                 "current_did_key": subject_did_key,
-                "reachability": "public",
             }
             auth_did_key, signature = _authorization_parts(request.headers["authorization"])
             timestamp = request.headers["x-aweb-timestamp"]
@@ -235,7 +234,6 @@ async def test_register_address_resolves_current_key_before_posting():
         "support",
         subject_did_aw,
         controller_signing_key,
-        "public",
     )
 
     assert address.current_did_key == subject_did_key
@@ -278,7 +276,6 @@ async def test_register_address_maps_did_precondition_conflicts(detail, error_ty
             "support",
             subject_did_aw,
             controller_signing_key,
-            "public",
             current_did_key=subject_did_key,
         )
 
@@ -836,7 +833,7 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
                 signature_b64=signature,
             )
             payload = json.loads(request.content.decode("utf-8"))
-            assert payload == {"reachability": "public"}
+            assert payload == {}
             return httpx.Response(
                 200,
                 json={
@@ -895,7 +892,6 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
         "acme.com",
         "support",
         controller_signing_key,
-        "public",
     )
     await client.delete_address("acme.com", "support", controller_signing_key)
     reverse_lookup = await client.list_did_addresses(subject_did_aw)
@@ -1487,7 +1483,7 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
     before_address = await client.resolve_address("acme.com", "support")
     before_domain = await client.list_addresses("acme.com")
     before_reverse = await client.list_did_addresses(subject_did_aw)
-    updated = await client.update_address("acme.com", "support", controller_signing_key, "public")
+    updated = await client.update_address("acme.com", "support", controller_signing_key)
     after_address = await client.resolve_address("acme.com", "support")
     after_domain = await client.list_addresses("acme.com")
     after_reverse = await client.list_did_addresses(subject_did_aw)
@@ -1742,7 +1738,6 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
         "support",
         subject_did_aw,
         controller_signing_key,
-        "public",
     )
     refreshed = await client.resolve_address("acme.com", "support")
 

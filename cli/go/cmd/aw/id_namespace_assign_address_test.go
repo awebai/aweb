@@ -60,8 +60,8 @@ func TestIDNamespaceAssignAddressHappyPath(t *testing.T) {
 			if body["current_did_key"] != subjectDID {
 				t.Fatalf("current_did_key=%v want %s", body["current_did_key"], subjectDID)
 			}
-			if body["reachability"] != "public" {
-				t.Fatalf("reachability=%v want public", body["reachability"])
+			if _, ok := body["reachability"]; ok {
+				t.Fatalf("unexpected reachability write: %v", body["reachability"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-1",
@@ -81,10 +81,9 @@ func TestIDNamespaceAssignAddressHappyPath(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	out, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        subjectStableID,
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  subjectStableID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,9 +99,6 @@ func TestIDNamespaceAssignAddressHappyPath(t *testing.T) {
 	}
 	if out.DIDKey != subjectDID {
 		t.Fatalf("did_key=%s", out.DIDKey)
-	}
-	if out.Reachability != "public" {
-		t.Fatalf("reachability=%s", out.Reachability)
 	}
 	if registerCalls.Load() != 1 {
 		t.Fatalf("register calls=%d want 1", registerCalls.Load())
@@ -166,10 +162,9 @@ func TestIDNamespaceAssignAddressIdempotentMatchingDID(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	out, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        subjectStableID,
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  subjectStableID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -244,10 +239,9 @@ func TestIDNamespaceAssignAddressConflictWithStaleAddressKey(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        subjectStableID,
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for stale address key")
@@ -320,10 +314,9 @@ func TestIDNamespaceAssignAddressConflictWithDifferentDID(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        subjectStableID,
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for DID mismatch")
@@ -333,55 +326,15 @@ func TestIDNamespaceAssignAddressConflictWithDifferentDID(t *testing.T) {
 	}
 }
 
-func TestIDNamespaceAssignAddressTeamMembersOnlyRequiresVisibleTeamID(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("AWID_REGISTRY_URL", "http://example.invalid")
-
-	_, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        "did:aw:abc",
-		Reachability: "team_members_only",
-	})
-	if err == nil {
-		t.Fatal("expected error when reachability=team_members_only without visible-to-team-id")
-	}
-	if !strings.Contains(err.Error(), "visible-to-team-id") {
-		t.Fatalf("error should mention visible-to-team-id, got: %v", err)
-	}
-}
-
-func TestIDNamespaceAssignAddressVisibleTeamIDOnlyValidForTeamMembersOnly(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("AWID_REGISTRY_URL", "http://example.invalid")
-
-	_, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:          "aweb.ai",
-		Name:            "alice",
-		DIDAW:           "did:aw:abc",
-		Reachability:    "public",
-		VisibleToTeamID: "some:team.example",
-	})
-	if err == nil {
-		t.Fatal("expected error when visible-to-team-id is set without reachability=team_members_only")
-	}
-	if !strings.Contains(err.Error(), "visible-to-team-id") {
-		t.Fatalf("error should mention visible-to-team-id, got: %v", err)
-	}
-}
-
 func TestIDNamespaceAssignAddressEmptyDIDAW(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AWID_REGISTRY_URL", "http://example.invalid")
 
 	_, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        "did:aw:",
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  "did:aw:",
 	})
 	if err == nil {
 		t.Fatal("expected error for empty did:aw body")
@@ -402,10 +355,9 @@ func TestIDNamespaceAssignAddressMissingControllerKey(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, err := executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        "did:aw:xyz",
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  "did:aw:xyz",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing controller key")
@@ -456,10 +408,9 @@ func TestIDNamespaceAssignAddressControllerMismatch(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
-		Domain:       "aweb.ai",
-		Name:         "alice",
-		DIDAW:        subjectStableID,
-		Reachability: "public",
+		Domain: "aweb.ai",
+		Name:   "alice",
+		DIDAW:  subjectStableID,
 	})
 	if err == nil {
 		t.Fatal("expected error for controller key mismatch")
