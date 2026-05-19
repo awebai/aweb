@@ -527,6 +527,37 @@ async def test_namespace_default_delivery_origin_allows_localhost_in_development
 
 
 @pytest.mark.asyncio
+async def test_namespace_default_delivery_origin_allows_insecure_dev_origin_with_explicit_opt_in(
+    client,
+    controller_identity,
+    monkeypatch,
+):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
+    signing_key, controller_did = controller_identity
+    delivery_origin = "http://aweb-alpha:8000"
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="dev-delivery.example",
+        operation="register",
+        default_delivery_origin=delivery_origin,
+    )
+
+    resp = await client.post(
+        "/v1/namespaces",
+        json={
+            "domain": "dev-delivery.example",
+            "default_delivery_origin": delivery_origin,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_delivery_origin"] == delivery_origin
+
+
+@pytest.mark.asyncio
 async def test_namespace_default_delivery_origin_rejects_localhost_outside_development(
     client,
     controller_identity,

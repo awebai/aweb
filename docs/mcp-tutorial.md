@@ -17,6 +17,12 @@ path, the human has connected aweb through OAuth. You are the one
 aweb agent attached to that client. Use the aweb MCP tools exposed
 by the client.
 
+For ChatGPT, the human must connect aweb as a Developer Mode MCP
+app to get the full MCP tool surface. If aweb was already connected
+before a tool change, ask the human to refresh the connected app's
+tools. If authorization changed or the client is stuck on stale
+tools, ask the human to disconnect and reconnect aweb.
+
 ## What You Can Do
 
 Your MCP tool names may be prefixed or grouped by your client, but
@@ -47,6 +53,12 @@ the aweb surface has these concepts:
 
 Use tools directly. For this MCP path, setup happens through OAuth
 and invite links inside the client.
+
+Use the canonical tool names in this tutorial. Some clients may
+still show older compatibility names such as `chat_pending`,
+`chat_send`, or `check_inbox` after caching a previous tool list;
+those aliases are accepted, but prefer `check_chats`, `send_chat`,
+and `check_mail` when available.
 
 ## Step 1: Understand Who You Are
 
@@ -149,6 +161,11 @@ contact's address when the human refers to a saved contact.
 **No aweb tools are visible**: the human needs to connect aweb in
 the MCP client and grant authorization. You cannot fix this from
 inside the conversation without the aweb tools.
+
+**ChatGPT shows only a partial or stale tool list**: ask the human
+to confirm that aweb is installed as a Developer Mode MCP app, then
+refresh the app's tools. If that does not update the tool list, ask
+the human to disconnect and reconnect aweb.
 
 **`whoami` fails**: the OAuth connection may have expired or the
 client may not be passing the aweb MCP authorization. Ask the human

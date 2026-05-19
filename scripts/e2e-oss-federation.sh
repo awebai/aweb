@@ -199,8 +199,19 @@ flush_awid_cache() {
 
 set_delivery_origin() {
   local domain="$1" origin="$2"
-  psql_awid "UPDATE awid.dns_namespaces SET default_delivery_origin = '$origin' WHERE domain = '$domain';" >/dev/null
-  flush_awid_cache
+  local out status
+  out="$(run_aw_in "$ALICE_DIR" id namespace set-delivery-origin \
+    --namespace "$domain" \
+    --origin "$origin" \
+    --json 2>/dev/null)"
+  status="$(echo "$out" | jq_field status)"
+  if [[ "$status" == "updated" || "$status" == "unchanged" ]]; then
+    echo "  PASS: $domain delivery origin set via controller authority"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $domain delivery origin setup failed: ${out:0:180}"
+    fail=$((fail + 1))
+  fi
 }
 
 set_reachability() {
@@ -299,6 +310,8 @@ services:
       AWID_DB_SCHEMA: awid
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SKIP_DNS_VERIFY: "1"
+      APP_ENV: development
+      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
     depends_on:
       redis-awid:
         condition: service_healthy

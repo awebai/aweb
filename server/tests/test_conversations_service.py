@@ -555,3 +555,153 @@ async def test_find_session_between_matches_multi_team_agent_via_did_fallback(aw
         "differs from the participation row's agent_id."
     )
     assert str(found_session_id) == str(session_id)
+
+
+@pytest.mark.asyncio
+async def test_find_active_one_to_one_conversation_between_picks_newest_duplicate(
+    aweb_cloud_db,
+):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db)
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    older = await create_conversation(
+        db,
+        conversation_type="chat",
+        created_by_did="did:aw:alice",
+        initiator={
+            "did": "did:aw:alice",
+            "agent_id": alice_agent_id,
+            "alias": "alice",
+            "address": "acme.com/alice",
+        },
+        recipients=[
+            {
+                "did": "did:aw:bob",
+                "agent_id": bob_agent_id,
+                "alias": "bob",
+                "address": "acme.com/bob",
+            }
+        ],
+        team_id="backend:acme.com",
+    )
+    newer = await create_conversation(
+        db,
+        conversation_type="chat",
+        created_by_did="did:aw:bob",
+        initiator={
+            "did": "did:aw:bob",
+            "agent_id": bob_agent_id,
+            "alias": "bob",
+            "address": "acme.com/bob",
+        },
+        recipients=[
+            {
+                "did": "did:aw:alice",
+                "agent_id": alice_agent_id,
+                "alias": "alice",
+                "address": "acme.com/alice",
+            }
+        ],
+        team_id="backend:acme.com",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.conversations}}
+        SET updated_at = CASE
+            WHEN conversation_id = $1 THEN NOW() - INTERVAL '1 hour'
+            WHEN conversation_id = $2 THEN NOW()
+            ELSE updated_at
+        END
+        WHERE conversation_id IN ($1, $2)
+        """,
+        older["conversation_id"],
+        newer["conversation_id"],
+    )
+
+    found = await find_active_one_to_one_conversation_between(
+        db,
+        conversation_type="chat",
+        did_a="did:aw:alice",
+        did_b="did:aw:bob",
+        agent_id_a=alice_agent_id,
+        agent_id_b=bob_agent_id,
+        address_a="acme.com/alice",
+        address_b="acme.com/bob",
+    )
+
+    assert found is not None
+    assert found["conversation_id"] == newer["conversation_id"]
+
+
+@pytest.mark.asyncio
+async def test_find_session_between_picks_newest_duplicate_legacy_session(
+    aweb_cloud_db,
+):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db)
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    older = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by, created_at)
+        VALUES ('backend:acme.com', 'alice', NOW() - INTERVAL '1 hour')
+        RETURNING session_id
+        """
+    )
+    newer = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by, created_at)
+        VALUES ('backend:acme.com', 'bob', NOW())
+        RETURNING session_id
+        """
+    )
+    for session_id in (older["session_id"], newer["session_id"]):
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}}
+                (session_id, did, agent_id, alias, address)
+            VALUES
+                ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+                ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+            """,
+            session_id,
+            alice_agent_id,
+            bob_agent_id,
+        )
+
+    found_session_id = await find_session_between(
+        db,
+        did_a="did:aw:alice",
+        did_b="did:aw:bob",
+        agent_id_a=alice_agent_id,
+        agent_id_b=bob_agent_id,
+        address_a="acme.com/alice",
+        address_b="acme.com/bob",
+    )
+
+    assert str(found_session_id) == str(newer["session_id"])

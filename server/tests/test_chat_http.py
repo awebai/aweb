@@ -15,6 +15,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.identity_metadata import routable_chat_address
 from aweb.routes import chat as chat_routes
@@ -335,7 +336,9 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        envelope = json.loads(request.content)["envelope"]
+        body = json.loads(request.content)
+        envelope = body["envelope"]
+        verify_federation_envelope(envelope, body["signature"])
         return httpx.Response(
             200,
             json={
@@ -826,7 +829,9 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        envelope = json.loads(request.content)["envelope"]
+        body = json.loads(request.content)
+        envelope = body["envelope"]
+        verify_federation_envelope(envelope, body["signature"])
         return httpx.Response(
             200,
             json={
@@ -862,8 +867,8 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
             "from_stable_id": "did:aw:bob",
             "message_id": reply_message_id,
             "timestamp": reply_timestamp,
-            "to": "alpha.example/alice",
-            "to_did": alice_did_key,
+            "to": "did:aw:alice",
+            "to_did": "did:aw:alice",
             "to_stable_id": "did:aw:alice",
             "type": "chat",
         }

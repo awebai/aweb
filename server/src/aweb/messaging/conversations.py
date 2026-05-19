@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 ConversationType = Literal["mail", "chat"]
 ConversationStatus = Literal["active", "closed", "expired"]
@@ -298,7 +298,9 @@ async def find_active_one_to_one_conversation_between(
 
     First-contact reachability is enforced before a conversation exists. Once an
     active 1:1 conversation exists, participant membership is the routing
-    authority. Ambiguous parallel conversations are surfaced rather than guessed.
+    authority. If duplicate active rows exist, return the newest one so routing
+    remains available; creating duplicates is a data invariant violation, but
+    refusing to route strands the participants.
     """
     normalized_type = _normalize_type(conversation_type)
     dids_a, agent_ids_a = await _equivalent_identity_refs(
@@ -378,8 +380,6 @@ async def find_active_one_to_one_conversation_between(
         agent_ids_b,
         addresses_b,
     )
-    if len(rows) > 1:
-        raise ConflictError("Multiple active conversations match these participants")
     if not rows:
         return None
     return _conversation_dict(dict(rows[0]))

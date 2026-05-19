@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError
+from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError
 from aweb.messaging.conversations import (
     _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
@@ -178,10 +178,12 @@ async def find_session_between(
             agent_ids_b,
             addresses_b,
         )
-        if len(rows) > 1:
-            raise ConflictError("Multiple active chat sessions match these participants")
         if not rows:
             return None
+        # Legacy chat_sessions has no active/closed status. If more than one
+        # pre-conversations session exists for the same 1:1 participants, route
+        # to the newest row so chat remains usable; ensure_session will create
+        # the canonical conversations row for that session before sending.
         return rows[0]["session_id"]
     return UUID(conversation["conversation_id"])
 

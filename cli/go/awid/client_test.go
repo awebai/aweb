@@ -681,6 +681,88 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 }
 
+func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	var gotSend ChatSendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{
+					{
+						SessionID:            "sess-1",
+						Participants:         []string{"rose", "monitor"},
+						ParticipantDIDs:      []string{stableID, "did:aw:monitor"},
+						ParticipantAddresses: []string{"example.com/rose", "otherco/monitor"},
+						CreatedAt:            "2026-02-01T00:00:00Z",
+					},
+				},
+			})
+		case "/v1/chat/sessions/sess-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotSend); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID: "msg-2",
+				Delivered: true,
+			})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("example.com/rose")
+	c.SetStableID(stableID)
+	c.SetRequireRecipientBindingForDirectAddresses(true)
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" {
+				t.Fatalf("resolved %q, want did:aw:monitor", identifier)
+			}
+			return nil, context.Canceled
+		},
+	})
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{Body: "ping"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := &MessageEnvelope{
+		From:           "rose",
+		FromDID:        did,
+		FromStableID:   stableID,
+		To:             "did:aw:monitor",
+		ToStableID:     "did:aw:monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
+	}
+	status, verifyErr := VerifyMessage(env)
+	if verifyErr != nil {
+		t.Fatalf("VerifyMessage: %v", verifyErr)
+	}
+	if status != Verified {
+		t.Fatalf("status=%s, want verified", status)
+	}
+}
+
 func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T) {
 	t.Parallel()
 
@@ -3257,6 +3339,84 @@ func TestInboxVerifiesSignedMessages(t *testing.T) {
 	}
 }
 
+func TestInboxSignedPayloadOverridesStableDIDForVerification(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:alice-stable"
+
+	env := &MessageEnvelope{
+		From:         "myco/alice",
+		FromDID:      did,
+		To:           "otherco/bob",
+		ToDID:        "did:key:z6MkBobCurrent",
+		ToStableID:   "did:aw:bob-stable",
+		Type:         "mail",
+		Subject:      "hello",
+		Body:         "world",
+		Timestamp:    "2026-02-22T00:00:00Z",
+		FromStableID: stableID,
+		MessageID:    "msg-stable-envelope",
+	}
+	sig, err := SignMessage(priv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPayload := CanonicalJSON(env)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{{
+				"message_id":     "msg-stable-envelope",
+				"from_agent_id":  "agent-uuid",
+				"from_alias":     "myco/alice",
+				"to_alias":       "otherco/bob",
+				"subject":        "hello",
+				"body":           "world",
+				"priority":       "normal",
+				"created_at":     "2026-02-22T00:00:00Z",
+				"from_did":       stableID,
+				"from_stable_id": stableID,
+				"to_did":         "did:aw:bob-stable",
+				"to_stable_id":   "did:aw:bob-stable",
+				"signature":      sig,
+				"signing_key_id": did,
+				"signed_payload": signedPayload,
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("len=%d", len(resp.Messages))
+	}
+	msg := resp.Messages[0]
+	if msg.FromDID != did {
+		t.Fatalf("FromDID=%q, want signed payload did:key %q", msg.FromDID, did)
+	}
+	if msg.FromStableID != stableID {
+		t.Fatalf("FromStableID=%q, want %q", msg.FromStableID, stableID)
+	}
+	if msg.ToDID != "did:key:z6MkBobCurrent" {
+		t.Fatalf("ToDID=%q, want signed payload recipient did:key", msg.ToDID)
+	}
+	if msg.VerificationStatus != Verified {
+		t.Fatalf("VerificationStatus=%q, want verified", msg.VerificationStatus)
+	}
+}
+
 func TestInboxUnverifiedWithoutDID(t *testing.T) {
 	t.Parallel()
 
@@ -3381,6 +3541,84 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 		t.Fatalf("len=%d", len(resp.Messages))
 	}
 	msg := resp.Messages[0]
+	if msg.VerificationStatus != Verified {
+		t.Fatalf("VerificationStatus=%q, want verified", msg.VerificationStatus)
+	}
+}
+
+func TestChatHistorySignedPayloadOverridesStableDIDForVerification(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:alice-stable"
+
+	env := &MessageEnvelope{
+		From:           "myco/alice",
+		FromDID:        did,
+		To:             "otherco/bob",
+		ToDID:          "did:key:z6MkBobCurrent",
+		ToStableID:     "did:aw:bob-stable",
+		Type:           "chat",
+		Subject:        "",
+		Body:           "hello chat",
+		Timestamp:      "2026-02-22T00:00:00Z",
+		FromStableID:   stableID,
+		MessageID:      "msg-stable-chat",
+		ConversationID: "sess-1",
+	}
+	sig, err := SignMessage(priv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPayload := CanonicalJSON(env)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{{
+				"message_id":      "msg-stable-chat",
+				"conversation_id": "sess-1",
+				"from_agent":      "myco/alice",
+				"from_address":    "myco/alice",
+				"to_address":      "otherco/bob",
+				"body":            "hello chat",
+				"timestamp":       "2026-02-22T00:00:00Z",
+				"from_did":        stableID,
+				"from_stable_id":  stableID,
+				"to_did":          "did:aw:bob-stable",
+				"to_stable_id":    "did:aw:bob-stable",
+				"signature":       sig,
+				"signing_key_id":  did,
+				"signed_payload":  signedPayload,
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("len=%d", len(resp.Messages))
+	}
+	msg := resp.Messages[0]
+	if msg.FromDID != did {
+		t.Fatalf("FromDID=%q, want signed payload did:key %q", msg.FromDID, did)
+	}
+	if msg.FromStableID != stableID {
+		t.Fatalf("FromStableID=%q, want %q", msg.FromStableID, stableID)
+	}
+	if msg.ToDID != "did:key:z6MkBobCurrent" {
+		t.Fatalf("ToDID=%q, want signed payload recipient did:key", msg.ToDID)
+	}
 	if msg.VerificationStatus != Verified {
 		t.Fatalf("VerificationStatus=%q, want verified", msg.VerificationStatus)
 	}

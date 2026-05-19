@@ -1,8 +1,9 @@
 # Federated Messaging Architecture
 
-Status: separate architecture model, not yet implemented and not part of the current SOT.
+Status: separate architecture model. Messaging federation v1 is implemented
+under epic `aweb-aaou`, but this model has not yet been folded into the SOT.
 
-This note describes a proposed federation model for OSS aweb and awid. It is
+This note describes the federation model for OSS aweb and awid. It is
 kept separate from the SOTs for now; if the model is accepted, the SOTs should
 be updated explicitly in a later step.
 
@@ -75,7 +76,7 @@ Tasks/work/presence/roles/instructions -> local aweb server only
 
 An identity can belong to multiple teams and can hold addresses in multiple
 namespaces. Putting a delivery server on `did:aw` would collapse those contexts
-into one global home server and would not compose with BYOIDT or multi-team
+into one global home server and would not compose with BYOT or multi-team
 identities.
 
 ### Why Not Team For Mail/Chat
@@ -351,11 +352,10 @@ Each aweb server must be configured with its public federation origin
 (`AWEB_PUBLIC_ORIGIN`). Recipient-side federation endpoints reject envelopes
 whose target delivery origin does not match this configured origin.
 
-The endpoint can be new (`/v1/federation/messages`,
-`/v1/federation/chat/...`) or folded into existing `/v1/messages` and
-`/v1/chat` routes, but the auth mode must be explicit. A remote server should
-not need a local workspace row for the sender; it should authenticate the
-signed identity envelope and any presented team certificate.
+The recipient-side endpoint is `POST /v1/federation/messages`. The auth mode is
+explicit: a remote server does not need a local workspace row for the sender;
+the recipient authenticates the signed identity envelope and any presented team
+certificate.
 
 ### aweb CLI
 
@@ -426,6 +426,14 @@ The executable plan lives in `aw` under epic `aweb-aaou`. Subtasks:
 13. `aweb-aaou.13` — Federation e2e matrix: two aweb servers and one awid
     registry.
 14. `aweb-aaou.14` — Docs and SOT updates after federation model acceptance.
+15. `aweb-aaou.15` — Supported namespace delivery-origin setup path; no direct
+    SQL fixture shortcuts in e2e.
+16. `aweb-aaou.16` — Hosted namespaces register or repair delivery origin when
+    AC holds the namespace controller key.
+17. `aweb-aaou.17` — Self-hosting docs for `AWEB_PUBLIC_ORIGIN` and controller
+    authorized delivery-origin publication.
+18. `aweb-aaou.18` — Hosted root federation ingress at
+    `POST /v1/federation/messages`.
 
 ## SOT Updates Needed If This Model Is Accepted
 

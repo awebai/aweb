@@ -230,10 +230,15 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 
 	if meta, ok := parseSignedEnvelopeMetadata(signedPayload); ok {
-		if ev.FromDID == "" {
+		// The chat stream row may carry a stable DID in from_did/to_did when the
+		// session participant was stored under did:aw. The signed payload is the
+		// verification authority and carries the did:key that signed the message;
+		// match ChatHistory normalization so live SSE rendering does not show a
+		// verified message as [unverified].
+		if meta.FromDID != "" {
 			ev.FromDID = meta.FromDID
 		}
-		if ev.ToDID == "" {
+		if meta.ToDID != "" {
 			ev.ToDID = meta.ToDID
 		}
 		if ev.FromStableID == "" {

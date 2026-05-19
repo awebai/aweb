@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent } from "./api/events.js";
-import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
-import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
+import { fetchInbox, type InboxMessage } from "./api/mail.js";
+import { fetchHistory, type ChatMessage } from "./api/chat.js";
 import { PinStore } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
@@ -204,8 +204,6 @@ async function dispatchMailEvent(
       meta,
       deliveryIntent: "wake",
     });
-
-    ackMessage(options.client, msg.message_id).catch(() => {});
   }
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
@@ -218,7 +216,6 @@ async function dispatchChatEvent(
   if (!event.session_id) return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
   let pinsDirty = false;
-  let lastMessageId: string | undefined;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
@@ -249,12 +246,6 @@ async function dispatchChatEvent(
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
-
-    lastMessageId = msg.message_id;
-  }
-
-  if (lastMessageId) {
-    markRead(options.client, event.session_id, lastMessageId).catch(() => {});
   }
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }

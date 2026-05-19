@@ -185,11 +185,18 @@ func httpStatusIs(err error, status int) bool {
 }
 
 func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversationTarget {
-	if value := deterministicTargetList(removeOneSelfIdentifier(item.ParticipantAddresses, c.address)); value != "" {
-		return mailConversationTarget{kind: "address", value: value}
+	otherDIDs, otherAddresses := OtherConversationParticipants(
+		item.ParticipantDIDs,
+		item.ParticipantAddresses,
+		c.stableID,
+		c.did,
+		c.address,
+	)
+	if len(otherDIDs) == 1 {
+		return mailConversationTarget{kind: "did", value: otherDIDs[0]}
 	}
-	if value := deterministicTargetList(removeOneSelfIdentifier(item.ParticipantDIDs, c.stableID, c.did)); value != "" {
-		return mailConversationTarget{kind: "did", value: value}
+	if len(otherAddresses) == 1 {
+		return mailConversationTarget{kind: "address", value: otherAddresses[0]}
 	}
 	selfAlias := c.addressAlias()
 	if selfAlias == "" {
@@ -203,18 +210,18 @@ func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversat
 
 func (c *Client) mailInboxTarget(messages []InboxMessage) mailConversationTarget {
 	for _, msg := range messages {
-		for _, candidate := range []string{msg.FromAddress, msg.ToAddress} {
-			candidate = strings.TrimSpace(candidate)
-			if candidate != "" && !strings.EqualFold(candidate, strings.TrimSpace(c.address)) {
-				return mailConversationTarget{kind: "address", value: candidate}
-			}
-		}
 		for _, candidate := range []string{msg.FromStableID, msg.ToStableID, msg.FromDID, msg.ToDID} {
 			candidate = strings.TrimSpace(candidate)
 			if candidate != "" &&
 				!strings.EqualFold(candidate, strings.TrimSpace(c.stableID)) &&
 				!strings.EqualFold(candidate, strings.TrimSpace(c.did)) {
 				return mailConversationTarget{kind: "did", value: candidate}
+			}
+		}
+		for _, candidate := range []string{msg.FromAddress, msg.ToAddress} {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" && !strings.EqualFold(candidate, strings.TrimSpace(c.address)) {
+				return mailConversationTarget{kind: "address", value: candidate}
 			}
 		}
 	}

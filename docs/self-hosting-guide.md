@@ -133,9 +133,17 @@ uv sync
 export AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWEB_REDIS_URL=redis://localhost:6379/0
 export AWID_REGISTRY_URL=http://localhost:8010
+export AWEB_PUBLIC_ORIGIN=https://aweb.acme.internal
 export APP_ENV=development
 uv run aweb serve
 ```
+
+`AWEB_PUBLIC_ORIGIN` is the public origin other aweb servers use for
+federated mail and chat delivery. It must be an origin only, for example
+`https://aweb.acme.internal`; do not include `/api` or another path.
+Its scheme must match how remote servers reach this deployment. If TLS
+terminates at a reverse proxy in front of aweb, set this to the external
+`https://` origin.
 
 ### Create a Persistent Identity
 
@@ -155,6 +163,28 @@ before moving on.
 If you are running an internal deployment that cannot perform public DNS
 verification, set `AWID_SKIP_DNS_VERIFY=1` on the `awid` server. That is the
 supported bypass for internal networks without DNS validation.
+
+### Publish the Delivery Origin
+
+Federated mail and chat need a delivery origin on the namespace. The namespace
+controller must authorize this setting. Run this from the machine that holds the
+namespace controller key:
+
+```bash
+aw id namespace set-delivery-origin \
+  --namespace acme.com \
+  --origin "$AWEB_URL"
+```
+
+The origin must be the public server origin, not the coordination API path. For
+example, use `https://aweb.acme.internal`, not
+`https://aweb.acme.internal/api`.
+The command uses `AWID_REGISTRY_URL` when it is set; otherwise it discovers the
+registry from DNS.
+
+Hosted aweb.ai namespaces are configured by the hosted service.
+Customer-held namespaces and self-hosted namespaces are configured by the
+namespace controller with the command above.
 
 ### Create a Team
 
@@ -233,6 +263,7 @@ For `aweb`:
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
+- `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
 - `APP_ENV=development` when using an internal `http://awid:8010` registry
 
 For `awid`:

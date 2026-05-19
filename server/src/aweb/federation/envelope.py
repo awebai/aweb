@@ -204,6 +204,12 @@ def _expect_signed_value(payload: Mapping[str, Any], field: str, expected: Any) 
         raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
 
 
+def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: tuple[Any, ...]) -> None:
+    actual = payload.get(field)
+    if not any(actual == value for value in allowed):
+        raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
+
+
 def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     payload = _signed_payload_json(model)
     _expect_signed_value(payload, "type", model.type)
@@ -211,8 +217,23 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     _expect_signed_value(payload, "from_did", model.sender_current_did_key)
     _expect_signed_value(payload, "message_id", model.message_id)
     _expect_signed_value(payload, "timestamp", model.timestamp)
-    _expect_signed_value(payload, "to", model.target_address)
-    _expect_signed_value(payload, "to_did", model.target_current_did_key)
+    # First-contact federation signs the routable address. Continuations may
+    # sign the already-vetted recipient identity while the envelope still carries
+    # target_address as the transport route.
+    _expect_signed_value_in(
+        payload,
+        "to",
+        (model.target_address, model.target_did_aw, model.target_current_did_key),
+    )
+    # Local signed-message validation accepts to_did as either the stable
+    # did:aw or the current did:key. Federation must preserve that same signed
+    # payload vocabulary while the envelope still carries the resolved current
+    # key for routing/freshness checks.
+    _expect_signed_value_in(
+        payload,
+        "to_did",
+        (model.target_current_did_key, model.target_did_aw),
+    )
     _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
     if model.sender_did_aw:
         _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)
