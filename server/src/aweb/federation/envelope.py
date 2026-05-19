@@ -204,9 +204,9 @@ def _expect_signed_value(payload: Mapping[str, Any], field: str, expected: Any) 
         raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
 
 
-def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: set[Any]) -> None:
+def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: tuple[Any, ...]) -> None:
     actual = payload.get(field)
-    if actual not in allowed:
+    if not any(actual == value for value in allowed):
         raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
 
 
@@ -223,7 +223,7 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     _expect_signed_value_in(
         payload,
         "to",
-        {model.target_address, model.target_did_aw, model.target_current_did_key},
+        (model.target_address, model.target_did_aw, model.target_current_did_key),
     )
     _expect_signed_value(payload, "to_did", model.target_current_did_key)
     _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
