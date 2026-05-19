@@ -454,6 +454,38 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
     }
 
 
+async def _external_recipient_from_did_aw(registry_client, did_aw: str) -> dict | None:
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    try:
+        resolution = await registry_client.resolve_key(did_aw)
+        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
+            resolution = await registry_client.resolve_key_fresh(did_aw)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+    if resolution is None:
+        return None
+    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip()
+    if resolved_did_aw != did_aw:
+        raise HTTPException(status_code=422, detail="Recipient stable identity mismatch")
+    current_did_key = str(getattr(resolution, "current_did_key", "") or "").strip()
+    delivery_origin = str(getattr(resolution, "delivery_origin", "") or "").strip()
+    if not current_did_key:
+        raise HTTPException(status_code=422, detail="Recipient current key not found")
+    return {
+        "agent_id": None,
+        "team_id": None,
+        "alias": did_aw,
+        "address": did_aw,
+        "did_aw": did_aw,
+        "did_key": current_did_key,
+        "delivery_origin": delivery_origin,
+        "reachability": "public",
+        "messaging_policy": None,
+        "external": True,
+    }
+
+
 def _sender_address(auth: MessagingAuth) -> str | None:
     return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
@@ -608,33 +640,28 @@ async def _deliver_remote_mail_and_project_locally(
             detail="Recipient address has no federated delivery origin",
         )
     _require_remote_mail_signature(payload)
-    sender_did_aw = (auth.did_aw or "").strip()
-    if not sender_did_aw:
+    sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
+    if not sender_routing_did:
         raise HTTPException(
             status_code=422,
-            detail="Federated mail delivery requires a stable sender did:aw",
+            detail="Federated mail delivery requires a sender identity",
         )
     sender_current_did = payload.from_did.strip()
     if sender_current_did not in set(auth_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
     target_current_did = str(recipient.get("did_key") or "").strip()
     target_stable_id = str(recipient.get("did_aw") or recipient_did or "").strip()
-    target_address = str(recipient.get("address") or payload.to_address or "").strip()
+    target_address = str(recipient.get("address") or payload.to_address or target_stable_id or "").strip()
     if not target_current_did or not target_stable_id or not target_address:
         raise HTTPException(
             status_code=422,
-            detail="Federated mail delivery requires a resolved target address and identity",
+            detail="Federated mail delivery requires a resolved target identity",
         )
     sender_team_certificate = _request_team_certificate(request)
-    if (recipient.get("reachability") or "public") != "public" and sender_team_certificate is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Recipient address requires a team certificate for federated delivery",
-        )
     try:
         envelope = FederationEnvelope(
             type="mail",
-            sender_did_aw=sender_did_aw,
+            sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
             sender_address=sender_address,
             sender_delivery_origin=_local_public_origin(request),
@@ -777,7 +804,7 @@ async def _deliver_remote_mail_and_project_locally(
             "team_id": auth.team_id,
             "from_agent_id": auth.agent_id,
             "from_did": sender_did,
-            "from_did_aw": sender_did_aw,
+            "from_did_aw": sender_routing_did if sender_routing_did.startswith("did:aw:") else None,
             "to_agent_id": to_agent_id,
             "from_alias": auth.alias or sender_did,
             "message_id": message_id or str(local_message_id),
@@ -863,9 +890,15 @@ async def _send_mail_conversation_continuation(
         )
         recipient_participant = continuation.recipient_participant
         if participant_is_remote(recipient_participant):
-            raise HTTPException(
-                status_code=422,
-                detail="Federated mail continuation requires a target-bound recipient address",
+            return await _send_federated_mail_conversation_continuation(
+                request,
+                payload,
+                db,
+                auth=auth,
+                registry_client=registry_client,
+                sender_address=sender_address,
+                sender_did=sender_did,
+                continuation=continuation,
             )
         recipient = await recipient_for_conversation_participant(db, recipient_participant)
         if payload.signature is not None:
@@ -1198,7 +1231,10 @@ async def send_message(
         recipient_did = payload.to_stable_id.strip()
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            if recipient_did.startswith("did:aw:"):
+                recipient = await _external_recipient_from_did_aw(registry_client, recipient_did)
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1224,13 +1260,16 @@ async def send_message(
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
             recipient = _with_requested_address(recipient, address)
-        to_agent_id = str(recipient["agent_id"])
+        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(db, requested_recipient_did)
         if recipient is None:
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            if requested_recipient_did.startswith("did:aw:"):
+                recipient = await _external_recipient_from_did_aw(registry_client, requested_recipient_did)
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1253,7 +1292,7 @@ async def send_message(
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
             recipient = _with_requested_address(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
-        to_agent_id = str(recipient["agent_id"])
+        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
     elif payload.to_address is not None:
         address = payload.to_address.strip()

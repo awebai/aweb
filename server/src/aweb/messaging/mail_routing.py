@@ -76,6 +76,9 @@ async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     local_recipient = await _local_recipient_from_address(db, address=address)
     if local_recipient is not None:
         return with_requested_address(local_recipient, address)
+    did = str(participant.get("did") or "").strip()
+    if did.startswith("did:key:") and not participant_delivery_origin(participant):
+        raise ValidationError("Local did:key recipient requires local resolution or learned return route")
     return participant_recipient(participant)
 
 
@@ -84,12 +87,21 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
     delivery_origin = participant_delivery_origin(participant)
     participant_did = str(participant.get("did") or "").strip()
     did_aw = participant_did if participant_did.startswith("did:aw:") else ""
-    if not address or "/" not in address:
-        raise ValidationError("Remote mail recipient has no stored routable address")
-    if not delivery_origin:
-        raise ValidationError("Remote mail recipient has no stored delivery origin")
     if not did_aw:
-        raise ValidationError("Remote mail recipient has no stored stable identity")
+        if participant_did.startswith("did:key:") and delivery_origin:
+            return {
+                "agent_id": None,
+                "team_id": None,
+                "alias": participant.get("alias") or participant_did,
+                "address": address or participant_did,
+                "did_aw": participant_did,
+                "did_key": participant_did,
+                "delivery_origin": delivery_origin,
+                "reachability": "public",
+                "messaging_policy": None,
+                "external": True,
+            }
+        raise ValidationError("Remote mail recipient has no stored routable identity")
     if registry_client is None:
         raise ServiceError("AWID registry unavailable")
     try:
@@ -104,12 +116,18 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
     current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
     if not current_did:
         raise ValidationError("Remote mail recipient current key not found")
-    _, name = address.split("/", 1)
+    resolved_origin = str(getattr(resolution, "delivery_origin", "") or "").strip() if resolution else ""
+    delivery_origin = resolved_origin or delivery_origin
+    if not delivery_origin:
+        raise ValidationError("Remote mail recipient has no delivery origin")
+    name = did_aw
+    if "/" in address:
+        _, name = address.split("/", 1)
     return {
         "agent_id": None,
         "team_id": None,
         "alias": participant.get("alias") or name,
-        "address": address,
+        "address": address or did_aw,
         "did_aw": did_aw,
         "did_key": current_did,
         "delivery_origin": delivery_origin,

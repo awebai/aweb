@@ -79,6 +79,7 @@ class DIDMapping:
 class KeyResolution:
     did_aw: str
     current_did_key: str
+    delivery_origin: str | None = None
     log_head: DIDKeyEvidence | None = None
 
 
@@ -1756,6 +1757,7 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
     return KeyResolution(
         did_aw=data["did_aw"],
         current_did_key=data["current_did_key"],
+        delivery_origin=data.get("delivery_origin"),
         log_head=_did_key_evidence_from_json(data.get("log_head")),
     )
 
@@ -1811,6 +1813,7 @@ def _key_resolution_to_json(value: KeyResolution) -> dict[str, Any]:
     return {
         "did_aw": value.did_aw,
         "current_did_key": value.current_did_key,
+        "delivery_origin": value.delivery_origin,
         "log_head": None if value.log_head is None else asdict(value.log_head),
     }
 

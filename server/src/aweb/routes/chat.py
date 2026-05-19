@@ -318,29 +318,37 @@ async def _resolve_remote_chat_route(
     address_lookup_kwargs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
-    if "/" not in address:
-        raise HTTPException(status_code=424, detail="Remote chat recipient has no routable address")
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
-    domain, name = address.split("/", 1)
     try:
-        if requester_did_key:
-            resolution = await registry_client.resolve_address(
-                domain,
-                name,
-                did_key=requester_did_key,
-                **(address_lookup_kwargs or {}),
-            )
+        if "/" in address:
+            domain, name = address.split("/", 1)
+            if requester_did_key:
+                resolution = await registry_client.resolve_address(
+                    domain,
+                    name,
+                    did_key=requester_did_key,
+                    **(address_lookup_kwargs or {}),
+                )
+            else:
+                resolution = await registry_client.resolve_address(
+                    domain,
+                    name,
+                    **(address_lookup_kwargs or {}),
+                )
         else:
-            resolution = await registry_client.resolve_address(
-                domain,
-                name,
-                **(address_lookup_kwargs or {}),
-            )
+            did_aw = str(recipient.get("did_aw") or recipient.get("did") or address or "").strip()
+            if not did_aw.startswith("did:aw:"):
+                raise HTTPException(status_code=424, detail="Remote chat recipient has no routable identity")
+            resolution = await registry_client.resolve_key(did_aw)
+            if not resolution and hasattr(registry_client, "resolve_key_fresh"):
+                resolution = await registry_client.resolve_key_fresh(did_aw)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
     if resolution is None:
-        raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
+        raise HTTPException(status_code=404, detail=f"Recipient route not found: {address}")
     target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
     target_current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
     recipient_stable_id = str(recipient.get("did_aw") or "").strip()
@@ -348,12 +356,15 @@ async def _resolve_remote_chat_route(
     if target_stable_id not in {recipient_stable_id, recipient_did}:
         raise HTTPException(status_code=422, detail="Remote chat recipient identity changed")
     delivery = getattr(resolution, "delivery", None)
-    resolved_origin = str(getattr(delivery, "origin", "") or "").strip()
-    delivery_origin = _target_delivery_origin(recipient) or resolved_origin
+    resolved_origin = str(
+        getattr(resolution, "delivery_origin", "")
+        or getattr(delivery, "origin", "")
+        or ""
+    ).strip()
+    delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
-    if resolved_origin and resolved_origin != delivery_origin:
-        delivery_origin = resolved_origin
+    if resolved_origin and resolved_origin != _target_delivery_origin(recipient):
         await _update_chat_participant_delivery_origin(
             db,
             conversation_id=str(recipient.get("session_id") or recipient.get("conversation_id") or ""),
@@ -366,7 +377,38 @@ async def _resolve_remote_chat_route(
         "current_did_key": target_current_did,
         "delivery_origin": delivery_origin,
         "reachability": str(getattr(resolution, "reachability", "") or "").strip() or "public",
-        "requires_team_certificate": (str(getattr(resolution, "reachability", "") or "").strip() or "public") != "public",
+        "requires_team_certificate": False,
+    }
+
+
+async def _external_chat_recipient_from_did_aw(registry_client, did_aw: str) -> dict[str, Any] | None:
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    try:
+        resolution = await registry_client.resolve_key(did_aw)
+        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
+            resolution = await registry_client.resolve_key_fresh(did_aw)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+    if resolution is None:
+        return None
+    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip()
+    if resolved_did_aw != did_aw:
+        raise HTTPException(status_code=422, detail="Remote chat recipient stable identity mismatch")
+    current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
+    delivery_origin = str(getattr(resolution, "delivery_origin", "") or "").strip()
+    if not current_did:
+        raise HTTPException(status_code=422, detail="Remote chat recipient current key not found")
+    return {
+        "agent_id": None,
+        "team_id": None,
+        "alias": did_aw,
+        "address": did_aw,
+        "did_aw": did_aw,
+        "did_key": current_did,
+        "delivery_origin": delivery_origin,
+        "messaging_policy": None,
+        "external": True,
     }
 
 
@@ -381,12 +423,17 @@ async def _resolve_stored_remote_chat_route(
     if not did_aw and participant_did.startswith("did:aw:"):
         did_aw = participant_did
     delivery_origin = _target_delivery_origin(recipient)
-    if not address or "/" not in address:
-        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored routable address")
     if not did_aw:
-        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored stable identity")
-    if not delivery_origin:
-        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored delivery origin")
+        local_did = participant_did if participant_did.startswith("did:key:") else ""
+        if local_did and delivery_origin:
+            return {
+                "address": address or local_did,
+                "did_aw": local_did,
+                "current_did_key": local_did,
+                "delivery_origin": delivery_origin,
+                "requires_team_certificate": False,
+            }
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no stored routable identity")
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
     try:
@@ -401,8 +448,12 @@ async def _resolve_stored_remote_chat_route(
     current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
     if not current_did:
         raise HTTPException(status_code=422, detail="Remote chat recipient current key not found")
+    resolved_origin = str(getattr(resolution, "delivery_origin", "") or "").strip() if resolution else ""
+    delivery_origin = resolved_origin or delivery_origin
+    if not delivery_origin:
+        raise HTTPException(status_code=424, detail="Remote chat recipient has no delivery origin")
     return {
-        "address": address,
+        "address": address or did_aw,
         "did_aw": did_aw,
         "current_did_key": current_did,
         "delivery_origin": delivery_origin,
@@ -474,23 +525,18 @@ async def _deliver_federated_chat(
     session_id: str,
 ) -> dict[str, Any]:
     _require_remote_chat_signature(payload, session_id=session_id)
-    sender_did_aw = (auth.did_aw or "").strip()
-    if not sender_did_aw:
-        raise HTTPException(status_code=422, detail="Federated chat delivery requires a stable sender did:aw")
+    sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
+    if not sender_routing_did:
+        raise HTTPException(status_code=422, detail="Federated chat delivery requires a sender identity")
     sender_current_did = str(payload.from_did or "").strip()
     if sender_current_did not in set(_actor_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
 
     sender_team_certificate = _request_team_certificate(request)
-    if route.get("requires_team_certificate") and sender_team_certificate is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Recipient address requires a team certificate for federated delivery",
-        )
     try:
         envelope = FederationEnvelope(
             type="chat",
-            sender_did_aw=sender_did_aw,
+            sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
             sender_address=sender_address,
             sender_delivery_origin=_local_public_origin(request),
@@ -744,6 +790,8 @@ async def _resolve_chat_targets(
 
     for did in to_dids:
         row = await resolve_agent_by_did(db, did)
+        if row is None and did.startswith("did:aw:"):
+            row = await _external_chat_recipient_from_did_aw(registry_client, did)
         if row is None:
             raise HTTPException(status_code=404, detail=f"Recipient agent not found: {did}")
         resolved[did] = row
@@ -867,6 +915,7 @@ async def _resolve_session_recipient_rows(
                 or (participant_did if participant_did.startswith("did:aw:") else ""),
                 "did_key": ((resolved or {}).get("did_key") or "").strip()
                 or (participant_did if participant_did.startswith("did:key:") else ""),
+                "local_resolved": resolved is not None,
             }
         )
     return recipient_rows
@@ -2013,6 +2062,13 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    for row in recipient_rows:
+        if (
+            str(row.get("did") or "").startswith("did:key:")
+            and not _target_delivery_origin(row)
+            and not row.get("local_resolved")
+        ):
+            raise HTTPException(status_code=422, detail="Local did:key recipient requires local resolution or learned return route")
     for index, row in enumerate(recipient_rows):
         if not _target_delivery_origin(row):
             continue

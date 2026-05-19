@@ -62,10 +62,10 @@ class FederationEnvelope(BaseModel):
 
     @field_validator("sender_did_aw", "target_did_aw")
     @classmethod
-    def _validate_did_aw(cls, value: str) -> str:
+    def _validate_routing_did(cls, value: str) -> str:
         value = value.strip()
-        if not value.startswith("did:aw:"):
-            raise ValueError("must be a did:aw")
+        if not (value.startswith("did:aw:") or value.startswith("did:key:")):
+            raise ValueError("must be a did:aw or did:key")
         return value
 
     @field_validator("sender_current_did_key", "target_current_did_key")
@@ -234,9 +234,14 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
         "to_did",
         (model.target_current_did_key, model.target_did_aw),
     )
-    _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
-    if model.sender_did_aw:
+    if model.target_did_aw.startswith("did:aw:"):
+        _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
+    elif payload.get("to_stable_id") not in (None, "", model.target_did_aw):
+        raise FederationEnvelopeError("Federation signed_payload to_stable_id does not match")
+    if model.sender_did_aw.startswith("did:aw:"):
         _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)
+    elif payload.get("from_stable_id") not in (None, "", model.sender_did_aw):
+        raise FederationEnvelopeError("Federation signed_payload from_stable_id does not match")
     if model.sender_address is not None:
         _expect_signed_value(payload, "from", model.sender_address)
     if model.conversation_id is not None:
