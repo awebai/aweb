@@ -44,11 +44,13 @@ A **global agent** has:
 - a canonical delivery origin for the identity; and
 - zero or more address aliases such as `acme.com/alice`.
 
-A global agent is globally reachable by any other global agent. First contact can
-start from an address alias or, when the sender already knows it, from `did:aw`.
-The sender and recipient still prove key possession with signed envelopes, but
-no team certificate, address visibility flag, contact list, or conversation id is
-needed to authorize first contact.
+A global agent is globally discoverable to global senders and reachable by any
+sender with a valid route and signed payload. First contact can start from an
+address alias or, when the sender already knows it, from `did:aw`. A local agent
+can also write outbound to a global agent through its home server. The sender and
+recipient still prove key possession with signed envelopes, but no team
+certificate, address visibility flag, contact list, or conversation id is needed
+to authorize first contact.
 
 ### Local agent
 
@@ -108,6 +110,19 @@ address resolution should return that identity origin alongside the resolved
 identity key. All address aliases for the same `did:aw` therefore route to the
 same origin by construction.
 
+Write authority for this field belongs to the `did:aw` identity authority: the
+current identity key, or the hosted custodial service acting for that identity.
+Namespace and address controllers may assign or change aliases, but they must not
+be able to redirect an existing global agent's canonical delivery origin merely
+by adding, deleting, or changing an address alias.
+
+Transitional namespace/address delivery origins are migration inputs only. They
+are not ongoing authority after identity-level delivery origin exists. If the
+migration sees conflicting alias origins for one `did:aw`, global delivery for
+that identity must fail closed until an operator repairs the conflict and the
+identity authority (or hosted custodial service acting for it) sets the canonical
+origin.
+
 Rationale:
 
 - It matches the `did:aw <-> actual agent` invariant.
@@ -134,6 +149,29 @@ A reply is valid because the sender signs it and the recipient route is either a
 global identity route or a learned local return route. It is not valid merely
 because the request contains a known `conversation_id`.
 
+### Learned local return routes are vouched capabilities
+
+A learned return route for a local `did:key` is learned from authenticated
+inbound transport and the local home server's route assertion. It is not learned
+merely from arbitrary fields inside the local agent's sender-signed payload. A
+local `did:key` signature proves the local agent key, but it does not prove that
+a claimed delivery origin is authoritative for that key.
+
+The route should be represented as a server-verifiable route assertion or
+capability (or an equivalent transport primitive) that binds at minimum:
+
+- local `did:key`;
+- home delivery origin or concrete return route;
+- issuing server identity or origin;
+- timestamp and expiry;
+- route scope; and
+- revocation semantics.
+
+Replies to local `did:key` require a valid learned route. Stale, missing,
+malformed, mismatched, or revoked route assertions fail closed. A receiving
+global server must not treat a bare self-asserted `did:key -> origin` claim in a
+signed message as sufficient routing authority.
+
 ## Deleted concepts
 
 The target model deletes these concepts as resolver/auth layers:
@@ -145,7 +183,9 @@ The target model deletes these concepts as resolver/auth layers:
 - Team-certificate address visibility gates.
 - aweb recipient messaging policy as a delivery authorization gate
   (`everyone`, `contacts`, `team`, `org`, `nobody`). Contacts may remain as UX
-  labels or address-book state, not as delivery auth.
+  labels or address-book state, not as delivery auth. Recipient-side blocklists,
+  abuse throttles, and spam controls may still run after identity/route
+  resolution; they are not resolver visibility rules.
 - Known-pin or local-row fallback that bypasses global identity resolution for a
   global address.
 - Conversation-id auth bypasses for mail/chat continuation.
@@ -194,11 +234,11 @@ reason delivery is allowed.
    aweb server/team.
 2. It sends to global `beta.example/bob`.
 3. The local server resolves Bob's global identity and delivery origin.
-4. The local agent signs the message as `did:key:zLocal`; the local server adds
-   return-route metadata that identifies where replies for this local key should
-   be delivered.
-5. Bob's server stores both the local sender key and learned return route with
-   the message participant record.
+4. The local agent signs the message as `did:key:zLocal`.
+5. The local home server/transport adds a verifiable route assertion that
+   identifies where replies for this local key should be delivered.
+6. Bob's server stores both the local sender key and validated learned return
+   route with the message participant record.
 
 The local sender is not inserted into AWID and does not become discoverable by
 other global agents.
@@ -208,12 +248,13 @@ other global agents.
 1. Bob replies to `did:key:zLocal` from the inbound message.
 2. Bob's server uses the learned return route captured from that inbound message.
 3. Bob signs the reply payload to the local `did:key` and route context.
-4. The local agent's home server accepts the reply only if the route matches the
-   learned local route and the signed payload binds the expected sender and
-   recipient keys.
+4. The local agent's home server accepts the reply only if the route assertion is
+   still valid, the route matches the learned local route, and the signed payload
+   binds the expected sender and recipient keys.
 
 The learned route is a return path, not a global directory entry. It can expire,
-be revoked, or be scoped to the server/team that issued it.
+be revoked, or be scoped to the server/team that issued it. If it is stale,
+missing, or revoked, the reply fails closed.
 
 ### Failed first contact to unknown local `did:key`
 
@@ -284,8 +325,9 @@ mismatched outer fields and stale routes.
 - Backfill hosted global identities with the hosted aweb origin.
 - For existing namespace-level delivery origin rows, derive candidate identity
   origins only when all active aliases for the `did:aw` agree. If aliases
-  disagree, mark the identity as migration-conflicted and require operator
-  repair before global delivery is enabled for that identity.
+  disagree, mark the identity as migration-conflicted and fail closed for global
+  delivery until operator repair and identity-authorized origin publication are
+  complete.
 
 ### Phase 2: global resolver reads ignore reachability
 
