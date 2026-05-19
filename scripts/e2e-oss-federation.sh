@@ -483,10 +483,10 @@ else
   missing_origin_exit=$?
 fi
 if [[ "$missing_origin_exit" != "0" ]]; then
-  echo "  PASS: namespace without delivery origin fails closed"
+  echo "  PASS: identity without delivery origin fails closed"
   pass=$((pass + 1))
 else
-  echo "  FAIL: namespace without delivery origin unexpectedly succeeded: ${missing_origin_out:0:180}"
+  echo "  FAIL: identity without delivery origin unexpectedly succeeded: ${missing_origin_out:0:180}"
   fail=$((fail + 1))
 fi
 echo ""
