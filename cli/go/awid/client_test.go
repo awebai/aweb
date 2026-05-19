@@ -661,7 +661,7 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		To:             "did:aw:monitor",
 		ToStableID:     "did:aw:monitor",
@@ -742,7 +742,7 @@ func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
@@ -815,7 +815,7 @@ func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T)
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
@@ -888,7 +888,7 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",

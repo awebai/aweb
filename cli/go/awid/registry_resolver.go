@@ -161,6 +161,10 @@ func (r *RegistryResolver) SetFallbackRegistryURL(raw string) error {
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if strings.HasPrefix(strings.TrimSpace(identifier), "did:aw:") {
+		return r.resolveStableIdentity(ctx, strings.TrimSpace(identifier))
+	}
+
 	if teamID, alias, ok := splitTeamMemberReference(identifier); ok {
 		member, err := r.resolveTeamMember(ctx, teamID, alias)
 		if err != nil {
@@ -258,6 +262,46 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 		Lifetime:      LifetimePersistent,
 		ResolvedAt:    r.now().UTC(),
 		ResolvedVia:   "registry",
+	}, nil
+}
+
+func (r *RegistryResolver) resolveStableIdentity(ctx context.Context, didAW string) (*ResolvedIdentity, error) {
+	registryURL := strings.TrimSpace(r.fallbackRegistryURL)
+	if registryURL == "" {
+		return nil, fmt.Errorf("RegistryResolver: no registry URL configured for %s", didAW)
+	}
+	keyRes, err := r.resolveKey(ctx, registryURL, didAW)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(keyRes.DIDAW) != didAW {
+		return nil, fmt.Errorf("RegistryResolver: key did:aw mismatch for %s", didAW)
+	}
+	r.mu.Lock()
+	cachedHead := r.headCache[didAW]
+	r.mu.Unlock()
+	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
+	if outcome == StableIdentityVerified && nextHead != nil {
+		r.mu.Lock()
+		r.headCache[didAW] = nextHead
+		r.mu.Unlock()
+	}
+	if outcome == StableIdentityHardError {
+		return nil, fmt.Errorf("RegistryResolver: invalid log head for %s: %w", didAW, verifyErr)
+	}
+	pub, err := ExtractPublicKey(keyRes.CurrentDIDKey)
+	if err != nil {
+		return nil, fmt.Errorf("RegistryResolver: invalid current did:key: %w", err)
+	}
+	return &ResolvedIdentity{
+		DID:         keyRes.CurrentDIDKey,
+		StableID:    keyRes.DIDAW,
+		PublicKey:   ed25519.PublicKey(pub),
+		RegistryURL: registryURL,
+		Custody:     CustodySelf,
+		Lifetime:    LifetimePersistent,
+		ResolvedAt:  r.now().UTC(),
+		ResolvedVia: "registry",
 	}, nil
 }
 

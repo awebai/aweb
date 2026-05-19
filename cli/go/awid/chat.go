@@ -536,7 +536,12 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 			to = toAddr
 		}
 		targetIsAddress = isRoutableAddressTarget(to) && !strings.Contains(to, ",")
-		from = c.signedPayloadFrom(false, !targetIsAddress)
+		targetIsIdentity := strings.HasPrefix(strings.TrimSpace(to), "did:")
+		// In-session continuations may be relayed through federation using the
+		// stored participant route. Sign the full address so the remote envelope
+		// sender_address can be verified even when the recipient target is a
+		// stable did:aw rather than an address.
+		from = c.signedPayloadFrom(false, !(targetIsAddress || targetIsIdentity))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:                    from,

@@ -748,6 +748,49 @@ func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 	}
 }
 
+func TestRegistryResolverResolvesStableDIDViaFallbackRegistry(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := resolver.Resolve(context.Background(), stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("StableID=%q, want %q", identity.StableID, stableID)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q, want %q", identity.DID, did)
+	}
+	if identity.RegistryURL != server.URL {
+		t.Fatalf("RegistryURL=%q, want %q", identity.RegistryURL, server.URL)
+	}
+}
+
 func TestRegistryResolverRejectsKeyDidAWMismatch(t *testing.T) {
 	t.Parallel()
 
