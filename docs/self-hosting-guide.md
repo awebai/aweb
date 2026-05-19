@@ -166,13 +166,12 @@ supported bypass for internal networks without DNS validation.
 
 ### Publish the Delivery Origin
 
-Federated mail and chat need a delivery origin on the namespace. The namespace
-controller must authorize this setting. Run this from the machine that holds the
-namespace controller key:
+Federated mail and chat need a delivery origin on each global identity. The
+identity key must authorize this setting. Run this from the workspace that holds
+the self-custodial identity key:
 
 ```bash
-aw id namespace set-delivery-origin \
-  --namespace acme.com \
+aw id set-delivery-origin \
   --origin "$AWEB_URL"
 ```
 
@@ -180,11 +179,12 @@ The origin must be the public server origin, not the coordination API path. For
 example, use `https://aweb.acme.internal`, not
 `https://aweb.acme.internal/api`.
 The command uses `AWID_REGISTRY_URL` when it is set; otherwise it discovers the
-registry from DNS.
+registry from the current identity metadata/DNS.
 
-Hosted aweb.ai namespaces are configured by the hosted service.
-Customer-held namespaces and self-hosted namespaces are configured by the
-namespace controller with the command above.
+Namespace default delivery origins are legacy metadata and are not routing
+authority for a `did:aw`. Do not rely on
+`aw id namespace set-delivery-origin` for federated delivery of a global
+identity. Hosted aweb.ai namespaces are configured by the hosted service.
 
 ### Create a Team
 

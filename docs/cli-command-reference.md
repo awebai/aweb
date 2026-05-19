@@ -141,6 +141,7 @@ Subcommands:
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current persistent identity signing key at the registry
+- `set-delivery-origin` Set the current did:aw delivery origin using the identity key
 - `show` Show the current identity and registry status
 - `sign` Sign a canonical JSON payload with the local identity key
 - `team` Team management (create, invite, membership)
@@ -212,7 +213,7 @@ Subcommands:
 - `assign-address` Assign a namespace address to an existing did:aw using the local controller key
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
-- `set-delivery-origin` Set the namespace delivery origin for federated mail/chat
+- `set-delivery-origin` Set legacy namespace default delivery-origin metadata
 
 Flags:
 - `-h, --help help for namespace`
@@ -265,9 +266,10 @@ Flags:
 
 ### `id namespace set-delivery-origin`
 
-Set the namespace delivery origin for federated mail/chat. Requires the local
-namespace controller key. Uses `AWID_REGISTRY_URL` when set; otherwise discovers
-the registry from DNS.
+Set legacy namespace default delivery-origin metadata. Requires the local
+namespace controller key. This is not routing authority for global `did:aw`
+federated delivery; use `aw id set-delivery-origin` for that. Uses
+`AWID_REGISTRY_URL` when set; otherwise discovers the registry from DNS.
 
 Flags:
 - `--domain string Namespace domain`
@@ -283,6 +285,20 @@ Register the current persistent identity at the configured registry
 
 Flags:
 - `-h, --help help for register`
+
+## `id set-delivery-origin`
+
+### `id set-delivery-origin`
+
+Set the current did:aw delivery origin using the identity key. Requires the
+current identity to be persistent and self-custodial. This is the routing
+authority for global federated delivery; namespace default delivery origins are
+not used as the delivery route for a did:aw identity.
+
+Flags:
+- `--did-aw string did:aw identity to update (defaults to the current identity)`
+- `-h, --help help for set-delivery-origin`
+- `--origin string Canonical aweb server origin, for example https://aweb.example.com`
 
 ## `id request`
 
