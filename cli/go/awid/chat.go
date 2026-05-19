@@ -544,15 +544,16 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		from = c.signedPayloadFrom(false, !(targetIsAddress || targetIsIdentity))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:                    from,
-		To:                      to,
-		Type:                    "chat",
-		Body:                    payload.Body,
-		ConversationID:          strings.TrimSpace(sessionID),
-		ReplyTo:                 payload.ReplyTo,
-		SenderLeaving:           payload.Leaving,
-		HangOn:                  payload.ExtendWait,
-		RequireRecipientBinding: targetIsAddress && c.requireRecipientBinding,
+		From:                          from,
+		To:                            to,
+		Type:                          "chat",
+		Body:                          payload.Body,
+		ConversationID:                strings.TrimSpace(sessionID),
+		ReplyTo:                       payload.ReplyTo,
+		SenderLeaving:                 payload.Leaving,
+		HangOn:                        payload.ExtendWait,
+		RequireRecipientBinding:       targetIsAddress && c.requireRecipientBinding,
+		AllowStoredRouteGlobalBinding: true,
 	})
 	if err != nil {
 		return nil, err

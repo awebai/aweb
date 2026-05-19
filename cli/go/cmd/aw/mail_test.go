@@ -256,6 +256,11 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := stableIDFromDidForTest(t, did)
+	recipientPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := awid.ComputeDIDKey(recipientPub)
 
 	bodyContent := "look at `config.ts` line 42 and ${VAR} stays literal\nsecond `paragraph` here"
 
@@ -270,6 +275,11 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case "/v1/did/did:aw:monitor/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:monitor",
+				"current_did_key": recipientDID,
+			})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode body: %v", err)
@@ -294,11 +304,12 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-26T00:00:00Z",
+		DID:         did,
+		StableID:    stableID,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-04-26T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -411,7 +422,7 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
-	if got.ToAlias != "" || got.ToDID != "" {
+	if got.ToAlias != "" || got.ToDID != "did:aw:bob" {
 		t.Fatalf("continuation used unexpected recipient fields: %+v", got)
 	}
 	if got.ToAddress != "" {
@@ -430,7 +441,7 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
+	if signed["to"] != "did:aw:bob" || signed["to_did"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
 		t.Fatalf("signed continuation did not bind rediscovered participant identity: %+v", signed)
 	}
 }

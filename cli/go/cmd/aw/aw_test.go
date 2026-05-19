@@ -966,6 +966,11 @@ func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := stableIDFromDidForTest(t, did)
 	recipientDID := "did:aw:recipient-123"
+	recipientPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientCurrentDID := awid.ComputeDIDKey(recipientPub)
 
 	var gotBody map[string]any
 	var gotAuth string
@@ -977,6 +982,11 @@ func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case "/v1/did/" + recipientDID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          recipientDID,
+				"current_did_key": recipientCurrentDID,
+			})
 		case "/v1/messages":
 			gotAuth = r.Header.Get("Authorization")
 			gotTeamCert = r.Header.Get("X-AWID-Team-Certificate")
@@ -1025,6 +1035,7 @@ func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 		Address:     address,
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: server.URL,
 		SigningKey:  priv,
 	})
 
@@ -1043,8 +1054,8 @@ func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["to_did"] != nil {
-		t.Fatalf("to_did=%v, want absent without current recipient binding", gotBody["to_did"])
+	if gotBody["to_did"] != recipientCurrentDID {
+		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientCurrentDID)
 	}
 	if gotBody["to_stable_id"] != recipientDID {
 		t.Fatalf("to_stable_id=%v, want %s", gotBody["to_stable_id"], recipientDID)
@@ -1597,6 +1608,11 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := stableIDFromDidForTest(t, did)
+	recipientPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := awid.ComputeDIDKey(recipientPub)
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1604,6 +1620,11 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case "/v1/did/did:aw:monitor/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:monitor",
+				"current_did_key": recipientDID,
+			})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-standalone-1",
@@ -1625,11 +1646,12 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:         did,
+		StableID:    stableID,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-04-04T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)

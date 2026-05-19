@@ -664,6 +664,7 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 		From:           "example.com/rose",
 		FromDID:        did,
 		To:             "did:aw:monitor",
+		ToDID:          "did:aw:monitor",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -746,6 +747,7 @@ func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
+		ToDID:          "did:aw:monitor",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -819,6 +821,7 @@ func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T)
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
+		ToDID:          "did:aw:monitor",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -892,6 +895,7 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
+		ToDID:          "did:aw:monitor",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -1911,6 +1915,11 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
 	recipientDID := "did:aw:recipient-123"
+	recipientPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientCurrentDID := ComputeDIDKey(recipientPub)
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1929,6 +1938,12 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	}
 	c.SetAddress("myco/agent")
 	c.SetStableID(stableID)
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != recipientDID {
+			t.Fatalf("resolved %q, want %s", identifier, recipientDID)
+		}
+		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientDID}, nil
+	}})
 
 	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
 		ToDID: recipientDID,
@@ -1938,8 +1953,8 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if gotBody["to_did"] != nil {
-		t.Fatalf("to_did=%v, want absent without current recipient binding", gotBody["to_did"])
+	if gotBody["to_did"] != recipientCurrentDID {
+		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientCurrentDID)
 	}
 	if gotBody["to_stable_id"] != recipientDID {
 		t.Fatalf("to_stable_id=%v, want %q", gotBody["to_stable_id"], recipientDID)
@@ -1963,8 +1978,8 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	if err := json.Unmarshal([]byte(sp), &env); err != nil {
 		t.Fatalf("unmarshal signed payload: %v", err)
 	}
-	if env.ToDID != "" {
-		t.Fatalf("signed payload to_did=%q, want empty without current recipient binding", env.ToDID)
+	if env.ToDID != recipientCurrentDID {
+		t.Fatalf("signed payload to_did=%q, want %q", env.ToDID, recipientCurrentDID)
 	}
 	if env.ToStableID != recipientDID {
 		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientDID)
@@ -2042,7 +2057,7 @@ func TestSendMessageByIdentityStableTargetSignsResolvedRecipientBinding(t *testi
 	}
 }
 
-func TestSendMessageByIdentityStableTargetWithoutResolverOmitsCurrentRecipientBinding(t *testing.T) {
+func TestSendMessageByIdentityStableTargetWithoutResolverFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -2053,14 +2068,10 @@ func TestSendMessageByIdentityStableTargetWithoutResolverOmitsCurrentRecipientBi
 	stableID := ComputeStableID(pub)
 	recipientStableID := "did:aw:recipient-123"
 
-	var gotBody map[string]any
+	var posted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-10T00:00:00Z",
-		})
+		posted = true
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
 
@@ -2075,29 +2086,14 @@ func TestSendMessageByIdentityStableTargetWithoutResolverOmitsCurrentRecipientBi
 		ToDID: recipientStableID,
 		Body:  "hello direct",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected missing current did:key failure")
 	}
-
-	sp, ok := gotBody["signed_payload"].(string)
-	if !ok || sp == "" {
-		t.Fatal("signed_payload missing")
+	if !strings.Contains(err.Error(), "missing current did:key") {
+		t.Fatalf("err=%v", err)
 	}
-	var env MessageEnvelope
-	if err := json.Unmarshal([]byte(sp), &env); err != nil {
-		t.Fatalf("unmarshal signed_payload: %v", err)
-	}
-	if env.ToDID != "" {
-		t.Fatalf("signed payload to_did=%q, want empty without resolver", env.ToDID)
-	}
-	if gotBody["to_did"] != nil {
-		t.Fatalf("wire to_did=%v, want absent without resolver", gotBody["to_did"])
-	}
-	if gotBody["to_stable_id"] != recipientStableID {
-		t.Fatalf("wire to_stable_id=%v, want stable target %q", gotBody["to_stable_id"], recipientStableID)
-	}
-	if env.ToStableID != recipientStableID {
-		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientStableID)
+	if posted {
+		t.Fatal("mail was posted despite missing current did:key")
 	}
 }
 
@@ -2111,6 +2107,11 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
 	recipientStableID := "did:aw:recipient-123"
+	recipientPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientCurrentDID := ComputeDIDKey(recipientPub)
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2129,6 +2130,12 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 	}
 	c.SetAddress("myco/agent")
 	c.SetStableID(stableID)
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != recipientStableID {
+			t.Fatalf("resolved %q, want %s", identifier, recipientStableID)
+		}
+		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientStableID}, nil
+	}})
 
 	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
 		ToStableID: recipientStableID,
@@ -2141,8 +2148,8 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 	if gotBody["to_stable_id"] != recipientStableID {
 		t.Fatalf("wire to_stable_id=%v, want stable target %q", gotBody["to_stable_id"], recipientStableID)
 	}
-	if gotBody["to_did"] != nil {
-		t.Fatalf("wire to_did=%v, want absent without current recipient binding", gotBody["to_did"])
+	if gotBody["to_did"] != recipientCurrentDID {
+		t.Fatalf("wire to_did=%v, want %s", gotBody["to_did"], recipientCurrentDID)
 	}
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
@@ -2152,8 +2159,8 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 	if err := json.Unmarshal([]byte(sp), &env); err != nil {
 		t.Fatalf("unmarshal signed_payload: %v", err)
 	}
-	if env.ToDID != "" {
-		t.Fatalf("signed payload to_did=%q, want empty without current recipient binding", env.ToDID)
+	if env.ToDID != recipientCurrentDID {
+		t.Fatalf("signed payload to_did=%q, want %q", env.ToDID, recipientCurrentDID)
 	}
 	if env.ToStableID != recipientStableID {
 		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientStableID)
@@ -2729,7 +2736,7 @@ func TestChatCreateSessionSingleStableTargetSignsResolvedRecipientBinding(t *tes
 	}
 }
 
-func TestChatCreateSessionSingleStableTargetWithoutResolverOmitsCurrentRecipientBinding(t *testing.T) {
+func TestChatCreateSessionSingleStableTargetWithoutResolverFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -2739,13 +2746,10 @@ func TestChatCreateSessionSingleStableTargetWithoutResolverOmitsCurrentRecipient
 	did := ComputeDIDKey(pub)
 	recipientStableID := "did:aw:recipient-123"
 
-	var gotBody map[string]any
+	var posted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
+		posted = true
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
 
@@ -2759,23 +2763,14 @@ func TestChatCreateSessionSingleStableTargetWithoutResolverOmitsCurrentRecipient
 		ToDIDs:  []string{recipientStableID},
 		Message: "hello direct chat",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected missing current did:key failure")
 	}
-
-	sp, ok := gotBody["signed_payload"].(string)
-	if !ok || sp == "" {
-		t.Fatal("signed_payload missing")
+	if !strings.Contains(err.Error(), "missing current did:key") {
+		t.Fatalf("err=%v", err)
 	}
-	var env MessageEnvelope
-	if err := json.Unmarshal([]byte(sp), &env); err != nil {
-		t.Fatalf("unmarshal signed_payload: %v", err)
-	}
-	if env.ToDID != "" {
-		t.Fatalf("signed payload to_did=%q, want empty without resolver", env.ToDID)
-	}
-	if env.ToStableID != recipientStableID {
-		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientStableID)
+	if posted {
+		t.Fatal("chat was posted despite missing current did:key")
 	}
 }
 
@@ -6079,5 +6074,280 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 
 	if v := c.LatestClientVersion(); v != "" {
 		t.Fatalf("LatestClientVersion=%q, want empty", v)
+	}
+}
+
+func TestSignEnvelopeGlobalTargetBindsStableAndCurrentDID(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	recipientStableID := "did:aw:recipient"
+	recipientPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientCurrentDID := ComputeDIDKey(recipientPub)
+
+	c, err := NewWithIdentity("https://aweb.example", priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(stableID)
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != recipientStableID {
+			t.Fatalf("resolved %q, want %s", identifier, recipientStableID)
+		}
+		return &ResolvedIdentity{DID: recipientCurrentDID, StableID: recipientStableID}, nil
+	}})
+
+	fields, err := c.signEnvelope(context.Background(), &MessageEnvelope{
+		ToDID:                   recipientStableID,
+		Type:                    "mail",
+		Subject:                 "global",
+		Body:                    "hello",
+		RequireRecipientBinding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields.ToStableID != recipientStableID {
+		t.Fatalf("to_stable_id=%q want %s", fields.ToStableID, recipientStableID)
+	}
+	if fields.ToDID != recipientCurrentDID {
+		t.Fatalf("to_did=%q want %s", fields.ToDID, recipientCurrentDID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(fields.SignedPayload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["to_stable_id"] != recipientStableID || payload["to_did"] != recipientCurrentDID {
+		t.Fatalf("signed payload target = %+v", payload)
+	}
+}
+
+func TestSignEnvelopeLocalDIDKeyTargetDoesNotNeedGlobalRoute(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	localPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	localDID := ComputeDIDKey(localPub)
+
+	c, err := NewWithIdentity("https://aweb.example", priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, err := c.signEnvelope(context.Background(), &MessageEnvelope{
+		ToDID:                   localDID,
+		Type:                    "chat",
+		Body:                    "local reply",
+		ConversationID:          "session-1",
+		RequireRecipientBinding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields.ToDID != localDID {
+		t.Fatalf("to_did=%q want %s", fields.ToDID, localDID)
+	}
+	if fields.ToStableID != "" {
+		t.Fatalf("to_stable_id=%q want empty", fields.ToStableID)
+	}
+}
+
+func TestSignEnvelopeGlobalTargetMissingCurrentKeyFailsClosed(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	c, err := NewWithIdentity("https://aweb.example", priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.signEnvelope(context.Background(), &MessageEnvelope{
+		ToDID:                   "did:aw:missing",
+		Type:                    "mail",
+		Subject:                 "global",
+		Body:                    "hello",
+		RequireRecipientBinding: true,
+	})
+	if err == nil {
+		t.Fatal("expected missing current key failure")
+	}
+	if !strings.Contains(err.Error(), "resolve recipient \"did:aw:missing\" for signed mail: missing current did:key") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestSendMessageByIdentityGlobalDIDResolverFailureFailsClosed(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var posted bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages" {
+			posted = true
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != "did:aw:missing" {
+			t.Fatalf("resolved %q, want did:aw:missing", identifier)
+		}
+		return nil, context.Canceled
+	}})
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToDID:   "did:aw:missing",
+		Subject: "global",
+		Body:    "hello",
+	})
+	if err == nil {
+		t.Fatal("expected direct did:aw binding failure")
+	}
+	if !strings.Contains(err.Error(), "resolve recipient \"did:aw:missing\" for signed mail") {
+		t.Fatalf("err=%v", err)
+	}
+	if posted {
+		t.Fatal("mail was posted despite missing global current key")
+	}
+}
+
+func TestChatCreateSessionGlobalDIDMissingCurrentKeyFailsClosed(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var posted bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/sessions" && r.Method == http.MethodPost {
+			posted = true
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != "did:aw:missing" {
+			t.Fatalf("resolved %q, want did:aw:missing", identifier)
+		}
+		return &ResolvedIdentity{StableID: "did:aw:missing"}, nil
+	}})
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToDIDs:  []string{"did:aw:missing"},
+		Message: "hello",
+	})
+	if err == nil {
+		t.Fatal("expected direct did:aw binding failure")
+	}
+	if !strings.Contains(err.Error(), "resolve recipient \"did:aw:missing\" for signed chat: missing current did:key") {
+		t.Fatalf("err=%v", err)
+	}
+	if posted {
+		t.Fatal("chat was posted despite missing global current key")
+	}
+}
+
+func TestSignEnvelopeStoredRouteMailGlobalTargetSignsStableAsToDIDWithoutResolver(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientStableID := "did:aw:stored-mail"
+
+	c, err := NewWithIdentity("https://aweb.example", priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		t.Fatalf("stored-route mail should not resolve %q", identifier)
+		return nil, nil
+	}})
+
+	fields, err := c.signEnvelope(context.Background(), &MessageEnvelope{
+		ToDID:                         recipientStableID,
+		Type:                          "mail",
+		Subject:                       "stored route",
+		Body:                          "hello",
+		ConversationID:                "conversation-1",
+		AllowStoredRouteGlobalBinding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields.ToStableID != recipientStableID || fields.ToDID != recipientStableID {
+		t.Fatalf("fields target to_did=%q to_stable_id=%q", fields.ToDID, fields.ToStableID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(fields.SignedPayload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["to_stable_id"] != recipientStableID || payload["to_did"] != recipientStableID {
+		t.Fatalf("signed payload target = %+v", payload)
+	}
+}
+
+func TestSignEnvelopeStoredRouteChatGlobalTargetSignsStableAsToDIDWithoutResolver(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientStableID := "did:aw:stored-chat"
+
+	c, err := NewWithIdentity("https://aweb.example", priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		t.Fatalf("stored-route chat should not resolve %q", identifier)
+		return nil, nil
+	}})
+
+	fields, err := c.signEnvelope(context.Background(), &MessageEnvelope{
+		To:                            recipientStableID,
+		Type:                          "chat",
+		Body:                          "hello",
+		ConversationID:                "session-1",
+		AllowStoredRouteGlobalBinding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields.ToStableID != recipientStableID || fields.ToDID != recipientStableID {
+		t.Fatalf("fields target to_did=%q to_stable_id=%q", fields.ToDID, fields.ToStableID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(fields.SignedPayload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["to_stable_id"] != recipientStableID || payload["to_did"] != recipientStableID {
+		t.Fatalf("signed payload target = %+v", payload)
 	}
 }

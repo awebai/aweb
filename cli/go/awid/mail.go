@@ -81,7 +81,8 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 			strings.TrimSpace(payload.ToStableID) != "" ||
 			strings.TrimSpace(payload.ToAddress) != ""
 	}
-	if c.signingKey != nil && strings.TrimSpace(payload.ConversationID) == "" && hasRecipient {
+	initialConversationID := strings.TrimSpace(payload.ConversationID)
+	if c.signingKey != nil && initialConversationID == "" && hasRecipient {
 		conversationID, err := GenerateUUID4()
 		if err != nil {
 			return nil, err
@@ -108,16 +109,17 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:                    from,
-		To:                      to,
-		ToDID:                   toDID,
-		ToStableID:              toStableID,
-		Type:                    "mail",
-		Priority:                signedMailPriority(payload.Priority),
-		Subject:                 payload.Subject,
-		Body:                    payload.Body,
-		ConversationID:          strings.TrimSpace(payload.ConversationID),
-		RequireRecipientBinding: strings.TrimSpace(payload.ToAddress) != "" && c.requireRecipientBinding,
+		From:                          from,
+		To:                            to,
+		ToDID:                         toDID,
+		ToStableID:                    toStableID,
+		Type:                          "mail",
+		Priority:                      signedMailPriority(payload.Priority),
+		Subject:                       payload.Subject,
+		Body:                          payload.Body,
+		ConversationID:                strings.TrimSpace(payload.ConversationID),
+		RequireRecipientBinding:       strings.TrimSpace(payload.ToAddress) != "" && c.requireRecipientBinding,
+		AllowStoredRouteGlobalBinding: initialConversationID != "",
 	})
 	if err != nil {
 		return nil, err

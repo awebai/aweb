@@ -103,7 +103,8 @@ type MessageEnvelope struct {
 	SenderLeaving  bool   `json:"sender_leaving,omitempty"`
 	HangOn         bool   `json:"hang_on,omitempty"`
 
-	RequireRecipientBinding bool `json:"-"`
+	RequireRecipientBinding       bool `json:"-"`
+	AllowStoredRouteGlobalBinding bool `json:"-"`
 
 	Signature    string `json:"signature,omitempty"`
 	SigningKeyID string `json:"signing_key_id,omitempty"`
