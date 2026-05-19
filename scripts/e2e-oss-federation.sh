@@ -187,44 +187,20 @@ run_aw_in() {
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
 }
 
-psql_awid() {
-  local sql="$1"
-  compose exec -T postgres-awid \
-    psql -U awid -d awid -v ON_ERROR_STOP=1 -Atq -c "$sql" 2>/dev/null | tr -d '\r'
-}
-
-flush_awid_cache() {
-  compose exec -T redis-awid redis-cli FLUSHDB >/dev/null
-}
-
-set_delivery_origin() {
-  local domain="$1" origin="$2"
+set_identity_delivery_origin() {
+  local dir="$1" label="$2" origin="$3"
   local out status
-  out="$(run_aw_in "$ALICE_DIR" id namespace set-delivery-origin \
-    --namespace "$domain" \
+  out="$(run_aw_in "$dir" id set-delivery-origin \
     --origin "$origin" \
     --json 2>/dev/null)"
   status="$(echo "$out" | jq_field status)"
-  if [[ "$status" == "updated" || "$status" == "unchanged" ]]; then
-    echo "  PASS: $domain delivery origin set via controller authority"
+  if [[ "$status" == "updated" ]]; then
+    echo "  PASS: $label identity delivery origin set"
     pass=$((pass + 1))
   else
-    echo "  FAIL: $domain delivery origin setup failed: ${out:0:180}"
+    echo "  FAIL: $label identity delivery origin setup failed: ${out:0:180}"
     fail=$((fail + 1))
   fi
-}
-
-set_reachability() {
-  local domain="$1" name="$2" reachability="$3" visible_to_team_id="${4:-}"
-  psql_awid "UPDATE awid.public_addresses pa
-    SET reachability = '$reachability',
-        visible_to_team_id = NULLIF('$visible_to_team_id', '')
-    FROM awid.dns_namespaces ns
-    WHERE pa.namespace_id = ns.namespace_id
-      AND ns.domain = '$domain'
-      AND pa.name = '$name'
-      AND pa.deleted_at IS NULL;" >/dev/null
-  flush_awid_cache
 }
 
 wait_health() {
@@ -451,8 +427,10 @@ run_aw_in "$BOB_DIR" init --url "$BETA_URL" --do-not-touch-agents-md >/dev/null 
 charlie_create="$(run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
 assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
-set_delivery_origin "alpha.test.local" "$ALPHA_ORIGIN"
-set_delivery_origin "beta.test.local" "$BETA_ORIGIN"
+set_identity_delivery_origin "$ALICE_DIR" "alice" "$ALPHA_ORIGIN"
+set_identity_delivery_origin "$ANN_DIR" "ann" "$ALPHA_ORIGIN"
+set_identity_delivery_origin "$NED_DIR" "ned" "$ALPHA_ORIGIN"
+set_identity_delivery_origin "$BOB_DIR" "bob" "$BETA_ORIGIN"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
@@ -489,30 +467,15 @@ chat_reply_count="$(echo "$alice_chat" | json_count_matching body "public federa
 assert_eq "public federated chat reply delivered to alpha" "1" "$chat_reply_count"
 echo ""
 
-echo "=== Phase 5: Private target authorization and fail-closed cases ==="
-set_reachability "beta.test.local" "bob" "team_members_only" "alpha:alpha.test.local"
-run_aw_in "$ANN_DIR" mail send --to-address beta.test.local/bob --subject "Private authorized mail" --body "authorized private mail" >/dev/null
-bob_private_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-private_mail_count="$(echo "$bob_private_inbox" | json_count_matching subject "Private authorized mail")"
-assert_eq "private federated mail with authorized team cert delivered" "1" "$private_mail_count"
-run_aw_in "$ANN_DIR" chat send-and-leave beta.test.local/bob "authorized private chat" >/dev/null
-bob_private_chat="$(run_aw_in "$BOB_DIR" chat history alpha.test.local/ann --json 2>/dev/null)"
-private_chat_count="$(echo "$bob_private_chat" | json_count_matching body "authorized private chat")"
-assert_eq "private federated chat with authorized team cert delivered" "1" "$private_chat_count"
-
-set_reachability "beta.test.local" "bob" "team_members_only" "other:alpha.test.local"
-if denied_out="$(run_aw_in "$NED_DIR" mail send --to-address beta.test.local/bob --subject "Private denied" --body "must fail" 2>&1)"; then
-  denied_exit=0
-else
-  denied_exit=$?
-fi
-if [[ "$denied_exit" != "0" ]]; then
-  echo "  PASS: private federated mail without authorization fails closed"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: private federated mail without authorization unexpectedly succeeded: ${denied_out:0:180}"
-  fail=$((fail + 1))
-fi
+echo "=== Phase 5: Global federation fail-closed cases ==="
+run_aw_in "$NED_DIR" mail send --to-address beta.test.local/bob --subject "Global federated mail" --body "global sender reaches beta bob" >/dev/null
+bob_global_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+global_mail_count="$(echo "$bob_global_inbox" | json_count_matching subject "Global federated mail")"
+assert_eq "global federated mail delivered" "1" "$global_mail_count"
+run_aw_in "$NED_DIR" chat send-and-leave beta.test.local/bob "global sender reaches beta chat" >/dev/null
+bob_global_chat="$(run_aw_in "$BOB_DIR" chat history alpha.test.local/ned --json 2>/dev/null)"
+global_chat_count="$(echo "$bob_global_chat" | json_count_matching body "global sender reaches beta chat")"
+assert_eq "global federated chat delivered" "1" "$global_chat_count"
 
 if missing_origin_out="$(run_aw_in "$ALICE_DIR" mail send --to-address gamma.test.local/charlie --subject "Missing origin" --body "must fail" 2>&1)"; then
   missing_origin_exit=0
@@ -529,7 +492,6 @@ fi
 echo ""
 
 echo "=== Phase 6: Direct federation replay/idempotency ==="
-set_reachability "beta.test.local" "bob" "public"
 replay_result="$(
   cd "$SERVER_DIR"
   ALICE_KEY="$ALICE_DIR/.aw/signing.key" \

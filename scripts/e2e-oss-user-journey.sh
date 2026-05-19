@@ -311,50 +311,6 @@ psql_exec() {
   )
 }
 
-set_awid_address_reachability() {
-  local domain="$1" name="$2" reachability="$3" visible_to_team_id="${4:-}"
-  local actual actual_reachability actual_visible_to_team_id expected_visible_to_team_id
-  actual="$(
-    cd "$SERVER_DIR"
-    docker compose --env-file .env.e2e exec -T postgres \
-      psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
-      -Atq -v ON_ERROR_STOP=1 \
-      -c "WITH updated AS (
-          UPDATE awid.public_addresses pa
-          SET reachability = '${reachability}',
-              visible_to_team_id = NULLIF('${visible_to_team_id}', '')
-          FROM awid.dns_namespaces ns
-          WHERE pa.namespace_id = ns.namespace_id
-            AND ns.domain = '${domain}'
-             AND pa.name = '${name}'
-             AND pa.deleted_at IS NULL
-           RETURNING pa.reachability, COALESCE(pa.visible_to_team_id, '') AS visible_to_team_id
-         )
-         SELECT COALESCE((SELECT reachability || '|' || visible_to_team_id FROM updated LIMIT 1), '|');" 2>/dev/null | tr -d '\r' | tail -n 1
-  )"
-  actual_reachability="${actual%%|*}"
-  actual_visible_to_team_id="${actual#*|}"
-  expected_visible_to_team_id=""
-  if [[ "$reachability" == "team_members_only" ]]; then
-    expected_visible_to_team_id="$visible_to_team_id"
-  fi
-  if [[ "$actual_reachability" != "$reachability" || "$actual_visible_to_team_id" != "$expected_visible_to_team_id" ]]; then
-    echo "  FAIL: set $domain/$name reachability to $reachability/$expected_visible_to_team_id (got '$actual_reachability/$actual_visible_to_team_id')"
-    fail=$((fail + 1))
-  fi
-  (
-    cd "$SERVER_DIR"
-    docker compose --env-file .env.e2e exec -T redis sh -c "
-      for version in v1 v2; do
-        redis-cli --scan --pattern \"awid:registry_cache:\${version}:address:*:${domain}:${name}:*\" |
-          while IFS= read -r key; do [ -n \"\$key\" ] && redis-cli DEL \"\$key\" >/dev/null; done
-        redis-cli --scan --pattern \"awid:registry_cache:\${version}:domain_addresses:*:${domain}:*\" |
-          while IFS= read -r key; do [ -n \"\$key\" ] && redis-cli DEL \"\$key\" >/dev/null; done
-      done
-    " >/dev/null 2>&1 || true
-  )
-}
-
 yaml_field() {
   python3 - "$1" "$2" <<'PY'
 import sys
@@ -1418,12 +1374,12 @@ if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   cross_ns_mail_exit=$?
 fi
-assert_eq "conversation gate cross-namespace initial mail exit" "0" "$cross_ns_mail_exit"
+assert_eq "cross-namespace global initial mail exit" "0" "$cross_ns_mail_exit"
 if [[ "$cross_ns_mail_exit" != "0" ]]; then
   echo "  cross namespace mail output: ${cross_ns_mail_out:0:240}"
 fi
 cross_ns_conversation_id="$(echo "$cross_ns_mail_out" | jq_field conversation_id)"
-assert_not_empty "conversation gate cross-namespace initial returns conversation_id" "$cross_ns_conversation_id"
+assert_not_empty "cross-namespace global initial returns conversation_id" "$cross_ns_conversation_id"
 
 if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
   --conversation-id "$cross_ns_conversation_id" \
@@ -1434,213 +1390,113 @@ if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
 else
   cross_ns_reply_exit=$?
 fi
-assert_eq "conversation gate cross-namespace reply by conversation_id" "0" "$cross_ns_reply_exit"
+assert_eq "cross-namespace global reply via stored participant route" "0" "$cross_ns_reply_exit"
 if [[ "$cross_ns_reply_exit" != "0" ]]; then
   echo "  cross namespace reply output: ${cross_ns_reply_out:0:240}"
 fi
 cross_ns_reply_conversation_id="$(echo "$cross_ns_reply_out" | jq_field conversation_id)"
-assert_eq "conversation gate cross-namespace reply stays in conversation" "$cross_ns_conversation_id" "$cross_ns_reply_conversation_id"
+assert_eq "cross-namespace global reply stays in conversation" "$cross_ns_conversation_id" "$cross_ns_reply_conversation_id"
 
 alice_cross_ns_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_cross_ns_reply_body="$(echo "$alice_cross_ns_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$cross_ns_conversation_id' and m.get('subject')=='Cross namespace reply'), ''))" 2>/dev/null || echo "")"
-assert_eq "conversation gate cross-namespace reply delivered" "Cross namespace response" "$alice_cross_ns_reply_body"
+assert_eq "cross-namespace global reply delivered" "Cross namespace response" "$alice_cross_ns_reply_body"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 12e: Messaging identity/reachability matrix
+# Phase 12e: Messaging global/local routing contract
 # ---------------------------------------------------------------------------
-echo "=== Phase 12e: Messaging identity/reachability matrix ==="
+echo "=== Phase 12e: Messaging global/local routing contract ==="
 
 seed_bob_address_out="$(run_aw_in "$ALICE_DIR" id namespace assign-address \
   --domain test.local \
   --name bob \
   --did-aw "$BOB_DID_AW" \
-  --reachability public \
   --json 2>/dev/null)"
 seed_bob_address_status="$(echo "$seed_bob_address_out" | jq_field status)"
 if [[ "$seed_bob_address_status" == "assigned" || "$seed_bob_address_status" == "already_assigned" ]]; then
-  echo "  PASS: matrix bob registry address seeded"
+  echo "  PASS: global bob registry address seeded"
   pass=$((pass + 1))
 else
-  echo "  FAIL: matrix bob registry address seeded (status=$seed_bob_address_status output=${seed_bob_address_out:0:180})"
+  echo "  FAIL: global bob registry address seeded (status=$seed_bob_address_status output=${seed_bob_address_out:0:180})"
   fail=$((fail + 1))
 fi
 
-set_awid_address_reachability "test.local" "bob" "public"
-
-if alice_public_addr_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+if alice_global_addr_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-address test.local/bob \
-  --subject "Matrix public direct address" \
-  --body "Matrix public direct address mail" 2>&1)"; then
-  alice_public_addr_mail_exit=0
+  --subject "Global direct address" \
+  --body "Global direct address mail" 2>&1)"; then
+  alice_global_addr_mail_exit=0
 else
-  alice_public_addr_mail_exit=$?
+  alice_global_addr_mail_exit=$?
 fi
-assert_eq "matrix public direct-address mail exit" "0" "$alice_public_addr_mail_exit"
-if [[ "$alice_public_addr_mail_exit" != "0" ]]; then
-  echo "  matrix public direct-address mail output: ${alice_public_addr_mail_out:0:240}"
+assert_eq "global direct-address mail exit" "0" "$alice_global_addr_mail_exit"
+if [[ "$alice_global_addr_mail_exit" != "0" ]]; then
+  echo "  global direct-address mail output: ${alice_global_addr_mail_out:0:240}"
 fi
 
 bob_matrix_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_public_addr_vs="$(echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix public direct address'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix public direct-address mail verified" "verified" "$bob_public_addr_vs"
-if [[ "$bob_public_addr_vs" != "verified" ]]; then
-  echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('subject')=='Matrix public direct address'), {}); print('  matrix public mail debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
+bob_global_addr_vs="$(echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Global direct address'), ''))" 2>/dev/null || echo "")"
+assert_eq "global direct-address mail verified" "verified" "$bob_global_addr_vs"
+if [[ "$bob_global_addr_vs" != "verified" ]]; then
+  echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('subject')=='Global direct address'), {}); print('  global address mail debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
 fi
 
-if alice_public_addr_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
-  "Matrix public direct address chat" 2>&1)"; then
-  alice_public_addr_chat_exit=0
+if alice_global_addr_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
+  "Global direct address chat" 2>&1)"; then
+  alice_global_addr_chat_exit=0
 else
-  alice_public_addr_chat_exit=$?
+  alice_global_addr_chat_exit=$?
 fi
-assert_eq "matrix public direct-address chat exit" "0" "$alice_public_addr_chat_exit"
-if [[ "$alice_public_addr_chat_exit" != "0" ]]; then
-  echo "  matrix public direct-address chat output: ${alice_public_addr_chat_out:0:240}"
+assert_eq "global direct-address chat exit" "0" "$alice_global_addr_chat_exit"
+if [[ "$alice_global_addr_chat_exit" != "0" ]]; then
+  echo "  global direct-address chat output: ${alice_global_addr_chat_out:0:240}"
 fi
-bob_public_addr_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
-bob_public_addr_chat_vs="$(echo "$bob_public_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix public direct address chat'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix public direct-address chat verified" "verified" "$bob_public_addr_chat_vs"
-if [[ "$bob_public_addr_chat_vs" != "verified" ]]; then
-  echo "$bob_public_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('body')=='Matrix public direct address chat'), {}); print('  matrix public chat debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
-fi
-
-set_awid_address_reachability "test.local" "bob" "org_only"
-if alice_org_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
-  --to-address test.local/bob \
-  --subject "Matrix org-only direct address" \
-  --body "Matrix org-only direct address mail" 2>&1)"; then
-  alice_org_mail_exit=0
-else
-  alice_org_mail_exit=$?
-fi
-assert_eq "matrix org_only direct-address mail exit" "0" "$alice_org_mail_exit"
-if [[ "$alice_org_mail_exit" != "0" ]]; then
-  echo "  matrix org_only mail output: ${alice_org_mail_out:0:240}"
-fi
-bob_org_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_org_vs="$(echo "$bob_org_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix org-only direct address'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix org_only direct-address mail verified" "verified" "$bob_org_vs"
-
-if alice_org_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
-  "Matrix org-only direct address chat" 2>&1)"; then
-  alice_org_chat_exit=0
-else
-  alice_org_chat_exit=$?
-fi
-assert_eq "matrix org_only direct-address chat exit" "0" "$alice_org_chat_exit"
-if [[ "$alice_org_chat_exit" != "0" ]]; then
-  echo "  matrix org_only chat output: ${alice_org_chat_out:0:240}"
-fi
-bob_org_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
-bob_org_chat_vs="$(echo "$bob_org_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix org-only direct address chat'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix org_only direct-address chat verified" "verified" "$bob_org_chat_vs"
-
-set_awid_address_reachability "test.local" "bob" "team_members_only" "devteam:test.local"
-if alice_team_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
-  --to-address test.local/bob \
-  --subject "Matrix team-only direct address" \
-  --body "Matrix team-only direct address mail" 2>&1)"; then
-  alice_team_mail_exit=0
-else
-  alice_team_mail_exit=$?
-fi
-assert_eq "matrix team_members_only direct-address mail exit" "0" "$alice_team_mail_exit"
-if [[ "$alice_team_mail_exit" != "0" ]]; then
-  echo "  matrix team_members_only mail output: ${alice_team_mail_out:0:240}"
-fi
-bob_team_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_team_vs="$(echo "$bob_team_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix team-only direct address'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix team_members_only direct-address mail verified" "verified" "$bob_team_vs"
-
-if alice_team_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
-  "Matrix team-only direct address chat" 2>&1)"; then
-  alice_team_chat_exit=0
-else
-  alice_team_chat_exit=$?
-fi
-assert_eq "matrix team_members_only direct-address chat exit" "0" "$alice_team_chat_exit"
-if [[ "$alice_team_chat_exit" != "0" ]]; then
-  echo "  matrix team_members_only chat output: ${alice_team_chat_out:0:240}"
-fi
-bob_team_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
-bob_team_chat_vs="$(echo "$bob_team_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix team-only direct address chat'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix team_members_only direct-address chat verified" "verified" "$bob_team_chat_vs"
-
-if carol_hidden_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CAROL_DIR" mail send \
-  --to-address test.local/bob \
-  --subject "Matrix hidden should not send" \
-  --body "Matrix unauthorized hidden direct address mail" 2>&1)"; then
-  carol_hidden_mail_exit=0
-else
-  carol_hidden_mail_exit=$?
-fi
-if [[ "$carol_hidden_mail_exit" != "0" ]] && echo "$carol_hidden_mail_out" | grep -qi "resolve recipient\|Address not found\|agent not found\|404"; then
-  echo "  PASS: matrix unauthorized team_members_only direct-address mail fails closed"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: matrix unauthorized team_members_only direct-address mail should fail closed (exit=$carol_hidden_mail_exit output=${carol_hidden_mail_out:0:180})"
-  fail=$((fail + 1))
-fi
-
-set_awid_address_reachability "test.local" "bob" "nobody"
-
-if carol_hidden_nobody_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CAROL_DIR" mail send \
-  --to-address test.local/bob \
-  --subject "Conversation hidden first-contact should not send" \
-  --body "Conversation unauthorized hidden direct address mail" 2>&1)"; then
-  carol_hidden_nobody_mail_exit=0
-else
-  carol_hidden_nobody_mail_exit=$?
-fi
-if [[ "$carol_hidden_nobody_mail_exit" != "0" ]] && echo "$carol_hidden_nobody_mail_out" | grep -qi "resolve recipient\|Address not found\|agent not found\|404"; then
-  echo "  PASS: conversation gate hidden direct-address first contact fails closed"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: conversation gate hidden direct-address first contact should fail closed (exit=$carol_hidden_nobody_mail_exit output=${carol_hidden_nobody_mail_out:0:180})"
-  fail=$((fail + 1))
+bob_global_addr_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
+bob_global_addr_chat_vs="$(echo "$bob_global_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Global direct address chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "global direct-address chat verified" "verified" "$bob_global_addr_chat_vs"
+if [[ "$bob_global_addr_chat_vs" != "verified" ]]; then
+  echo "$bob_global_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('body')=='Global direct address chat'), {}); print('  global address chat debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
 fi
 
 if bob_hidden_start_out="$(run_aw_in "$BOB_DIR" mail send \
   --to-did "$ALICE_DID_AW" \
-  --subject "Conversation hidden bob starts" \
-  --body "Hidden bob starts a conversation" \
+  --subject "Global conversation bob starts" \
+  --body "Bob starts a global conversation" \
   --json 2>&1)"; then
   bob_hidden_start_exit=0
 else
   bob_hidden_start_exit=$?
 fi
-assert_eq "conversation gate hidden bob initiates outbound mail" "0" "$bob_hidden_start_exit"
+assert_eq "global conversation bob initiates outbound mail" "0" "$bob_hidden_start_exit"
 if [[ "$bob_hidden_start_exit" != "0" ]]; then
-  echo "  hidden bob start output: ${bob_hidden_start_out:0:240}"
+  echo "  global bob start output: ${bob_hidden_start_out:0:240}"
 fi
 bob_hidden_conversation_id="$(echo "$bob_hidden_start_out" | jq_field conversation_id)"
-assert_not_empty "conversation gate initial mail returns conversation_id" "$bob_hidden_conversation_id"
+assert_not_empty "global conversation initial mail returns conversation_id" "$bob_hidden_conversation_id"
 
 alice_hidden_start_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_hidden_start_body="$(echo "$alice_hidden_start_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id'), ''))" 2>/dev/null || echo "")"
-assert_eq "conversation gate alice receives hidden bob initiation" "Hidden bob starts a conversation" "$alice_hidden_start_body"
+assert_eq "global conversation alice receives bob initiation" "Bob starts a global conversation" "$alice_hidden_start_body"
 
 if alice_hidden_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
   --conversation-id "$bob_hidden_conversation_id" \
-  --subject "Conversation hidden reply" \
-  --body "Reply by conversation_id to hidden bob" \
+  --subject "Global conversation reply" \
+  --body "Reply through stored participant route" \
   --json 2>&1)"; then
   alice_hidden_reply_exit=0
 else
   alice_hidden_reply_exit=$?
 fi
-assert_eq "conversation gate alice replies by conversation_id while bob hidden" "0" "$alice_hidden_reply_exit"
+assert_eq "global conversation alice replies by stored participant route" "0" "$alice_hidden_reply_exit"
 if [[ "$alice_hidden_reply_exit" != "0" ]]; then
-  echo "  hidden reply output: ${alice_hidden_reply_out:0:240}"
+  echo "  global reply output: ${alice_hidden_reply_out:0:240}"
 fi
 alice_hidden_reply_conversation_id="$(echo "$alice_hidden_reply_out" | jq_field conversation_id)"
-assert_eq "conversation gate reply stays in same conversation" "$bob_hidden_conversation_id" "$alice_hidden_reply_conversation_id"
+assert_eq "global conversation reply stays in same conversation" "$bob_hidden_conversation_id" "$alice_hidden_reply_conversation_id"
 
 bob_hidden_reply_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Conversation hidden reply'), ''))" 2>/dev/null || echo "")"
-assert_eq "conversation gate hidden bob receives conversation reply" "Reply by conversation_id to hidden bob" "$bob_hidden_reply_body"
-assert_eq "conversation gate old client inbox receives conversation reply" "Reply by conversation_id to hidden bob" "$bob_hidden_reply_body"
+bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Global conversation reply'), ''))" 2>/dev/null || echo "")"
+assert_eq "global conversation bob receives stored-route reply" "Reply through stored participant route" "$bob_hidden_reply_body"
 
 if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send \
   --conversation-id "$bob_hidden_conversation_id" \
@@ -1651,10 +1507,10 @@ else
   carol_leaked_conversation_exit=$?
 fi
 if [[ "$carol_leaked_conversation_exit" != "0" ]] && echo "$carol_leaked_conversation_out" | grep -qi "not a participant\|403"; then
-  echo "  PASS: conversation gate leaked conversation_id rejected as non-participant"
+  echo "  PASS: leaked conversation_id rejected as non-participant"
   pass=$((pass + 1))
 else
-  echo "  FAIL: conversation gate leaked conversation_id should return participant rejection (exit=$carol_leaked_conversation_exit output=${carol_leaked_conversation_out:0:180})"
+  echo "  FAIL: leaked conversation_id should return participant rejection (exit=$carol_leaked_conversation_exit output=${carol_leaked_conversation_out:0:180})"
   fail=$((fail + 1))
 fi
 
@@ -1667,10 +1523,10 @@ else
   missing_conversation_exit=$?
 fi
 if [[ "$missing_conversation_exit" != "0" ]] && echo "$missing_conversation_out" | grep -qi "Conversation not found\|404"; then
-  echo "  PASS: conversation gate missing conversation_id returns not found"
+  echo "  PASS: missing conversation_id returns not found"
   pass=$((pass + 1))
 else
-  echo "  FAIL: conversation gate missing conversation_id should return 404 (exit=$missing_conversation_exit output=${missing_conversation_out:0:180})"
+  echo "  FAIL: missing conversation_id should return 404 (exit=$missing_conversation_exit output=${missing_conversation_out:0:180})"
   fail=$((fail + 1))
 fi
 
@@ -1684,10 +1540,10 @@ else
   closed_conversation_exit=$?
 fi
 if [[ "$closed_conversation_exit" != "0" ]] && echo "$closed_conversation_out" | grep -qi "closed\|403"; then
-  echo "  PASS: conversation gate closed conversation rejects continuation"
+  echo "  PASS: closed conversation rejects continuation"
   pass=$((pass + 1))
 else
-  echo "  FAIL: conversation gate closed conversation should reject continuation (exit=$closed_conversation_exit output=${closed_conversation_out:0:180})"
+  echo "  FAIL: closed conversation should reject continuation (exit=$closed_conversation_exit output=${closed_conversation_out:0:180})"
   fail=$((fail + 1))
 fi
 
@@ -1700,12 +1556,12 @@ if ttl_start_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   ttl_start_exit=$?
 fi
-assert_eq "conversation gate ttl slide initial mail exit" "0" "$ttl_start_exit"
+assert_eq "conversation ttl slide initial mail exit" "0" "$ttl_start_exit"
 if [[ "$ttl_start_exit" != "0" ]]; then
   echo "  ttl slide initial output: ${ttl_start_out:0:240}"
 fi
 ttl_conversation_id="$(echo "$ttl_start_out" | jq_field conversation_id)"
-assert_not_empty "conversation gate ttl slide initial returns conversation_id" "$ttl_conversation_id"
+assert_not_empty "conversation ttl slide initial returns conversation_id" "$ttl_conversation_id"
 psql_exec "UPDATE aweb.conversations SET expires_at = NOW() + INTERVAL '1 day' WHERE conversation_id = '${ttl_conversation_id}'::uuid;"
 if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send \
   --conversation-id "$ttl_conversation_id" \
@@ -1716,9 +1572,9 @@ if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send \
 else
   ttl_reply_exit=$?
 fi
-assert_eq "conversation gate ttl slide continuation exit" "0" "$ttl_reply_exit"
+assert_eq "conversation ttl slide continuation exit" "0" "$ttl_reply_exit"
 ttl_slid="$(psql_scalar "SELECT CASE WHEN expires_at > NOW() + INTERVAL '29 days' THEN 'yes' ELSE 'no' END FROM aweb.conversations WHERE conversation_id = '${ttl_conversation_id}'::uuid;")"
-assert_eq "conversation gate continuation slides ttl 30 days" "yes" "$ttl_slid"
+assert_eq "conversation continuation slides ttl 30 days" "yes" "$ttl_slid"
 
 if expired_start_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to bob \
@@ -1729,9 +1585,9 @@ if expired_start_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   expired_start_exit=$?
 fi
-assert_eq "conversation gate concurrent expiry initial mail exit" "0" "$expired_start_exit"
+assert_eq "conversation concurrent expiry initial mail exit" "0" "$expired_start_exit"
 expired_conversation_id="$(echo "$expired_start_out" | jq_field conversation_id)"
-assert_not_empty "conversation gate concurrent expiry returns conversation_id" "$expired_conversation_id"
+assert_not_empty "conversation concurrent expiry returns conversation_id" "$expired_conversation_id"
 psql_exec "UPDATE aweb.conversations SET expires_at = NOW() - INTERVAL '1 second' WHERE conversation_id = '${expired_conversation_id}'::uuid;"
 expired_one_out="$E2E_CWD/expired-one.out"
 expired_two_out="$E2E_CWD/expired-two.out"
@@ -1764,45 +1620,29 @@ expired_two_text="$(cat "$expired_two_out" 2>/dev/null || true)"
 expired_status="$(psql_scalar "SELECT status FROM aweb.conversations WHERE conversation_id = '${expired_conversation_id}'::uuid;")"
 if [[ "$expired_one_exit" != "0" && "$expired_two_exit" != "0" && "$expired_status" == "expired" ]] && \
    echo "$expired_one_text $expired_two_text" | grep -qi "expired\|403"; then
-  echo "  PASS: conversation gate concurrent lazy expiry rejects both continuations"
+  echo "  PASS: conversation concurrent lazy expiry rejects both continuations"
   pass=$((pass + 1))
 else
-  echo "  FAIL: conversation gate concurrent lazy expiry should reject both (exit1=$expired_one_exit exit2=$expired_two_exit status=$expired_status output1=${expired_one_text:0:120} output2=${expired_two_text:0:120})"
+  echo "  FAIL: conversation concurrent lazy expiry should reject both (exit1=$expired_one_exit exit2=$expired_two_exit status=$expired_status output1=${expired_one_text:0:120} output2=${expired_two_text:0:120})"
   fail=$((fail + 1))
 fi
 
-if alice_pin_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
-  --to-address test.local/bob \
-  --subject "Matrix known pin fallback" \
-  --body "Matrix known pin fallback mail" 2>&1)"; then
-  alice_pin_mail_exit=0
-else
-  alice_pin_mail_exit=$?
-fi
-assert_eq "matrix known-agent pin fallback mail exit" "0" "$alice_pin_mail_exit"
-if [[ "$alice_pin_mail_exit" != "0" ]]; then
-  echo "  matrix known-agent pin fallback output: ${alice_pin_mail_out:0:240}"
-fi
-
-set_awid_address_reachability "test.local" "bob" "public"
 if alice_stable_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-did "$BOB_DID_AW" \
-  --subject "Matrix stable did target" \
-  --body "Matrix stable did target mail" 2>&1)"; then
+  --subject "Global stable did target" \
+  --body "Global stable did target mail" 2>&1)"; then
   alice_stable_mail_exit=0
 else
   alice_stable_mail_exit=$?
 fi
-assert_eq "matrix stable did:aw mail exit" "0" "$alice_stable_mail_exit"
+assert_eq "global stable did:aw mail exit" "0" "$alice_stable_mail_exit"
 if [[ "$alice_stable_mail_exit" != "0" ]]; then
-  echo "  matrix stable did:aw mail output: ${alice_stable_mail_out:0:240}"
+  echo "  global stable did:aw mail output: ${alice_stable_mail_out:0:240}"
 fi
 
 bob_matrix_final_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_pin_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Matrix known pin fallback'), ''))" 2>/dev/null || echo "")"
-bob_stable_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Matrix stable did target'), ''))" 2>/dev/null || echo "")"
-assert_eq "matrix known-agent pin fallback delivered" "Matrix known pin fallback mail" "$bob_pin_body"
-assert_eq "matrix stable did:aw delivered" "Matrix stable did target mail" "$bob_stable_body"
+bob_stable_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Global stable did target'), ''))" 2>/dev/null || echo "")"
+assert_eq "global stable did:aw delivered" "Global stable did target mail" "$bob_stable_body"
 
 if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to bob \
@@ -1813,21 +1653,21 @@ if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   rotation_start_exit=$?
 fi
-assert_eq "conversation gate rotation initial mail exit" "0" "$rotation_start_exit"
+assert_eq "conversation rotation initial mail exit" "0" "$rotation_start_exit"
 rotation_conversation_id="$(echo "$rotation_start_out" | jq_field conversation_id)"
-assert_not_empty "conversation gate rotation initial returns conversation_id" "$rotation_conversation_id"
+assert_not_empty "conversation rotation initial returns conversation_id" "$rotation_conversation_id"
 
 if bob_rotate_out="$(run_aw_in "$BOB_DIR" id rotate-key --json 2>&1)"; then
   bob_rotate_exit=0
 else
   bob_rotate_exit=$?
 fi
-assert_eq "conversation gate bob rotates did:key" "0" "$bob_rotate_exit"
+assert_eq "conversation bob rotates did:key" "0" "$bob_rotate_exit"
 if [[ "$bob_rotate_exit" != "0" ]]; then
   echo "  bob rotate output: ${bob_rotate_out:0:240}"
 fi
 bob_rotated_new_did="$(echo "$bob_rotate_out" | jq_field new_did)"
-assert_not_empty "conversation gate bob rotation returns new did:key" "$bob_rotated_new_did"
+assert_not_empty "conversation bob rotation returns new did:key" "$bob_rotated_new_did"
 
 if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send \
   --conversation-id "$rotation_conversation_id" \
@@ -1838,16 +1678,16 @@ if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send \
 else
   rotation_reply_exit=$?
 fi
-assert_eq "conversation gate rotated did:key continues did:aw conversation" "0" "$rotation_reply_exit"
+assert_eq "conversation rotated did:key continues did:aw conversation" "0" "$rotation_reply_exit"
 if [[ "$rotation_reply_exit" != "0" ]]; then
   echo "  rotation reply output: ${rotation_reply_out:0:240}"
 fi
 rotation_reply_conversation_id="$(echo "$rotation_reply_out" | jq_field conversation_id)"
-assert_eq "conversation gate rotated reply stays in conversation" "$rotation_conversation_id" "$rotation_reply_conversation_id"
+assert_eq "conversation rotated reply stays in conversation" "$rotation_conversation_id" "$rotation_reply_conversation_id"
 
 alice_rotation_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
-assert_eq "conversation gate rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
+assert_eq "conversation rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
 
 if partner_bob_bare_mail_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
   --to alice \
