@@ -45,7 +45,6 @@ type guidedOnboardingRequest struct {
 	Domain             string
 	Alias              string
 	Name               string
-	Reachability       string
 	HumanName          string
 	AgentType          string
 	Role               string

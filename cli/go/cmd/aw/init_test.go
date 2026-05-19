@@ -99,7 +99,6 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	oldAlias := initAlias
 	oldName := initName
 	oldDomain := initDomain
-	oldReachability := initReachability
 	oldBYOD := initBYOD
 	oldPersistent := initPersistent
 	oldURL := initURL
@@ -111,7 +110,6 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 		initAlias = oldAlias
 		initName = oldName
 		initDomain = oldDomain
-		initReachability = oldReachability
 		initBYOD = oldBYOD
 		initPersistent = oldPersistent
 		initURL = oldURL
@@ -130,7 +128,6 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	initAlias = "alice"
 	initName = ""
 	initDomain = ""
-	initReachability = ""
 	initBYOD = false
 	initPersistent = false
 
@@ -515,7 +512,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
-	oldReachability := initReachability
 	oldRole := initRole
 	oldPersistent := initPersistent
 	t.Cleanup(func() {
@@ -530,7 +526,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
-		initReachability = oldReachability
 		initRole = oldRole
 		initPersistent = oldPersistent
 	})
@@ -551,7 +546,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	initDomain = ""
 	initAlias = "laptop"
 	initName = ""
-	initReachability = ""
 	initRole = "developer"
 	initPersistent = true
 
@@ -601,7 +595,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
-	oldReachability := initReachability
 	oldRole := initRole
 	oldPersistent := initPersistent
 	t.Cleanup(func() {
@@ -616,7 +609,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
-		initReachability = oldReachability
 		initRole = oldRole
 		initPersistent = oldPersistent
 	})
@@ -637,7 +629,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	initDomain = "example.com"
 	initAlias = "alice"
 	initName = ""
-	initReachability = ""
 	initRole = "developer"
 	initPersistent = false
 

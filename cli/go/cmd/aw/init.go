@@ -43,7 +43,6 @@ var (
 	initDomain             string
 	initAlias              string
 	initName               string
-	initReachability       string
 	initInjectDocs         bool
 	initSetupHooks         bool
 	initSetupChannel       bool
@@ -83,7 +82,6 @@ func init() {
 	initCmd.Flags().StringVar(&initDomain, "domain", "", "BYOD domain to use with --byod")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
-	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (nobody|org-only|team-members-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initDoNotTouchAgentsMD, "do-not-touch-agents-md", false, "Do not create or update AGENTS.md or CLAUDE.md during init")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
@@ -141,17 +139,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			WorkingDir:   wd,
-			AwebURL:      awebURL,
-			RegistryURL:  registryURL,
-			APIKey:       apiKey,
-			Name:         strings.TrimSpace(initName),
-			Alias:        resolveAliasValue(strings.TrimSpace(initAlias)),
-			Reachability: strings.TrimSpace(initReachability),
-			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Persistent:   initPersistent,
+			WorkingDir:  wd,
+			AwebURL:     awebURL,
+			RegistryURL: registryURL,
+			APIKey:      apiKey,
+			Name:        strings.TrimSpace(initName),
+			Alias:       resolveAliasValue(strings.TrimSpace(initAlias)),
+			Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
+			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			Persistent:  initPersistent,
 		})
 		if err != nil {
 			return err
@@ -260,7 +257,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return resolveAliasValue(strings.TrimSpace(initAlias))
 			}(),
 			Name:               strings.TrimSpace(initName),
-			Reachability:       strings.TrimSpace(initReachability),
 			HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
@@ -287,7 +283,6 @@ func initHasExplicitOnboardingArgs() bool {
 		initDomain,
 		initAlias,
 		initName,
-		initReachability,
 	}
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -432,7 +427,6 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 		strings.TrimSpace(initUsername) == "" &&
 		strings.TrimSpace(initDomain) == "" &&
 		strings.TrimSpace(initName) == "" &&
-		strings.TrimSpace(initReachability) == "" &&
 		!initPersistent
 }
 
@@ -440,7 +434,7 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 // escalate to full init because it changes identity/team state or has no
 // existing workspace to operate on.
 func initNeedsFullInitForAddonOnly() bool {
-	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
+	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initRole != "" || initPersistent {
 		return true
 	}
 	wd, _ := os.Getwd()

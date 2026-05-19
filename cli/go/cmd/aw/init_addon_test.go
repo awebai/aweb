@@ -18,7 +18,6 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
-	oldReachability := initReachability
 	oldInjectDocs := initInjectDocs
 	oldSetupHooks := initSetupHooks
 	oldSetupChannel := initSetupChannel
@@ -34,7 +33,6 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
-		initReachability = oldReachability
 		initInjectDocs = oldInjectDocs
 		initSetupHooks = oldSetupHooks
 		initSetupChannel = oldSetupChannel
@@ -72,7 +70,6 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	initDomain = ""
 	initAlias = ""
 	initName = ""
-	initReachability = ""
 	initInjectDocs = false
 	initSetupHooks = false
 	initSetupChannel = true

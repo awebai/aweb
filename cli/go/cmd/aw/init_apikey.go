@@ -28,30 +28,28 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	WorkingDir   string
-	AwebURL      string
-	RegistryURL  string
-	APIKey       string
-	Name         string
-	Alias        string
-	Reachability string
-	Role         string
-	HumanName    string
-	AgentType    string
-	Persistent   bool
+	WorkingDir  string
+	AwebURL     string
+	RegistryURL string
+	APIKey      string
+	Name        string
+	Alias       string
+	Role        string
+	HumanName   string
+	AgentType   string
+	Persistent  bool
 }
 
 type apiKeyBootstrapRequest struct {
-	DID                 string `json:"did"`
-	PublicKey           string `json:"public_key"`
-	Name                string `json:"name,omitempty"`
-	Alias               string `json:"alias,omitempty"`
-	Custody             string `json:"custody"`
-	AddressReachability string `json:"address_reachability,omitempty"`
-	RoleName            string `json:"role_name,omitempty"`
-	HumanName           string `json:"human_name,omitempty"`
-	AgentType           string `json:"agent_type,omitempty"`
-	Lifetime            string `json:"lifetime"`
+	DID       string `json:"did"`
+	PublicKey string `json:"public_key"`
+	Name      string `json:"name,omitempty"`
+	Alias     string `json:"alias,omitempty"`
+	Custody   string `json:"custody"`
+	RoleName  string `json:"role_name,omitempty"`
+	HumanName string `json:"human_name,omitempty"`
+	AgentType string `json:"agent_type,omitempty"`
+	Lifetime  string `json:"lifetime"`
 }
 
 type apiKeyBootstrapResponse struct {
@@ -68,17 +66,19 @@ type apiKeyBootstrapResponse struct {
 }
 
 type apiKeyPartialInitState struct {
-	Version           int    `yaml:"version"`
-	DIDKey            string `yaml:"did_key"`
-	StableID          string `yaml:"stable_id"`
-	SigningKeyB64     string `yaml:"signing_key_b64"`
-	Name              string `yaml:"name"`
-	AwebURL           string `yaml:"aweb_url"`
-	RegistryURL       string `yaml:"registry_url"`
-	TeamIDHint        string `yaml:"team_id_hint,omitempty"`
-	RoleName          string `yaml:"role_name,omitempty"`
-	HumanName         string `yaml:"human_name,omitempty"`
-	AgentType         string `yaml:"agent_type,omitempty"`
+	Version       int    `yaml:"version"`
+	DIDKey        string `yaml:"did_key"`
+	StableID      string `yaml:"stable_id"`
+	SigningKeyB64 string `yaml:"signing_key_b64"`
+	Name          string `yaml:"name"`
+	AwebURL       string `yaml:"aweb_url"`
+	RegistryURL   string `yaml:"registry_url"`
+	TeamIDHint    string `yaml:"team_id_hint,omitempty"`
+	RoleName      string `yaml:"role_name,omitempty"`
+	HumanName     string `yaml:"human_name,omitempty"`
+	AgentType     string `yaml:"agent_type,omitempty"`
+	// Reachability is a legacy partial-init field. It is accepted on read for
+	// one-release compatibility but ignored and never sent to cloud.
 	Reachability      string `yaml:"reachability,omitempty"`
 	APIKeyFingerprint string `yaml:"api_key_fingerprint"`
 	CreatedAt         string `yaml:"created_at"`
@@ -163,16 +163,15 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
-		DID:                 didKey,
-		PublicKey:           base64.StdEncoding.EncodeToString(pub),
-		Name:                name,
-		Alias:               alias,
-		Custody:             awid.CustodySelf,
-		AddressReachability: strings.TrimSpace(req.Reachability),
-		RoleName:            strings.TrimSpace(req.Role),
-		HumanName:           strings.TrimSpace(req.HumanName),
-		AgentType:           strings.TrimSpace(req.AgentType),
-		Lifetime:            initLifetimeValue(req.Persistent),
+		DID:       didKey,
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		Name:      name,
+		Alias:     alias,
+		Custody:   awid.CustodySelf,
+		RoleName:  strings.TrimSpace(req.Role),
+		HumanName: strings.TrimSpace(req.HumanName),
+		AgentType: strings.TrimSpace(req.AgentType),
+		Lifetime:  initLifetimeValue(req.Persistent),
 	})
 	if err != nil {
 		return connectOutput{}, err
@@ -346,7 +345,6 @@ func newAPIKeyPartialInitState(
 		RoleName:          strings.TrimSpace(req.Role),
 		HumanName:         strings.TrimSpace(req.HumanName),
 		AgentType:         strings.TrimSpace(req.AgentType),
-		Reachability:      strings.TrimSpace(req.Reachability),
 		APIKeyFingerprint: apiKeyFingerprint(req.APIKey),
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339),
 	}, nil
@@ -410,9 +408,6 @@ func validateAPIKeyPartialInitContext(
 	}
 	if state.AgentType != expected.AgentType {
 		mismatches = append(mismatches, fmt.Sprintf("agent_type %q != %q", state.AgentType, expected.AgentType))
-	}
-	if state.Reachability != expected.Reachability {
-		mismatches = append(mismatches, fmt.Sprintf("reachability %q != %q", state.Reachability, expected.Reachability))
 	}
 	if state.APIKeyFingerprint != expected.APIKeyFingerprint {
 		mismatches = append(mismatches, "api_key_fingerprint differs")
@@ -641,4 +636,3 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	}
 	return &result, nil
 }
-
