@@ -16,6 +16,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, AddressDelivery, KeyResolution, TeamCertificate
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import (
     IDENTITY_DID_AW_HEADER,
     IdentityAuth,
@@ -3020,6 +3021,7 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
         assert envelope["target_did_aw"] == "did:aw:alice"
         assert envelope["target_current_did_key"] == alice_did_key
         assert envelope["target_delivery_origin"] == "https://sender.example"
+        verify_federation_envelope(envelope, body["signature"])
         return httpx.Response(
             200,
             json={
@@ -3056,7 +3058,7 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "priority": "normal",
             "subject": "Federated reply",
             "timestamp": timestamp,
-            "to": "alpha.example/alice",
+            "to": "did:aw:alice",
             "to_did": alice_did_key,
             "to_stable_id": "did:aw:alice",
             "type": "mail",
@@ -3067,7 +3069,6 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "/v1/messages",
             json={
                 "conversation_id": conversation_id,
-                "to_address": "alpha.example/alice",
                 "to_did": alice_did_key,
                 "to_stable_id": "did:aw:alice",
                 "subject": "Federated reply",

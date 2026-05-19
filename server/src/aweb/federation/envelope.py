@@ -204,6 +204,12 @@ def _expect_signed_value(payload: Mapping[str, Any], field: str, expected: Any) 
         raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
 
 
+def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: set[Any]) -> None:
+    actual = payload.get(field)
+    if actual not in allowed:
+        raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
+
+
 def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     payload = _signed_payload_json(model)
     _expect_signed_value(payload, "type", model.type)
@@ -211,7 +217,14 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     _expect_signed_value(payload, "from_did", model.sender_current_did_key)
     _expect_signed_value(payload, "message_id", model.message_id)
     _expect_signed_value(payload, "timestamp", model.timestamp)
-    _expect_signed_value(payload, "to", model.target_address)
+    # First-contact federation signs the routable address. Continuations may
+    # sign the already-vetted recipient identity while the envelope still carries
+    # target_address as the transport route.
+    _expect_signed_value_in(
+        payload,
+        "to",
+        {model.target_address, model.target_did_aw, model.target_current_did_key},
+    )
     _expect_signed_value(payload, "to_did", model.target_current_did_key)
     _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
     if model.sender_did_aw:
