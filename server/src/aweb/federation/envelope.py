@@ -225,7 +225,15 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
         "to",
         (model.target_address, model.target_did_aw, model.target_current_did_key),
     )
-    _expect_signed_value(payload, "to_did", model.target_current_did_key)
+    # Local signed-message validation accepts to_did as either the stable
+    # did:aw or the current did:key. Federation must preserve that same signed
+    # payload vocabulary while the envelope still carries the resolved current
+    # key for routing/freshness checks.
+    _expect_signed_value_in(
+        payload,
+        "to_did",
+        (model.target_current_did_key, model.target_did_aw),
+    )
     _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
     if model.sender_did_aw:
         _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)

@@ -3059,7 +3059,7 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "subject": "Federated reply",
             "timestamp": timestamp,
             "to": "did:aw:alice",
-            "to_did": alice_did_key,
+            "to_did": "did:aw:alice",
             "to_stable_id": "did:aw:alice",
             "type": "mail",
         }
@@ -3069,7 +3069,7 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "/v1/messages",
             json={
                 "conversation_id": conversation_id,
-                "to_did": alice_did_key,
+                "to_did": "did:aw:alice",
                 "to_stable_id": "did:aw:alice",
                 "subject": "Federated reply",
                 "body": "federated continuation",

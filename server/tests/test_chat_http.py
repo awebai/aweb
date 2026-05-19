@@ -868,7 +868,7 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
             "message_id": reply_message_id,
             "timestamp": reply_timestamp,
             "to": "did:aw:alice",
-            "to_did": alice_did_key,
+            "to_did": "did:aw:alice",
             "to_stable_id": "did:aw:alice",
             "type": "chat",
         }
