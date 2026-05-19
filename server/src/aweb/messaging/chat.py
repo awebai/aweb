@@ -212,14 +212,15 @@ async def _ensure_chat_conversation(
         await executor.execute(
             """
             INSERT INTO {{tables.conversation_participants}} (
-                conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+                conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 'chat', $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'chat', $8)
             ON CONFLICT (conversation_id, did) DO UPDATE
             SET agent_id = EXCLUDED.agent_id,
                 alias = EXCLUDED.alias,
                 address = EXCLUDED.address,
                 delivery_origin = EXCLUDED.delivery_origin,
+                current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
                 transport_hint = EXCLUDED.transport_hint
             """,
             session_id,
@@ -228,6 +229,7 @@ async def _ensure_chat_conversation(
             participant["alias"],
             participant["address"],
             participant.get("delivery_origin"),
+            participant.get("current_did_key"),
             "initiator" if participant["did"] == created_by_did else "participant",
         )
 
@@ -256,6 +258,7 @@ async def ensure_session(
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
                 "delivery_origin": (row.get("delivery_origin") or "").strip() or None,
+                "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip() or None,
             }
         )
     if len(normalized_participants) < 2:
@@ -319,13 +322,14 @@ async def ensure_session(
         for participant in normalized_participants:
             await tx.execute(
                 """
-                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (session_id, did) DO UPDATE
                 SET agent_id = EXCLUDED.agent_id,
                     alias = EXCLUDED.alias,
                     address = EXCLUDED.address,
-                    delivery_origin = EXCLUDED.delivery_origin
+                    delivery_origin = EXCLUDED.delivery_origin,
+                    current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.chat_participants}}.current_did_key)
                 """,
                 session_id,
                 participant["did"],
@@ -333,6 +337,7 @@ async def ensure_session(
                 participant["alias"],
                 participant["address"],
                 participant["delivery_origin"],
+                participant["current_did_key"],
             )
         await _ensure_chat_conversation(
             tx,

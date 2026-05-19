@@ -87,6 +87,38 @@ def _is_local_did_key(value: str | None) -> bool:
     return str(value or "").strip().startswith("did:key:")
 
 
+async def _backfill_federated_sender_current_key(db, envelope: FederationEnvelope, *, chat_session: bool = False) -> None:
+    sender_did_aw = str(envelope.sender_did_aw or "").strip()
+    current_did_key = str(envelope.sender_current_did_key or "").strip()
+    if not sender_did_aw.startswith("did:aw:") or not current_did_key.startswith("did:key:"):
+        return
+    if not envelope.conversation_id:
+        return
+    conversation_id = UUID(envelope.conversation_id)
+    aweb_db = db.get_manager("aweb")
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET current_did_key = $3
+        WHERE conversation_id = $1 AND did = $2
+        """,
+        conversation_id,
+        sender_did_aw,
+        current_did_key,
+    )
+    if chat_session:
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.chat_participants}}
+            SET current_did_key = $3
+            WHERE session_id = $1 AND did = $2
+            """,
+            conversation_id,
+            sender_did_aw,
+            current_did_key,
+        )
+
+
 def _certificate_header_from_dict(certificate: dict | None) -> str | None:
     if certificate is None:
         return None
@@ -363,6 +395,7 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
         dids = {item["did"] for item in participants}
         if envelope.sender_did_aw not in dids or envelope.target_did_aw not in dids:
             raise HTTPException(status_code=403, detail="Federation conversation participants mismatch")
+        await _backfill_federated_sender_current_key(db, envelope)
         return envelope.conversation_id
 
     if _is_local_did_key(envelope.target_did_aw):
@@ -382,6 +415,7 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
             ),
             "address": envelope.sender_address,
             "delivery_origin": envelope.sender_delivery_origin,
+            "current_did_key": envelope.sender_current_did_key,
             "transport_hint": _federated_transport_hint(envelope.sender_delivery_origin),
         },
         recipients=[
@@ -393,6 +427,7 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
                     envelope.target_did_aw,
                 ),
                 "address": envelope.target_address,
+                "current_did_key": envelope.target_current_did_key,
                 "transport_hint": "local",
             }
         ],
@@ -436,6 +471,7 @@ async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recip
             session_dids = {item["did"] for item in session_participants}
             if {envelope.sender_did_aw, envelope.target_did_aw} - session_dids:
                 raise HTTPException(status_code=403, detail="Federation chat session participants mismatch")
+            await _backfill_federated_sender_current_key(db, envelope, chat_session=True)
             return envelope.conversation_id
 
     if _is_local_did_key(envelope.target_did_aw):
@@ -454,6 +490,7 @@ async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recip
                 ),
                 "address": envelope.sender_address,
                 "delivery_origin": envelope.sender_delivery_origin,
+                "current_did_key": envelope.sender_current_did_key,
             },
             {
                 "did": envelope.target_did_aw,
@@ -464,6 +501,7 @@ async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recip
                 ),
                 "address": envelope.target_address,
                 "delivery_origin": None,
+                "current_did_key": envelope.target_current_did_key,
             },
         ],
         created_by=envelope.sender_did_aw,

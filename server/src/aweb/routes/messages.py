@@ -767,6 +767,7 @@ async def _deliver_remote_mail_and_project_locally(
                         "alias": to_alias or recipient.get("alias") or recipient_did,
                         "address": target_address,
                         "delivery_origin": delivery_origin,
+                        "current_did_key": target_current_did,
                         "transport_hint": _recipient_transport_hint(payload),
                     }
                 ],
@@ -1461,6 +1462,7 @@ async def send_message(
                     "agent_id": to_agent_id,
                     "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
                     "address": _recipient_conversation_address(recipient, payload),
+                    "current_did_key": (recipient or {}).get("did_key"),
                     "transport_hint": _recipient_transport_hint(payload),
                 }
             ],

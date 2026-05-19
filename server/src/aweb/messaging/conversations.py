@@ -22,6 +22,7 @@ class ConversationParticipant:
     alias: str | None = None
     address: str | None = None
     delivery_origin: str | None = None
+    current_did_key: str | None = None
     transport_hint: str | None = None
     role: ParticipantRole = "participant"
 
@@ -81,6 +82,7 @@ def _participant_from(value: ConversationParticipant | dict[str, Any]) -> Conver
         alias=value.get("alias"),
         address=value.get("address"),
         delivery_origin=value.get("delivery_origin"),
+        current_did_key=value.get("current_did_key") or value.get("did_key"),
         transport_hint=value.get("transport_hint"),
         role=_normalize_role(value.get("role")),
     )
@@ -97,6 +99,7 @@ def _participant_record(value: ConversationParticipant | dict[str, Any], *, role
         "alias": alias or did,
         "address": str(participant.address or "").strip() or None,
         "delivery_origin": str(participant.delivery_origin or "").strip() or None,
+        "current_did_key": str(participant.current_did_key or "").strip() or None,
         "transport_hint": str(participant.transport_hint or "").strip() or None,
         "role": participant_role,
     }
@@ -141,6 +144,7 @@ def _participant_dict(row: dict[str, Any]) -> dict[str, Any]:
         "alias": row["alias"],
         "address": row.get("address"),
         "delivery_origin": row.get("delivery_origin"),
+        "current_did_key": row.get("current_did_key"),
         "transport_hint": row.get("transport_hint"),
         "role": row["role"],
         "joined_at": row["joined_at"],
@@ -439,14 +443,15 @@ async def create_conversation(
             await tx.execute(
                 """
                 INSERT INTO {{tables.conversation_participants}} (
-                    conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+                    conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (conversation_id, did) DO UPDATE
                 SET agent_id = EXCLUDED.agent_id,
                     alias = EXCLUDED.alias,
                     address = EXCLUDED.address,
                     delivery_origin = EXCLUDED.delivery_origin,
+                    current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
                     transport_hint = EXCLUDED.transport_hint,
                     role = EXCLUDED.role
                 """,
@@ -456,6 +461,7 @@ async def create_conversation(
                 participant["alias"],
                 participant["address"],
                 participant["delivery_origin"],
+                participant["current_did_key"],
                 participant["transport_hint"],
                 participant["role"],
             )
@@ -486,7 +492,7 @@ async def list_conversation_participants(db, *, conversation_id: str | UUID) -> 
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role, joined_at
+        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
         ORDER BY joined_at, alias
@@ -513,17 +519,18 @@ async def add_conversation_participant(
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+            conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (conversation_id, did) DO UPDATE
         SET agent_id = EXCLUDED.agent_id,
             alias = EXCLUDED.alias,
             address = EXCLUDED.address,
             delivery_origin = EXCLUDED.delivery_origin,
+            current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
             transport_hint = EXCLUDED.transport_hint,
             role = EXCLUDED.role
-        RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role, joined_at
+        RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         """,
         _parse_uuid(conversation_id, field_name="conversation_id"),
         record["did"],
@@ -531,6 +538,7 @@ async def add_conversation_participant(
         record["alias"],
         record["address"],
         record["delivery_origin"],
+        record["current_did_key"],
         record["transport_hint"],
         record["role"],
     )
@@ -560,7 +568,7 @@ async def require_active_conversation_participant(
 
     participant_row = await aweb_db.fetch_one(
         """
-        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role, joined_at
+        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
           AND did = ANY($2::text[])

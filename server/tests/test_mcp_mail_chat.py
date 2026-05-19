@@ -709,14 +709,15 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+            conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
         )
         VALUES
-            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, 'sender', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', NULL, 'federation:https://remote.example', 'participant')
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'sender', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob', 'federation:https://remote.example', 'participant')
         """,
         conversation_id,
         alice_agent_id,
+        alice_did_key,
     )
 
     monkeypatch.setattr(
@@ -736,8 +737,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
 
     class _Registry:
         async def resolve_key(self, did_aw: str):
-            assert did_aw == "did:aw:bob"
-            return KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob")
+            raise AssertionError("mail continuation must use stored participant current did:key")
 
     remote_calls: list[dict] = []
 
@@ -1827,11 +1827,11 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (
-            session_id, did, agent_id, alias, address, delivery_origin
+            session_id, did, agent_id, alias, address, delivery_origin, current_did_key
         )
         VALUES
-            ($1, $3, $2, 'alice', 'acme.com/alice', NULL),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example')
+            ($1, $3, $2, 'alice', 'acme.com/alice', NULL, $3),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob')
         """,
         session_id,
         alice_agent_id,
@@ -1855,8 +1855,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
 
     class _Registry:
         async def resolve_key(self, did_aw: str):
-            assert did_aw == "did:aw:bob"
-            return KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob")
+            raise AssertionError("chat continuation must use stored participant current did:key")
 
     remote_calls: list[dict] = []
 

@@ -102,22 +102,11 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
                 "external": True,
             }
         raise ValidationError("Remote mail recipient has no stored routable identity")
-    if registry_client is None:
-        raise ServiceError("AWID registry unavailable")
-    try:
-        resolution = await registry_client.resolve_key(did_aw)
-        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
-            resolution = await registry_client.resolve_key_fresh(did_aw)
-    except Exception as exc:
-        raise ServiceError("AWID registry unavailable") from exc
-    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip() if resolution else ""
-    if resolved_did_aw and resolved_did_aw != did_aw:
-        raise ValidationError("Remote mail recipient stable identity mismatch")
-    current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
+    current_did = str(participant.get("current_did_key") or participant.get("did_key") or "").strip()
     if not current_did:
-        raise ValidationError("Remote mail recipient current key not found")
-    resolved_origin = str(getattr(resolution, "delivery_origin", "") or "").strip() if resolution else ""
-    delivery_origin = resolved_origin or delivery_origin
+        raise ValidationError("Remote mail recipient stored route is missing current did:key")
+    if not current_did.startswith("did:key:"):
+        raise ValidationError("Remote mail recipient stored route current did:key is invalid")
     if not delivery_origin:
         raise ValidationError("Remote mail recipient has no delivery origin")
     name = did_aw

@@ -160,7 +160,7 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.alias, p.address AS participant_address, p.delivery_origin,
-               a.did_key, a.did_aw, a.address
+               p.current_did_key, a.did_key, a.did_aw, a.address
         FROM {{tables.chat_participants}} p
         LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
         WHERE p.session_id = $1

@@ -434,22 +434,11 @@ async def _resolve_stored_remote_chat_route(
                 "requires_team_certificate": False,
             }
         raise HTTPException(status_code=424, detail="Remote chat recipient has no stored routable identity")
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
-    try:
-        resolution = await registry_client.resolve_key(did_aw)
-        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
-            resolution = await registry_client.resolve_key_fresh(did_aw)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
-    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip() if resolution else ""
-    if resolved_did_aw and resolved_did_aw != did_aw:
-        raise HTTPException(status_code=422, detail="Remote chat recipient stable identity mismatch")
-    current_did = str(getattr(resolution, "current_did_key", "") or "").strip() if resolution else ""
+    current_did = str(recipient.get("current_did_key") or recipient.get("did_key") or "").strip()
     if not current_did:
-        raise HTTPException(status_code=422, detail="Remote chat recipient current key not found")
-    resolved_origin = str(getattr(resolution, "delivery_origin", "") or "").strip() if resolution else ""
-    delivery_origin = resolved_origin or delivery_origin
+        raise HTTPException(status_code=424, detail="Remote chat recipient stored route is missing current did:key")
+    if not current_did.startswith("did:key:"):
+        raise HTTPException(status_code=422, detail="Remote chat recipient stored route current did:key is invalid")
     if not delivery_origin:
         raise HTTPException(status_code=424, detail="Remote chat recipient has no delivery origin")
     return {
@@ -886,7 +875,7 @@ async def _resolve_session_recipient_rows(
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, alias, address, delivery_origin
+        SELECT did, alias, address, delivery_origin, current_did_key
         FROM {{tables.chat_participants}}
         WHERE session_id = $1
           AND NOT (did = ANY($2::text[]))
@@ -911,9 +900,11 @@ async def _resolve_session_recipient_rows(
                 or participant_address
                 or _address_from_alias(participant_alias),
                 "delivery_origin": (participant.get("delivery_origin") or "").strip() or None,
+                "current_did_key": (participant.get("current_did_key") or "").strip() or None,
                 "did_aw": ((resolved or {}).get("did_aw") or "").strip()
                 or (participant_did if participant_did.startswith("did:aw:") else ""),
                 "did_key": ((resolved or {}).get("did_key") or "").strip()
+                or (participant.get("current_did_key") or "").strip()
                 or (participant_did if participant_did.startswith("did:key:") else ""),
                 "local_resolved": resolved is not None,
             }
@@ -1066,6 +1057,7 @@ async def create_or_send(
         {
             "did": _target_did(row),
             "did_key": (row.get("did_key") or "").strip() or None,
+            "current_did_key": (row.get("did_key") or row.get("current_did_key") or "").strip() or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
             "alias": (row.get("alias") or "").strip() or _target_did(row),
             "address": (row.get("address") or "").strip() or None,

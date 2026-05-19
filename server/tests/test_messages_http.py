@@ -192,7 +192,7 @@ async def _insert_agent(
 async def _conversation_participants(aweb_db, conversation_id: str):
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, agent_id, alias, address, delivery_origin, transport_hint, role
+        SELECT did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
         ORDER BY role, alias
@@ -569,6 +569,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     assert message["to_did"] == "did:aw:bob"
     assert by_did["did:aw:bob"]["agent_id"] is None
     assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
+    assert by_did["did:aw:bob"]["current_did_key"] == "did:key:bob"
     assert by_did["did:aw:bob"]["transport_hint"] == "to_address"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -3296,7 +3297,7 @@ async def test_receive_federated_mail_existing_local_didkey_first_contact_fails_
 @pytest.mark.asyncio
 async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
-    _, _, local_did_key = _make_keypair()
+    local_sk, _, local_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
     local_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -3357,6 +3358,87 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(aweb_
     assert row["from_did"] == "did:aw:bob"
     assert row["to_did"] == local_did_key
     assert str(row["to_agent_id"]) == local_agent_id
+    remote_participant = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT current_did_key
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1 AND did = 'did:aw:bob'
+        """,
+        UUID(conversation_id),
+    )
+    assert remote_participant["current_did_key"] == bob_did_key
+
+    registry.resolve_key = AsyncMock(side_effect=AssertionError("continuation must use backfilled current did:key"))
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("continuation must not rediscover address"))
+    remote_calls = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_calls.append(request)
+        envelope = json.loads(request.content)["envelope"]
+        assert envelope["target_current_did_key"] == bob_did_key
+        assert envelope["target_delivery_origin"] == "https://remote.example"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
+
+    async def _local_auth():
+        return MessagingAuth(
+            did_key=local_did_key,
+            did_aw="",
+            address="",
+            team_id="default:beta.example",
+            alias="local",
+            agent_id=local_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _local_auth
+    reply_message_id = str(uuid4())
+    reply_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    reply_signed_payload = canonical_json_bytes(
+        {
+            "body": "local continuation after backfill",
+            "conversation_id": conversation_id,
+            "from": "beta.example/local",
+            "from_did": local_did_key,
+            "message_id": reply_message_id,
+            "priority": "normal",
+            "subject": "Local reply",
+            "timestamp": reply_timestamp,
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_did": "did:aw:bob",
+                "to_stable_id": "did:aw:bob",
+                "subject": "Local reply",
+                "body": "local continuation after backfill",
+                "from_did": local_did_key,
+                "message_id": reply_message_id,
+                "timestamp": reply_timestamp,
+                "signature": sign_message(local_sk, reply_signed_payload),
+                "signed_payload": reply_signed_payload.decode(),
+            },
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert len(remote_calls) == 1
+    registry.resolve_key.assert_not_called()
+    registry.resolve_address.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -3385,18 +3467,20 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role
+            conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
         )
         VALUES
-            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', NULL, 'federation:https://sender.example', 'initiator'),
-            ($1, 'did:aw:bob', $2, 'bob', 'beta.example/bob', NULL, 'local', 'participant')
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'https://sender.example', $3, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $2, 'bob', 'beta.example/bob', NULL, $4, 'local', 'participant')
         """,
         UUID(conversation_id),
         UUID(bob_agent_id),
+        alice_did_key,
+        bob_did_key,
     )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_key = AsyncMock(side_effect=AssertionError("federated continuation must use stored current did:key"))
     registry.resolve_address = AsyncMock(side_effect=AssertionError("federated continuation must not rediscover address"))
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://recipient.example"
@@ -3476,6 +3560,55 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
     assert resp.json()["conversation_id"] == conversation_id
     assert len(remote_calls) == 1
     registry.resolve_address.assert_not_called()
+    registry.resolve_key.assert_not_called()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET current_did_key = NULL
+        WHERE conversation_id = $1 AND did = 'did:aw:alice'
+        """,
+        UUID(conversation_id),
+    )
+    second_message_id = str(uuid4())
+    second_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    second_signed_payload = canonical_json_bytes(
+        {
+            "body": "federated continuation without stored key",
+            "conversation_id": conversation_id,
+            "from": "beta.example/bob",
+            "from_did": bob_did_key,
+            "from_stable_id": "did:aw:bob",
+            "message_id": second_message_id,
+            "priority": "normal",
+            "subject": "Federated reply",
+            "timestamp": second_timestamp,
+            "to": "did:aw:alice",
+            "to_did": "did:aw:alice",
+            "to_stable_id": "did:aw:alice",
+            "type": "mail",
+        }
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing_key = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_did": "did:aw:alice",
+                "to_stable_id": "did:aw:alice",
+                "subject": "Federated reply",
+                "body": "federated continuation without stored key",
+                "from_did": bob_did_key,
+                "message_id": second_message_id,
+                "timestamp": second_timestamp,
+                "signature": sign_message(bob_sk, second_signed_payload),
+                "signed_payload": second_signed_payload.decode(),
+            },
+        )
+
+    assert missing_key.status_code == 422, missing_key.text
+    assert missing_key.json()["detail"] == "Remote mail recipient stored route is missing current did:key"
+    assert len(remote_calls) == 1
 
 
 @pytest.mark.asyncio
