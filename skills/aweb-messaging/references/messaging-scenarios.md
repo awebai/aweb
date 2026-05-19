@@ -21,7 +21,7 @@ Metadata:
 Please review the latest skills draft.
 
 [Awakening hint: appended by channel]
-Use the aw CLI to respond when appropriate. If unsure how to handle this coordination message, load the aweb-messaging skill. This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.
+Use the aw CLI to respond when appropriate.
 ```
 
 The exact fields vary by event type. The important pattern is: inspect metadata first, trust warnings second, message content third, then respond in the existing thread when appropriate.

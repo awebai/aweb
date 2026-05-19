@@ -233,7 +233,7 @@ export function formatAwakeningForAgent(awakening) {
     if (awakening.content) {
         lines.push("", "Message:", awakening.content);
     }
-    lines.push("", "Use the aw CLI to respond when appropriate. If unsure how to handle this coordination message, load the aweb-messaging skill. This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.");
+    lines.push("", "Use the aw CLI to respond when appropriate.");
     return lines.join("\n");
 }
 function pruneDispatched(dispatched) {
