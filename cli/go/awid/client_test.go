@@ -681,6 +681,88 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 }
 
+func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	var gotSend ChatSendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{
+					{
+						SessionID:            "sess-1",
+						Participants:         []string{"rose", "monitor"},
+						ParticipantDIDs:      []string{stableID, "did:aw:monitor"},
+						ParticipantAddresses: []string{"example.com/rose", "otherco/monitor"},
+						CreatedAt:            "2026-02-01T00:00:00Z",
+					},
+				},
+			})
+		case "/v1/chat/sessions/sess-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotSend); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID: "msg-2",
+				Delivered: true,
+			})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("example.com/rose")
+	c.SetStableID(stableID)
+	c.SetRequireRecipientBindingForDirectAddresses(true)
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" {
+				t.Fatalf("resolved %q, want did:aw:monitor", identifier)
+			}
+			return nil, context.Canceled
+		},
+	})
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{Body: "ping"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := &MessageEnvelope{
+		From:           "rose",
+		FromDID:        did,
+		FromStableID:   stableID,
+		To:             "did:aw:monitor",
+		ToStableID:     "did:aw:monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
+	}
+	status, verifyErr := VerifyMessage(env)
+	if verifyErr != nil {
+		t.Fatalf("VerifyMessage: %v", verifyErr)
+	}
+	if status != Verified {
+		t.Fatalf("status=%s, want verified", status)
+	}
+}
+
 func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T) {
 	t.Parallel()
 

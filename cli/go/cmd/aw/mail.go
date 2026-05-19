@@ -87,20 +87,163 @@ func mailConversationMatchesTarget(conv awid.ConversationItem, targetKind, targe
 	return false
 }
 
-func uniqueMailConversationID(conversations map[string]bool, targetValue string) (string, error) {
+func uniqueMailConversationTarget(conversations map[string]mailConversationTarget, targetValue string) (mailConversationTarget, error) {
 	if len(conversations) == 0 {
-		return "", nil
+		return mailConversationTarget{}, nil
 	}
 	if len(conversations) != 1 {
-		return "", fmt.Errorf("multiple mail conversations match %s; use --conversation-id to choose one", targetValue)
+		return mailConversationTarget{}, fmt.Errorf("multiple mail conversations match %s; use --conversation-id to choose one", targetValue)
 	}
-	for conversationID := range conversations {
-		return conversationID, nil
+	for _, target := range conversations {
+		return target, nil
 	}
-	return "", nil
+	return mailConversationTarget{}, nil
 }
 
-func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (string, error) {
+type mailConversationTarget struct {
+	conversationID string
+	kind           string
+	value          string
+}
+
+func mailConversationParticipantTarget(c *awid.Client, conv awid.ConversationItem, fallbackKind, fallbackValue string) mailConversationTarget {
+	target := mailConversationTarget{
+		conversationID: strings.TrimSpace(conv.ConversationID),
+		kind:           fallbackKind,
+		value:          strings.TrimSpace(fallbackValue),
+	}
+	if target.conversationID == "" {
+		return target
+	}
+	if c != nil {
+		otherDIDs, otherAddresses := awid.OtherConversationParticipants(
+			conv.ParticipantDIDs,
+			conv.ParticipantAddresses,
+			c.StableID(),
+			c.DID(),
+			c.Address(),
+		)
+		if len(otherDIDs) == 1 {
+			target.kind = "did"
+			target.value = otherDIDs[0]
+			return target
+		}
+		if len(otherAddresses) == 1 {
+			target.kind = "address"
+			target.value = otherAddresses[0]
+			return target
+		}
+	}
+	return target
+}
+
+func mailInboxMessageParticipantTarget(c *awid.Client, msg awid.InboxMessage, fallbackKind, fallbackValue string) mailConversationTarget {
+	target := mailConversationTarget{
+		conversationID: strings.TrimSpace(msg.ConversationID),
+		kind:           fallbackKind,
+		value:          strings.TrimSpace(fallbackValue),
+	}
+	if candidate := mailMatchedMessageParticipantTarget(msg, fallbackKind, fallbackValue); candidate.value != "" {
+		candidate.conversationID = target.conversationID
+		return candidate
+	}
+	if c == nil {
+		return target
+	}
+	selfStableID := strings.TrimSpace(c.StableID())
+	selfDID := strings.TrimSpace(c.DID())
+	selfAddress := strings.TrimSpace(c.Address())
+	for _, participant := range []struct {
+		stableID string
+		did      string
+		address  string
+	}{
+		{stableID: msg.FromStableID, did: msg.FromDID, address: msg.FromAddress},
+		{stableID: msg.ToStableID, did: msg.ToDID, address: msg.ToAddress},
+	} {
+		stableID := strings.TrimSpace(participant.stableID)
+		did := strings.TrimSpace(participant.did)
+		address := strings.TrimSpace(participant.address)
+		isSelf := (selfStableID != "" && strings.EqualFold(stableID, selfStableID)) ||
+			(selfDID != "" && strings.EqualFold(did, selfDID)) ||
+			(selfAddress != "" && strings.EqualFold(address, selfAddress))
+		if isSelf {
+			continue
+		}
+		if stableID != "" {
+			target.kind = "did"
+			target.value = stableID
+			return target
+		}
+		if did != "" {
+			target.kind = "did"
+			target.value = did
+			return target
+		}
+		if address != "" {
+			target.kind = "address"
+			target.value = address
+			return target
+		}
+	}
+	return target
+}
+
+func mailMatchedMessageParticipantTarget(msg awid.InboxMessage, targetKind, targetValue string) mailConversationTarget {
+	targetValue = strings.TrimSpace(targetValue)
+	if targetValue == "" {
+		return mailConversationTarget{}
+	}
+	for _, participant := range []struct {
+		stableID string
+		did      string
+		address  string
+	}{
+		{stableID: msg.FromStableID, did: msg.FromDID, address: msg.FromAddress},
+		{stableID: msg.ToStableID, did: msg.ToDID, address: msg.ToAddress},
+	} {
+		stableID := strings.TrimSpace(participant.stableID)
+		did := strings.TrimSpace(participant.did)
+		address := strings.TrimSpace(participant.address)
+		matched := (targetKind == "address" && strings.EqualFold(address, targetValue)) ||
+			(targetKind == "did" && (strings.EqualFold(stableID, targetValue) || strings.EqualFold(did, targetValue)))
+		if !matched {
+			continue
+		}
+		if stableID != "" {
+			return mailConversationTarget{kind: "did", value: stableID}
+		}
+		if did != "" {
+			return mailConversationTarget{kind: "did", value: did}
+		}
+		if address != "" {
+			return mailConversationTarget{kind: "address", value: address}
+		}
+	}
+	return mailConversationTarget{}
+}
+
+func applyMailRecipientTarget(req *awid.SendMessageRequest, kind, value string) {
+	value = strings.TrimSpace(value)
+	switch {
+	case value == "":
+		return
+	case kind == "did" && strings.HasPrefix(value, "did:aw:"):
+		req.ToStableID = value
+	case kind == "did":
+		req.ToDID = value
+	case kind == "address":
+		req.ToAddress = value
+	default:
+		req.ToAlias = value
+	}
+}
+
+func mailRecipientTargetApplied(req *awid.SendMessageRequest) bool {
+	return req.ToAlias != "" || req.ToDID != "" || req.ToStableID != "" || req.ToAddress != ""
+}
+
+func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (mailConversationTarget, error) {
 	for _, target := range []struct {
 		kind  string
 		value string
@@ -112,12 +255,12 @@ func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, age
 		if target.value == "" {
 			continue
 		}
-		conversationID, err := findUniqueMailConversationForTarget(ctx, c, target.kind, target.value)
-		if err != nil || conversationID != "" {
-			return conversationID, err
+		conversation, err := findUniqueMailConversationForTarget(ctx, c, target.kind, target.value)
+		if err != nil || conversation.conversationID != "" {
+			return conversation, err
 		}
 	}
-	return "", nil
+	return mailConversationTarget{}, nil
 }
 
 func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
@@ -153,9 +296,9 @@ func agentMatchesSelection(agent awid.AgentView, sel *awconfig.Selection) bool {
 	return false
 }
 
-func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, targetKind, targetValue string) (string, error) {
+func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, targetKind, targetValue string) (mailConversationTarget, error) {
 	if c == nil || (targetKind != "address" && targetKind != "did") {
-		return "", nil
+		return mailConversationTarget{}, nil
 	}
 	params := awid.ConversationListParams{
 		Limit:            100,
@@ -168,18 +311,18 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 	}
 	conversationsResp, err := c.ListConversationsWithParams(ctx, params)
 	if err == nil {
-		conversations := map[string]bool{}
+		conversations := map[string]mailConversationTarget{}
 		for _, conv := range conversationsResp.Conversations {
 			conversationID := strings.TrimSpace(conv.ConversationID)
 			if conversationID == "" || !mailConversationMatchesTarget(conv, targetKind, targetValue) {
 				continue
 			}
-			conversations[conversationID] = true
+			conversations[conversationID] = mailConversationParticipantTarget(c.Client, conv, targetKind, targetValue)
 		}
-		if conversationID, err := uniqueMailConversationID(conversations, targetValue); err != nil || conversationID != "" {
-			return conversationID, err
+		if conversation, err := uniqueMailConversationTarget(conversations, targetValue); err != nil || conversation.conversationID != "" {
+			return conversation, err
 		}
-		return "", nil
+		return mailConversationTarget{}, nil
 	}
 
 	// Older servers do not expose participant identities on /v1/conversations.
@@ -190,17 +333,17 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 	})
 	if err != nil {
 		// Auto-threading is opportunistic; the send endpoint remains authoritative.
-		return "", nil
+		return mailConversationTarget{}, nil
 	}
-	conversations := map[string]bool{}
+	conversations := map[string]mailConversationTarget{}
 	for _, msg := range resp.Messages {
 		conversationID := strings.TrimSpace(msg.ConversationID)
 		if conversationID == "" || !mailIdentityMatchesTarget(msg, targetKind, targetValue) {
 			continue
 		}
-		conversations[conversationID] = true
+		conversations[conversationID] = mailInboxMessageParticipantTarget(c.Client, msg, targetKind, targetValue)
 	}
-	return uniqueMailConversationID(conversations, targetValue)
+	return uniqueMailConversationTarget(conversations, targetValue)
 }
 
 var mailSendCmd = &cobra.Command{
@@ -245,20 +388,24 @@ var mailSendCmd = &cobra.Command{
 			} else if found {
 				if agentMatchesSelection(agent, sel) {
 					req.ToAlias = targetValue
-				} else if conversationID, findErr := findUniqueMailConversationForAgent(ctx, c, agent); findErr != nil {
+				} else if conversation, findErr := findUniqueMailConversationForAgent(ctx, c, agent); findErr != nil {
 					return findErr
-				} else if conversationID != "" {
+				} else if conversation.conversationID != "" {
 					targetKind = "conversation"
-					targetValue = conversationID
-					req.ConversationID = conversationID
-					if value := strings.TrimSpace(agent.Address); value != "" {
-						req.ToAddress = value
-					} else if value := strings.TrimSpace(agent.DIDAW); value != "" {
-						req.ToStableID = value
-					} else if value := strings.TrimSpace(agent.DIDKey); value != "" {
-						req.ToDID = value
-					} else {
-						req.ToAlias = strings.TrimSpace(agent.Alias)
+					targetValue = conversation.conversationID
+					req.ConversationID = conversation.conversationID
+					applyMailRecipientTarget(req, conversation.kind, conversation.value)
+					if !mailRecipientTargetApplied(req) {
+						applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
+					}
+					if !mailRecipientTargetApplied(req) {
+						applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
+					}
+					if !mailRecipientTargetApplied(req) {
+						applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
+					}
+					if !mailRecipientTargetApplied(req) {
+						applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
 					}
 				} else {
 					req.ToAlias = targetValue
@@ -272,16 +419,15 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 			recipientDID := targetValue
-			if conversationID, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+			if conversation, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
-			} else if conversationID != "" {
+			} else if conversation.conversationID != "" {
 				targetKind = "conversation"
-				targetValue = conversationID
-				req.ConversationID = conversationID
-				if strings.HasPrefix(recipientDID, "did:aw:") {
-					req.ToStableID = recipientDID
-				} else {
-					req.ToDID = recipientDID
+				targetValue = conversation.conversationID
+				req.ConversationID = conversation.conversationID
+				applyMailRecipientTarget(req, conversation.kind, conversation.value)
+				if req.ToDID == "" && req.ToStableID == "" {
+					applyMailRecipientTarget(req, "did", recipientDID)
 				}
 			} else {
 				req.ToDID = targetValue
@@ -291,14 +437,13 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			recipientAddress := targetValue
-			if conversationID, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+			if conversation, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
-			} else if conversationID != "" {
+			} else if conversation.conversationID != "" {
 				targetKind = "conversation"
-				targetValue = conversationID
-				req.ConversationID = conversationID
-				req.ToAddress = recipientAddress
+				targetValue = conversation.conversationID
+				req.ConversationID = conversation.conversationID
+				applyMailRecipientTarget(req, conversation.kind, conversation.value)
 			} else {
 				req.ToAddress = targetValue
 			}

@@ -90,11 +90,18 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		if s.SessionID != sessionID {
 			continue
 		}
-		if toAddr := c.toAddressForAliases(removeOneSelfIdentifier(s.ParticipantAddresses, c.address)); toAddr != "" {
-			return toAddr, nil
+		otherDIDs, otherAddresses := OtherConversationParticipants(
+			s.ParticipantDIDs,
+			s.ParticipantAddresses,
+			c.stableID,
+			c.did,
+			c.address,
+		)
+		if len(otherDIDs) == 1 {
+			return otherDIDs[0], nil
 		}
-		if toDIDs := deterministicTargetList(removeOneSelfIdentifier(s.ParticipantDIDs, c.stableID, c.did)); toDIDs != "" {
-			return toDIDs, nil
+		if toAddr := c.toAddressForAliases(otherAddresses); toAddr != "" {
+			return toAddr, nil
 		}
 		selfAlias := c.addressAlias()
 		if selfAlias == "" {
@@ -117,6 +124,54 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		return c.toAddressForAliases(others), nil
 	}
 	return "", nil
+}
+
+// OtherConversationParticipants removes the caller's single participant row
+// from paired DID/address participant lists and returns the remaining values.
+func OtherConversationParticipants(participantDIDs, participantAddresses []string, selfStableID, selfDID, selfAddress string) ([]string, []string) {
+	selfDIDs := []string{selfStableID, selfDID}
+	selfAddress = strings.TrimSpace(selfAddress)
+	maxLen := len(participantDIDs)
+	if len(participantAddresses) > maxLen {
+		maxLen = len(participantAddresses)
+	}
+	otherDIDs := make([]string, 0, len(participantDIDs))
+	otherAddresses := make([]string, 0, len(participantAddresses))
+	removedSelf := false
+	for i := 0; i < maxLen; i++ {
+		did := ""
+		if i < len(participantDIDs) {
+			did = strings.TrimSpace(participantDIDs[i])
+		}
+		address := ""
+		if i < len(participantAddresses) {
+			address = strings.TrimSpace(participantAddresses[i])
+		}
+		isSelf := false
+		if !removedSelf && selfAddress != "" && address != "" && strings.EqualFold(address, selfAddress) {
+			isSelf = true
+		}
+		if !removedSelf && !isSelf {
+			for _, selfDID := range selfDIDs {
+				selfDID = strings.TrimSpace(selfDID)
+				if selfDID != "" && did != "" && strings.EqualFold(did, selfDID) {
+					isSelf = true
+					break
+				}
+			}
+		}
+		if isSelf {
+			removedSelf = true
+			continue
+		}
+		if did != "" {
+			otherDIDs = append(otherDIDs, did)
+		}
+		if address != "" {
+			otherAddresses = append(otherAddresses, address)
+		}
+	}
+	return otherDIDs, otherAddresses
 }
 
 type ChatCreateSessionRequest struct {
