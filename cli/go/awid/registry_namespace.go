@@ -78,13 +78,7 @@ func (c *RegistryClient) GetNamespaceAddressAtSigned(
 	registryURL, domain, name string,
 	signingKey ed25519.PrivateKey,
 ) (*RegistryAddress, string, error) {
-	var out RegistryAddress
-	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/addresses/" + urlPathEscape(strings.TrimSpace(name))
-	headers := signedAddressLookupHeaders(domain, strings.TrimSpace(name), "get_address", signingKey)
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, headers, nil, &out); err != nil {
-		return nil, "", err
-	}
-	return &out, registryURL, nil
+	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
 func (c *RegistryClient) RegisterNamespace(
@@ -476,24 +470,6 @@ func signedDIDDeliveryOriginHeaders(didAW, deliveryOrigin string, signingKey ed2
 		"operation":       "set_delivery_origin",
 		"timestamp":       timestamp,
 	}, signingKey, timestamp)
-}
-
-func signedAddressLookupHeaders(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
-	if strings.TrimSpace(name) != "" {
-		fields["name"] = strings.TrimSpace(name)
-	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
 }
 
 func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {

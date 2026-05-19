@@ -201,11 +201,6 @@ type Client struct {
 	latestClientVersion     atomic.Value     // last seen X-Latest-Client-Version header (string)
 }
 
-const (
-	addressLookupAuthHeader      = "X-AWID-Address-Lookup-Authorization"
-	addressLookupTimestampHeader = "X-AWID-Address-Lookup-Timestamp"
-)
-
 // New creates a new client.
 func New(baseURL string) (*Client, error) {
 	if _, err := url.Parse(baseURL); err != nil {
@@ -375,32 +370,6 @@ func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*Resol
 		return nil, errors.New("aweb: no identity resolver configured")
 	}
 	return c.resolver.Resolve(ctx, identifier)
-}
-
-func (c *Client) addressLookupProofHeaders(address string) (map[string]string, error) {
-	address = strings.TrimSpace(address)
-	if c == nil || c.signingKey == nil || !strings.Contains(address, "/") {
-		return nil, nil
-	}
-	parts := strings.SplitN(address, "/", 2)
-	domain := strings.TrimSpace(parts[0])
-	name := strings.TrimSpace(parts[1])
-	if domain == "" || name == "" {
-		return nil, nil
-	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	didKey, signature, _, err := SignArbitraryPayload(c.signingKey, map[string]any{
-		"domain":    canonicalizeDomain(domain),
-		"name":      name,
-		"operation": "get_address",
-	}, timestamp)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		addressLookupAuthHeader:      "DIDKey " + didKey + " " + signature,
-		addressLookupTimestampHeader: timestamp,
-	}, nil
 }
 
 // SetPinStore sets the TOFU pin store for sender identity verification.

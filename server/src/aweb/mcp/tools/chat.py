@@ -478,7 +478,6 @@ async def chat_send(
                 "did_aw": (target.get("did_aw") or target_did).strip(),
                 "current_did_key": (target.get("did_key") or "").strip(),
                 "delivery_origin": (target.get("delivery_origin") or "").strip(),
-                "requires_team_certificate": (target.get("reachability") or "public") != "public",
             }
             if hang_on:
                 payload = ChatSendMessageRequest(
@@ -589,7 +588,6 @@ async def chat_send(
                 "did_key": route["current_did_key"],
                 "current_did_key": route["current_did_key"],
                 "delivery_origin": route["delivery_origin"],
-                "requires_team_certificate": route["requires_team_certificate"],
             }
         to_value, to_current_did, to_stable_id = _recipient_signed_fields(recipient_rows)
         signed_fields = {

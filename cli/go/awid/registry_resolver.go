@@ -81,15 +81,12 @@ type RegistryResolver struct {
 	DNSResolver         TXTResolver
 	Now                 func() time.Time
 	fallbackRegistryURL string
-	lookupSigningKey    ed25519.PrivateKey
-	lookupCertificate   *TeamCertificate
-
-	mu            sync.Mutex
-	registryCache map[string]cachedValue[DomainAuthority]
-	addressCache  map[string]cachedValue[*registryAddressCacheValue]
-	memberCache   map[string]cachedValue[*registryTeamMemberCacheValue]
-	keyCache      map[string]cachedValue[*DidKeyResolution]
-	headCache     map[string]*VerifiedLogHead
+	mu                  sync.Mutex
+	registryCache       map[string]cachedValue[DomainAuthority]
+	addressCache        map[string]cachedValue[*registryAddressCacheValue]
+	memberCache         map[string]cachedValue[*registryTeamMemberCacheValue]
+	keyCache            map[string]cachedValue[*DidKeyResolution]
+	headCache           map[string]*VerifiedLogHead
 }
 
 func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *RegistryResolver {
@@ -108,43 +105,6 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		memberCache:   make(map[string]cachedValue[*registryTeamMemberCacheValue]),
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
-	}
-}
-
-// SetLookupSigningKey configures optional DIDKey authentication for namespace
-// address reads so private reachability rows can be resolved when authorized.
-func (r *RegistryResolver) SetLookupSigningKey(key ed25519.PrivateKey) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if key == nil {
-		r.lookupSigningKey = nil
-		if r.addressCache != nil {
-			r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
-		}
-		return
-	}
-	r.lookupSigningKey = append(ed25519.PrivateKey(nil), key...)
-	if r.addressCache != nil {
-		r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
-	}
-}
-
-// SetLookupTeamCertificate configures the optional team certificate presented
-// alongside signed namespace address reads.
-func (r *RegistryResolver) SetLookupTeamCertificate(cert *TeamCertificate) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if cert == nil {
-		r.lookupCertificate = nil
-		if r.addressCache != nil {
-			r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
-		}
-		return
-	}
-	copyCert := *cert
-	r.lookupCertificate = &copyCert
-	if r.addressCache != nil {
-		r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
 	}
 }
 
@@ -560,49 +520,7 @@ func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string)
 
 func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, name string, out any) error {
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses/" + urlPathEscape(name)
-	headers, err := r.addressLookupAuthHeaders(domain, name)
-	if err != nil {
-		return err
-	}
-	return r.getJSONWithHeaders(ctx, baseURL, path, headers, out)
-}
-
-func (r *RegistryResolver) addressLookupAuthHeaders(domain, name string) (map[string]string, error) {
-	r.mu.Lock()
-	key := append(ed25519.PrivateKey(nil), r.lookupSigningKey...)
-	var cert *TeamCertificate
-	if r.lookupCertificate != nil {
-		copyCert := *r.lookupCertificate
-		cert = &copyCert
-	}
-	r.mu.Unlock()
-	if key == nil {
-		return nil, nil
-	}
-	if len(key) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("registry lookup signing key has invalid length")
-	}
-	timestamp := r.now().UTC().Format(time.RFC3339)
-	didKey, signature, _, err := SignArbitraryPayload(key, map[string]any{
-		"domain":    canonicalizeDomain(domain),
-		"name":      strings.TrimSpace(name),
-		"operation": "get_address",
-	}, timestamp)
-	if err != nil {
-		return nil, err
-	}
-	headers := map[string]string{
-		"Authorization":    "DIDKey " + didKey + " " + signature,
-		"X-AWEB-Timestamp": timestamp,
-	}
-	if cert != nil {
-		encoded, err := EncodeTeamCertificateHeader(cert)
-		if err != nil {
-			return nil, fmt.Errorf("encode lookup team certificate: %w", err)
-		}
-		headers["X-AWID-Team-Certificate"] = encoded
-	}
-	return headers, nil
+	return r.getJSON(ctx, baseURL, path, out)
 }
 
 func (r *RegistryResolver) getJSON(ctx context.Context, baseURL, path string, out any) error {

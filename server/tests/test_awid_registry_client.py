@@ -953,28 +953,15 @@ async def test_resolve_address_uses_discovered_registry_for_domain():
 
 
 @pytest.mark.asyncio
-async def test_resolve_address_signs_lookup_when_identity_supplied():
+async def test_resolve_address_does_not_sign_lookup_when_identity_supplied():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == "/v1/namespaces/acme.com/addresses/support"
-        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
-        timestamp = request.headers["x-aweb-timestamp"]
-        assert auth_did_key == did_key
-        verify_did_key_signature(
-            did_key=auth_did_key,
-            payload=canonical_json_bytes(
-                {
-                    "domain": "acme.com",
-                    "name": "support",
-                    "operation": "get_address",
-                    "timestamp": timestamp,
-                }
-            ),
-            signature_b64=signature,
-        )
+        assert "authorization" not in request.headers
+        assert "x-aweb-timestamp" not in request.headers
         return httpx.Response(
             200,
             json={
@@ -1336,7 +1323,7 @@ async def test_cached_registry_client_uses_address_ttl_for_list_addresses(monkey
 
 
 @pytest.mark.asyncio
-async def test_cached_registry_client_scopes_address_reads_by_caller():
+async def test_cached_registry_client_reuses_address_reads_across_callers():
     owner_signing_key, owner_public_key = generate_keypair()
     owner_did_key = did_from_public_key(owner_public_key)
     subject_did_aw = stable_id_from_did_key(owner_did_key)
@@ -1346,35 +1333,20 @@ async def test_cached_registry_client_scopes_address_reads_by_caller():
         request_counts[request.url.path] = request_counts.get(request.url.path, 0) + 1
         assert request.method == "GET"
         assert request.url.path == "/v1/namespaces/acme.com/addresses/support"
-        if "authorization" in request.headers:
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
-            timestamp = request.headers["x-aweb-timestamp"]
-            assert auth_did_key == owner_did_key
-            verify_did_key_signature(
-                did_key=auth_did_key,
-                payload=canonical_json_bytes(
-                    {
-                        "domain": "acme.com",
-                        "name": "support",
-                        "operation": "get_address",
-                        "timestamp": timestamp,
-                    }
-                ),
-                signature_b64=signature,
-            )
-            return httpx.Response(
-                200,
-                json={
-                    "address_id": "addr-1",
-                    "domain": "acme.com",
-                    "name": "support",
-                    "did_aw": subject_did_aw,
-                    "current_did_key": owner_did_key,
-                    "reachability": "nobody",
-                    "created_at": "2026-04-03T00:00:00Z",
-                },
-            )
-        return httpx.Response(404, json={"detail": "Address not found"})
+        assert "authorization" not in request.headers
+        assert "x-aweb-timestamp" not in request.headers
+        return httpx.Response(
+            200,
+            json={
+                "address_id": "addr-1",
+                "domain": "acme.com",
+                "name": "support",
+                "did_aw": subject_did_aw,
+                "current_did_key": owner_did_key,
+                "reachability": "nobody",
+                "created_at": "2026-04-03T00:00:00Z",
+            },
+        )
 
     client = CachedRegistryClient(
         registry_url="https://api.awid.ai",
@@ -1386,10 +1358,10 @@ async def test_cached_registry_client_scopes_address_reads_by_caller():
     owner_first = await client.resolve_address("acme.com", "support", signing_key=owner_signing_key, did_key=owner_did_key)
     owner_second = await client.resolve_address("acme.com", "support", signing_key=owner_signing_key, did_key=owner_did_key)
 
-    assert anonymous is None
+    assert anonymous is not None
     assert owner_first is not None
     assert owner_second is not None
-    assert request_counts["/v1/namespaces/acme.com/addresses/support"] == 2
+    assert request_counts["/v1/namespaces/acme.com/addresses/support"] == 1
 
 
 @pytest.mark.asyncio

@@ -234,12 +234,7 @@ func (c *RegistryClient) ListNamespaceAddressesAtSigned(
 	registryURL, domain string,
 	signingKey ed25519.PrivateKey,
 ) ([]RegistryAddress, string, error) {
-	var out RegistryAddressList
-	headers := signedAddressLookupHeaders(domain, "", "list_addresses", signingKey)
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/namespaces/"+urlPathEscape(canonicalizeDomain(domain))+"/addresses", headers, nil, &out); err != nil {
-		return nil, "", err
-	}
-	return out.Addresses, registryURL, nil
+	return c.ListNamespaceAddressesAt(ctx, registryURL, domain)
 }
 
 func (c *RegistryClient) RegisterIdentity(

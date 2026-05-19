@@ -461,14 +461,6 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	if err != nil {
 		return err
 	}
-	registry.SetLookupSigningKey(c.Client.SigningKey())
-	if strings.TrimSpace(sel.WorkingDir) != "" && strings.TrimSpace(sel.TeamID) != "" {
-		if cert, err := awconfig.LoadTeamCertificateForTeam(sel.WorkingDir, sel.TeamID); err == nil {
-			registry.SetLookupTeamCertificate(cert)
-		} else {
-			debugLog("load registry lookup team certificate: %v", err)
-		}
-	}
 	c.SetResolver(&awid.ChainResolver{
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,

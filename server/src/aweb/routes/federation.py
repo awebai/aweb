@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import base64
-import json
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.log import canonical_server_origin
-from awid.team_ids import parse_team_id
 
 from aweb.config import get_settings
 from aweb.deps import get_db
@@ -18,7 +15,6 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     verify_federation_envelope,
 )
-from aweb.federation.address_lookup import envelope_address_lookup_kwargs
 from aweb.hooks import fire_mutation_hook
 from aweb.messaging.conversations import (
     create_conversation,
@@ -34,7 +30,6 @@ from aweb.messaging.messages import (
     utc_iso,
 )
 from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
-from aweb.team_auth import parse_and_verify_certificate
 
 router = APIRouter(prefix="/v1/federation", tags=["aweb-federation"])
 
@@ -119,10 +114,6 @@ async def _backfill_federated_sender_current_key(db, envelope: FederationEnvelop
         )
 
 
-def _certificate_header_from_dict(certificate: dict | None) -> str | None:
-    if certificate is None:
-        return None
-    return base64.b64encode(json.dumps(certificate).encode()).decode()
 
 
 async def _verify_sender_current_key(registry_client, envelope: FederationEnvelope) -> None:
@@ -148,11 +139,7 @@ async def _resolve_target_identity(registry_client, envelope: FederationEnvelope
     try:
         if "/" in envelope.target_address:
             domain, name = _split_address(envelope.target_address)
-            resolved = await registry_client.resolve_address(
-                domain,
-                name,
-                **envelope_address_lookup_kwargs(envelope),
-            )
+            resolved = await registry_client.resolve_address(domain, name)
         else:
             if envelope.target_address not in {envelope.target_did_aw, envelope.target_current_did_key}:
                 raise HTTPException(status_code=422, detail="Federation target route does not match identity")
@@ -183,96 +170,6 @@ async def _resolve_target_identity(registry_client, envelope: FederationEnvelope
     return resolved
 
 
-async def _verify_team_certificate(registry_client, envelope: FederationEnvelope) -> None:
-    if envelope.sender_team_certificate is None:
-        return
-    cert_header = _certificate_header_from_dict(envelope.sender_team_certificate)
-    if cert_header is None:
-        return
-
-    async def _team_key(team_id: str) -> str:
-        domain, name = parse_team_id(team_id)
-        key = await registry_client.get_team_public_key(domain, name)
-        if not key:
-            raise ValueError("Unknown team")
-        return key
-
-    try:
-        team_id = str(envelope.sender_team_certificate.get("team_id") or "")
-        if envelope.sender_active_team_id and team_id != envelope.sender_active_team_id:
-            raise ValueError("Certificate team_id mismatch")
-        team_did_key = await _team_key(team_id)
-        revoked = await _certificate_revoked_at_message_time(registry_client, envelope, team_id)
-        cert_info = parse_and_verify_certificate(
-            cert_header,
-            request_did_key=envelope.sender_current_did_key,
-            team_public_key_resolver=lambda _team_id: team_did_key,
-            revocation_checker=lambda _team_id, _certificate_id: revoked,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail="Invalid federation team certificate") from exc
-
-    cert_did_aw = (cert_info.get("member_did_aw") or "").strip()
-    if cert_did_aw and cert_did_aw != envelope.sender_did_aw:
-        raise HTTPException(status_code=403, detail="Federation team certificate identity mismatch")
-    cert_address = (cert_info.get("member_address") or "").strip()
-    if cert_address and envelope.sender_address and cert_address != envelope.sender_address:
-        raise HTTPException(status_code=403, detail="Federation team certificate address mismatch")
-    _verify_certificate_time(envelope)
-
-
-def _verify_certificate_time(envelope: FederationEnvelope) -> None:
-    cert = envelope.sender_team_certificate or {}
-    issued_at = str(cert.get("issued_at") or "").strip()
-    if not issued_at:
-        raise HTTPException(status_code=403, detail="Federation team certificate missing issued_at")
-    try:
-        issued = datetime.fromisoformat(issued_at.replace("Z", "+00:00")).astimezone(timezone.utc)
-        message_time = _parse_timestamp(envelope.timestamp)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail="Federation team certificate has invalid issued_at") from exc
-    if issued > message_time:
-        raise HTTPException(status_code=403, detail="Federation team certificate was issued after message timestamp")
-
-
-async def _certificate_revoked_at_message_time(
-    registry_client,
-    envelope: FederationEnvelope,
-    team_id: str,
-) -> bool:
-    certificate_id = str((envelope.sender_team_certificate or {}).get("certificate_id") or "").strip()
-    if not certificate_id:
-        return True
-    domain, name = parse_team_id(team_id)
-    message_time = _parse_timestamp(envelope.timestamp)
-    list_certificates = getattr(registry_client, "list_team_certificates", None)
-    if callable(list_certificates):
-        try:
-            certificates = await list_certificates(domain, name, active_only=False)
-        except (AttributeError, TypeError):
-            certificates = None
-        if certificates is not None:
-            for cert in certificates:
-                if str(getattr(cert, "certificate_id", "") or "") != certificate_id:
-                    continue
-                revoked_at = str(getattr(cert, "revoked_at", "") or "").strip()
-                if not revoked_at:
-                    return False
-                try:
-                    revoked_time = datetime.fromisoformat(
-                        revoked_at.replace("Z", "+00:00")
-                    ).astimezone(timezone.utc)
-                except Exception as exc:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Federation team certificate has invalid revoked_at",
-                    ) from exc
-                return revoked_time <= message_time
-
-    revoked = await registry_client.get_team_revocations(domain, name)
-    return certificate_id in revoked
 
 
 def _require_target_origin_here(request: Request, envelope: FederationEnvelope) -> None:
@@ -542,7 +439,6 @@ async def receive_federated_message(
     _require_target_origin_here(request, envelope)
     await _verify_sender_current_key(registry_client, envelope)
     await _resolve_target_identity(registry_client, envelope)
-    await _verify_team_certificate(registry_client, envelope)
 
     recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
     if recipient is None:

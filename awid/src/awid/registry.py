@@ -616,23 +616,10 @@ class RegistryClient:
         *,
         signing_key: bytes | None = None,
         did_key: str | None = None,
-        lookup_authorization: str | None = None,
-        lookup_timestamp: str | None = None,
-        team_certificate: str | None = None,
     ) -> Address | None:
-        headers = self._address_lookup_headers(
-            domain=domain,
-            name=name,
-            signing_key=signing_key,
-            did_key=did_key,
-            lookup_authorization=lookup_authorization,
-            lookup_timestamp=lookup_timestamp,
-            team_certificate=team_certificate,
-        )
         data = await self._request_optional_json(
             "GET",
             f"/v1/namespaces/{domain}/addresses/{name}",
-            headers=headers,
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _address_from_json(data)
@@ -647,13 +634,6 @@ class RegistryClient:
         data = await self._request_json(
             "GET",
             f"/v1/namespaces/{domain}/addresses",
-            headers=self._signed_address_lookup_headers(
-                domain=domain,
-                name=None,
-                operation="list_addresses",
-                signing_key=signing_key,
-                did_key=did_key,
-            ),
             registry_url=await self._registry_url_for_domain(domain),
         )
         return [_address_from_json(item) for item in data.get("addresses", [])]
@@ -915,66 +895,6 @@ class RegistryClient:
             "X-AWEB-Timestamp": timestamp,
         }
 
-    def _signed_address_lookup_headers(
-        self,
-        *,
-        domain: str,
-        name: str | None,
-        operation: str,
-        signing_key: bytes | None,
-        did_key: str | None = None,
-    ) -> dict[str, str] | None:
-        if signing_key is None:
-            return None
-        signer_did = _did_key_from_signing_key(signing_key)
-        if did_key is not None and did_key.strip() and did_key.strip() != signer_did:
-            raise ValueError("signing_key must match did_key for signed address lookup")
-        timestamp = _utc_timestamp()
-        payload_dict: dict[str, Any] = {
-            "domain": domain,
-            "operation": operation,
-            "timestamp": timestamp,
-        }
-        if name is not None:
-            payload_dict["name"] = name
-        payload = canonical_json_bytes(payload_dict)
-        return {
-            "Authorization": f"DIDKey {signer_did} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
-
-    def _address_lookup_headers(
-        self,
-        *,
-        domain: str,
-        name: str | None,
-        signing_key: bytes | None,
-        did_key: str | None = None,
-        lookup_authorization: str | None = None,
-        lookup_timestamp: str | None = None,
-        team_certificate: str | None = None,
-    ) -> dict[str, str] | None:
-        auth = (lookup_authorization or "").strip()
-        timestamp = (lookup_timestamp or "").strip()
-        cert = (team_certificate or "").strip()
-        if auth or timestamp or cert:
-            if not auth or not timestamp:
-                raise ValueError("forwarded address lookup requires Authorization and X-AWEB-Timestamp")
-            headers = {
-                "Authorization": auth,
-                "X-AWEB-Timestamp": timestamp,
-            }
-            if cert:
-                headers["X-AWID-Team-Certificate"] = cert
-            return headers
-        return self._signed_address_lookup_headers(
-            domain=domain,
-            name=name,
-            operation="get_address" if name is not None else "list_addresses",
-            signing_key=signing_key,
-            did_key=did_key,
-        )
-
     def _signed_team_headers(
         self,
         *,
@@ -1113,7 +1033,7 @@ class CachedRegistryClient(RegistryClient):
         did_key: str | None = None,
     ) -> list[Address]:
         registry_url = await self._registry_url_for_domain(domain)
-        caller_did_key = _normalize_lookup_did_key(signing_key=signing_key, did_key=did_key)
+        caller_did_key = None
         return await self._cached_read(
             cache_key=self._domain_addresses_cache_key(domain, registry_url=registry_url, caller_did_key=caller_did_key),
             ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
@@ -1133,16 +1053,9 @@ class CachedRegistryClient(RegistryClient):
         *,
         signing_key: bytes | None = None,
         did_key: str | None = None,
-        lookup_authorization: str | None = None,
-        lookup_timestamp: str | None = None,
-        team_certificate: str | None = None,
     ) -> Address | None:
         registry_url = await self._registry_url_for_domain(domain)
-        caller_did_key = _normalize_lookup_did_key(
-            signing_key=signing_key,
-            did_key=did_key,
-            lookup_authorization=lookup_authorization,
-        )
+        caller_did_key = None
         return await self._cached_read(
             cache_key=self._address_cache_key(domain, name, registry_url=registry_url, caller_did_key=caller_did_key),
             ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
@@ -1151,9 +1064,6 @@ class CachedRegistryClient(RegistryClient):
                 name,
                 signing_key=signing_key,
                 did_key=caller_did_key,
-                lookup_authorization=lookup_authorization,
-                lookup_timestamp=lookup_timestamp,
-                team_certificate=team_certificate,
             ),
             encode=lambda value: None if value is None else _address_to_json(value),
             decode=lambda payload: None if payload is None else _address_from_json(payload),
@@ -1668,37 +1578,6 @@ class CachedRegistryClient(RegistryClient):
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _normalize_lookup_did_key(
-    *,
-    signing_key: bytes | None,
-    did_key: str | None,
-    lookup_authorization: str | None = None,
-) -> str | None:
-    forwarded = _did_key_from_lookup_authorization(lookup_authorization)
-    if forwarded is not None:
-        return forwarded
-    normalized = (did_key or "").strip() or None
-    if signing_key is None:
-        return None
-    signer_did = _did_key_from_signing_key(signing_key)
-    if normalized is not None and normalized != signer_did:
-        raise ValueError("signing_key must match did_key for signed address lookup")
-    return signer_did
-
-
-def _did_key_from_lookup_authorization(value: str | None) -> str | None:
-    value = (value or "").strip()
-    if not value:
-        return None
-    parts = value.split()
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        return None
-    did_key = parts[1].strip()
-    if not did_key.startswith("did:key:"):
-        return None
-    return did_key
 
 
 def _lookup_cache_scope(caller_did_key: str | None) -> str:

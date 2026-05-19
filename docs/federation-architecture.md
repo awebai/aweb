@@ -35,7 +35,7 @@ beta.example/bob         -> aweb.alpha.example/alice
 The trust model must remain the same:
 
 - awid is the source of truth for identities, namespace addresses,
-  reachability, team public keys, certificates, and revocation.
+  identity delivery origins, team public keys, certificates, and revocation.
 - aweb is the source of truth for coordination state: mail, chat,
   conversations, tasks, presence, work queues, roles, and instructions.
 - A coordination server must not invent address authority from local rows.
@@ -46,8 +46,8 @@ The trust model must remain the same:
 The code already has the identity half of federation:
 
 - `domain/name` address lookup goes through awid.
-- awid resolves the address to `did:aw` plus current `did:key`, subject to
-  reachability.
+- awid resolves the address to `did:aw` plus current `did:key`; legacy
+  reachability metadata is not a resolver gate.
 - aweb mail/chat can build an "external recipient" when the recipient address
   resolves at awid but is not present in the local aweb database.
 
@@ -160,14 +160,12 @@ not changed by messaging federation v1.
 When Alice sends to `beta.example/bob`:
 
 1. Alice's local client selects her active team.
-2. Alice signs an awid address lookup for `beta.example/bob`.
-3. If the target address is non-public, Alice also presents her active team
-   certificate to awid.
-4. awid returns:
+2. Alice resolves `beta.example/bob` through awid; address lookup is not an authorization surface.
+3. awid returns:
    - target `did:aw`
    - target current `did:key`
    - target delivery origin inherited from the namespace
-5. Alice signs the normal mail/chat message payload with:
+4. Alice signs the normal mail/chat message payload with:
    - sender `did:aw` and current `did:key`
    - sender selected address, if any
    - target address
@@ -201,15 +199,11 @@ The recipient server must verify:
    `did:aw` and current `did:key`.
 4. The resolved namespace delivery origin matches this server's origin, or this
    server is explicitly authorized to accept for that origin.
-5. If the address was resolved through non-public reachability, the federation
-   transport envelope carries the team certificate that was presented to awid,
-   and the recipient server re-verifies that certificate rather than trusting
-   the sender's server.
-6. The timestamp is inside the accepted skew window.
-7. The message id has not already been accepted for this sender/recipient route.
+5. The timestamp is inside the accepted skew window.
+6. The message id has not already been accepted for this sender/recipient route.
    Duplicate message ids are idempotent, not double-delivered.
-8. The sender is allowed by recipient messaging policy.
-9. Conversation continuation is valid if `conversation_id` is present.
+7. The sender is allowed by recipient messaging policy.
+8. Conversation continuation is valid if `conversation_id` is present.
 
 If any identity, address, or delivery binding disagrees, the recipient server
 must fail closed.
@@ -240,9 +234,9 @@ The sender delivery origin carried in the federation transport envelope is
 route metadata, not identity authority. The sender identity authority remains
 the preserved sender-signed mail/chat payload and AWID current-key check.
 
-This is what lets a non-public address reply after an authorized first contact:
-conversation participation authorizes the reply path; address reachability only
-controls first discovery.
+This is what lets a local or legacy address reply after first contact:
+conversation participation stores the reply route; address reachability is not
+routing authority.
 
 ## Direct `did:aw` Sends
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -23,7 +22,6 @@ from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError, verify_federation_envelope
-from aweb.federation.address_lookup import request_address_lookup_kwargs
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
@@ -266,19 +264,6 @@ def _local_public_origin(request: Request) -> str:
     return get_settings().public_origin
 
 
-def _request_team_certificate(request: Request) -> dict | None:
-    cert_header = (request.headers.get("X-AWID-Team-Certificate") or "").strip()
-    if not cert_header:
-        return None
-    try:
-        decoded = json.loads(base64.b64decode(cert_header))
-    except Exception:
-        raise HTTPException(status_code=401, detail="Malformed certificate")
-    if not isinstance(decoded, dict):
-        raise HTTPException(status_code=401, detail="Malformed certificate")
-    return decoded
-
-
 def _target_delivery_origin(row: dict[str, Any] | None) -> str:
     return str((row or {}).get("delivery_origin") or "").strip()
 
@@ -315,7 +300,6 @@ async def _resolve_remote_chat_route(
     registry_client,
     recipient: dict[str, Any],
     requester_did_key: str | None = None,
-    address_lookup_kwargs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
     if registry_client is None:
@@ -328,14 +312,9 @@ async def _resolve_remote_chat_route(
                     domain,
                     name,
                     did_key=requester_did_key,
-                    **(address_lookup_kwargs or {}),
                 )
             else:
-                resolution = await registry_client.resolve_address(
-                    domain,
-                    name,
-                    **(address_lookup_kwargs or {}),
-                )
+                resolution = await registry_client.resolve_address(domain, name)
         else:
             did_aw = str(recipient.get("did_aw") or recipient.get("did") or address or "").strip()
             if not did_aw.startswith("did:aw:"):
@@ -377,7 +356,6 @@ async def _resolve_remote_chat_route(
         "current_did_key": target_current_did,
         "delivery_origin": delivery_origin,
         "reachability": str(getattr(resolution, "reachability", "") or "").strip() or "public",
-        "requires_team_certificate": False,
     }
 
 
@@ -431,7 +409,6 @@ async def _resolve_stored_remote_chat_route(
                 "did_aw": local_did,
                 "current_did_key": local_did,
                 "delivery_origin": delivery_origin,
-                "requires_team_certificate": False,
             }
         raise HTTPException(status_code=424, detail="Remote chat recipient has no stored routable identity")
     current_did = str(recipient.get("current_did_key") or recipient.get("did_key") or "").strip()
@@ -448,7 +425,6 @@ async def _resolve_stored_remote_chat_route(
         "delivery_origin": delivery_origin,
         # Existing conversation route metadata is sufficient authority to reply;
         # recipient address reachability is not re-litigated on continuation.
-        "requires_team_certificate": False,
     }
 
 
@@ -521,7 +497,6 @@ async def _deliver_federated_chat(
     if sender_current_did not in set(_actor_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
 
-    sender_team_certificate = _request_team_certificate(request)
     try:
         envelope = FederationEnvelope(
             type="chat",
@@ -529,15 +504,7 @@ async def _deliver_federated_chat(
             sender_current_did_key=sender_current_did,
             sender_address=sender_address,
             sender_delivery_origin=_local_public_origin(request),
-            sender_active_team_id=auth.team_id,
-            sender_team_certificate=sender_team_certificate,
             target_address=route["address"],
-            target_address_lookup_authorization=request.headers.get(
-                "X-AWID-Address-Lookup-Authorization"
-            ),
-            target_address_lookup_timestamp=request.headers.get(
-                "X-AWID-Address-Lookup-Timestamp"
-            ),
             target_did_aw=route["did_aw"],
             target_current_did_key=route["current_did_key"],
             target_delivery_origin=route["delivery_origin"],
@@ -791,12 +758,7 @@ async def _resolve_chat_targets(
         domain, name = address.split("/", 1)
         resolution = None
         if registry_client is not None:
-            resolution = await registry_client.resolve_address(
-                domain,
-                name,
-                did_key=auth.did_key,
-                **request_address_lookup_kwargs(request),
-            )
+            resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
         if resolution is not None and resolution.did_aw:
             row = await resolve_agent_by_did(db, resolution.did_aw)
             if row is None:
@@ -1153,7 +1115,6 @@ async def create_or_send(
             registry_client=registry_client,
             recipient=external_targets[0],
             requester_did_key=auth.did_key,
-            address_lookup_kwargs=request_address_lookup_kwargs(request),
         )
 
         remote = await _deliver_federated_chat(
@@ -2074,7 +2035,6 @@ async def send_message(
             "did_key": route["current_did_key"],
             "current_did_key": route["current_did_key"],
             "delivery_origin": route["delivery_origin"],
-            "requires_team_certificate": route["requires_team_certificate"],
         }
     try:
         await require_conversation_not_legacy_bound(
@@ -2138,7 +2098,6 @@ async def send_message(
                 registry_client=getattr(request.app.state, "awid_registry_client", None),
                 recipient=route,
                 requester_did_key=auth.did_key,
-                address_lookup_kwargs=request_address_lookup_kwargs(request),
             )
             if refreshed_route["delivery_origin"] == _target_delivery_origin(route):
                 raise exc
@@ -2148,7 +2107,6 @@ async def send_message(
                 "did_key": refreshed_route["current_did_key"],
                 "current_did_key": refreshed_route["current_did_key"],
                 "delivery_origin": refreshed_route["delivery_origin"],
-                "requires_team_certificate": refreshed_route["requires_team_certificate"],
             }
             remote = await _deliver_federated_chat(
                 request,

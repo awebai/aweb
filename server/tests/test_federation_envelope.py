@@ -7,11 +7,7 @@ import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.federation.envelope import (
-    FederationEnvelopeError,
-    require_team_certificate_for_non_public_reachability,
-    verify_federation_envelope,
-)
+from aweb.federation.envelope import FederationEnvelopeError, verify_federation_envelope
 
 
 def _timestamp(offset_seconds: int = 0) -> str:
@@ -49,7 +45,6 @@ def _envelope(sender_did_key: str) -> dict:
         "sender_did_aw": stable_id_from_did_key(sender_did_key),
         "sender_current_did_key": sender_did_key,
         "sender_address": "alpha.example/alice",
-        "sender_active_team_id": "default:alpha.example",
         "target_address": "beta.example/bob",
         "target_did_aw": "did:aw:target",
         "target_current_did_key": target_did_key,
@@ -91,7 +86,6 @@ def test_verify_federation_envelope_accepts_signed_mail_payload():
     )
 
     assert verified.target_delivery_origin == "https://aweb.beta.example"
-    assert verified.sender_active_team_id == "default:alpha.example"
 
 
 @pytest.mark.parametrize("signed_to", ["did:aw:target", "did:key:z6Mktarget"])
@@ -273,30 +267,3 @@ def test_verify_federation_envelope_rejects_stale_timestamp():
 
     with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
         verify_federation_envelope(envelope, signature)
-
-
-def test_non_public_reachability_requires_carried_team_certificate():
-    signing_key, public_key = generate_keypair()
-    sender_did_key = did_from_public_key(public_key)
-    envelope = _envelope(sender_did_key)
-    signature = _sign(envelope, signing_key)
-    verified = verify_federation_envelope(envelope, signature)
-
-    with pytest.raises(FederationEnvelopeError, match="missing sender_team_certificate"):
-        require_team_certificate_for_non_public_reachability(
-            verified,
-            reachability="team_members_only",
-        )
-
-    envelope["sender_team_certificate"] = {
-        "version": 1,
-        "team_id": "default:alpha.example",
-        "certificate_id": "cert-1",
-    }
-    signature = _sign(envelope, signing_key)
-    verified = verify_federation_envelope(envelope, signature)
-
-    require_team_certificate_for_non_public_reachability(
-        verified,
-        reachability="team_members_only",
-    )

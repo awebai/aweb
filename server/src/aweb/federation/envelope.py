@@ -40,11 +40,7 @@ class FederationEnvelope(BaseModel):
     sender_current_did_key: str = Field(..., min_length=1, max_length=256)
     sender_address: str | None = Field(default=None, min_length=1, max_length=256)
     sender_delivery_origin: str | None = Field(default=None, min_length=1, max_length=512)
-    sender_active_team_id: str | None = Field(default=None, min_length=1, max_length=512)
-    sender_team_certificate: dict[str, Any] | None = None
     target_address: str = Field(..., min_length=1, max_length=256)
-    target_address_lookup_authorization: str | None = Field(default=None, min_length=1, max_length=1024)
-    target_address_lookup_timestamp: str | None = Field(default=None, min_length=1, max_length=64)
     target_did_aw: str = Field(..., min_length=1, max_length=256)
     target_current_did_key: str = Field(..., min_length=1, max_length=256)
     target_delivery_origin: str = Field(..., min_length=1, max_length=512)
@@ -98,7 +94,7 @@ class FederationEnvelope(BaseModel):
         except Exception as exc:
             raise ValueError("must be a UUID") from exc
 
-    @field_validator("timestamp", "target_address_lookup_timestamp")
+    @field_validator("timestamp")
     @classmethod
     def _validate_timestamp(cls, value: str | None) -> str | None:
         if value is None:
@@ -147,18 +143,6 @@ def verify_federation_envelope(
     except Exception as exc:
         raise FederationEnvelopeError("Invalid federation message signature") from exc
     return model
-
-
-def require_team_certificate_for_non_public_reachability(
-    envelope: FederationEnvelope,
-    *,
-    reachability: str,
-) -> None:
-    """Require the carried team certificate when private awid reachability was used."""
-    if reachability == "public":
-        return
-    if envelope.sender_team_certificate is None:
-        raise FederationEnvelopeError("Federation envelope is missing sender_team_certificate")
 
 
 def _parse_timestamp(value: str) -> datetime:

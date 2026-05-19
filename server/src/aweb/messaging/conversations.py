@@ -300,7 +300,7 @@ async def find_active_one_to_one_conversation_between(
 ) -> dict[str, Any] | None:
     """Return the unique active 1:1 conversation shared by two identities.
 
-    First-contact reachability is enforced before a conversation exists. Once an
+    First-contact identity binding is enforced before a conversation exists. Once an
     active 1:1 conversation exists, participant membership is the routing
     authority. If duplicate active rows exist, return the newest one so routing
     remains available; creating duplicates is a data invariant violation, but

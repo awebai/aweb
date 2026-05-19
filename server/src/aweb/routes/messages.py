@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime, timezone
 from typing import Optional
@@ -16,7 +15,6 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     verify_federation_envelope,
 )
-from aweb.federation.address_lookup import request_address_lookup_kwargs
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
@@ -575,19 +573,6 @@ def _signed_payload_conversation_id(signed_payload: str | None) -> str:
     return str(payload.get("conversation_id") or "").strip()
 
 
-def _request_team_certificate(request: Request) -> dict | None:
-    cert_header = (request.headers.get("X-AWID-Team-Certificate") or "").strip()
-    if not cert_header:
-        return None
-    try:
-        decoded = json.loads(base64.b64decode(cert_header))
-    except Exception:
-        raise HTTPException(status_code=401, detail="Malformed certificate")
-    if not isinstance(decoded, dict):
-        raise HTTPException(status_code=401, detail="Malformed certificate")
-    return decoded
-
-
 def _require_remote_mail_signature(payload: SendMessageRequest) -> None:
     if not payload.signature or not payload.signed_payload:
         raise HTTPException(
@@ -657,7 +642,6 @@ async def _deliver_remote_mail_and_project_locally(
             status_code=422,
             detail="Federated mail delivery requires a resolved target identity",
         )
-    sender_team_certificate = _request_team_certificate(request)
     try:
         envelope = FederationEnvelope(
             type="mail",
@@ -665,15 +649,7 @@ async def _deliver_remote_mail_and_project_locally(
             sender_current_did_key=sender_current_did,
             sender_address=sender_address,
             sender_delivery_origin=_local_public_origin(request),
-            sender_active_team_id=auth.team_id,
-            sender_team_certificate=sender_team_certificate,
             target_address=target_address,
-            target_address_lookup_authorization=request.headers.get(
-                "X-AWID-Address-Lookup-Authorization"
-            ),
-            target_address_lookup_timestamp=request.headers.get(
-                "X-AWID-Address-Lookup-Timestamp"
-            ),
             target_did_aw=target_stable_id,
             target_current_did_key=target_current_did,
             target_delivery_origin=delivery_origin,
@@ -1301,12 +1277,7 @@ async def send_message(
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
         if registry_client is not None:
-            resolved = await registry_client.resolve_address(
-                domain,
-                name,
-                did_key=auth.did_key,
-                **request_address_lookup_kwargs(request),
-            )
+            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
                 recipient = await resolve_agent_by_did(db, recipient_did)

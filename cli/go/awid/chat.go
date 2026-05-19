@@ -267,16 +267,8 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		payload.SignedPayload = sf.SignedPayload
 	}
 
-	lookupAddress := ""
-	if len(payload.ToAddresses) == 1 {
-		lookupAddress = strings.TrimSpace(payload.ToAddresses[0])
-	}
-	extraHeaders, err := c.addressLookupProofHeaders(lookupAddress)
-	if err != nil {
-		return nil, err
-	}
 	var out ChatCreateSessionResponse
-	if err := c.PostWithHeaders(ctx, "/v1/chat/sessions", &payload, &out, extraHeaders); err != nil {
+	if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

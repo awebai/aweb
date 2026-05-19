@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import Address, AddressDelivery, KeyResolution, TeamCertificate
+from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import (
@@ -522,24 +522,10 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         "signed_payload": signed_payload,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/v1/messages",
-            json=payload,
-            headers={
-                "X-AWID-Address-Lookup-Authorization": "DIDKey alice lookup-signature",
-                "X-AWID-Address-Lookup-Timestamp": "2026-05-17T00:00:00Z",
-            },
-        )
+        resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_with(
-        "otherco.com",
-        "bob",
-        did_key=alice_did_key,
-        lookup_authorization="DIDKey alice lookup-signature",
-        lookup_timestamp="2026-05-17T00:00:00Z",
-        team_certificate="",
-    )
+    registry.resolve_address.assert_awaited_with("otherco.com", "bob", did_key=alice_did_key)
     assert resp.json()["conversation_id"] == conversation_id
     assert resp.json()["message_id"] == message_id
     assert len(remote_requests) == 1
@@ -548,8 +534,8 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     assert remote_body["signature"] == payload["signature"]
     assert remote_body["envelope"]["signed_payload"] == signed_payload
     assert remote_body["envelope"]["target_delivery_origin"] == "https://remote.example"
-    assert remote_body["envelope"]["target_address_lookup_authorization"] == "DIDKey alice lookup-signature"
-    assert remote_body["envelope"]["target_address_lookup_timestamp"] == "2026-05-17T00:00:00Z"
+    assert "target_address_lookup_authorization" not in remote_body["envelope"]
+    assert "target_address_lookup_timestamp" not in remote_body["envelope"]
     assert remote_body["envelope"]["sender_did_aw"] == "did:aw:alice"
     assert remote_body["envelope"]["sender_current_did_key"] == alice_did_key
     assert remote_body["envelope"]["target_did_aw"] == "did:aw:bob"
@@ -3099,9 +3085,6 @@ def _federated_mail_payload(
     priority: str = "normal",
     message_id: str | None = None,
     conversation_id: str | None = None,
-    sender_team_certificate: dict | None = None,
-    target_address_lookup_authorization: str | None = None,
-    target_address_lookup_timestamp: str | None = None,
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
@@ -3142,13 +3125,6 @@ def _federated_mail_payload(
         "subject": subject,
         "priority": priority,
     }
-    if target_address_lookup_authorization is not None:
-        envelope["target_address_lookup_authorization"] = target_address_lookup_authorization
-    if target_address_lookup_timestamp is not None:
-        envelope["target_address_lookup_timestamp"] = target_address_lookup_timestamp
-    if sender_team_certificate is not None:
-        envelope["sender_active_team_id"] = sender_team_certificate.get("team_id")
-        envelope["sender_team_certificate"] = sender_team_certificate
     return {
         "envelope": envelope,
         "signature": sign_message(sender_sk, signed_payload.encode()),
@@ -3188,21 +3164,13 @@ async def test_receive_federated_mail_stores_recipient_inbox_and_reply_route(awe
         sender_sk=alice_sk,
         sender_did_key=alice_did_key,
         target_did_key=bob_did_key,
-        target_address_lookup_authorization="DIDKey alice lookup-signature",
-        target_address_lookup_timestamp="2026-05-17T00:00:00Z",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_with(
-        "beta.example",
-        "bob",
-        lookup_authorization="DIDKey alice lookup-signature",
-        lookup_timestamp="2026-05-17T00:00:00Z",
-        team_certificate="",
-    )
+    registry.resolve_address.assert_awaited_with("beta.example", "bob")
     envelope = payload["envelope"]
     assert resp.json()["message_id"] == envelope["message_id"]
     assert resp.json()["conversation_id"] == envelope["conversation_id"]
@@ -3802,150 +3770,6 @@ async def test_receive_federated_mail_enforces_recipient_policy(aweb_cloud_db):
         UUID(payload["envelope"]["message_id"]),
     )
     assert count == 0
-
-
-@pytest.mark.asyncio
-async def test_receive_federated_mail_ignores_reachability_gate_but_verifies_carried_cert(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    team_sk, _, team_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
-    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="default:beta.example",
-        alias="bob",
-        did_key=bob_did_key,
-        did_aw="did:aw:bob",
-        address="beta.example/bob",
-    )
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="default:alpha.example",
-        member_did_aw="did:aw:alice",
-        member_address="alpha.example/alice",
-        alias="alice",
-        issued_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
-    )
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id=str(uuid4()),
-            domain="beta.example",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=bob_did_key,
-            reachability="team_members_only",
-            visible_to_team_id="default:alpha.example",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            delivery=AddressDelivery(origin="https://recipient.example"),
-        )
-    )
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
-    app.state.public_origin = "https://recipient.example"
-    payload_without_cert = _federated_mail_payload(
-        sender_sk=alice_sk,
-        sender_did_key=alice_did_key,
-        target_did_key=bob_did_key,
-    )
-    payload_with_cert = _federated_mail_payload(
-        sender_sk=alice_sk,
-        sender_did_key=alice_did_key,
-        target_did_key=bob_did_key,
-        sender_team_certificate=cert,
-    )
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        missing_cert = await client.post("/v1/federation/messages", json=payload_without_cert)
-        accepted = await client.post("/v1/federation/messages", json=payload_with_cert)
-
-    assert missing_cert.status_code == 200, missing_cert.text
-    assert accepted.status_code == 200, accepted.text
-    registry.get_team_public_key.assert_awaited()
-    registry.list_team_certificates.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_receive_federated_mail_accepts_cert_revoked_after_message_timestamp(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    team_sk, _, team_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
-    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="default:beta.example",
-        alias="bob",
-        did_key=bob_did_key,
-        did_aw="did:aw:bob",
-        address="beta.example/bob",
-    )
-    issued_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
-    revoked_at = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="default:alpha.example",
-        member_did_aw="did:aw:alice",
-        member_address="alpha.example/alice",
-        alias="alice",
-        issued_at=issued_at,
-    )
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id=str(uuid4()),
-            domain="beta.example",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=bob_did_key,
-            reachability="team_members_only",
-            visible_to_team_id="default:alpha.example",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            delivery=AddressDelivery(origin="https://recipient.example"),
-        )
-    )
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.list_team_certificates = AsyncMock(
-        return_value=[
-            TeamCertificate(
-                certificate_id=cert["certificate_id"],
-                member_did_key=alice_did_key,
-                member_did_aw="did:aw:alice",
-                member_address="alpha.example/alice",
-                alias="alice",
-                lifetime="persistent",
-                issued_at=issued_at,
-                revoked_at=revoked_at,
-            )
-        ]
-    )
-    registry.get_team_revocations = AsyncMock(return_value={cert["certificate_id"]})
-    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
-    app.state.public_origin = "https://recipient.example"
-    payload = _federated_mail_payload(
-        sender_sk=alice_sk,
-        sender_did_key=alice_did_key,
-        target_did_key=bob_did_key,
-        sender_team_certificate=cert,
-    )
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        accepted = await client.post("/v1/federation/messages", json=payload)
-
-    assert accepted.status_code == 200, accepted.text
-    registry.list_team_certificates.assert_awaited_once_with(
-        "alpha.example",
-        "default",
-        active_only=False,
-    )
-    registry.get_team_revocations.assert_not_awaited()
 
 
 @pytest.mark.asyncio

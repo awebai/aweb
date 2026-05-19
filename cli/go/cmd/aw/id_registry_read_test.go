@@ -300,17 +300,11 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || auths[0] != "" {
-		t.Fatalf("anonymous namespace address auth headers=%q", auths)
+	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || auths[0] != "" || auths[1] != "" || auths[2] != "" {
+		t.Fatalf("namespace address auth headers=%q, want unsigned reads", auths)
 	}
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || !strings.Contains(auths[1], did) {
-		t.Fatalf("did namespace address auth headers=%q want %s", auths, did)
-	}
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || !strings.Contains(auths[2], controllerDID) {
-		t.Fatalf("controller namespace address auth headers=%q want %s", auths, controllerDID)
-	}
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses/alice"]; len(auths) != 1 || !strings.Contains(auths[0], controllerDID) {
-		t.Fatalf("controller resolve auth headers=%q want %s", auths, controllerDID)
+	if auths := seenAuth["/v1/namespaces/acme.com/addresses/alice"]; len(auths) != 1 || auths[0] != "" {
+		t.Fatalf("controller resolve auth headers=%q, want unsigned read", auths)
 	}
 }
 
