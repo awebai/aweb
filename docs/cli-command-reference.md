@@ -211,7 +211,7 @@ Subcommands:
 - `assign-address` Assign a namespace address to an existing did:aw using the local controller key
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
-- `set-delivery-origin` Set legacy namespace default delivery-origin metadata
+- `set-delivery-origin` Set namespace address-route default delivery origin
 
 Flags:
 - `-h, --help help for namespace`
