@@ -1181,6 +1181,12 @@ async def create_or_send(
         )
         if msg_row is None:
             raise HTTPException(status_code=500, detail="Failed to send message")
+        await _record_successful_chat_contacts(
+            db,
+            owner_did=(auth.did_aw or actor_did).strip(),
+            sender_team_id=auth.team_id,
+            recipients=[{**external_targets[0], **route}],
+        )
         await fire_mutation_hook(
             request,
             "chat.message_sent",
@@ -2178,6 +2184,12 @@ async def send_message(
             raise
         if msg_row is None:
             raise HTTPException(status_code=500, detail="Failed to send message")
+        await _record_successful_chat_contacts(
+            db,
+            owner_did=(auth.did_aw or actor_did).strip(),
+            sender_team_id=auth.team_id,
+            recipients=remote_recipients,
+        )
         await fire_mutation_hook(
             request,
             "chat.message_sent",

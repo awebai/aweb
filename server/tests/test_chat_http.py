@@ -264,6 +264,114 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         UUID(session_id),
     )
     assert conversation_participant["current_did_key"] == "did:key:bob"
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT contact_address, label, reference_type, status
+        FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice'
+          AND contact_address = 'otherco.com/bob'
+        """
+    )
+    assert dict(contact) == {
+        "contact_address": "otherco.com/bob",
+        "label": "bob",
+        "reference_type": "identity",
+        "status": "active",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_to_external_address_remote_failure_does_not_create_contact(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-chat-failure",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://local.example"
+    app.state.federation_chat_transport = httpx.MockTransport(
+        lambda request: httpx.Response(503, json={"detail": "remote unavailable"})
+    )
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    session_id = str(uuid4())
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "remote failure chat",
+            "conversation_id": session_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        }
+    ).decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/chat/sessions",
+            json={
+                "session_id": session_id,
+                "to_addresses": ["otherco.com/bob"],
+                "message": "remote failure chat",
+                "from_did": alice_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": sign_message(alice_sk, signed_payload.encode()),
+                "signed_payload": signed_payload,
+            },
+        )
+
+    assert resp.status_code == 502, resp.text
+    contact_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*) FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice'
+          AND contact_address = 'otherco.com/bob'
+        """
+    )
+    assert contact_count == 0
 
 
 @pytest.mark.asyncio
