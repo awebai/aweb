@@ -36,7 +36,7 @@ describe("channel-core dispatchAgentEvent", () => {
     normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
 
-  test("does not ack mail when channel delivery succeeds", async () => {
+  test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
       get: vi.fn().mockResolvedValue({
@@ -71,10 +71,10 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "mail",
       content: "world",
     }));
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
   });
 
-  test("does not mark chat read when channel delivery succeeds", async () => {
+  test("marks chat read after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
       get: vi.fn().mockResolvedValue({
@@ -112,7 +112,7 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "chat",
       content: "hello",
     }));
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-1" });
   });
 
   test("mail trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
@@ -193,7 +193,7 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
   });
 
   test("chat trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
@@ -277,6 +277,6 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { up_to_message_id: "chat-stable-envelope" });
   });
 });

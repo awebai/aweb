@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 
 EVENTS_POLL_INTERVAL = 1.0  # seconds between polls
+EVENTS_HEARTBEAT_INTERVAL = 15.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
 
 
@@ -281,6 +282,7 @@ async def _sse_agent_events(
         return
 
     yield ": keepalive\n\n"
+    last_heartbeat_at = datetime.now(timezone.utc)
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
@@ -346,6 +348,14 @@ async def _sse_agent_events(
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in control_events:
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+
+        if mail_events or chat_events or control_events:
+            last_heartbeat_at = datetime.now(timezone.utc)
+        else:
+            now = datetime.now(timezone.utc)
+            if (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+                yield ": keepalive\n\n"
+                last_heartbeat_at = now
 
         previous_mail = _index_events(current_mail, key_field="message_id")
         previous_chat = _index_events(current_chat, key_field="session_id")

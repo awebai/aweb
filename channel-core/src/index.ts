@@ -11,8 +11,10 @@ export { loadSigningKey } from "./identity/keys.js";
 export { loadTeamCertificate, encodeTeamCertificateHeader, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
 export {
+  DEFAULT_DELIVERY_STORE_PATH,
   DEFAULT_PIN_STORE_PATH,
   createChannelClient,
+  DeliveryStore,
   createRegistryResolver,
   dispatchAgentEvent,
   formatAwakeningForAgent,

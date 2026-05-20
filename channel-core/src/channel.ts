@@ -1,18 +1,21 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent } from "./api/events.js";
-import { fetchInbox, type InboxMessage } from "./api/mail.js";
-import { fetchHistory, type ChatMessage } from "./api/chat.js";
+import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
+import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
+export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
 const MAX_DISPATCHED_IDS = 2000;
+const MAX_DELIVERED_IDS = 5000;
+const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
 const MAIL_FETCH_LIMIT = 200;
 const CHAT_FETCH_LIMIT = 2000;
 
@@ -41,6 +44,7 @@ export interface ChannelLoopOptions {
   self: SelfIdentity;
   signal: AbortSignal;
   onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
+  deliveryStore?: DeliveryStore;
   log?: (message: string) => void;
 }
 
@@ -50,6 +54,61 @@ export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promi
     return PinStore.fromYAML(content);
   } catch {
     return new PinStore();
+  }
+}
+
+export class DeliveryStore {
+  private constructor(
+    private readonly path: string,
+    private entries: Map<string, number>,
+  ) {}
+
+  static async load(path: string = DEFAULT_DELIVERY_STORE_PATH): Promise<DeliveryStore> {
+    try {
+      const raw = JSON.parse(await readFile(path, "utf-8")) as Record<string, string | number>;
+      const now = Date.now();
+      const entries = new Map<string, number>();
+      for (const [key, value] of Object.entries(raw)) {
+        const timestamp = typeof value === "number" ? value : Date.parse(value);
+        if (Number.isFinite(timestamp) && now - timestamp <= DELIVERED_IDS_TTL_MS) {
+          entries.set(key, timestamp);
+        }
+      }
+      return new DeliveryStore(path, entries);
+    } catch {
+      return new DeliveryStore(path, new Map());
+    }
+  }
+
+  has(key: string): boolean {
+    this.prune();
+    return this.entries.has(key);
+  }
+
+  mark(key: string): void {
+    this.entries.set(key, Date.now());
+    this.prune();
+  }
+
+  async save(): Promise<void> {
+    this.prune();
+    await mkdir(dirname(this.path), { recursive: true });
+    const payload = Object.fromEntries(
+      [...this.entries.entries()].map(([key, value]) => [key, new Date(value).toISOString()]),
+    );
+    await writeFile(this.path, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [key, value] of this.entries) {
+      if (now - value > DELIVERED_IDS_TTL_MS) this.entries.delete(key);
+    }
+    if (this.entries.size <= MAX_DELIVERED_IDS) return;
+    const sorted = [...this.entries.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [key] of sorted.slice(0, this.entries.size - MAX_DELIVERED_IDS)) {
+      this.entries.delete(key);
+    }
   }
 }
 
@@ -90,11 +149,12 @@ export function createChannelClient(config: {
 
 export async function startChannelLoop(options: ChannelLoopOptions): Promise<void> {
   const dispatched = new Set<string>();
+  const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
   const log = options.log || (() => {});
 
   for await (const event of streamAgentEvents(options.client, options.signal)) {
     try {
-      await dispatchAgentEvent(options, dispatched, event);
+      await dispatchAgentEvent({ ...options, deliveryStore }, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err) {
       log(`[aw-channel] dispatch error: ${err}`);
@@ -179,8 +239,7 @@ async function dispatchMailEvent(
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
-    if (dispatched.has(key)) continue;
-    dispatched.add(key);
+    if (dispatched.has(key) || options.deliveryStore?.has(key)) continue;
 
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
@@ -204,6 +263,12 @@ async function dispatchMailEvent(
       meta,
       deliveryIntent: "wake",
     });
+    dispatched.add(key);
+    if (options.deliveryStore) {
+      options.deliveryStore.mark(key);
+      await options.deliveryStore.save();
+    }
+    await ackMessage(options.client, msg.message_id);
   }
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
@@ -216,12 +281,12 @@ async function dispatchChatEvent(
   if (!event.session_id) return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
   let pinsDirty = false;
+  let lastMessageId: string | undefined;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
     const key = dispatchKey("chat", conversationID, msg.message_id);
-    if (dispatched.has(key)) continue;
-    dispatched.add(key);
+    if (dispatched.has(key) || options.deliveryStore?.has(key)) continue;
 
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
@@ -246,7 +311,14 @@ async function dispatchChatEvent(
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
+    dispatched.add(key);
+    if (options.deliveryStore) {
+      options.deliveryStore.mark(key);
+      await options.deliveryStore.save();
+    }
+    lastMessageId = msg.message_id;
   }
+  if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
 

@@ -9,8 +9,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   APIClient,
+  ackMessage,
   fetchHistory,
   fetchInbox,
+  markRead,
   PinStore,
   RegistryResolver,
   resolveConfig,
@@ -89,7 +91,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Read them and act if needed. Channel delivery does not acknowledge or mark the message handled. Reply with: aw mail reply <message_id> --body "<reply>". Replying marks the source message handled after the reply is sent. Running aw mail inbox explicitly marks displayed unread mail as read; aw mail show is read-only.
+Mail events (type="mail") are async. Read them and act if needed. Confirmed channel delivery marks the source message handled so reconnects do not replay stale mail. Reply with: aw mail reply <message_id> --body "<reply>".
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.
@@ -204,6 +206,7 @@ export async function dispatchEvent(
           method: "notifications/claude/channel",
           params: { content: msg.body, meta },
         });
+        await ackMessage(client, msg.message_id);
       }
       if (pinsDirty) await pinStore.save(PIN_STORE_PATH);
       break;
@@ -213,6 +216,7 @@ export async function dispatchEvent(
       if (!event.session_id) break;
       const messages = await fetchHistory(client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
       let pinsDirty = false;
+      let lastMessageId: string | undefined;
       for (const msg of messages) {
         if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, self)) continue;
         const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
@@ -251,8 +255,10 @@ export async function dispatchEvent(
           method: "notifications/claude/channel",
           params: { content: msg.body, meta },
         });
+        lastMessageId = msg.message_id;
       }
 
+      if (lastMessageId) await markRead(client, event.session_id, lastMessageId);
       if (pinsDirty) await pinStore.save(PIN_STORE_PATH);
       break;
     }

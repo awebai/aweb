@@ -5,6 +5,7 @@ import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
 export declare const DEFAULT_PIN_STORE_PATH: string;
+export declare const DEFAULT_DELIVERY_STORE_PATH: string;
 export interface SelfIdentity {
     alias: string;
     address: string;
@@ -27,9 +28,20 @@ export interface ChannelLoopOptions {
     self: SelfIdentity;
     signal: AbortSignal;
     onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
+    deliveryStore?: DeliveryStore;
     log?: (message: string) => void;
 }
 export declare function loadPinStore(path?: string): Promise<PinStore>;
+export declare class DeliveryStore {
+    private readonly path;
+    private entries;
+    private constructor();
+    static load(path?: string): Promise<DeliveryStore>;
+    has(key: string): boolean;
+    mark(key: string): void;
+    save(): Promise<void>;
+    private prune;
+}
 export declare function resolveRegistryFallbackURL(identityRegistryURL?: string): string | undefined;
 export declare function createRegistryResolver(registryURL?: string): RegistryResolver;
 export declare function createChannelClient(config: {

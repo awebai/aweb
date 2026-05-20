@@ -10,4 +10,4 @@ export { computeDIDKey, extractPublicKey } from "./identity/did.js";
 export { loadSigningKey } from "./identity/keys.js";
 export { loadTeamCertificate, encodeTeamCertificateHeader } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload } from "./identity/signing.js";
-export { DEFAULT_PIN_STORE_PATH, createChannelClient, createRegistryResolver, dispatchAgentEvent, formatAwakeningForAgent, isTrustedVerificationStatus, loadPinStore, resolveRegistryFallbackURL, startChannelLoop, trustWarningLine, } from "./channel.js";
+export { DEFAULT_DELIVERY_STORE_PATH, DEFAULT_PIN_STORE_PATH, createChannelClient, DeliveryStore, createRegistryResolver, dispatchAgentEvent, formatAwakeningForAgent, isTrustedVerificationStatus, loadPinStore, resolveRegistryFallbackURL, startChannelLoop, trustWarningLine, } from "./channel.js";

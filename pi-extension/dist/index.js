@@ -1647,7 +1647,9 @@ async function* streamAgentEvents(client, signal) {
     } catch (err2) {
       if (signal.aborted)
         return;
-      console.error(`[aw-channel] events stream parse failed: ${err2}`);
+      if (!isExpectedStreamTermination(err2)) {
+        console.error(`[aw-channel] events stream parse failed: ${err2}`);
+      }
       await sleep(1e3, signal);
     } finally {
       resp.body?.cancel().catch(() => {
@@ -1732,6 +1734,13 @@ function parseAgentEvent(eventName, data) {
   } catch {
     return { type: eventName };
   }
+}
+function isExpectedStreamTermination(err2) {
+  if (!(err2 instanceof Error))
+    return false;
+  const name = err2.name.toLowerCase();
+  const message = err2.message.toLowerCase();
+  return name === "aborterror" || message === "terminated";
 }
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -2089,6 +2098,9 @@ function hydrateAddressesFromSignedPayload(msg) {
   } catch {
   }
 }
+async function ackMessage(client, messageId) {
+  await client.post(`/v1/messages/${encodeURIComponent(messageId)}/ack`);
+}
 async function verifyInboxMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
     const status2 = await verifySignedPayload(msg.signed_payload, msg.signature, msg.from_did, msg.signing_key_id || "");
@@ -2163,6 +2175,9 @@ function hydrateAddressesFromSignedPayload2(msg) {
     }
   } catch {
   }
+}
+async function markRead(client, sessionId, upToMessageId) {
+  await client.post(`/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`, { up_to_message_id: upToMessageId });
 }
 async function verifyChatMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
@@ -5869,11 +5884,14 @@ function escapeJSON3(s) {
 }
 
 // ../channel-core/dist/channel.js
-import { join as join2 } from "node:path";
+import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
-import { readFile as readFile4 } from "node:fs/promises";
+import { mkdir as mkdir2, readFile as readFile4, writeFile } from "node:fs/promises";
 var DEFAULT_PIN_STORE_PATH = join2(homedir(), ".config", "aw", "known_agents.yaml");
+var DEFAULT_DELIVERY_STORE_PATH = join2(homedir(), ".config", "aw", "channel-delivered-ids.json");
 var MAX_DISPATCHED_IDS = 2e3;
+var MAX_DELIVERED_IDS = 5e3;
+var DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1e3;
 var MAIL_FETCH_LIMIT = 200;
 var CHAT_FETCH_LIMIT = 2e3;
 async function loadPinStore(path = DEFAULT_PIN_STORE_PATH) {
@@ -5884,6 +5902,58 @@ async function loadPinStore(path = DEFAULT_PIN_STORE_PATH) {
     return new PinStore();
   }
 }
+var DeliveryStore = class _DeliveryStore {
+  path;
+  entries;
+  constructor(path, entries) {
+    this.path = path;
+    this.entries = entries;
+  }
+  static async load(path = DEFAULT_DELIVERY_STORE_PATH) {
+    try {
+      const raw = JSON.parse(await readFile4(path, "utf-8"));
+      const now = Date.now();
+      const entries = /* @__PURE__ */ new Map();
+      for (const [key, value] of Object.entries(raw)) {
+        const timestamp2 = typeof value === "number" ? value : Date.parse(value);
+        if (Number.isFinite(timestamp2) && now - timestamp2 <= DELIVERED_IDS_TTL_MS) {
+          entries.set(key, timestamp2);
+        }
+      }
+      return new _DeliveryStore(path, entries);
+    } catch {
+      return new _DeliveryStore(path, /* @__PURE__ */ new Map());
+    }
+  }
+  has(key) {
+    this.prune();
+    return this.entries.has(key);
+  }
+  mark(key) {
+    this.entries.set(key, Date.now());
+    this.prune();
+  }
+  async save() {
+    this.prune();
+    await mkdir2(dirname2(this.path), { recursive: true });
+    const payload = Object.fromEntries([...this.entries.entries()].map(([key, value]) => [key, new Date(value).toISOString()]));
+    await writeFile(this.path, `${JSON.stringify(payload, null, 2)}
+`, "utf-8");
+  }
+  prune() {
+    const now = Date.now();
+    for (const [key, value] of this.entries) {
+      if (now - value > DELIVERED_IDS_TTL_MS)
+        this.entries.delete(key);
+    }
+    if (this.entries.size <= MAX_DELIVERED_IDS)
+      return;
+    const sorted = [...this.entries.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [key] of sorted.slice(0, this.entries.size - MAX_DELIVERED_IDS)) {
+      this.entries.delete(key);
+    }
+  }
+};
 function resolveRegistryFallbackURL(identityRegistryURL = "") {
   const envRegistryURL = (process.env.AWID_REGISTRY_URL || "").trim();
   if (envRegistryURL) {
@@ -5911,11 +5981,12 @@ function createChannelClient(config) {
 }
 async function startChannelLoop(options) {
   const dispatched = /* @__PURE__ */ new Set();
+  const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
   const log = options.log || (() => {
   });
   for await (const event of streamAgentEvents(options.client, options.signal)) {
     try {
-      await dispatchAgentEvent(options, dispatched, event);
+      await dispatchAgentEvent({ ...options, deliveryStore }, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err2) {
       log(`[aw-channel] dispatch error: ${err2}`);
@@ -5991,9 +6062,8 @@ async function dispatchMailEvent(options, dispatched, event) {
       continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
-    if (dispatched.has(key))
+    if (dispatched.has(key) || options.deliveryStore?.has(key))
       continue;
-    dispatched.add(key);
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;
@@ -6018,6 +6088,12 @@ async function dispatchMailEvent(options, dispatched, event) {
       meta,
       deliveryIntent: "wake"
     });
+    dispatched.add(key);
+    if (options.deliveryStore) {
+      options.deliveryStore.mark(key);
+      await options.deliveryStore.save();
+    }
+    await ackMessage(options.client, msg.message_id);
   }
   if (pinsDirty)
     await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
@@ -6027,14 +6103,14 @@ async function dispatchChatEvent(options, dispatched, event) {
     return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
   let pinsDirty = false;
+  let lastMessageId;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self))
       continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
     const key = dispatchKey("chat", conversationID, msg.message_id);
-    if (dispatched.has(key))
+    if (dispatched.has(key) || options.deliveryStore?.has(key))
       continue;
-    dispatched.add(key);
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;
@@ -6060,7 +6136,15 @@ async function dispatchChatEvent(options, dispatched, event) {
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake"
     });
+    dispatched.add(key);
+    if (options.deliveryStore) {
+      options.deliveryStore.mark(key);
+      await options.deliveryStore.save();
+    }
+    lastMessageId = msg.message_id;
   }
+  if (lastMessageId)
+    await markRead(options.client, event.session_id, lastMessageId);
   if (pinsDirty)
     await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
@@ -6143,10 +6227,10 @@ function isSelfSender(alias, address, stableID, did, self) {
 }
 
 // src/index.ts
-import { access, mkdir as mkdir2, readFile as readFile5, writeFile } from "node:fs/promises";
+import { access, mkdir as mkdir3, readFile as readFile5, writeFile as writeFile2 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { delimiter, dirname as dirname2, join as join3 } from "node:path";
+import { delimiter, dirname as dirname3, join as join3 } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 var require2 = createRequire(import.meta.url);
@@ -6171,7 +6255,7 @@ async function findOnPath(name) {
 async function resolveBundledAw() {
   try {
     const packageJSONPath = require2.resolve("@awebai/aw/package.json");
-    const packageRoot = dirname2(packageJSONPath);
+    const packageRoot = dirname3(packageJSONPath);
     const packageJSON = require2(packageJSONPath);
     const bin = typeof packageJSON.bin === "string" ? packageJSON.bin : packageJSON.bin?.aw;
     if (!bin) return void 0;
@@ -6246,8 +6330,8 @@ async function markWelcomeSeen(key) {
   const state = await loadWelcomeState();
   state.seen = state.seen || {};
   state.seen[key] = (/* @__PURE__ */ new Date()).toISOString();
-  await mkdir2(dirname2(WELCOME_STATE_PATH), { recursive: true });
-  await writeFile(WELCOME_STATE_PATH, `${JSON.stringify(state, null, 2)}
+  await mkdir3(dirname3(WELCOME_STATE_PATH), { recursive: true });
+  await writeFile2(WELCOME_STATE_PATH, `${JSON.stringify(state, null, 2)}
 `, "utf-8");
 }
 function welcomeMessage(alias, teamID) {

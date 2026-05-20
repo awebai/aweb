@@ -57,7 +57,9 @@ export async function* streamAgentEvents(
       yield* parseSSEResponse(resp, signal);
     } catch (err) {
       if (signal.aborted) return;
-      console.error(`[aw-channel] events stream parse failed: ${err}`);
+      if (!isExpectedStreamTermination(err)) {
+        console.error(`[aw-channel] events stream parse failed: ${err}`);
+      }
       // Stream ended or errored — reconnect after brief pause
       await sleep(1000, signal);
     } finally {
@@ -142,6 +144,13 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
   } catch {
     return { type: eventName as AgentEventType };
   }
+}
+
+function isExpectedStreamTermination(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = err.name.toLowerCase();
+  const message = err.message.toLowerCase();
+  return name === "aborterror" || message === "terminated";
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

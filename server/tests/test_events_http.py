@@ -196,6 +196,56 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
+    team_sk, _, team_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        bob_did_key,
+        team_id="backend:acme.com",
+        alias="bob",
+        lifetime="persistent",
+        member_did_aw="did:aw:bob",
+    )
+    cert_header = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "backend:acme.com",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
+        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        """,
+        "backend:acme.com",
+        bob_did_key,
+    )
+
+    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.05)).isoformat()
+    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.text.count(": keepalive") >= 2
+
+
+@pytest.mark.asyncio
 async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()

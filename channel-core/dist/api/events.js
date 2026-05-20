@@ -23,7 +23,9 @@ export async function* streamAgentEvents(client, signal) {
         catch (err) {
             if (signal.aborted)
                 return;
-            console.error(`[aw-channel] events stream parse failed: ${err}`);
+            if (!isExpectedStreamTermination(err)) {
+                console.error(`[aw-channel] events stream parse failed: ${err}`);
+            }
             // Stream ended or errored — reconnect after brief pause
             await sleep(1000, signal);
         }
@@ -104,6 +106,13 @@ export function parseAgentEvent(eventName, data) {
     catch {
         return { type: eventName };
     }
+}
+function isExpectedStreamTermination(err) {
+    if (!(err instanceof Error))
+        return false;
+    const name = err.name.toLowerCase();
+    const message = err.message.toLowerCase();
+    return name === "aborterror" || message === "terminated";
 }
 function sleep(ms, signal) {
     return new Promise((resolve) => {

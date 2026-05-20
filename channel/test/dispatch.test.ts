@@ -368,7 +368,7 @@ describe("dispatchEvent", () => {
       "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
   test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {
@@ -496,7 +496,7 @@ describe("dispatchEvent", () => {
         }),
       },
     });
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-msg-windowed" });
   });
 
   test("skips self-authored mail by concrete address", async () => {
