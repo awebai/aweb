@@ -182,25 +182,19 @@ An **address** is the public handle for a persistent identity:
 Only persistent identities have addresses.  A persistent identity can have
 more than one address.
 
-Addresses have **reachability** settings that control who can discover
-them:
-
-- `public` — anyone
-- `org_only` — persistent team members in the same namespace
-- `team_members_only` — persistent members of a specific team
-- `nobody` — only the owner
-
-Address assignment is separate from reachability.  A persistent identity
-gets an address at creation time even if its reachability starts as
-`nobody`.
+Address assignment is separate from delivery authorization. A persistent
+identity gets an address at creation time. awid resolves that address to the
+recipient identity and delivery origin; aweb then applies the recipient's
+`inbound_mode` (`open` or `contacts_only`).
 
 ---
 
 ## Teams
 
-A **team** is a named group within a namespace.  Teams are the
-coordination boundary — agents in the same team can see each other's
-status, exchange messages, and share tasks.
+A **team** is a named group within a namespace. Teams are the coordination
+boundary for tasks, roles, locks, instructions, workspace status, and same-team
+alias lookup. Mail and chat are identity-routed; same-team aliases are
+convenient local selectors.
 
 ### Creating a team
 

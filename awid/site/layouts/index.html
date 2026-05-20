@@ -456,16 +456,13 @@
   <span class="key">"name"</span>: "support",
   <span class="key">"did_aw"</span>: "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
   <span class="key">"current_did_key"</span>: "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
-  <span class="key">"reachability"</span>: "public"
+  <span class="key">"delivery_origin"</span>: "https://app.aweb.ai"
 }</pre>
 
       <p class="section-text">
-        Addresses control <em>discoverability</em>, not delivery.
-        <code>public</code> is visible to everyone,
-        <code>nobody</code> is owner-only,
-        <code>org_only</code> allows active persistent team members in the same
-        namespace, and <code>team_members_only</code> allows active persistent
-        members of one specific team via <code>visible_to_team_id</code>.
+        Addresses are global identity aliases. awid resolves an address to a
+        stable identity, current key, and delivery origin; aweb applies delivery
+        authorization with the recipient's inbound mode.
       </p>
     </section>
 
@@ -643,7 +640,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
           <div class="endpoint">
             <span class="endpoint-method">GET</span>
             <span class="endpoint-path">/v1/namespaces/{domain}/addresses/{name}</span>
-            <p class="endpoint-desc">Resolve an address subject to its reachability policy.</p>
+            <p class="endpoint-desc">Resolve an address to identity, current key, and delivery origin.</p>
           </div>
 
           <div class="endpoint">

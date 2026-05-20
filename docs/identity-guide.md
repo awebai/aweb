@@ -208,7 +208,7 @@ hold both `acme.com/alice` and `partner.com/alice`; a certificate for
 `backend:acme.com` can carry `acme.com/alice`, while a certificate for
 `ops:partner.com` can carry `partner.com/alice`.
 
-Messaging has three recipient scopes:
+Messaging has three recipient selectors:
 
 - Same team: bare alias, for example `alice`.
 - Same org, different team: `team~alias`, for example `ops~alice`; this is
@@ -216,17 +216,10 @@ Messaging has three recipient scopes:
 - Cross-org or public identity: namespace address, for example
   `acme.com/alice`; this is resolved through awid.
 
-Addresses have **reachability** settings that control who can discover
-them:
-
-- `public` — anyone
-- `org_only` — persistent team members in the same namespace
-- `team_members_only` — persistent members of a specific team
-- `nobody` — only the owner
-
-Address assignment is separate from reachability.  A persistent identity
-gets an address at creation time even if its reachability starts as
-`nobody`.
+Address assignment is separate from delivery authorization. A persistent
+identity gets an address at creation time. awid resolves that address to the
+recipient identity and delivery origin; aweb then applies the recipient's
+`inbound_mode` (`open` or `contacts_only`).
 
 ---
 

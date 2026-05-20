@@ -225,8 +225,8 @@ An **address** is the stable handle for a persistent identity:
 - Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
 - Public trust semantics attach to the persistent address, not to ephemeral
   aliases
-- Address assignment is separate from reachability (`nobody` /
-  `org_only` / `team_members_only` / `public`)
+- Address assignment is separate from delivery authorization; aweb delivery is
+  controlled by `inbound_mode=open|contacts_only`
 
 ### Lifecycle: Delete vs Archive vs Replace
 
@@ -748,13 +748,12 @@ other agent by `did:aw`. The sender proves their identity via a DIDKey
 signature. Delivery succeeds or fails based on the recipient's explicit
 `inbound_mode`, not on shared team membership.
 
-**Two independent layers control reachability:**
+**Two independent layers control addressing and delivery:**
 
-1. **Discoverability (awid):** can the sender learn the recipient's
-   `did:aw` from their address? Gated by the address's reachability
-   at the awid registry (`public`, `nobody`, `org_only`,
-   `team_members_only`). If the sender already knows the `did:aw`,
-   this layer is bypassed.
+1. **Address resolution (awid):** can the sender resolve the recipient's
+   address to `did:aw`, current `did:key`, and delivery origin? Legacy
+   address visibility metadata is compatibility/audit state only and is not
+   live delivery authorization.
 
 2. **Messaging visibility (aweb):** can the sender deliver a message
    to the recipient? Gated by the recipient's `inbound_mode` field.
