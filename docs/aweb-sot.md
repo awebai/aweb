@@ -89,7 +89,7 @@ A **workspace** is a local runtime container.
 
 - It is represented by a local `.aw/` directory.
 - It stores local runtime state and configuration.
-- It may also store secret key material for self-custodial persistent identities.
+- It may also store secret key material for self-custodial global identities.
 - A workspace belongs to one local machine/path, but it may be moved by moving
   the `.aw/` directory.
 - A workspace has one active identity and one active team binding.
@@ -110,26 +110,26 @@ and trust.
 
 Two identity classes exist:
 
-- **Ephemeral identity**: disposable, internal, one alias. Has only `did:key`.
+- **Local identity**: disposable, internal, one alias. Has only `did:key`.
   Created by accepting a team invite or via spawn into the same team. Deleted
   when the workspace is removed. Does not carry public trust continuity.
-- **Persistent identity**: durable, trust-bearing. Has both `did:key` and
+- **Global identity**: durable, trust-bearing. Has both `did:key` and
   `did:aw`. Has one or more public addresses. Supports rotation, archival, and
   controlled replacement.
 
-Trust continuity is only promised for persistent identities.
+Trust continuity is only promised for global identities.
 
 ### Custody Modes
 
-Persistent identities have two custody modes:
+Global identities have two custody modes:
 
 - **Self-custodial**: the agent holds its own Ed25519 private key locally,
   inside its `.aw/` workspace. Created only from the CLI. Cannot be used by
-  hosted OAuth MCP runtimes. Created explicitly via `aw init --persistent
+  hosted OAuth MCP runtimes. Created explicitly via `aw init --global
   --name <name>` — never as a side effect of a default flow.
 - **Custodial**: the hosted service holds the encrypted private key. Created
   from the dashboard for hosted/browser MCP use. The dashboard creates
-  persistent custodial identities, not generic "agents".
+  global custodial identities, not generic "agents".
 
 ### Hosted vs BYOT Authority
 
@@ -214,19 +214,19 @@ is not part of Add existing identity.
 
 ### Alias vs Address
 
-An **alias** is the routing name for an ephemeral identity:
+An **alias** is the routing name for a local identity:
 
 - Internal/team scoped (e.g., `alice` within the team)
 - Not the external public trust surface
 - May be auto-assigned from a pool of standard names
-- An ephemeral identity has exactly one alias
+- A local identity has exactly one alias
 
-An **address** is the stable handle for a persistent identity:
+An **address** is the stable handle for a global identity:
 
-- Only persistent identities have addresses
-- A persistent identity may have more than one address
+- Only global identities have addresses
+- A global identity may have more than one address
 - Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
-- Public trust semantics attach to the persistent address, not to ephemeral
+- Public trust semantics attach to the global address, not to local
   aliases
 - Address assignment is separate from delivery authorization; aweb delivery is
   controlled by `inbound_mode=open|contacts_only`
@@ -235,11 +235,11 @@ An **address** is the stable handle for a persistent identity:
 
 Three distinct lifecycle stories that must not be conflated:
 
-- **Delete**: ephemeral only. Releases the alias for reuse. The single
-  user-facing lifecycle verb for ephemeral teardown.
-- **Archive**: persistent identity lifecycle cleanup with no continuity claim.
+- **Delete**: local workspace teardown. Releases the alias for reuse. The single
+  user-facing lifecycle verb for local teardown.
+- **Archive**: global identity lifecycle cleanup with no continuity claim.
   Stops active participation, keeps history.
-- **Replace**: persistent identity continuity via owner-authorized replacement
+- **Replace**: global identity continuity via owner-authorized replacement
   of an assigned public address. Distinct from cryptographic key rotation.
   Used when the owner has lost the key but still controls the dashboard and
   public address surface.
@@ -282,7 +282,7 @@ routes that are explicitly identity-scoped and do not require a team
 certificate.
 
 Identity-scoped messaging routes route by authenticated DID and address, not
-by local team membership. If a persistent `did:aw` has multiple active local
+by local team membership. If a global `did:aw` has multiple active local
 team rows, messaging by DID/address must proceed without selecting a team
 context. Team-scoped operations and alias-scoped coordination still require a
 team certificate or another unambiguous team selector, and must reject
@@ -329,7 +329,7 @@ remains the canonical credential.
 5. Team-certificate routes extract `team` (the coordination `team_id`),
    `alias`, and `lifetime` from the certificate. Identity-scoped
    messaging routes instead bind the caller to the authenticated
-   persistent identity (`did:aw`) carried in the signed payload.
+   global identity (`did:aw`) carried in the signed payload.
 
 Steps 1-4 are local crypto, no network. The revocation-list and team
 public key lookups for team-certificate auth are cache hits — see
@@ -785,15 +785,15 @@ binding, not a delivery route, and first-contact delivery fails closed unless an
 existing conversation/session supplies stored participant route state. Aliases
 within a shared team remain backwards-compatible local shorthand.
 
-Persistent address resolution is governed by the cross-service
+Global address resolution is governed by the cross-service
 [`identity-messaging-contract.md`](identity-messaging-contract.md). In short:
 awid is authoritative for `domain/name` address bindings, current keys, and
 address-route delivery metadata. Legacy reachability/visibility fields are
-compatibility/audit metadata, not live delivery authority. Aweb local persistent
-rows are routing/cache state, not address authority. If a persistent
+compatibility/audit metadata, not live delivery authority. Aweb cached global
+identity rows are routing/cache state, not address authority. If a global
 direct-address send cannot be resolved through awid, aweb may use a local
-persistent row only when the client supplied a signed recipient binding that
-matches that row. Bare persistent local fallback must fail closed.
+cached global row only when the client supplied a signed recipient binding that
+matches that row. Bare local fallback must fail closed.
 
 **Signed payload integrity:** if a messaging request carries
 `signed_payload`, the route enforces that the signed envelope and the
@@ -862,10 +862,10 @@ is available, it returns HTTP 409 with detail `alias_exhausted`.
 | `GET/POST /v1/repos/*` | Git repos |
 | `GET/POST/DELETE /v1/workspaces/*` | Workspace management |
 
-`DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone ephemeral
+`DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
-the workspace. It returns `409` if the bound agent is persistent
-(persistent identities outlive workspaces) or if `last_seen_at` is
+the workspace. It returns `409` if the bound agent is global
+(global identities outlive workspaces) or if `last_seen_at` is
 within the 30-minute presence TTL and the workspace is not yet
 considered gone. The caller must present a team certificate for the same
 `team_id` as the target workspace.
@@ -1021,14 +1021,14 @@ managed namespace flow on top of self-hosted aweb run their own
 onboarding service that owns a parent controller key for their chosen
 namespace family.
 
-### Persistent agent (joining an existing team via invite)
+### Global agent (joining an existing team via invite)
 
 ```
 1. aw id create --name alice --domain acme.com
    → identity created at awid (did:aw, did:key, address)
 
 2. Team controller invites alice:
-   aw id team invite --persistent
+   aw id team invite --global
    → returns invite token
 
 3. Alice accepts:
@@ -1046,21 +1046,21 @@ namespace family.
 (The server URL above is the public hosted instance; substitute your
 own server URL for self-hosted aweb.)
 
-### Ephemeral agent
+### Local agent
 
 ```
-1. Team controller creates invite for ephemeral member:
+1. Team controller creates invite for local member:
    aw id team invite
 
 2. New agent accepts:
    aw id team accept-invite <token>
    → generates local keypair (.aw/signing.key)
-   → team controller signs ephemeral certificate for this did:key
+   → team controller signs local certificate for this did:key
    → certificate saved under .aw/team-certs/<team>.pem
 
 3. AWEB_URL=https://app.aweb.ai aw init
    → POST /v1/connect to aweb
-   → aweb auto-provisions ephemeral agent row
+   → aweb auto-provisions local agent row
    → writes .aw/workspace.yaml
 ```
 
@@ -1107,9 +1107,9 @@ relies on are:
 |---------|---------|
 | `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
-| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; persistent when `--address` is supplied, ephemeral otherwise |
+| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; global when `--address` is supplied, local otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite [--team X --namespace Y] [--persistent]` | Create invite token; defaults to the active team and an ephemeral invite |
+| `aw id team invite [--team X --namespace Y] [--global]` | Create invite token; defaults to the active team and a local invite |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate |
 | `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
@@ -1122,7 +1122,7 @@ relies on are:
 | `aw id cert show` | Show current certificate |
 | `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (for the public hosted service, <https://app.aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |
 | `aw whoami` | Show team membership + certificate info |
-| `aw workspace add-worktree [role]` | Create a sibling git worktree with its own ephemeral team certificate and connect it to the same team |
+| `aw workspace add-worktree [role]` | Create a sibling git worktree with its own local team certificate and connect it to the same team |
 | `aw workspace status [--all]` | Show team coordination state for the selected team, optionally including all local memberships |
 
 Most coordination commands also accept `--team <team_id>` to override `active_team`
@@ -1156,7 +1156,7 @@ aw mcp-config
 
 ```
 .aw/
-  identity.yaml       # Persistent identity (did:aw, did:key, address, registry_url)
+  identity.yaml       # Global identity (did:aw, did:key, address, registry_url)
   signing.key          # Ed25519 private key
   teams.yaml           # awid team memberships + active_team
   workspace.yaml       # aweb server URL + workspace membership metadata

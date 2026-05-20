@@ -341,12 +341,12 @@ func TestExecuteBYODPathDefaultsToEphemeralAlias(t *testing.T) {
 		t.Fatalf("domain=%q", gotDomain)
 	}
 	output := out.String()
-	// The wizard no longer prompts for persistent-vs-ephemeral. Default is
-	// ephemeral; --persistent is the only signal that flips it. Output still
+	// The wizard no longer prompts for global-vs-local. Default is
+	// local; --global is the canonical signal that flips it. Output still
 	// describes the chosen identity once name + domain are known.
 	for _, want := range []string{
 		"Agent alias",
-		"Creating ephemeral BYOD identity",
+		"Creating local BYOD workspace identity",
 		`Agent alias "alice"`,
 		"No public did:aw address will be registered",
 	} {

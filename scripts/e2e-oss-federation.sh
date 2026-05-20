@@ -236,7 +236,7 @@ create_identity_and_join_team() {
   invite_out="$(run_aw_in "$dir" id team invite \
     --team "$team" \
     --namespace "$domain" \
-    --persistent \
+    --global \
     --json 2>/dev/null)"
   token="$(echo "$invite_out" | jq_field token)"
   assert_not_empty "$name invite token" "$token"
@@ -392,7 +392,7 @@ assert_not_empty "alice did_aw" "$ALICE_DID_AW"
 assert_not_empty "alice did_key" "$ALICE_DID_KEY"
 alpha_team="$(run_aw_in "$ALICE_DIR" id team create --name alpha --namespace alpha.test.local --registry "$AWID_URL" --json 2>/dev/null)"
 assert_eq "alpha team id" "alpha:alpha.test.local" "$(echo "$alpha_team" | jq_field team_id)"
-alice_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --persistent --json 2>/dev/null)"
+alice_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
 alice_token="$(echo "$alice_invite" | jq_field token)"
 run_aw_in "$ALICE_DIR" id team accept-invite "$alice_token" --alias alice --json >/dev/null 2>&1
 run_aw_in "$ALICE_DIR" init --url "$ALPHA_URL" --do-not-touch-agents-md >/dev/null 2>&1
@@ -400,7 +400,7 @@ run_aw_in "$ALICE_DIR" init --url "$ALPHA_URL" --do-not-touch-agents-md >/dev/nu
 ann_create="$(run_aw_in "$ANN_DIR" id create --name ann --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
 ANN_DID_AW="$(echo "$ann_create" | jq_field did_aw)"
 assert_not_empty "ann did_aw" "$ANN_DID_AW"
-ann_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --persistent --json 2>/dev/null)"
+ann_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
 ann_token="$(echo "$ann_invite" | jq_field token)"
 run_aw_in "$ANN_DIR" id team accept-invite "$ann_token" --alias ann --json >/dev/null 2>&1
 run_aw_in "$ANN_DIR" init --url "$ALPHA_URL" --do-not-touch-agents-md >/dev/null 2>&1
@@ -408,7 +408,7 @@ run_aw_in "$ANN_DIR" init --url "$ALPHA_URL" --do-not-touch-agents-md >/dev/null
 ned_create="$(run_aw_in "$NED_DIR" id create --name ned --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
 NED_DID_AW="$(echo "$ned_create" | jq_field did_aw)"
 assert_not_empty "ned did_aw" "$NED_DID_AW"
-ned_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --persistent --json 2>/dev/null)"
+ned_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
 ned_token="$(echo "$ned_invite" | jq_field token)"
 run_aw_in "$NED_DIR" id team accept-invite "$ned_token" --alias ned --json >/dev/null 2>&1
 run_aw_in "$NED_DIR" init --url "$ALPHA_URL" --do-not-touch-agents-md >/dev/null 2>&1
@@ -420,7 +420,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
 beta_team="$(run_aw_in "$BOB_DIR" id team create --name beta --namespace beta.test.local --registry "$AWID_URL" --json 2>/dev/null)"
 assert_eq "beta team id" "beta:beta.test.local" "$(echo "$beta_team" | jq_field team_id)"
-bob_invite="$(run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --persistent --json 2>/dev/null)"
+bob_invite="$(run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --global --json 2>/dev/null)"
 bob_token="$(echo "$bob_invite" | jq_field token)"
 run_aw_in "$BOB_DIR" id team accept-invite "$bob_token" --alias bob --json >/dev/null 2>&1
 run_aw_in "$BOB_DIR" init --url "$BETA_URL" --do-not-touch-agents-md >/dev/null 2>&1

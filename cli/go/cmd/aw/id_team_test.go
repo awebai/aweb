@@ -1113,7 +1113,7 @@ func TestTeamAcceptInviteRejectsAddressOnEphemeralInvite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
 	}
-	if !strings.Contains(string(acceptOut), "--address is only valid for persistent invites") {
+	if !strings.Contains(string(acceptOut), "--address is only valid for global invites") {
 		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {

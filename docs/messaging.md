@@ -5,7 +5,7 @@
 - mail: asynchronous, durable, good for handoffs and updates
 - chat: synchronous, presence-aware, good for quick coordination
 
-Mail and chat are identity-scoped. First contact to a persistent address
+Mail and chat are identity-scoped. First contact to a global address
 (`domain/name`) resolves through awid to the recipient identity, current key,
 and address-route delivery origin, then aweb applies the recipient's
 `inbound_mode` (`open` or `contacts_only`). Bare external `did:aw` first contact

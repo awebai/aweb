@@ -128,6 +128,65 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 	}
 }
 
+func TestGlobalLocalHelpDoesNotAdvertisePersistentEphemeralFlags(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cases := []struct {
+		name       string
+		args       []string
+		want       []string
+		mustAbsent []string
+	}{
+		{
+			name:       "init",
+			args:       []string{"init", "--help"},
+			want:       []string{"--global", "Global identity name", "Local workspace routing alias"},
+			mustAbsent: []string{"--persistent", "ephemeral identity", "Persistent identity"},
+		},
+		{
+			name:       "team invite",
+			args:       []string{"id", "team", "invite", "--help"},
+			want:       []string{"--global", "--local", "global member invite", "local workspace member invite"},
+			mustAbsent: []string{"--persistent", "--ephemeral", "persistent member invite", "ephemeral member invite"},
+		},
+		{
+			name:       "team add-member",
+			args:       []string{"id", "team", "add-member", "--help"},
+			want:       []string{"--global", "--local", "Global member address", "local workspace member certificate"},
+			mustAbsent: []string{"--lifetime", "persistent", "ephemeral"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, bin, tc.args...)
+			cmd.Dir = tmp
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s help failed: %v\n%s", tc.name, err, string(out))
+			}
+			text := string(out)
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Fatalf("%s help missing %q:\n%s", tc.name, want, text)
+				}
+			}
+			for _, forbidden := range tc.mustAbsent {
+				if strings.Contains(text, forbidden) {
+					t.Fatalf("%s help still advertises %q:\n%s", tc.name, forbidden, text)
+				}
+			}
+		})
+	}
+}
+
 func TestAwWhoAmIIsCanonicalCommandName(t *testing.T) {
 	t.Parallel()
 

@@ -24,21 +24,21 @@ self-custodial identities, the private signing key.
 
 An **identity** is the principal other agents trust. Two identity classes exist:
 
-- **Ephemeral**: disposable, team-internal, alias-based, no public continuity guarantee
-- **Persistent**: durable, trust-bearing, has both `did:key` and `did:aw`, and can hold one or more public addresses
+- **Local**: workspace-bound, alias-based, no public continuity guarantee
+- **Global**: durable, trust-bearing, has both `did:key` and `did:aw`, and can hold one or more public addresses
 
-Persistent identities are the only identities with public addresses such as
+Global identities are the only identities with public addresses such as
 `acme.com/alice`.
 
 ### Alias vs Address
 
-- An **alias** is the team-local routing name for an ephemeral identity, such as `alice`
-- An **address** is the public `namespace/name` handle for a persistent identity, such as `acme.com/alice`
+- An **alias** is the team-local routing name for a local identity, such as `alice`
+- An **address** is the public `namespace/name` handle for a global identity, such as `acme.com/alice`
 
 ## Key Material
 
 The active signing key is Ed25519. The public key is encoded as a `did:key`.
-For persistent identities, awid also records a stable `did:aw` identifier.
+For global identities, awid also records a stable `did:aw` identifier.
 
 ```text
 did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
@@ -91,19 +91,19 @@ the change.
 
 These are distinct lifecycle stories:
 
-- **Delete**: ephemeral teardown; the alias can be reused
-- **Archive**: persistent cleanup without continuity claim
-- **Replace**: owner-authorized replacement of a persistent public address
+- **Delete**: local workspace teardown; the alias can be reused
+- **Archive**: global identity cleanup without continuity claim
+- **Replace**: owner-authorized replacement of a global public address
 - **Rotate key**: cryptographic continuity signed by the old key
 
 Do not collapse these into one generic "identity reset" idea; the trust story
 depends on the distinction.
 
-Persistent identity lifetime is also distinct from workspace path lifetime. A
-missing or deleted local workspace path is not evidence that a persistent
+Global identity lifetime is also distinct from workspace path lifetime. A
+missing or deleted local workspace path is not evidence that a global
 identity should be deleted, archived, replaced, unclaimed, or reassigned. OSS
-aweb only treats confirmed gone **ephemeral** workspaces as cleanup candidates;
-persistent lifecycle actions require explicit authority and reviewed lifecycle
+aweb only treats confirmed gone **local** workspaces as cleanup candidates;
+global lifecycle actions require explicit authority and reviewed lifecycle
 flows. See [OSS Support Tools](support-tools.md) for doctor, support bundle,
 registry read, and high-impact handoff behavior.
 
@@ -111,7 +111,7 @@ registry read, and high-impact handoff behavior.
 
 Common identity-related files in `.aw/`:
 
-- `identity.yaml`: persistent identity metadata
+- `identity.yaml`: global identity metadata
 - `signing.key`: local Ed25519 private key for self-custodial identities
 - `team-certs/`: team membership certificates
 - `teams.yaml`: team memberships and `active_team`

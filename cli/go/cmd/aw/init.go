@@ -80,8 +80,8 @@ func init() {
 	initCmd.Flags().BoolVar(&initBYOD, "byod", false, "Use a domain you control instead of hosted aweb.ai onboarding")
 	initCmd.Flags().StringVar(&initUsername, "username", "", "Hosted username to create")
 	initCmd.Flags().StringVar(&initDomain, "domain", "", "BYOD domain to use with --byod")
-	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
-	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
+	initCmd.Flags().StringVar(&initAlias, "alias", "", "Local workspace routing alias (optional; default: server-suggested)")
+	initCmd.Flags().StringVar(&initName, "name", "", "Global identity name (required with --global unless .aw/identity.yaml already exists)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initDoNotTouchAgentsMD, "do-not-touch-agents-md", false, "Do not create or update AGENTS.md or CLAUDE.md during init")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
@@ -91,7 +91,9 @@ func init() {
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
-	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
+	initCmd.Flags().BoolVar(&initPersistent, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
+	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Compatibility alias for --global")
+	_ = initCmd.Flags().MarkHidden("persistent")
 
 	rootCmd.AddCommand(initCmd)
 }

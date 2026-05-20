@@ -90,7 +90,7 @@ func writeDoctorEphemeralFixture(t *testing.T, workingDir, awebURL string) {
 		CreatedAt:   "2026-04-04T00:00:00Z",
 	})
 	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
-		t.Fatalf("remove ephemeral identity: %v", err)
+		t.Fatalf("remove local identity: %v", err)
 	}
 }
 
@@ -693,7 +693,7 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "persistent lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete persistent identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
+		{name: "persistent lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
 		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "persistent_identity_lifecycle"},
 		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "persistent_identity_lifecycle"},
 		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "persistent_identity_lifecycle"},
@@ -803,7 +803,7 @@ func TestAwDoctorLocalChecksValidEphemeralWorkspace(t *testing.T) {
 	requireDoctorCheckStatus(t, got, doctorCheckSigningKeyMatchesCert, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusOK)
 	if _, ok := doctorCheckByID(got, doctorCheckIdentityPersistent); ok {
-		t.Fatalf("ephemeral workspace unexpectedly required persistent identity: %#v", got.Checks)
+		t.Fatalf("local workspace unexpectedly required global identity: %#v", got.Checks)
 	}
 }
 
@@ -1020,7 +1020,7 @@ func TestAwDoctorLocalChecksPersistentMissingIdentity(t *testing.T) {
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
 	if err != nil {
-		t.Fatalf("doctor should report missing persistent identity as checks: %v\n%s", err, string(out))
+		t.Fatalf("doctor should report missing global identity as checks: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusFail)
@@ -1038,7 +1038,7 @@ func TestAwDoctorLocalChecksCorruptEphemeralIdentityFails(t *testing.T) {
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
 	if err != nil {
-		t.Fatalf("doctor should report corrupt ephemeral identity as checks: %v\n%s", err, string(out))
+		t.Fatalf("doctor should report corrupt local identity as checks: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusInfo)

@@ -378,7 +378,7 @@ func addWorktreeViaLocalTeamKey(
 	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, sourceServerURL, true)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("create ephemeral team invite for %s: %w", teamID, err)
+		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
 	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, alias, "")
 	if err != nil {

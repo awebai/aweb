@@ -118,7 +118,7 @@ It currently affects:
 - spawn invite namespace selection.
 - dashboard JWT namespace lookup.
 - lifecycle primary-address selection.
-- persistent address assignment.
+- global address assignment.
 
 Changing `is_default` to make BYOT "win" would couple product authority to
 unrelated UI and lifecycle semantics. BYOT selection must instead be explicit:

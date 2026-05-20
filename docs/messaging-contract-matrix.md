@@ -20,7 +20,7 @@ The intended authority split is:
   the recipient's aweb `inbound_mode`.
 - Once a conversation exists, replies are authorized by stored conversation
   participation and route state, not by re-running address discovery.
-- A persistent identity can belong to multiple teams without becoming a new
+- A global identity can belong to multiple teams without becoming a new
   identity.
 - Bare aliases are local to the active team/namespace. Cross-namespace
   communication uses an address or an explicit selector.
@@ -48,8 +48,8 @@ The release gate must cover these cases for both mail and chat where applicable:
    address discovery.
 9. Bare external `did:aw` first contact fails closed; stored-route continuation works.
 10. Key rotation preserves conversation continuity.
-11. Ephemeral local identity: team-local alias only.
-12. Persistent identity in multiple teams: active team selects sender context.
+11. Local identity: team-local alias only.
+12. Global identity in multiple teams: active team selects sender context.
 13. Existing identity added to another hosted or BYOIDT team without cloning the
     identity.
 14. Duplicate aliases across teams require explicit address or team context.

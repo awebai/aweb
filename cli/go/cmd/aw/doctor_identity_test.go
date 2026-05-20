@@ -267,7 +267,7 @@ func TestAwDoctorIdentityEphemeralSkipsPublicRegistry(t *testing.T) {
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalEphemeralAWID, doctorStatusOK)
 	if hits.Load() != 0 {
-		t.Fatalf("ephemeral identity contacted awid %d times", hits.Load())
+		t.Fatalf("local identity contacted awid %d times", hits.Load())
 	}
 
 	out, err = runDoctorCLI(t, bin, tmp, "doctor", "registry", "--online", "--json")
@@ -276,8 +276,8 @@ func TestAwDoctorIdentityEphemeralSkipsPublicRegistry(t *testing.T) {
 	}
 	got = decodeDoctorOutput(t, out)
 	check := requireDoctorCheckStatus(t, got, doctorCheckAWIDDIDResolve, doctorStatusInfo)
-	if check.Detail["reason"] != "ephemeral_not_applicable" {
-		t.Fatalf("ephemeral registry reason=%v", check.Detail["reason"])
+	if check.Detail["reason"] != "local_identity_not_applicable" {
+		t.Fatalf("local registry reason=%v", check.Detail["reason"])
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("ephemeral registry contacted awid %d times", hits.Load())

@@ -38,9 +38,9 @@ workspace state. One directory = one identity. If you need
 multiple agents in the same repo, use git worktrees (each
 worktree gets its own `.aw/`).
 
-An **identity** is how other agents know you. **Ephemeral
-identities** are the default — disposable, team-internal,
-workspace-bound. **Persistent identities** are durable,
+An **identity** is how other agents know you. **Local
+identities** are the default — workspace-bound, team-projected,
+and not globally first-contactable. **Global identities** are durable,
 trust-bearing, and can own public addresses like
 `acme.com/alice`. See
 [identity-guide.md](https://awid.ai/identity-guide.md) for the
@@ -70,10 +70,10 @@ How to tell whether this directory is already initialized:
   aweb server.
 - `.aw/team-certs/` exists: this worktree has one or more team
   membership certificates.
-- `.aw/identity.yaml` exists: this worktree has a persistent
+- `.aw/identity.yaml` exists: this worktree has a global
   identity.
 - `.aw/signing.key` exists: this worktree has a signing key (both
-  persistent and ephemeral).
+  global and local).
 - `aw whoami` succeeds: the identity resolves.
 - `aw workspace status` succeeds: local coordination metadata is
   present.
@@ -193,7 +193,7 @@ non-default coordination server.
 The guided onboarding path runs interactively in a TTY by default.
 For scripted runs, pass `--json` and provide the required inputs as
 flags: hosted needs `--username` plus `--alias` (or `--name` with
-`--persistent`); BYOD needs `--byod --domain <domain>` plus a name
+`--global`); BYOD needs `--byod --domain <domain>` plus a name
 or alias. Missing flags return a usage error rather than blocking
 on stdin.
 
@@ -203,7 +203,7 @@ For fully hosted teams, create and manage teams in the dashboard.
 For BYOT/local-controller teams, create the namespace, team, and
 membership certificates at AWID. The CLI flow is:
 
-1. Create a persistent identity (if you don't have one):
+1. Create a global identity (if you don't have one):
 
 ```bash
 aw id create --name <name> --domain <domain>
@@ -256,10 +256,10 @@ file layout.
 - Team API-key CLI bootstrap and `aw workspace add-worktree` create local
   self-custodial CLI workspaces. They do not create hosted custodial browser/MCP
   identities.
-- CLI bootstrap creates ephemeral identities by default. Add
-  `--persistent --name <name>` to create a persistent/global self-custodial CLI
+- CLI bootstrap creates local identities by default. Add
+  `--global --name <name>` to create a global self-custodial CLI
   identity instead.
-- Persistent custodial addressed/global identities are created from the dashboard
+- Custodial addressed/global identities are created from the dashboard
   or OAuth flow for agents without filesystem access (like hosted MCP runtimes).
 - Hosted OAuth MCP is a dashboard/browser flow, not a local workspace bootstrap
   flow.
@@ -272,7 +272,7 @@ file layout.
 ### Hosted Add Existing Identity
 
 Use the dashboard Add existing identity action when a hosted team owner/admin
-wants to add a persistent identity that already exists outside the hosted team.
+wants to add a global identity that already exists outside the hosted team.
 The normal input is the identity's address; the dashboard should only ask for
 `did:aw` or current DID material when the address cannot be resolved from the
 registry. Hosted aweb holds the hosted team controller key, signs and registers
@@ -506,8 +506,8 @@ aw lock list --mine
 Everything lives in `.aw/` in the working directory:
 
 - `.aw/signing.key` — Ed25519 private key (identity).
-- `.aw/identity.yaml` — persistent identity metadata (only for
-  persistent identities).
+- `.aw/identity.yaml` — global identity metadata (only for
+  global identities).
 - `.aw/team-certs/` — team membership certificates.
 - `.aw/teams.yaml` — awid team membership state: active team and
   memberships.
@@ -545,7 +545,7 @@ active team selection.
 
 Use worktrees. Each worktree gets its own `.aw/` directory and
 its own agent identity. `aw workspace add-worktree` creates the
-sibling worktree, mints an ephemeral team certificate, and
+sibling worktree, mints a local team certificate, and
 connects it in one step. For BYOT/local-controller teams it uses
 the local team controller key. For hosted/API-key bootstrapped
 workspaces it asks the cloud to issue the child certificate using

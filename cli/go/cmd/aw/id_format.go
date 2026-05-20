@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
 func formatIDRegister(v any) string {
@@ -61,7 +63,7 @@ func formatIDShow(v any) string {
 		sb.WriteString(fmt.Sprintf("Custody:     %s\n", out.Custody))
 	}
 	if strings.TrimSpace(out.Lifetime) != "" {
-		sb.WriteString(fmt.Sprintf("Lifetime:    %s\n", out.Lifetime))
+		sb.WriteString(fmt.Sprintf("Identity:    %s\n", awid.DescribeIdentityClass(out.Lifetime)))
 	}
 	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryStatus))
 	if strings.TrimSpace(out.RegistryURL) != "" {

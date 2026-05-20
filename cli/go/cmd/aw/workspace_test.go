@@ -690,7 +690,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
-	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }
@@ -787,8 +787,8 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	if !strings.Contains(string(out), "gone_persistent_path_only") || !strings.Contains(string(out), "no cleanup attempted") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
-	if strings.Contains(string(out), "deleted ephemeral identity") || strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("did not expect ephemeral identity cleanup output, got:\n%s", string(out))
+	if strings.Contains(string(out), "deleted local identity") || strings.Contains(string(out), "removed workspace record") {
+		t.Fatalf("did not expect local identity cleanup output, got:\n%s", string(out))
 	}
 }
 

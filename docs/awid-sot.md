@@ -490,7 +490,7 @@ private key. It proves that a specific did:key is authorized as a
 member of a specific team. The agent carries it and presents it to
 any service.
 
-`member_address` is per team membership, not per identity. A persistent
+`member_address` is per team membership, not per identity. A global
 `did:aw` can hold multiple addresses at awid; each team certificate
 selects at most one address for that `(team_id, member)` relationship.
 Services use the address in the active team certificate as the sender's
@@ -506,8 +506,8 @@ by listing all addresses for a `did:aw`.
   "team_id": "backend:acme.com",
   "team_did_key": "did:key:z6Mk...(team public key)",
   "member_did_key": "did:key:z6Mk...(agent's key)",
-  "member_did_aw": "did:aw:...(agent's stable ID, empty for ephemeral)",
-  "member_address": "acme.com/alice (empty for ephemeral)",
+  "member_did_aw": "did:aw:...(agent's stable ID, empty for local)",
+  "member_address": "acme.com/alice (empty for local)",
   "alias": "alice",
   "lifetime": "persistent",
   "issued_at": "2026-04-06T...",

@@ -24,7 +24,7 @@ type goneWorkspace struct {
 
 // detectGoneWorkspaces checks for workspaces on this hostname whose paths
 // no longer exist. The server owns cleanup policy and deletes the bound
-// ephemeral identity when the stale workspace is removed.
+// local identity when the stale workspace is removed.
 func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWorkspace {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
@@ -69,7 +69,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 			g.CleanupStatus = "gone_ephemeral_cleanup_candidate"
 		case "persistent":
 			g.CleanupStatus = "gone_persistent_path_only"
-			g.CleanupBlocked = "persistent identity path unavailable; no cleanup attempted"
+			g.CleanupBlocked = "global identity path unavailable; no cleanup attempted"
 			deleted[ws.WorkspaceID] = true
 			gone = append(gone, g)
 			continue
@@ -151,7 +151,7 @@ func formatGoneWorkspaces(gone []goneWorkspace) string {
 			details = append(details, g.CleanupStatus)
 		}
 		if g.IdentityDeleted {
-			details = append(details, "deleted ephemeral identity")
+			details = append(details, "deleted local identity")
 		}
 		if g.WorkspaceDeleted {
 			details = append(details, "removed workspace record")

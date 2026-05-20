@@ -493,15 +493,15 @@ func (r *doctorRunner) runIdentityFileOnlyChecks(state *doctorLocalState) {
 
 func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 	if state.cert == nil {
-		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity lifetime expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
-		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity lifetime expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
 		r.addIdentityDependentBlockedChecks(doctorCheckCertificateParse)
 		return
 	}
 	lifetime := strings.TrimSpace(state.cert.Lifetime)
 	if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
-		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity lifetime expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
-		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity lifetime expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity class expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity class expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
 		r.addIdentityDependentBlockedChecks(doctorCheckCertificateLifetime)
 		return
 	}
@@ -522,7 +522,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			doctorCheckIdentityEphemeral,
 			doctorStatusOK,
 			state.identityPath,
-			"Ephemeral workspace does not require identity.yaml.",
+			"Local workspace does not require identity.yaml.",
 			"",
 			map[string]any{"state": "absent", "lifetime": lifetime},
 		))
@@ -533,8 +533,8 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			doctorCheckIdentityPersistent,
 			doctorStatusFail,
 			state.identityPath,
-			"Persistent workspace requires identity.yaml, but it is missing.",
-			"Restore .aw/identity.yaml or reconnect this persistent identity.",
+			"Global workspace requires identity.yaml, but it is missing.",
+			"Restore .aw/identity.yaml or reconnect this global identity.",
 			map[string]any{"state": "missing", "lifetime": lifetime},
 		)
 		check.Handoff = persistentLifecycleReviewHandoff()
@@ -549,7 +549,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			doctorCheckIdentityEphemeral,
 			doctorStatusInfo,
 			state.identityPath,
-			"Ephemeral workspace has an optional identity.yaml file.",
+			"Local workspace has an optional identity.yaml file.",
 			"Keep it only if you understand how identity commands use this reserved path.",
 			map[string]any{"state": "present", "lifetime": lifetime},
 		))
@@ -558,7 +558,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			doctorCheckIdentityPersistent,
 			doctorStatusOK,
 			state.identityPath,
-			"Persistent workspace identity.yaml is present.",
+			"Global workspace identity.yaml is present.",
 			"",
 			map[string]any{"state": "present", "lifetime": lifetime},
 		))
@@ -644,30 +644,30 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 		certStableID := strings.TrimSpace(cert.MemberDIDAW)
 		switch {
 		case identityStableID == "":
-			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusFail, state.identityPath, "Persistent identity stable_id is missing.", "Restore the persistent identity stable_id.", nil))
+			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusFail, state.identityPath, "Global identity stable_id is missing.", "Restore the global identity stable_id.", nil))
 		case certStableID != "" && identityStableID != certStableID:
 			r.add(localPathCheck(
 				doctorCheckIdentityStableID,
 				doctorStatusFail,
 				state.identityPath,
-				"Persistent identity stable_id does not match the team certificate did:aw value.",
+				"Global identity stable_id does not match the team certificate did:aw value.",
 				"Repair identity.yaml or restore the matching team certificate.",
 				map[string]any{"identity_stable_id": identityStableID, "certificate_member_did_aw": certStableID},
 			))
 		default:
-			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusOK, state.identityPath, "Persistent identity stable_id is present and locally coherent.", "", map[string]any{"stable_id": identityStableID}))
+			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusOK, state.identityPath, "Global identity stable_id is present and locally coherent.", "", map[string]any{"stable_id": identityStableID}))
 		}
 
 		custody := strings.TrimSpace(identity.Custody)
 		switch custody {
 		case awid.CustodySelf, awid.CustodyCustodial:
-			r.add(localPathCheck(doctorCheckIdentityCustody, doctorStatusOK, state.identityPath, "Persistent identity custody is present and recognized.", "", map[string]any{"custody": custody}))
+			r.add(localPathCheck(doctorCheckIdentityCustody, doctorStatusOK, state.identityPath, "Global identity custody is present and recognized.", "", map[string]any{"custody": custody}))
 		default:
 			r.add(localPathCheck(
 				doctorCheckIdentityCustody,
 				doctorStatusFail,
 				state.identityPath,
-				"Persistent identity custody is missing or unknown.",
+				"Global identity custody is missing or unknown.",
 				"Repair identity.yaml with a supported custody value.",
 				map[string]any{"custody": custody},
 			))

@@ -50,17 +50,17 @@ AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
 Flags:
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
-- `--alias string Ephemeral identity routing alias (optional; default: server-suggested)`
+- `--alias string Local workspace routing alias (optional; default: server-suggested)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`
 - `--do-not-touch-agents-md Do not create or update AGENTS.md or CLAUDE.md during init`
 - `--domain string BYOD domain to use with --byod`
+- `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)`
-- `--persistent Create a durable self-custodial identity instead of the default ephemeral identity`
+- `--name string Global identity name (required with --global unless .aw/identity.yaml already exists)`
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
@@ -133,13 +133,13 @@ Identity lifecycle, registry, settings, and key management
 Subcommands:
 - `addresses` List registry addresses for a did:aw
 - `cert` Team certificate operations
-- `create` Create a standalone persistent identity with a DNS-backed address in .aw/
+- `create` Create a standalone global identity with a DNS-backed address in .aw/
 - `log` Show an identity log
 - `namespace` Inspect or recover namespace controller state
-- `register` Register the current persistent identity at the configured registry
+- `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
-- `rotate-key` Rotate the current persistent identity signing key at the registry
+- `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign a canonical JSON payload with the local identity key
 - `team` Team management (create, invite, membership)
@@ -182,12 +182,12 @@ Flags:
 
 ### `id create`
 
-Create a standalone persistent identity with a DNS-backed address in .aw/
+Create a standalone global identity with a DNS-backed address in .aw/
 
 Flags:
-- `--domain string Persistent identity domain`
+- `--domain string Global identity domain`
 - `-h, --help help for create`
-- `--name string Persistent identity name`
+- `--name string Global identity name`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 
@@ -211,7 +211,7 @@ Subcommands:
 - `assign-address` Assign a namespace address to an existing did:aw using the local controller key
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
-- `set-delivery-origin` Set namespace address-route default delivery origin
+- `set-delivery-origin` Set namespace address-route default delivery origin using the local controller key
 
 Flags:
 - `-h, --help help for namespace`
@@ -262,23 +262,19 @@ Flags:
 
 ### `id namespace set-delivery-origin`
 
-Set namespace default delivery-origin metadata for address routes. Requires the
-local namespace controller key. Addresses in the namespace inherit this route
-origin for federated first contact; it is not routing authority for bare
-`did:aw` first contact. Uses `AWID_REGISTRY_URL` when set; otherwise discovers
-the registry from DNS.
+Set namespace address-route default delivery origin using the local controller key
 
 Flags:
-- `--domain string Namespace domain`
+- `--domain string Namespace domain (alias for --namespace)`
 - `-h, --help help for set-delivery-origin`
-- `--namespace string Namespace domain`
-- `--origin string Public aweb server origin, for example https://aweb.example.com`
+- `--namespace string Namespace domain (e.g. acme.com)`
+- `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
 
 ## `id register`
 
 ### `id register`
 
-Register the current persistent identity at the configured registry
+Register the current global identity at the configured registry
 
 Flags:
 - `-h, --help help for register`
@@ -311,7 +307,7 @@ Flags:
 
 ### `id rotate-key`
 
-Rotate the current persistent identity signing key at the registry
+Rotate the current global identity signing key at the registry
 
 Flags:
 - `-h, --help help for rotate-key`
@@ -377,7 +373,7 @@ joins, use `aw id team request`, have the controller run
 joining machine.
 
 Flags:
-- `--address string Registered address to place in the persistent member certificate`
+- `--address string Registered address to place in the global member certificate`
 - `--alias string Alias for the accepting agent (defaults to identity name)`
 - `-h, --help help for accept-invite`
 
@@ -388,7 +384,7 @@ Flags:
 Join another team with the current identity
 
 Flags:
-- `--address string Registered address to place in the persistent member certificate`
+- `--address string Registered address to place in the global member certificate`
 - `--alias string Alias for the added team membership (defaults to the current identity name)`
 - `-h, --help help for add`
 
@@ -399,12 +395,13 @@ Flags:
 Add a member directly to a team (controller signs certificate)
 
 Flags:
-- `--address string Persistent member address when using --did; must resolve to --did-aw`
+- `--address string Global member address when using --did; must resolve to --did-aw`
 - `--alias string Alias to use with --did`
 - `--did string Member did:key for direct certificate issuance`
 - `--did-aw string Optional stable did:aw when using --did`
+- `--global Issue a global member certificate for --did`
 - `-h, --help help for add-member`
-- `--lifetime string Certificate lifetime for --did (ephemeral or persistent) (default "ephemeral")`
+- `--local Issue a local workspace member certificate for --did (default)`
 - `--member string Member address (e.g. acme.com/alice)`
 - `--namespace string Namespace domain`
 - `--team string Team name`
@@ -465,14 +462,14 @@ Flags:
 Generate an invite token for a team.
 
 Defaults to the active local team when --team and --namespace are omitted.
-Invites are ephemeral unless --persistent is set. Hosted teams use cloud
+Invites create local workspace members unless --global is set. Hosted teams use cloud
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
-- `--ephemeral Create ephemeral member invite (default)`
+- `--global Create global member invite`
 - `-h, --help help for invite`
+- `--local Create local workspace member invite (default)`
 - `--namespace string Namespace domain`
-- `--persistent Create persistent member invite`
 - `--team string Team name`
 
 ## `id team leave`
@@ -743,7 +740,7 @@ Flags:
 
 ### `directory`
 
-Search or look up persistent identities in the network directory
+Search or look up global identities in the network directory
 
 Flags:
 - `--capability string Filter by capability`
@@ -854,7 +851,7 @@ Flags:
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`
 - `--to-address string Recipient address (domain/name)`
-- `--to-did string Recipient DID for local or stored-route continuations; bare external did:aw first contact is unsupported`
+- `--to-did string Recipient stable identity (did:aw:...)`
 
 ## `mail show`
 

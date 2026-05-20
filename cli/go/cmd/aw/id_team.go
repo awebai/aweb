@@ -152,6 +152,8 @@ var (
 	teamInviteNamespace  string
 	teamInviteEphemeral  bool
 	teamInvitePersistent bool
+	teamInviteLocal      bool
+	teamInviteGlobal     bool
 
 	teamAcceptAlias   string
 	teamAcceptAddress string
@@ -164,6 +166,8 @@ var (
 	teamAddMemberDID      string
 	teamAddMemberAlias    string
 	teamAddMemberLifetime string
+	teamAddMemberLocal    bool
+	teamAddMemberGlobal   bool
 	teamAddMemberDIDAW    string
 	teamAddMemberAddress  string
 
@@ -205,7 +209,7 @@ var teamInviteCmd = &cobra.Command{
 	Short: "Generate an invite token for a team",
 	Long: "Generate an invite token for a team.\n\n" +
 		"Defaults to the active local team when --team and --namespace are omitted.\n" +
-		"Invites are ephemeral unless --persistent is set. Hosted teams use cloud\n" +
+		"Invites create local workspace members unless --global is set. Hosted teams use cloud\n" +
 		"invite authority; local-controller teams use the local team controller key.",
 	RunE: runTeamInvite,
 }
@@ -304,16 +308,20 @@ func init() {
 
 	teamInviteCmd.Flags().StringVar(&teamInviteTeam, "team", "", "Team name")
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
-	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Create ephemeral member invite (default)")
-	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Create persistent member invite")
+	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
+	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
+	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Compatibility alias for --local")
+	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Compatibility alias for --global")
+	_ = teamInviteCmd.Flags().MarkHidden("ephemeral")
+	_ = teamInviteCmd.Flags().MarkHidden("persistent")
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
-	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the persistent member certificate")
+	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the global member certificate")
 	teamCmd.AddCommand(teamAcceptInviteCmd)
 
 	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Alias for the added team membership (defaults to the current identity name)")
-	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the persistent member certificate")
+	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the global member certificate")
 	teamCmd.AddCommand(teamAddCmd)
 	teamCmd.AddCommand(teamSwitchCmd)
 	teamCmd.AddCommand(teamListCmd)
@@ -324,9 +332,12 @@ func init() {
 	teamAddMemberCmd.Flags().StringVar(&teamAddMember, "member", "", "Member address (e.g. acme.com/alice)")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDID, "did", "", "Member did:key for direct certificate issuance")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "alias", "", "Alias to use with --did")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Certificate lifetime for --did (ephemeral or persistent)")
+	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberLocal, "local", false, "Issue a local workspace member certificate for --did (default)")
+	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberGlobal, "global", false, "Issue a global member certificate for --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Compatibility alias: certificate storage lifetime for --did")
+	_ = teamAddMemberCmd.Flags().MarkHidden("lifetime")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Persistent member address when using --did; must resolve to --did-aw")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Global member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
 
 	teamFetchCertCmd.Flags().StringVar(&teamFetchCertTeam, "team", "", "Team name")
@@ -415,27 +426,29 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if teamInvitePersistent && teamInviteEphemeral {
-		return usageError("--persistent and --ephemeral cannot be used together")
+	global := teamInviteGlobal || teamInvitePersistent
+	local := teamInviteLocal || teamInviteEphemeral
+	if global && local {
+		return usageError("--global and --local cannot be used together")
 	}
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(workingDir)
 	if err != nil {
 		return err
 	}
 
-	ephemeral := !teamInvitePersistent
+	localInvite := !global
 	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
 	if err != nil {
 		return err
 	}
 	var inviteID, token string
 	if hasTeamKey {
-		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, ephemeral)
+		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
 		if err != nil {
 			return err
 		}
 	} else {
-		inviteID, token, err = createHostedTeamInviteToken(workingDir, awid.BuildTeamID(domain, team), ephemeral)
+		inviteID, token, err = createHostedTeamInviteToken(workingDir, awid.BuildTeamID(domain, team), localInvite)
 		if err != nil {
 			return err
 		}
@@ -724,7 +737,7 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral 
 
 func createHostedTeamInviteToken(workingDir, teamID string, ephemeral bool) (string, string, error) {
 	if !ephemeral {
-		return "", "", usageError("--persistent is not supported for hosted team invites")
+		return "", "", usageError("--global is not supported for hosted team invites")
 	}
 	client, _, err := resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
 	if err != nil {
@@ -790,7 +803,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 	lifetime := awid.LifetimePersistent
 	if invite.Ephemeral {
 		if strings.TrimSpace(addressOverride) != "" {
-			return nil, usageError("--address is only valid for persistent invites")
+			return nil, usageError("--address is only valid for global invites")
 		}
 		lifetime = awid.LifetimeEphemeral
 	}
@@ -865,7 +878,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 
 func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
 	if strings.TrimSpace(addressOverride) != "" {
-		return nil, usageError("--address is only valid for persistent invites")
+		return nil, usageError("--address is only valid for global invites")
 	}
 	if err := ensureConnectTargetClean(workingDir); err != nil {
 		return nil, err
@@ -961,7 +974,7 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 		return nil, "", fmt.Errorf("hosted team invite certificate lifetime %q does not match %q", cert.Lifetime, awid.LifetimeEphemeral)
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
-		return nil, "", fmt.Errorf("hosted ephemeral team invite certificate unexpectedly contains persistent identity fields")
+		return nil, "", fmt.Errorf("hosted local team invite certificate unexpectedly contains global identity fields")
 	}
 	return cert, serverURL, nil
 }
@@ -1025,13 +1038,45 @@ func teamKeyLoadError(teamID, domain string, err error) error {
 	)
 }
 
+func resolveTeamAddMemberLifetime(cmd *cobra.Command) (string, error) {
+	global := teamAddMemberGlobal
+	local := teamAddMemberLocal
+	if global && local {
+		return "", usageError("--global and --local cannot be used together")
+	}
+	if global {
+		return awid.LifetimePersistent, nil
+	}
+	if local {
+		return awid.LifetimeEphemeral, nil
+	}
+	if cmd != nil && cmd.Flags().Changed("lifetime") {
+		switch awid.NormalizeLifetime(teamAddMemberLifetime) {
+		case awid.LifetimePersistent:
+			return awid.LifetimePersistent, nil
+		case awid.LifetimeEphemeral:
+			return awid.LifetimeEphemeral, nil
+		default:
+			return "", usageError("invalid --lifetime %q (compatibility values: %q or %q; canonical flags: --global or --local)",
+				teamAddMemberLifetime,
+				awid.LifetimePersistent,
+				awid.LifetimeEphemeral,
+			)
+		}
+	}
+	return awid.LifetimeEphemeral, nil
+}
+
 func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamAddTeam))
 	domain := awconfig.NormalizeDomain(teamAddNamespace)
 	member := strings.TrimSpace(teamAddMember)
 	memberDID := strings.TrimSpace(teamAddMemberDID)
 	memberAlias := strings.TrimSpace(teamAddMemberAlias)
-	lifetime := strings.TrimSpace(teamAddMemberLifetime)
+	lifetime, err := resolveTeamAddMemberLifetime(cmd)
+	if err != nil {
+		return err
+	}
 	memberDIDAW := strings.TrimSpace(teamAddMemberDIDAW)
 	memberAddress := strings.TrimSpace(teamAddMemberAddress)
 	if team == "" {
@@ -1050,12 +1095,9 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if memberAlias == "" {
 			return usageError("--alias is required when using --did")
 		}
-		if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
-			return usageError("invalid --lifetime %q (use %q or %q)", lifetime, awid.LifetimeEphemeral, awid.LifetimePersistent)
-		}
 		if memberAddress != "" {
 			if lifetime != awid.LifetimePersistent {
-				return usageError("--address requires --lifetime %s when using --did", awid.LifetimePersistent)
+				return usageError("--address requires --global when using --did")
 			}
 			if memberDIDAW == "" {
 				return usageError("--did-aw is required when --address is set")
@@ -1108,7 +1150,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		memberDIDAW = address.DIDAW
 		memberAddress = member
 		memberAlias = memberName
-		// --lifetime only applies to the direct --did path; address-backed members are always persistent.
+		// Local/global flags only apply to the direct --did path; address-backed members are always global.
 		lifetime = awid.LifetimePersistent
 	}
 
@@ -1778,10 +1820,10 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 	}
 
 	if !ephemeral {
-		return "", usageError("no identity found; run `aw id create` first, or use --ephemeral invite")
+		return "", usageError("no identity found; run `aw id create` first, or use --local invite")
 	}
 
-	// Generate ephemeral keypair
+	// Generate local keypair
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
 		return "", err
@@ -1796,7 +1838,7 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 }
 
 // resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
-// Returns empty strings for ephemeral agents that have no identity.yaml.
+// Returns empty strings for local agents that have no identity.yaml.
 func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)

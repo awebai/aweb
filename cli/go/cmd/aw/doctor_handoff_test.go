@@ -41,7 +41,7 @@ func TestAwDoctorHandoffJSONContractCategories(t *testing.T) {
 			auth:   doctorAuthorityTeamAdmin,
 		},
 		{
-			name:   "persistent identity registry repair review",
+			name:   "global identity registry repair review",
 			input:  persistentIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}),
 			action: "persistent_identity_registry_repair_review",
 			auth:   doctorAuthorityCaller,

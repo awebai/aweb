@@ -116,8 +116,8 @@ func TestTeamRequestPersistentJSONIncludesStableFields(t *testing.T) {
 		t.Fatalf("address=%v", got["address"])
 	}
 	command, _ := got["command"].(string)
-	if !strings.Contains(command, "--lifetime persistent") {
-		t.Fatalf("command missing persistent lifetime: %q", command)
+	if !strings.Contains(command, "--global") {
+		t.Fatalf("command missing global identity flag: %q", command)
 	}
 	if !strings.Contains(command, "--did-aw "+stableID) {
 		t.Fatalf("command missing did-aw: %q", command)

@@ -117,14 +117,14 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	// Cloud contract: persistent uses name (not alias), ephemeral uses alias (not name).
+	// Cloud contract: global uses name (not alias), local uses alias (not name).
 	name := strings.TrimSpace(req.Name)
 	alias := strings.TrimSpace(req.Alias)
 	if req.Persistent {
 		if name == "" {
-			return connectOutput{}, usageError("--name is required for persistent API key bootstrap")
+			return connectOutput{}, usageError("--name is required for global API-key bootstrap")
 		}
-		alias = "" // cloud rejects alias for persistent
+		alias = "" // cloud rejects alias for global identity bootstrap
 	}
 
 	var registry *awid.RegistryClient
@@ -228,7 +228,7 @@ func prepareAPIKeyBootstrapIdentity(
 	if !req.Persistent {
 		if _, err := os.Stat(apiKeyPartialInitPath(req.WorkingDir)); err == nil {
 			return apiKeyBootstrapIdentityMaterial{}, usageError(
-				"found partial persistent API-key init state at %s; retry the persistent init or remove the file explicitly",
+				"found partial global API-key init state at %s; retry the global init or remove the file explicitly",
 				apiKeyPartialInitPath(req.WorkingDir),
 			)
 		} else if !os.IsNotExist(err) {
@@ -237,7 +237,7 @@ func prepareAPIKeyBootstrapIdentity(
 		return generateAPIKeyBootstrapIdentity()
 	}
 	if registry == nil {
-		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("identity registry client is required for persistent API-key bootstrap")
+		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("identity registry client is required for global API-key bootstrap")
 	}
 
 	path := apiKeyPartialInitPath(req.WorkingDir)
@@ -492,13 +492,13 @@ func validateAPIKeyBootstrapResponse(
 	stableID = strings.TrimSpace(resp.StableID)
 	if persistent {
 		if stableID == "" {
-			return false, "", "", fmt.Errorf("persistent workspace init response is missing stable_id")
+			return false, "", "", fmt.Errorf("global identity workspace init response is missing stable_id")
 		}
 		if strings.TrimSpace(cert.MemberDIDAW) == "" {
-			return false, "", "", fmt.Errorf("persistent workspace init response is missing member_did_aw")
+			return false, "", "", fmt.Errorf("global identity workspace init response is missing member_did_aw")
 		}
 		if strings.TrimSpace(cert.MemberAddress) == "" {
-			return false, "", "", fmt.Errorf("persistent workspace init response is missing member_address")
+			return false, "", "", fmt.Errorf("global identity workspace init response is missing member_address")
 		}
 		if strings.TrimSpace(cert.MemberDIDAW) != stableID {
 			return false, "", "", fmt.Errorf(
@@ -510,10 +510,10 @@ func validateAPIKeyBootstrapResponse(
 		return persistent, serverURL, stableID, nil
 	}
 	if stableID != "" {
-		return false, "", "", fmt.Errorf("ephemeral workspace init response unexpectedly returned stable_id %q", stableID)
+		return false, "", "", fmt.Errorf("local workspace init response unexpectedly returned stable_id %q", stableID)
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
-		return false, "", "", fmt.Errorf("ephemeral workspace init response unexpectedly contains persistent identity fields")
+		return false, "", "", fmt.Errorf("local workspace init response unexpectedly contains global identity fields")
 	}
 	return persistent, serverURL, "", nil
 }

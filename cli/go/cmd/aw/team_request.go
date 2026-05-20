@@ -92,10 +92,10 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 		stableID := strings.TrimSpace(identity.StableID)
 		address := strings.TrimSpace(identity.Address)
 		if stableID == "" || address == "" {
-			return usageError("current persistent identity is missing stable_id or address; restore .aw/identity.yaml or run `aw id create` again")
+			return usageError("current global identity is missing stable_id or address; restore .aw/identity.yaml or run `aw id create` again")
 		}
 		commandParts = append(commandParts,
-			"--lifetime", awid.LifetimePersistent,
+			"--global",
 			"--did-aw", stableID,
 			"--address", address,
 		)

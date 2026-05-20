@@ -30,7 +30,7 @@ var connectCmd = &cobra.Command{
 func init() {
 	connectCmd.GroupID = groupWorkspace
 	connectCmd.Flags().StringVar(&connectBootstrapToken, "bootstrap-token", "", "One-time bootstrap token from the dashboard")
-	connectCmd.Flags().StringVar(&connectAddress, "address", "", "Persistent public address from the dashboard copy command")
+	connectCmd.Flags().StringVar(&connectAddress, "address", "", "Global public address from the dashboard copy command")
 	connectCmd.Flags().StringVar(&connectMockURL, "mock-url", "", "Override the bootstrap/aweb base URL for local development")
 	connectCmd.Hidden = true
 	rootCmd.AddCommand(connectCmd)
@@ -201,7 +201,7 @@ func validateBootstrapRedeemResponse(
 	switch strings.TrimSpace(resp.Lifetime) {
 	case awid.LifetimePersistent:
 		if strings.TrimSpace(stableID) == "" || strings.TrimSpace(address) == "" {
-			return nil, fmt.Errorf("persistent bootstrap redeem requires a did:aw and address")
+			return nil, fmt.Errorf("global bootstrap redeem requires a did:aw and address")
 		}
 		if strings.TrimSpace(resp.DIDAW) != stableID {
 			return nil, fmt.Errorf("bootstrap redeem returned did_aw %q, expected %q", resp.DIDAW, stableID)
@@ -217,13 +217,13 @@ func validateBootstrapRedeemResponse(
 		}
 	case awid.LifetimeEphemeral:
 		if strings.TrimSpace(address) != "" {
-			return nil, fmt.Errorf("dashboard minted an ephemeral bootstrap token; re-run the exact command without --address")
+			return nil, fmt.Errorf("dashboard minted a local bootstrap token; re-run the exact command without --address")
 		}
 		if strings.TrimSpace(resp.DIDAW) != "" || strings.TrimSpace(resp.MemberAddress) != "" {
-			return nil, fmt.Errorf("ephemeral bootstrap redeem unexpectedly returned persistent identity fields")
+			return nil, fmt.Errorf("local bootstrap redeem unexpectedly returned global identity fields")
 		}
 		if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
-			return nil, fmt.Errorf("ephemeral bootstrap certificate unexpectedly contains persistent identity fields")
+			return nil, fmt.Errorf("local bootstrap certificate unexpectedly contains global identity fields")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported bootstrap lifetime %q", resp.Lifetime)

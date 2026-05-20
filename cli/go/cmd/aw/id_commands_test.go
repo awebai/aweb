@@ -1651,7 +1651,7 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *te
 	if err == nil {
 		t.Fatalf("expected rotate-key to fail\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "this command requires a persistent identity") {
+	if !strings.Contains(string(out), "this command requires a global identity") {
 		t.Fatalf("unexpected error output:\n%s", string(out))
 	}
 }
@@ -1682,7 +1682,7 @@ func TestAwIDRegisterFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *tes
 	if err == nil {
 		t.Fatalf("expected register to fail\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "this command requires a persistent identity") {
+	if !strings.Contains(string(out), "this command requires a global identity") {
 		t.Fatalf("unexpected error output:\n%s", string(out))
 	}
 }

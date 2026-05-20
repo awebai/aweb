@@ -16,7 +16,7 @@ import (
 
 var idRotateKeyCmd = &cobra.Command{
 	Use:   "rotate-key",
-	Short: "Rotate the current persistent identity signing key at the registry",
+	Short: "Rotate the current global identity signing key at the registry",
 	RunE:  runIDRotateKey,
 }
 

@@ -117,17 +117,21 @@ func formatTeamList(v any) string {
 	}
 	var sb strings.Builder
 	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ACTIVE\tTEAM\tALIAS\tLIFETIME\tISSUED")
+	_, _ = fmt.Fprintln(tw, "ACTIVE\tTEAM\tALIAS\tIDENTITY\tISSUED")
 	for _, item := range out.Memberships {
 		active := ""
 		if item.Active {
 			active = "*"
 		}
+		identityClass := "-"
+		if strings.TrimSpace(item.Lifetime) != "" {
+			identityClass = awid.DescribeIdentityClass(item.Lifetime)
+		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			active,
 			item.TeamID,
 			item.Alias,
-			firstNonEmpty(item.Lifetime, "-"),
+			identityClass,
 			firstNonEmpty(item.IssuedAt, "-"),
 		)
 	}
@@ -152,7 +156,7 @@ func formatCertShow(v any) string {
 	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Member DID:  %s\n", out.MemberDIDKey))
 	sb.WriteString(fmt.Sprintf("Team DID:    %s\n", out.TeamDIDKey))
-	sb.WriteString(fmt.Sprintf("Lifetime:    %s\n", out.Lifetime))
+	sb.WriteString(fmt.Sprintf("Identity:    %s\n", awid.DescribeIdentityClass(out.Lifetime)))
 	sb.WriteString(fmt.Sprintf("Issued:      %s\n", out.IssuedAt))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertificateID))
 	return sb.String()

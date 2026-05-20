@@ -4,7 +4,7 @@
 #
 # Simulates a new user who:
 #   1. Starts awid + aweb in Docker
-#   2. Creates a persistent identity (alice)
+#   2. Creates a global identity (alice)
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
 #   5. Exercises mail, chat, tasks, locks
@@ -509,7 +509,7 @@ echo "=== Phase 4: Alice joins team ==="
 alice_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --persistent \
+  --global \
   --json 2>/dev/null)"
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
@@ -606,7 +606,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 bob_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --persistent \
+  --global \
   --json 2>/dev/null)"
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
@@ -659,9 +659,9 @@ assert_eq "message body" "Hello from alice" "$bob_msg_body"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 11a: Bare alias to an ephemeral member with a registered identity
+# Phase 11a: Bare alias to a local member with a registered global identity
 # ---------------------------------------------------------------------------
-echo "=== Phase 11a: Bare alias to registered ephemeral member ==="
+echo "=== Phase 11a: Bare alias to registered local member ==="
 
 eve_create="$(run_aw_in "$EVE_DIR" id create \
   --name eve \
@@ -677,13 +677,13 @@ eve_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --namespace test.local \
   --json 2>/dev/null)"
 EVE_INVITE_TOKEN="$(echo "$eve_invite_out" | jq_field token)"
-assert_not_empty "eve ephemeral invite token" "$EVE_INVITE_TOKEN"
+assert_not_empty "eve local invite token" "$EVE_INVITE_TOKEN"
 
 eve_accept="$(run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
   --alias eve \
   --json 2>/dev/null)"
 EVE_ACCEPT_STATUS="$(echo "$eve_accept" | jq_field status)"
-assert_eq "eve accepted default ephemeral invite" "accepted" "$EVE_ACCEPT_STATUS"
+assert_eq "eve accepted default local invite" "accepted" "$EVE_ACCEPT_STATUS"
 
 run_aw_in "$EVE_DIR" init --url "$AWEB_URL" 2>/dev/null
 eve_init_exit=$?
@@ -691,20 +691,20 @@ assert_eq "eve init exit" "0" "$eve_init_exit"
 
 if eve_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to eve \
-  --subject "Registered ephemeral e2e" \
-  --body "Hello registered ephemeral eve" 2>&1)"; then
+  --subject "Registered local e2e" \
+  --body "Hello registered local eve" 2>&1)"; then
   eve_mail_exit=0
 else
   eve_mail_exit=$?
 fi
-assert_eq "alice mails registered ephemeral eve by bare alias" "0" "$eve_mail_exit"
+assert_eq "alice mails registered local eve by bare alias" "0" "$eve_mail_exit"
 if [[ "$eve_mail_exit" != "0" ]]; then
   echo "$eve_mail_out"
 fi
 
 eve_inbox="$(run_aw_in "$EVE_DIR" mail inbox --json 2>/dev/null)"
-eve_msg_body="$(echo "$eve_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Hello registered ephemeral eve'), ''))" 2>/dev/null || echo "")"
-assert_eq "eve receives bare-alias mail despite registered identity" "Hello registered ephemeral eve" "$eve_msg_body"
+eve_msg_body="$(echo "$eve_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Hello registered local eve'), ''))" 2>/dev/null || echo "")"
+assert_eq "eve receives bare-alias mail despite registered identity" "Hello registered local eve" "$eve_msg_body"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -739,7 +739,7 @@ erin_add="$(run_aw_in "$ALICE_DIR" id team add-member \
   --namespace test.local \
   --did "$ERIN_DID_KEY" \
   --alias erin \
-  --lifetime persistent \
+  --global \
   --did-aw "$ERIN_DID_AW" \
   --address "$ERIN_ADDRESS" \
   --json 2>/dev/null)"
@@ -980,23 +980,23 @@ assert_contains "dave sees cross-team chat from alice" "$dave_pending" "alice"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 12c: Ephemeral server-local addresses
+# Phase 12c: Local server-projected addresses
 # ---------------------------------------------------------------------------
-echo "=== Phase 12c: Ephemeral server-local addresses ==="
+echo "=== Phase 12c: Local server-projected addresses ==="
 
 gsk_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --ephemeral \
+  --local \
   --json 2>/dev/null)"
 GSK_INVITE_TOKEN="$(echo "$gsk_invite_out" | jq_field token)"
-assert_not_empty "gsk ephemeral invite token" "$GSK_INVITE_TOKEN"
+assert_not_empty "gsk local invite token" "$GSK_INVITE_TOKEN"
 
 gsk_accept="$(run_aw_in "$GSK_DIR" id team accept-invite "$GSK_INVITE_TOKEN" \
   --alias gsk \
   --json 2>/dev/null)"
 GSK_ACCEPT_STATUS="$(echo "$gsk_accept" | jq_field status)"
-assert_eq "gsk accepted ephemeral invite" "accepted" "$GSK_ACCEPT_STATUS"
+assert_eq "gsk accepted local invite" "accepted" "$GSK_ACCEPT_STATUS"
 
 run_aw_in "$GSK_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
 gsk_init_exit=$?
@@ -1005,14 +1005,14 @@ if [[ ! -f "$GSK_DIR/.aw/identity.yaml" ]]; then
   echo "  PASS: gsk has no identity.yaml"
   pass=$((pass + 1))
 else
-  echo "  FAIL: gsk ephemeral agent should not have identity.yaml"
+  echo "  FAIL: gsk local agent should not have identity.yaml"
   fail=$((fail + 1))
 fi
 
 if gsk_mail_out="$(run_aw_in "$GSK_DIR" mail send \
   --to alice \
-  --subject "Ephemeral sender address" \
-  --body "Ephemeral hello from gsk" 2>&1)"; then
+  --subject "Local sender address" \
+  --body "Local hello from gsk" 2>&1)"; then
   gsk_mail_exit=0
 else
   gsk_mail_exit=$?
@@ -1022,13 +1022,13 @@ if [[ "$gsk_mail_exit" != "0" ]]; then
   echo "  gsk mail output: ${gsk_mail_out:0:240}"
 fi
 
-alice_ephemeral_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
-alice_gsk_from_address="$(echo "$alice_ephemeral_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral sender address'), ''))" 2>/dev/null || echo "")"
+alice_local_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_gsk_from_address="$(echo "$alice_local_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
 
 if gsk_identity_mail_out="$(run_aw_in "$GSK_DIR" mail send \
   --to-address test.local/alice \
-  --subject "Ephemeral identity-auth sender address" \
+  --subject "Local identity-auth sender address" \
   --body "Identity-auth hello from gsk" 2>&1)"; then
   gsk_identity_mail_exit=0
 else
@@ -1040,12 +1040,12 @@ if [[ "$gsk_identity_mail_exit" != "0" ]]; then
 fi
 
 alice_identity_mail_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
-alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral identity-auth sender address'), ''))" 2>/dev/null || echo "")"
+alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local identity-auth sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk identity-auth mail address" "test.local/gsk" "$alice_gsk_identity_from_address"
 
 if alice_gsk_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-address test.local/gsk \
-  --subject "Reply to ephemeral address" \
+  --subject "Reply to local address" \
   --body "Reply to gsk by local address" 2>&1)"; then
   alice_gsk_reply_exit=0
 else
@@ -1057,11 +1057,11 @@ if [[ "$alice_gsk_reply_exit" != "0" ]]; then
 fi
 
 gsk_inbox="$(run_aw_in "$GSK_DIR" mail inbox --json --show-all 2>/dev/null)"
-gsk_reply_body="$(echo "$gsk_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply to ephemeral address'), ''))" 2>/dev/null || echo "")"
+gsk_reply_body="$(echo "$gsk_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply to local address'), ''))" 2>/dev/null || echo "")"
 assert_eq "gsk receives address-routed mail reply" "Reply to gsk by local address" "$gsk_reply_body"
 
 if gsk_chat_out="$(run_aw_in "$GSK_DIR" chat send-and-leave alice \
-  "Ephemeral chat from gsk" 2>&1)"; then
+  "Local chat from gsk" 2>&1)"; then
   gsk_chat_exit=0
 else
   gsk_chat_exit=$?
@@ -1075,7 +1075,7 @@ alice_gsk_pending="$(run_aw_in "$ALICE_DIR" chat pending 2>/dev/null)"
 assert_contains "alice sees gsk server-local chat address" "$alice_gsk_pending" "test.local/gsk"
 
 if alice_gsk_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/gsk \
-  "Reply to ephemeral chat address" 2>&1)"; then
+  "Reply to local chat address" 2>&1)"; then
   alice_gsk_chat_reply_exit=0
 else
   alice_gsk_chat_reply_exit=$?
@@ -1086,7 +1086,7 @@ if [[ "$alice_gsk_chat_reply_exit" != "0" ]]; then
 fi
 
 gsk_chat_history="$(run_aw_in "$GSK_DIR" chat history alice 2>/dev/null)"
-assert_contains "gsk receives address-routed chat reply" "$gsk_chat_history" "Reply to ephemeral chat address"
+assert_contains "gsk receives address-routed chat reply" "$gsk_chat_history" "Reply to local chat address"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1131,7 +1131,7 @@ assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 partner_bob_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --persistent \
+  --global \
   --json 2>/dev/null)"
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
@@ -1149,7 +1149,7 @@ assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 partner_alice_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --persistent \
+  --global \
   --json 2>/dev/null)"
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"

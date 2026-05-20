@@ -103,9 +103,9 @@ DID operations.
 |--------|--------|
 | **Algorithm** | Ed25519 |
 | **Private key location** | Self-custodial: `.aw/signing.key` in the workspace directory.  Custodial: operator's encrypted storage |
-| **Public key location** | awid `did_aw_mappings.current_did_key` (for persistent identities).  Also embedded in the team certificate as `member_did_key` |
+| **Public key location** | awid `did_aw_mappings.current_did_key` (for global identities).  Also embedded in the team certificate as `member_did_key` |
 | **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
-| **Created by** | Self-custodial: `aw init` (ephemeral) or `aw init --persistent --name <name>` (persistent).  Custodial: the operator's dashboard |
+| **Created by** | Self-custodial: `aw init` for a local workspace or `aw init --global --name <name>` for a global identity.  Custodial: the operator's dashboard |
 | **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side |
 | **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
 
@@ -134,7 +134,7 @@ namespace controller of `domain` — either the BYOD controller of
 `domain`, or the hosted operator for managed namespaces.
 
 This split is load-bearing. It means a `did_aw` can exist without
-any address (ephemeral-turned-durable upgrades, cross-namespace
+any address (local-to-global upgrades, cross-namespace
 memberships), and a managed address can be assigned to a
 self-custodial `did_aw` without the hosted operator ever touching
 the identity key. The awid-side invariant — `did_aw` must be
@@ -190,7 +190,7 @@ Each key type is recoverable by the authority one level above it:
 
 ## Identity Key Loss
 
-### Custodial persistent identity
+### Custodial global identity
 
 The operator's replace operation handles this:
 
@@ -209,7 +209,7 @@ a key rotation (which would be signed by the old identity key).
 The app.aweb.ai dashboard provides this operation for custodial identities
 it manages.
 
-### Self-custodial persistent identity (CLI-created)
+### Self-custodial global identity (CLI-created)
 
 **No recovery path exists today.**
 
@@ -234,9 +234,9 @@ the team controller issues a new certificate for the new `did:key` (step
 force the issue by rotating the team key — but the cooperative path is the
 expected one.
 
-### Ephemeral identity
+### Local identity
 
-Ephemeral identities have no recovery story by design.  If the signing key
+Local identities have no recovery story by design.  If the signing key
 is lost, delete the workspace and create a new one.  The alias is released
 for reuse.
 

@@ -9,21 +9,21 @@ APIs and operator runbooks live in the cloud support documentation.
 
 aweb separates workspace lifetime from identity lifetime.
 
-- An **ephemeral identity** is team-local and workspace-bound. It has an alias
+- A **local identity** is team-local and workspace-bound. It has an alias
   such as `alice`, but no public address or trust-continuity promise.
-- A **persistent identity** is durable. It has a `did:key`, a stable `did:aw`,
+- A **global identity** is durable. It has a `did:key`, a stable `did:aw`,
   and may hold public addresses such as `acme.com/alice`.
 - A **workspace path** is only a local binding. Losing, moving, or deleting a
-  path does not prove that a persistent identity should be deleted, archived,
+  path does not prove that a global identity should be deleted, archived,
   replaced, unclaimed, or reassigned.
 
-Ephemeral workspace deletion is a lifecycle event. When the server confirms a
-gone ephemeral workspace, OSS aweb soft-deletes the workspace and bound
-ephemeral agent row, clears presence, and releases task claims with the normal
+Local workspace deletion is a lifecycle event. When the server confirms a
+gone local workspace, OSS aweb soft-deletes the workspace and bound
+local agent row, clears presence, and releases task claims with the normal
 unclaim events.
 
-Persistent workspace disappearance is not a lifecycle event. The server
-rejects persistent workspace delete/archive attempts in OSS because persistent
+Global identity workspace disappearance is not a lifecycle event. The server
+rejects global identity workspace delete/archive attempts in OSS because global
 identity lifecycle requires explicit authority and a reviewed lifecycle flow.
 Missing local files alone are never enough evidence for archive, replacement,
 address reassignment, or task/presence cleanup.
@@ -95,7 +95,7 @@ aw doctor --fix local.workspace.active_team
 
 The fix framework refuses high-impact or sensitive mutations, including:
 
-- persistent identity delete/archive/replace/retire/reassign
+- global identity delete/archive/replace/retire/reassign
 - private key or signing key rewrites
 - task unclaim and presence cleanup
 - server, registry, dashboard, support, or service-authority mutations
@@ -172,7 +172,7 @@ For direct DID approvals, use the values from the member's request:
 ```bash
 aw id team add-member --namespace <domain> --team <team> \
   --did <did:key> --alias <alias> \
-  --lifetime persistent --did-aw <did:aw> --address <domain>/<name>
+  --global --did-aw <did:aw> --address <domain>/<name>
 ```
 
 `add-member` prints the new `certificate_id` and a fetch command for the
@@ -223,7 +223,7 @@ review prompts, not automatic repairs.
 
 Examples:
 
-- `persistent_lifecycle_review`: persistent archive/delete/replace requires
+- `persistent_lifecycle_review`: global archive/delete/replace requires
   external authorized review; missing local state alone is not sufficient.
 - `persistent_identity_registry_repair_review`: if the local DID key is valid,
   caller-authorized DID registration or registry repair is preferred before

@@ -207,30 +207,30 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 		return
 	}
 	if strings.TrimSpace(state.lifetime) == awid.LifetimeEphemeral {
-		r.add(localCheck(doctorCheckIdentityLocalContext, doctorStatusOK, identityTarget(state), "Ephemeral identity context is available from the active team certificate.", "", map[string]any{"source": "team_certificate"}))
-		r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Identity lifetime is ephemeral.", "", map[string]any{"lifetime": awid.LifetimeEphemeral}))
+		r.add(localCheck(doctorCheckIdentityLocalContext, doctorStatusOK, identityTarget(state), "Local identity context is available from the active team certificate.", "", map[string]any{"source": "team_certificate"}))
+		r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Identity is local.", "", map[string]any{"lifetime": awid.LifetimeEphemeral}))
 		r.addIdentityDIDFormatCheck(state)
 		r.addIdentitySigningKeyCheck(state)
-		r.add(localCheck(doctorCheckIdentityLocalStableID, doctorStatusInfo, identityTarget(state), "Ephemeral identity does not require a did:aw stable_id.", "", map[string]any{"expected": false}))
-		r.add(localCheck(doctorCheckIdentityLocalAddress, doctorStatusInfo, identityTarget(state), "Ephemeral identity does not require a public address.", "", map[string]any{"expected": false}))
-		r.add(localCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusInfo, nil, "Ephemeral identity does not require an awid registry URL.", "", map[string]any{"expected": false}))
-		r.add(localCheck(doctorCheckIdentityLocalEphemeralAWID, doctorStatusOK, identityTarget(state), "Public awid registration is not expected for ephemeral identity.", "", nil))
+		r.add(localCheck(doctorCheckIdentityLocalStableID, doctorStatusInfo, identityTarget(state), "Local identity does not require a did:aw stable_id.", "", map[string]any{"expected": false}))
+		r.add(localCheck(doctorCheckIdentityLocalAddress, doctorStatusInfo, identityTarget(state), "Local identity does not require a public address.", "", map[string]any{"expected": false}))
+		r.add(localCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusInfo, nil, "Local identity does not require an awid registry URL.", "", map[string]any{"expected": false}))
+		r.add(localCheck(doctorCheckIdentityLocalEphemeralAWID, doctorStatusOK, identityTarget(state), "Public awid registration is not expected for local identity.", "", nil))
 		return
 	}
 
 	if !state.identityExists {
 		if strings.TrimSpace(state.lifetime) == awid.LifetimePersistent {
-			r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusFail, state.identityPath, "Persistent identity.yaml is missing.", "Restore .aw/identity.yaml before using persistent identity or awid registry diagnostics.", map[string]any{"state": "missing", "expected_lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
-			r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Active team certificate expects persistent identity.", "", map[string]any{"lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
+			r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusFail, state.identityPath, "Global identity.yaml is missing.", "Restore .aw/identity.yaml before using global identity or awid registry diagnostics.", map[string]any{"state": "missing", "expected_lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
+			r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Active team certificate expects global identity.", "", map[string]any{"lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
 			r.addIdentityDIDFormatCheck(state)
 			r.addIdentitySigningKeyCheck(state)
-			r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusBlocked, state.identityPath, "Stable ID expectation requires persistent identity.yaml.", "Restore .aw/identity.yaml before using awid registry diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
-			r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusBlocked, state.identityPath, "Address expectation requires persistent identity.yaml.", "Restore .aw/identity.yaml before using awid address diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
-			r.add(localPathCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusBlocked, state.identityPath, "Registry URL source requires persistent identity.yaml or AWID_REGISTRY_URL.", "Restore .aw/identity.yaml or set AWID_REGISTRY_URL.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
+			r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusBlocked, state.identityPath, "Stable ID expectation requires global identity.yaml.", "Restore .aw/identity.yaml before using awid registry diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
+			r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusBlocked, state.identityPath, "Address expectation requires global identity.yaml.", "Restore .aw/identity.yaml before using awid address diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
+			r.add(localPathCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusBlocked, state.identityPath, "Registry URL source requires global identity.yaml or AWID_REGISTRY_URL.", "Restore .aw/identity.yaml or set AWID_REGISTRY_URL.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
 			return
 		}
-		r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusInfo, state.identityPath, "No identity.yaml was found.", "Run `aw init` or `aw id create` when a persistent identity is expected.", map[string]any{"state": "missing"}))
-		r.add(localPathCheck(doctorCheckIdentityLocalLifetime, doctorStatusInfo, state.identityPath, "Identity lifetime is unavailable because no identity context was found.", "", map[string]any{"reason": "no_identity_context"}))
+		r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusInfo, state.identityPath, "No identity.yaml was found.", "Run `aw init` or `aw id create` when a global identity is expected.", map[string]any{"state": "missing"}))
+		r.add(localPathCheck(doctorCheckIdentityLocalLifetime, doctorStatusInfo, state.identityPath, "Identity class is unavailable because no identity context was found.", "", map[string]any{"reason": "no_identity_context"}))
 		r.add(localPathCheck(doctorCheckIdentityLocalDIDKeyFormat, doctorStatusInfo, state.identityPath, "Identity did:key is unavailable because no identity context was found.", "", map[string]any{"reason": "no_identity_context"}))
 		r.add(localPathCheck(doctorCheckIdentityLocalSigningKey, doctorStatusInfo, state.signingKeyPath, "Signing key comparison is unavailable because no identity context was found.", "", map[string]any{"reason": "no_identity_context"}))
 		r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusInfo, state.identityPath, "Stable ID expectation is unavailable because no identity context was found.", "", map[string]any{"reason": "no_identity_context"}))
@@ -239,12 +239,12 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 		return
 	}
 
-	r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusOK, state.identityPath, "Persistent identity.yaml parsed successfully.", "", map[string]any{"source": awconfig.DefaultWorktreeIdentityRelativePath()}))
+	r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusOK, state.identityPath, "Global identity.yaml parsed successfully.", "", map[string]any{"source": awconfig.DefaultWorktreeIdentityRelativePath()}))
 	switch state.lifetime {
 	case awid.LifetimePersistent:
-		r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Identity lifetime is persistent.", "", map[string]any{"lifetime": state.lifetime}))
+		r.add(localCheck(doctorCheckIdentityLocalLifetime, doctorStatusOK, identityTarget(state), "Identity is global.", "", map[string]any{"lifetime": state.lifetime}))
 	case "":
-		r.add(localPathCheck(doctorCheckIdentityLocalLifetime, doctorStatusFail, state.identityPath, "Persistent identity lifetime is missing.", "Repair identity.yaml with a supported lifetime.", nil))
+		r.add(localPathCheck(doctorCheckIdentityLocalLifetime, doctorStatusFail, state.identityPath, "Global identity lifetime is missing.", "Repair identity.yaml with a supported lifetime.", nil))
 	default:
 		r.add(localPathCheck(doctorCheckIdentityLocalLifetime, doctorStatusFail, state.identityPath, "Identity lifetime is unknown.", "Repair identity.yaml with a supported lifetime.", map[string]any{"lifetime": state.lifetime}))
 	}
@@ -296,26 +296,26 @@ func (r *doctorRunner) addIdentitySigningKeyCheck(state *doctorIdentityState) {
 
 func (r *doctorRunner) addPersistentStableIDCheck(state *doctorIdentityState) {
 	if strings.TrimSpace(state.stableID) == "" {
-		r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusFail, state.identityPath, "Persistent identity stable_id is missing.", "Repair identity.yaml or re-register the persistent identity under caller authority.", nil))
+		r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusFail, state.identityPath, "Global identity stable_id is missing.", "Repair identity.yaml or re-register the global identity under caller authority.", nil))
 		return
 	}
 	if !strings.HasPrefix(state.stableID, "did:aw:") {
-		r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusFail, state.identityPath, "Persistent identity stable_id is not a did:aw identifier.", "Repair identity.yaml with a valid did:aw stable identifier.", nil))
+		r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusFail, state.identityPath, "Global identity stable_id is not a did:aw identifier.", "Repair identity.yaml with a valid did:aw stable identifier.", nil))
 		return
 	}
-	r.add(localCheck(doctorCheckIdentityLocalStableID, doctorStatusOK, &doctorTarget{Type: "did", ID: state.stableID}, "Persistent identity stable_id is present.", "", map[string]any{"stable_id": state.stableID}))
+	r.add(localCheck(doctorCheckIdentityLocalStableID, doctorStatusOK, &doctorTarget{Type: "did", ID: state.stableID}, "Global identity stable_id is present.", "", map[string]any{"stable_id": state.stableID}))
 }
 
 func (r *doctorRunner) addPersistentAddressCheck(state *doctorIdentityState) {
 	if strings.TrimSpace(state.address) == "" {
-		r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusFail, state.identityPath, "Persistent identity address is missing.", "Repair identity.yaml with the registered address before using address diagnostics.", nil))
+		r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusFail, state.identityPath, "Global identity address is missing.", "Repair identity.yaml with the registered address before using address diagnostics.", nil))
 		return
 	}
 	if state.domain == "" || state.handle == "" {
-		r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusFail, state.identityPath, "Persistent identity address is malformed.", "Use the canonical domain/name address form.", map[string]any{"address": state.address}))
+		r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusFail, state.identityPath, "Global identity address is malformed.", "Use the canonical domain/name address form.", map[string]any{"address": state.address}))
 		return
 	}
-	r.add(localCheck(doctorCheckIdentityLocalAddress, doctorStatusOK, &doctorTarget{Type: "address", ID: state.address}, "Persistent identity address is present.", "", map[string]any{"address": state.address}))
+	r.add(localCheck(doctorCheckIdentityLocalAddress, doctorStatusOK, &doctorTarget{Type: "address", ID: state.address}, "Global identity address is present.", "", map[string]any{"address": state.address}))
 }
 
 func (r *doctorRunner) addRegistryURLSourceCheck(state *doctorIdentityState) {
@@ -343,7 +343,7 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 	}
 	if strings.TrimSpace(state.lifetime) == awid.LifetimeEphemeral {
 		for _, id := range awidCheckIDs {
-			r.add(awidCheck(id, doctorStatusInfo, "Public awid registration is not expected for ephemeral identity.", "", map[string]any{"reason": "ephemeral_not_applicable"}))
+			r.add(awidCheck(id, doctorStatusInfo, "Public awid registration is not expected for local identity.", "", map[string]any{"reason": "local_identity_not_applicable"}))
 		}
 		return
 	}
@@ -380,7 +380,7 @@ func (r *doctorRunner) runOnlineRegistryChecks(state *doctorIdentityState, clien
 
 	resolution, resolveOK, blockedPrerequisite := r.addDIDResolveChecks(ctx, state, client)
 	if !resolveOK {
-		message := "DID/address checks require a resolved persistent did:aw."
+		message := "DID/address checks require a resolved global did:aw."
 		nextStep := "Resolve awid.did.resolve first."
 		if blockedPrerequisite == doctorCheckAWIDDIDCurrentKey {
 			message = "DID/address checks require awid current did:key to match local identity."
@@ -401,7 +401,7 @@ func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIde
 		statusCode, hasStatus := doctorRegistryStatusCode(err)
 		switch {
 		case hasStatus && statusCode == http.StatusNotFound:
-			check := awidCheck(doctorCheckAWIDDIDResolve, doctorStatusFail, "Persistent did:aw was not found in awid.", "Register or repair this persistent identity under caller authority; do not replace it automatically.", map[string]any{"reason": "did_not_found", "registry_url": state.registryURL, "did_aw": state.stableID})
+			check := awidCheck(doctorCheckAWIDDIDResolve, doctorStatusFail, "Global did:aw was not found in awid.", "Register or repair this global identity under caller authority; do not replace it automatically.", map[string]any{"reason": "did_not_found", "registry_url": state.registryURL, "did_aw": state.stableID})
 			check.Handoff = persistentIdentityRegistryRepairReviewHandoff(authorityStatus, authorityEvidence)
 			r.add(check)
 		case hasStatus && statusCode == http.StatusForbidden:
@@ -419,7 +419,7 @@ func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIde
 		r.add(awidCheck(doctorCheckAWIDDIDCurrentKey, doctorStatusBlocked, "Current-key comparison requires coherent did:aw resolution.", "Resolve awid.did.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDDIDResolve}))
 		return resolution, false, doctorCheckAWIDDIDResolve
 	}
-	r.add(awidCheck(doctorCheckAWIDDIDResolve, doctorStatusOK, "Persistent did:aw resolves at awid.", "", map[string]any{"registry_url": state.registryURL, "did_aw": state.stableID}))
+	r.add(awidCheck(doctorCheckAWIDDIDResolve, doctorStatusOK, "Global did:aw resolves at awid.", "", map[string]any{"registry_url": state.registryURL, "did_aw": state.stableID}))
 	if strings.TrimSpace(resolution.CurrentDIDKey) != strings.TrimSpace(state.did) {
 		check := awidCheck(doctorCheckAWIDDIDCurrentKey, doctorStatusFail, "awid current did:key does not match local identity did.", "Escalate key mismatch; do not replace identity automatically.", map[string]any{"local_did": state.did, "registry_current_did_key": strings.TrimSpace(resolution.CurrentDIDKey)})
 		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
@@ -479,7 +479,7 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 		statusCode, hasStatus := doctorRegistryStatusCode(err)
 		switch {
 		case hasStatus && statusCode == http.StatusNotFound:
-			check := awidCheck(doctorCheckAWIDAddressResolve, doctorStatusWarn, "Persistent address was not found in awid.", "Register or repair the address under caller authority; do not replace identity automatically.", map[string]any{"reason": "address_not_found", "address": state.address})
+			check := awidCheck(doctorCheckAWIDAddressResolve, doctorStatusWarn, "Global address was not found in awid.", "Register or repair the address under caller authority; do not replace identity automatically.", map[string]any{"reason": "address_not_found", "address": state.address})
 			check.Handoff = managedAddressRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 			r.add(check)
 		case hasStatus && statusCode == http.StatusForbidden:
@@ -501,7 +501,7 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 		return
 	}
 
-	r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusOK, "Persistent address resolves under caller authority.", "", map[string]any{"address": state.address}))
+	r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusOK, "Global address resolves under caller authority.", "", map[string]any{"address": state.address}))
 	if strings.TrimSpace(address.DIDAW) != state.stableID {
 		check := awidCheck(doctorCheckAWIDAddressStableID, doctorStatusWarn, "Registered address points at a different did:aw.", "Repair address registration under namespace authority; do not replace identity automatically.", map[string]any{"local_did_aw": state.stableID, "address_did_aw": strings.TrimSpace(address.DIDAW)})
 		check.Handoff = managedAddressRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
@@ -619,7 +619,7 @@ func registryPreconditionFailure(state *doctorIdentityState) string {
 	case strings.TrimSpace(state.registryURL) == "":
 		return "no_explicit_registry_url"
 	case strings.TrimSpace(state.lifetime) != awid.LifetimePersistent:
-		return "persistent_identity_required"
+		return "global_identity_required"
 	case strings.TrimSpace(state.did) == "":
 		return "missing_did_key"
 	case strings.TrimSpace(state.stableID) == "":

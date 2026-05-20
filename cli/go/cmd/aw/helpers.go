@@ -118,7 +118,7 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeMembership.TeamID, err)
 	}
 	if strings.TrimSpace(cert.Lifetime) != awid.LifetimeEphemeral {
-		return nil, usageError("current persistent identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
 	}
 
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
@@ -171,7 +171,7 @@ func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {
 		return usageError("current identity is invalid: .aw/identity.yaml is missing custody")
 	}
 	if lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) == "" {
-		return usageError("current identity is invalid: persistent .aw/identity.yaml is missing stable_id")
+		return usageError("current identity is invalid: global .aw/identity.yaml is missing stable_id")
 	}
 	if custody != awid.CustodySelf {
 		return nil
@@ -287,7 +287,7 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	}
 	configuredSel := *sel
 	if identityMissing {
-		// Ephemeral identity-auth requests must not synthesize a public address
+		// Local identity-auth requests must not synthesize a public address
 		// from team membership metadata. Without identity.yaml, only the local
 		// signing key is authoritative for messaging auth.
 		configuredSel.Address = ""
@@ -1058,7 +1058,7 @@ func sanitizeKeyComponent(s string) string {
 }
 
 // deriveIdentityAddress builds the canonical external identity address from
-// the identity domain plus the local routing handle or persistent name.
+// the identity domain plus the local routing handle or global name.
 func deriveIdentityAddress(domain, handle string) string {
 	if domain != "" {
 		return domain + "/" + handle

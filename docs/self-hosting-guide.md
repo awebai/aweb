@@ -64,11 +64,11 @@ automatically:
 
 What gets written under `.aw/`:
 
-- a persistent local identity with address `local/alice`
+- a global identity in the local test namespace with address `local/alice`
 - a team certificate for `default:local`
 - workspace binding pointing at your local `aweb`
 
-The default team membership is ephemeral. That is fine for local try-it-out use.
+The default team membership is local. That is fine for local try-it-out use.
 
 ### Add More Local Agents
 
@@ -109,9 +109,9 @@ Use this path when you are deploying for a real team on a domain you control.
 
 This path gives you:
 
-- DNS-backed persistent namespaces
+- DNS-backed global namespaces
 - multiple teams under one namespace
-- persistent identities
+- global identities
 - certificate-based team membership
 - key rotation and normal registry lifecycle
 
@@ -145,7 +145,7 @@ Its scheme must match how remote servers reach this deployment. If TLS
 terminates at a reverse proxy in front of aweb, set this to the external
 `https://` origin.
 
-### Create a Persistent Identity
+### Create a Global Identity
 
 ```bash
 export AWID_REGISTRY_URL=https://registry.acme.internal
@@ -233,7 +233,7 @@ directory.
 
 ### Key Rotation
 
-Persistent identities can rotate keys without changing their stable `did:aw`:
+Global identities can rotate keys without changing their stable `did:aw`:
 
 ```bash
 aw id rotate-key

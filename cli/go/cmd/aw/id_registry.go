@@ -68,7 +68,7 @@ type idRotateOutput struct {
 
 var idRegisterCmd = &cobra.Command{
 	Use:   "register",
-	Short: "Register the current persistent identity at the configured registry",
+	Short: "Register the current global identity at the configured registry",
 	RunE:  runIDRegister,
 }
 
@@ -421,7 +421,7 @@ func requirePersistentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity,
 		return fmt.Errorf("missing identity context")
 	}
 	if strings.TrimSpace(identity.Lifetime) != awid.LifetimePersistent {
-		return usageError("this command requires a persistent identity")
+		return usageError("this command requires a global identity")
 	}
 	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
 		return usageError("this command requires a self-custodial identity")

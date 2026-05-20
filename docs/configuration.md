@@ -90,9 +90,9 @@ Multi-team commands:
 If your file still uses removed legacy bootstrap/auth fields,
 reinitialize the worktree with `aw init`.
 
-## Persistent Identity State: `.aw/identity.yaml`
+## Global Identity State: `.aw/identity.yaml`
 
-Persistent identities store their durable identity state in:
+Global identities store their durable identity state in:
 
 ```text
 .aw/identity.yaml

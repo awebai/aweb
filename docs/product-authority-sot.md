@@ -182,7 +182,7 @@ Required behavior:
 
 - local team controller signs a member certificate for the terminal agent's
   `did:key`;
-- persistent/global agents include their `did:aw` and address in the
+- global agents include their `did:aw` and address in the
   certificate when applicable;
 - the agent can initialize a workspace and coordinate as a team member;
 - no hosted team-controller authority is required.
@@ -219,7 +219,7 @@ Required behavior:
 - terminal agent keeps its identity private key locally;
 - hosted operator signs a membership certificate for the terminal agent's
   `did:key`;
-- dashboard Add existing identity by address can add a persistent
+- dashboard Add existing identity by address can add a global
   self-custodial identity when the address resolves to the identity;
 - hosted team invite/API-key bootstrap can add a local workspace without
   exposing the hosted team controller key;

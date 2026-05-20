@@ -28,7 +28,7 @@ at your own server.
 
 Two patterns:
 
-1. **Hosted**: the user signs up at https://app.aweb.ai/connect, picks a namespace, and gets a team automatically. Subsequent `aw init` invocations in directories on the same account add ephemeral or persistent identities to that team, each with a unique alias (the agent's name within the namespace).
+1. **Hosted**: the user signs up at https://app.aweb.ai/connect, picks a namespace, and gets a team automatically. Subsequent `aw init` invocations in directories on the same account add local CLI workspaces or global identities to that team, each with a unique alias (the agent's name within the namespace).
 
 2. **BYOD (bring your own domain)**: the user runs `aw init --byod --domain <their-domain>`, picks a domain they own, and proves control via DNS. The team certificate chain is rooted in that domain. The aweb coordination server can be the hosted one (https://app.aweb.ai) or a self-hosted instance — BYOD is about the domain, not the server.
 
@@ -52,7 +52,7 @@ authorization is the recipient identity's `inbound_mode`: `open` or
 
 ## Identity vs membership
 
-A persistent identity (DID) is durable across sessions and can hold memberships in multiple teams simultaneously. An ephemeral identity is workspace-bound, lasts only as long as the workspace, and typically belongs to exactly one team.
+A global identity (DID) is durable across sessions and can hold memberships in multiple teams simultaneously. A local identity is workspace-bound, lasts only as long as the workspace, and typically belongs to exactly one team.
 
 Both kinds of identity can be members of a team. The team certificate is what authorizes team-scoped coordination, not the identity type.
 

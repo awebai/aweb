@@ -94,14 +94,14 @@ team.
 
 If your directory is not in a git repository, create a same-team
 invite and accept it from another directory. From this directory,
-create an invite for an ephemeral teammate:
+create an invite for a local teammate:
 
 ```
 aw id team invite
 ```
 
 The command prints an `aw id team accept-invite ...` command with
-the invite token in it. The token is an ephemeral same-team invite.
+the invite token in it. The token is a local same-team invite.
 
 Next, `cd` to a fresh second directory, and run that command with
 alias `bob`, then connect that directory to aweb:

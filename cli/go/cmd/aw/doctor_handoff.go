@@ -15,7 +15,7 @@ func conciseDoctorHandoffLine(h *doctorHandoff) string {
 	case "persistent_identity_registry_repair_review":
 		return "Review caller-authorized DID registry repair before considering replacement."
 	case "persistent_lifecycle_review":
-		return "Review persistent lifecycle with an authorized owner; doctor will not apply it automatically."
+		return "Review global identity lifecycle with an authorized owner; doctor will not apply it automatically."
 	case "persistent_replacement_review":
 		return "Review replacement only with the required authority; doctor will not replace identities."
 	case "managed_address_repair_review":
@@ -34,14 +34,14 @@ func persistentLifecycleReviewHandoff() *doctorHandoff {
 		Action:                "persistent_lifecycle_review",
 		RequiredAuthority:     doctorAuthorityTeamAdmin,
 		CallerAuthorityStatus: doctorAuthorityStatusUnknown,
-		ExpectedAction:        "Review persistent lifecycle with an authorized owner; missing local state alone is not enough to archive, replace, delete, or unclaim.",
+		ExpectedAction:        "Review global identity lifecycle with an authorized owner; missing local state alone is not enough to archive, replace, delete, or unclaim.",
 		DashboardAction:       "Hosted dashboard archive/replace is conditional on confirmed team or org authority and managed identity context.",
 		Consequences: []string{
-			"persistent identities outlive workspace paths",
+			"global identities outlive workspace paths",
 			"archive or replacement changes identity lifecycle and trust continuity",
 		},
 		DoctorRefusalReason: "high_impact_persistent_lifecycle",
-		ReplacementGuidance: "Do not replace a persistent identity solely because local files are missing; inspect registry and authority first.",
+		ReplacementGuidance: "Do not replace a global identity solely because local files are missing; inspect registry and authority first.",
 		SupportRunbookRef:   doctorIdentityRecoveryRunbook,
 	}
 }
@@ -55,7 +55,7 @@ func persistentIdentityRegistryRepairReviewHandoff(authorityStatus doctorAuthori
 		ExpectedAction:          "Review caller-authorized DID registry repair; register or repair the existing DID when the local DID key is valid.",
 		DryRunCommand:           "aw doctor registry --online",
 		Consequences: []string{
-			"DID registration changes registry state for the persistent identity",
+			"DID registration changes registry state for the global identity",
 			"doctor will not register or replace the identity automatically",
 		},
 		DoctorRefusalReason: "persistent_identity_registry_repair_required",
@@ -74,7 +74,7 @@ func persistentReplacementReviewHandoff(authorityStatus doctorAuthorityStatus, e
 		RequiredAuthority:       doctorAuthorityTeamAdmin,
 		CallerAuthorityStatus:   authorityStatus,
 		CallerAuthorityEvidence: evidence,
-		ExpectedAction:          "Review persistent replacement only after identity key loss or unusable custody is confirmed with the required authority.",
+		ExpectedAction:          "Review global identity replacement only after identity key loss or unusable custody is confirmed with the required authority.",
 		DashboardAction:         "Hosted dashboard Replace is conditional on dashboard/team authority and managed namespace authority.",
 		Consequences: []string{
 			"replacement creates a new identity continuity claim",
