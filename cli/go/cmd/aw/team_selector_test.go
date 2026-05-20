@@ -388,7 +388,7 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
-	run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	run.Env = append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

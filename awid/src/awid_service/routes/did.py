@@ -21,7 +21,6 @@ from awid.log import (
 from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.signing import canonical_json_bytes
-from awid_service.delivery_origin import validate_delivery_origin
 from awid_service.routes.dns_addresses import (
     AddressDeliveryResponse,
     AddressListResponse,
@@ -84,7 +83,6 @@ class DidKeyEvidence(BaseModel):
 class DidKeyResponse(BaseModel):
     did_aw: str
     current_did_key: str
-    delivery_origin: str | None = None
     log_head: DidKeyEvidence | None = None
 
 
@@ -101,7 +99,6 @@ class DidHeadResponse(BaseModel):
 class DidFullResponse(BaseModel):
     did_aw: str
     current_did_key: str
-    delivery_origin: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -132,16 +129,6 @@ class DidLogEntry(BaseModel):
     signature: str
     timestamp: str
 
-
-class DidDeliveryOriginUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    delivery_origin: str | None = Field(..., max_length=512)
-
-    @field_validator("delivery_origin")
-    @classmethod
-    def validate_origin(cls, value: str | None) -> str | None:
-        return validate_delivery_origin(value)
 
 
 def _db(request: Request):
@@ -266,7 +253,7 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     db = _db(request)
     row = await db.fetch_one(
         """
-        SELECT did_aw, current_did_key, delivery_origin
+        SELECT did_aw, current_did_key
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         """,
@@ -295,7 +282,6 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     return DidKeyResponse(
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        delivery_origin=row.get("delivery_origin"),
         log_head=DidKeyEvidence(
             seq=head["seq"],
             operation=head["operation"],
@@ -346,7 +332,7 @@ async def list_did_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
-        " pa.reachability, pa.visible_to_team_id, m.delivery_origin, pa.created_at"
+        " pa.reachability, pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -369,7 +355,7 @@ async def list_did_addresses(
                 current_did_key=row["current_did_key"],
                 reachability=str(row.get("reachability") or "nobody"),
                 visible_to_team_id=row.get("visible_to_team_id"),
-                delivery=AddressDeliveryResponse(origin=row.get("delivery_origin"), source="identity"),
+                delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
                 created_at=row["created_at"].isoformat(),
             )
             for row in page_rows
@@ -449,7 +435,7 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     db = _db(request)
     row = await db.fetch_one(
         """
-        SELECT did_aw, current_did_key, delivery_origin, created_at, updated_at
+        SELECT did_aw, current_did_key, created_at, updated_at
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         """,
@@ -463,78 +449,10 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     return DidFullResponse(
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        delivery_origin=row.get("delivery_origin"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
-
-@router.put(
-    "/{did_aw}/delivery-origin",
-    response_model=DidFullResponse,
-    dependencies=[Depends(rate_limit_dep("did_delivery_origin_update"))],
-)
-async def update_delivery_origin(
-    request: Request,
-    did_aw: str,
-    req: DidDeliveryOriginUpdateRequest,
-) -> DidFullResponse:
-    try:
-        did_aw = validate_stable_id(did_aw)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    db = _db(request)
-    async with db.transaction() as tx:
-        row = await tx.fetch_one(
-            """
-            SELECT did_aw, current_did_key, delivery_origin, created_at, updated_at
-            FROM {{tables.did_aw_mappings}}
-            WHERE did_aw = $1
-            FOR UPDATE
-            """,
-            did_aw,
-        )
-        if row is None:
-            raise HTTPException(status_code=404, detail="not found")
-
-        did_key, sig = parse_didkey_auth(request.headers.get("Authorization"))
-        timestamp = require_timestamp(request)
-        enforce_timestamp_skew(timestamp)
-        if did_key != row["current_did_key"]:
-            raise HTTPException(status_code=403, detail="forbidden")
-        payload = canonical_json_bytes(
-            {
-                "delivery_origin": req.delivery_origin or "",
-                "did_aw": did_aw,
-                "operation": "set_delivery_origin",
-                "timestamp": timestamp,
-            }
-        )
-        try:
-            verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=sig)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail="invalid signature") from exc
-
-        updated = await tx.fetch_one(
-            """
-            UPDATE {{tables.did_aw_mappings}}
-            SET delivery_origin = $2,
-                updated_at = NOW()
-            WHERE did_aw = $1
-            RETURNING did_aw, current_did_key, delivery_origin, created_at, updated_at
-            """,
-            did_aw,
-            req.delivery_origin,
-        )
-
-    return DidFullResponse(
-        did_aw=updated["did_aw"],
-        current_did_key=updated["current_did_key"],
-        delivery_origin=updated.get("delivery_origin"),
-        created_at=updated["created_at"],
-        updated_at=updated["updated_at"],
-    )
 
 
 @router.get(

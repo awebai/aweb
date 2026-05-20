@@ -878,23 +878,23 @@ contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
 
 if bob_direct_out="$(run_aw_in "$BOB_DIR" mail send \
-  --to-did "$ALICE_DID_AW" \
-  --body "Direct hello from bob" 2>&1)"; then
+  --to-address "test.local/alice" \
+  --body "Address hello from bob" 2>&1)"; then
   bob_direct_exit=0
 else
   bob_direct_exit=$?
 fi
-assert_eq "bob direct mail to alice did" "0" "$bob_direct_exit"
+assert_eq "bob address mail to alice" "0" "$bob_direct_exit"
 if [[ "$bob_direct_exit" != "0" ]]; then
   echo "$bob_direct_out"
 fi
 
 alice_contacts_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json 2>/dev/null)"
-alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from bob'), ''))" 2>/dev/null || echo "")"
-assert_eq "alice receives bob direct message" "Direct hello from bob" "$alice_bob_message"
+alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Address hello from bob'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives bob address message" "Address hello from bob" "$alice_bob_message"
 
 if carol_direct_out="$(run_aw_in "$CAROL_DIR" mail send \
-  --to-did "$ALICE_DID_AW" \
+  --to-address "test.local/alice" \
   --body 'Blocked hello from carol' 2>&1)"; then
   carol_direct_exit=0
 else
@@ -910,14 +910,14 @@ fi
 
 set_inbound_mode "$ALICE_DID_AW" "open"
 run_aw_in "$CAROL_DIR" mail send \
-  --to-did "$ALICE_DID_AW" \
-  --body "Direct hello from carol" >/dev/null 2>&1
+  --to-address "test.local/alice" \
+  --body "Address hello from carol" >/dev/null 2>&1
 carol_retry_exit=$?
 assert_eq "carol direct mail succeeds after inbound mode change" "0" "$carol_retry_exit"
 
 alice_all_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
-alice_carol_message="$(echo "$alice_all_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from carol'), ''))" 2>/dev/null || echo "")"
-assert_eq "alice receives carol direct message" "Direct hello from carol" "$alice_carol_message"
+alice_carol_message="$(echo "$alice_all_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Address hello from carol'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives carol address message" "Address hello from carol" "$alice_carol_message"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1459,7 +1459,7 @@ if [[ "$bob_global_addr_chat_vs" != "verified" ]]; then
 fi
 
 if bob_hidden_start_out="$(run_aw_in "$BOB_DIR" mail send \
-  --to-did "$ALICE_DID_AW" \
+  --to-address "test.local/alice" \
   --subject "Global conversation bob starts" \
   --body "Bob starts a global conversation" \
   --json 2>&1)"; then
@@ -1635,14 +1635,13 @@ if alice_stable_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   alice_stable_mail_exit=$?
 fi
-assert_eq "global stable did:aw mail exit" "0" "$alice_stable_mail_exit"
-if [[ "$alice_stable_mail_exit" != "0" ]]; then
-  echo "  global stable did:aw mail output: ${alice_stable_mail_out:0:240}"
+if [[ "$alice_stable_mail_exit" != "0" ]] && echo "$alice_stable_mail_out" | grep -qi "did:aw first-contact\|use.*address\|unsupported"; then
+  echo "  PASS: global stable did:aw first-contact fails closed"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: global stable did:aw first-contact should fail closed (exit=$alice_stable_mail_exit output=${alice_stable_mail_out:0:240})"
+  fail=$((fail + 1))
 fi
-
-bob_matrix_final_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
-bob_stable_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Global stable did target'), ''))" 2>/dev/null || echo "")"
-assert_eq "global stable did:aw delivered" "Global stable did target mail" "$bob_stable_body"
 
 if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to bob \

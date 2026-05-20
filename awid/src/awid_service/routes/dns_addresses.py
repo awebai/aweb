@@ -108,7 +108,7 @@ def _require_controller(caller_did: str, ns_row) -> None:
 async def _require_registered_did(tx, *, did_aw: str, current_did_key: str):
     row = await tx.fetch_one(
         """
-        SELECT current_did_key, delivery_origin
+        SELECT current_did_key
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         FOR SHARE
@@ -136,11 +136,12 @@ async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str)
     return await tx.fetch_one(
         """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, m.delivery_origin, pa.created_at
+               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+        JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
         WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
-        FOR SHARE OF pa, m
+        FOR SHARE OF pa, m, ns
         """,
         namespace_id,
         name,
@@ -251,7 +252,7 @@ def _address_response(row, domain: str) -> AddressResponse:
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=row.get("delivery_origin"), source="identity"),
+        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -381,7 +382,7 @@ async def register_address(
         current_did_key=body.current_did_key,
         reachability=reachability,
         visible_to_team_id=visible_to_team_id,
-        delivery=AddressDeliveryResponse(origin=did_row.get("delivery_origin"), source="identity"),
+        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
         created_at=now.isoformat(),
     )
 
@@ -404,7 +405,7 @@ async def get_address(
     row = await db.fetch_one(
         """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, m.delivery_origin, pa.created_at
+               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -454,7 +455,7 @@ async def list_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
-        " pa.visible_to_team_id, m.delivery_origin, pa.created_at"
+        " pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -519,7 +520,7 @@ async def update_address(
         row = await tx.fetch_one(
             """
             SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                   pa.visible_to_team_id, m.delivery_origin, pa.created_at
+                   pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
             FROM {{tables.public_addresses}} pa
             JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
             JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -546,7 +547,7 @@ async def update_address(
                   AND m.did_aw = pa.did_aw
                   AND ns.namespace_id = pa.namespace_id
                 RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                          pa.visible_to_team_id, m.delivery_origin, pa.created_at
+                          pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
                 """,
                 next_reachability,
                 next_visible_to_team_id,
@@ -563,7 +564,7 @@ async def update_address(
         current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=row.get("delivery_origin"), source="identity"),
+        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -716,6 +717,6 @@ async def reassign_address(
         current_did_key=body.current_did_key,
         reachability=str(row.get("reachability") or "nobody"),
         visible_to_team_id=row.get("visible_to_team_id"),
-        delivery=AddressDeliveryResponse(origin=did_row.get("delivery_origin"), source="identity"),
+        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )

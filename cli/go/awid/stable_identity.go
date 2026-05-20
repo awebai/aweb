@@ -32,10 +32,9 @@ type DidKeyEvidence struct {
 }
 
 type DidKeyResolution struct {
-	DIDAW          string          `json:"did_aw"`
-	CurrentDIDKey  string          `json:"current_did_key"`
-	DeliveryOrigin string          `json:"delivery_origin,omitempty"`
-	LogHead        *DidKeyEvidence `json:"log_head"`
+	DIDAW         string          `json:"did_aw"`
+	CurrentDIDKey string          `json:"current_did_key"`
+	LogHead       *DidKeyEvidence `json:"log_head"`
 }
 
 type StableIdentityVerification struct {

@@ -275,6 +275,20 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case "/v1/namespaces/otherco.com/addresses/monitor":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-monitor",
+				"domain":          "otherco.com",
+				"name":            "monitor",
+				"did_aw":          "did:aw:monitor",
+				"current_did_key": recipientDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-26T00:00:00Z",
+				"delivery": map[string]any{
+					"origin": "https://remote.example",
+					"source": "namespace",
+				},
+			})
 		case "/v1/did/did:aw:monitor/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          "did:aw:monitor",
@@ -321,7 +335,7 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
-		"--to-did", "did:aw:monitor",
+		"--to-address", "otherco.com/monitor",
 		"--body-file", bodyFile,
 	)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)

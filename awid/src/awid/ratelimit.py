@@ -132,7 +132,6 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "did_log": (30, 60),
     "did_head": (120, 60),
     "did_full": (30, 60),
-    "did_delivery_origin_update": (30, 3600),
     "namespace_register": (10, 3600),
     "namespace_get": (60, 60),
     "namespace_rotate": (30, 3600),

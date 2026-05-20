@@ -135,19 +135,19 @@ async def _verify_sender_current_key(registry_client, envelope: FederationEnvelo
         raise HTTPException(status_code=422, detail="Federation sender current key mismatch")
 
 
-async def _resolve_target_identity(registry_client, envelope: FederationEnvelope):
+async def _resolve_target_identity(
+    registry_client,
+    envelope: FederationEnvelope,
+    *,
+    stored_route_continuation: bool = False,
+):
+    if stored_route_continuation:
+        return None
+    if "/" not in envelope.target_address:
+        raise HTTPException(status_code=422, detail="Federation first-contact target_address must be domain/name")
     try:
-        if "/" in envelope.target_address:
-            domain, name = _split_address(envelope.target_address)
-            resolved = await registry_client.resolve_address(domain, name)
-        else:
-            if envelope.target_address not in {envelope.target_did_aw, envelope.target_current_did_key}:
-                raise HTTPException(status_code=422, detail="Federation target route does not match identity")
-            if envelope.target_did_aw.startswith("did:key:"):
-                return None
-            resolved = await registry_client.resolve_key(envelope.target_did_aw)
-            if not resolved and hasattr(registry_client, "resolve_key_fresh"):
-                resolved = await registry_client.resolve_key_fresh(envelope.target_did_aw)
+        domain, name = _split_address(envelope.target_address)
+        resolved = await registry_client.resolve_address(domain, name)
     except HTTPException:
         raise
     except Exception as exc:
@@ -161,10 +161,10 @@ async def _resolve_target_identity(registry_client, envelope: FederationEnvelope
     delivery = getattr(resolved, "delivery", None)
     try:
         resolved_origin = canonical_server_origin(
-            str(getattr(resolved, "delivery_origin", "") or getattr(delivery, "origin", "") or "").strip()
+            str(getattr(delivery, "origin", "") or "").strip()
         )
     except Exception as exc:
-        raise HTTPException(status_code=424, detail="Federation target identity has no delivery origin") from exc
+        raise HTTPException(status_code=424, detail="Federation target address has no delivery origin") from exc
     if resolved_origin != envelope.target_delivery_origin:
         raise HTTPException(status_code=422, detail="Federation target delivery origin mismatch")
     return resolved
@@ -451,7 +451,12 @@ async def receive_federated_message(
 
     _require_target_origin_here(request, envelope)
     await _verify_sender_current_key(registry_client, envelope)
-    await _resolve_target_identity(registry_client, envelope)
+    stored_route_continuation = await _federated_stored_route_continuation_exists(db, envelope)
+    await _resolve_target_identity(
+        registry_client,
+        envelope,
+        stored_route_continuation=stored_route_continuation,
+    )
 
     recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
     if recipient is None:
@@ -459,7 +464,6 @@ async def receive_federated_message(
     if recipient is None:
         raise HTTPException(status_code=404, detail="Federation recipient agent not found")
 
-    stored_route_continuation = await _federated_stored_route_continuation_exists(db, envelope)
     if _is_local_did_key(envelope.target_did_aw) and not stored_route_continuation:
         detail = "Local did:key target requires an existing session" if envelope.type == "chat" else "Local did:key target requires an existing conversation"
         raise HTTPException(status_code=404, detail=detail)

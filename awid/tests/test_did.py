@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from awid.log import identity_state_hash, log_entry_payload
-from awid.signing import canonical_json_bytes, sign_message
+from awid.signing import sign_message
 from awid_service.routes import did as did_routes
 
 
@@ -33,20 +33,6 @@ def register_vector(identity_vectors):
 
 def _register_body(register_vector: dict) -> dict:
     return {**register_vector["entry_payload"], "proof": register_vector["signature_b64"]}
-
-
-def _signed_delivery_origin_headers(signing_key: bytes, did_key: str, did_aw: str, delivery_origin: str | None) -> dict[str, str]:
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    payload = {
-        "delivery_origin": delivery_origin or "",
-        "did_aw": did_aw,
-        "operation": "set_delivery_origin",
-        "timestamp": timestamp,
-    }
-    return {
-        "Authorization": f"DIDKey {did_key} {sign_message(signing_key, canonical_json_bytes(payload))}",
-        "X-AWEB-Timestamp": timestamp,
-    }
 
 
 def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:
@@ -229,43 +215,17 @@ async def test_register_did_state_hash_tamper_breaks_signature(client, register_
 
 
 @pytest.mark.asyncio
-async def test_identity_delivery_origin_is_identity_authorized(client, identity_vectors, register_vector):
+async def test_did_delivery_origin_endpoint_is_not_exposed(client, register_vector):
     body = _register_body(register_vector)
     register = await client.post("/v1/did", json=body)
     assert register.status_code == 200, register.text
 
-    seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
-    did_key = identity_vectors["mapping"]["initial_did_key"]
-    delivery_origin = "https://identity-origin.example"
-    update = await client.put(
+    response = await client.put(
         f"/v1/did/{body['did_aw']}/delivery-origin",
-        json={"delivery_origin": delivery_origin},
-        headers=_signed_delivery_origin_headers(seed, did_key, body["did_aw"], delivery_origin),
+        json={"delivery_origin": "https://identity-origin.example"},
     )
-    assert update.status_code == 200, update.text
-    assert update.json()["delivery_origin"] == delivery_origin
+    assert response.status_code == 404
 
     key_response = await client.get(f"/v1/did/{body['did_aw']}/key")
     assert key_response.status_code == 200, key_response.text
-    assert key_response.json()["delivery_origin"] == delivery_origin
-
-
-@pytest.mark.asyncio
-async def test_identity_delivery_origin_rejects_non_current_key(client, identity_vectors, register_vector):
-    body = _register_body(register_vector)
-    register = await client.post("/v1/did", json=body)
-    assert register.status_code == 200, register.text
-
-    other_seed = bytes.fromhex(identity_vectors["key_seeds"]["rotated_seed_hex"])
-    other_did_key = identity_vectors["mapping"]["rotated_did_key"]
-    delivery_origin = "https://evil-origin.example"
-    update = await client.put(
-        f"/v1/did/{body['did_aw']}/delivery-origin",
-        json={"delivery_origin": delivery_origin},
-        headers=_signed_delivery_origin_headers(other_seed, other_did_key, body["did_aw"], delivery_origin),
-    )
-    assert update.status_code == 403, update.text
-
-    key_response = await client.get(f"/v1/did/{body['did_aw']}/key")
-    assert key_response.status_code == 200, key_response.text
-    assert key_response.json()["delivery_origin"] is None
+    assert "delivery_origin" not in key_response.json()

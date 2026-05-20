@@ -87,27 +87,6 @@ async def _register_identity(client, signing_key, did_key):
     return resp.json()
 
 
-async def _set_identity_delivery_origin(client, signing_key, did_key, did_aw, delivery_origin):
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    payload = {
-        "delivery_origin": delivery_origin or "",
-        "did_aw": did_aw,
-        "operation": "set_delivery_origin",
-        "timestamp": timestamp,
-    }
-    headers = {
-        "Authorization": f"DIDKey {did_key} {sign_message(signing_key, canonical_json_bytes(payload))}",
-        "X-AWEB-Timestamp": timestamp,
-    }
-    resp = await client.put(
-        f"/v1/did/{did_aw}/delivery-origin",
-        json={"delivery_origin": delivery_origin},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
-
-
 async def _rotate_identity(client, old_signing_key, did_aw, old_did_key, new_did_key):
     key_resp = await client.get(f"/v1/did/{did_aw}/key")
     assert key_resp.status_code == 200, key_resp.text
@@ -635,14 +614,13 @@ async def test_namespace_default_delivery_origin_rejects_literal_ip(
 
 
 @pytest.mark.asyncio
-async def test_address_resolution_returns_identity_delivery_origin(client, controller_identity):
+async def test_address_resolution_returns_namespace_route_origin(client, controller_identity):
     signing_key, controller_did = controller_identity
     identity_key, identity_pub = generate_keypair()
     identity_did_key = did_from_public_key(identity_pub)
     identity = await _register_identity(client, identity_key, identity_did_key)
     domain = "address-delivery.example"
     namespace_origin = "https://namespace.address-delivery.example"
-    identity_origin = "https://identity.address-delivery.example"
     headers = _sign(
         signing_key,
         controller_did,
@@ -656,7 +634,6 @@ async def test_address_resolution_returns_identity_delivery_origin(client, contr
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    await _set_identity_delivery_origin(client, identity_key, identity_did_key, identity["did_aw"], identity_origin)
 
     headers = _sign(signing_key, controller_did, domain=domain, operation="register_address", name="alice")
     address_resp = await client.post(
@@ -666,22 +643,22 @@ async def test_address_resolution_returns_identity_delivery_origin(client, contr
     )
     assert address_resp.status_code == 200, address_resp.text
     assert address_resp.json()["delivery"] == {
-        "origin": identity_origin,
-        "source": "identity",
+        "origin": namespace_origin,
+        "source": "namespace",
     }
 
     get_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
     assert get_resp.status_code == 200, get_resp.text
     assert get_resp.json()["delivery"] == {
-        "origin": identity_origin,
-        "source": "identity",
+        "origin": namespace_origin,
+        "source": "namespace",
     }
 
     list_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert list_resp.status_code == 200, list_resp.text
     assert list_resp.json()["addresses"][0]["delivery"] == {
-        "origin": identity_origin,
-        "source": "identity",
+        "origin": namespace_origin,
+        "source": "namespace",
     }
 
 
@@ -2436,13 +2413,11 @@ async def test_update_address_ignores_deprecated_visible_to_team_id(client, cont
 
 
 @pytest.mark.asyncio
-async def test_multiple_aliases_resolve_to_identity_delivery_origin_despite_namespace_origins(client, controller_identity):
+async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origins(client, controller_identity):
     ns_key, ns_did = controller_identity
     identity_key, identity_pub = generate_keypair()
     identity_did_key = did_from_public_key(identity_pub)
     identity = await _register_identity(client, identity_key, identity_did_key)
-    identity_origin = "https://canonical.identity-alias.example"
-    await _set_identity_delivery_origin(client, identity_key, identity_did_key, identity["did_aw"], identity_origin)
 
     domains = [
         ("alias-one.example", "https://namespace-one.example"),
@@ -2475,17 +2450,19 @@ async def test_multiple_aliases_resolve_to_identity_delivery_origin_despite_name
         )
         assert address_resp.status_code == 200, address_resp.text
 
-    for domain, _namespace_origin in domains:
+    for domain, namespace_origin in domains:
         resolved = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
         assert resolved.status_code == 200, resolved.text
         payload = resolved.json()
         assert payload["did_aw"] == identity["did_aw"]
         assert payload["current_did_key"] == identity_did_key
-        assert payload["delivery"] == {"origin": identity_origin, "source": "identity"}
+        assert payload["delivery"] == {"origin": namespace_origin, "source": "namespace"}
 
     did_addresses = await client.get(f"/v1/did/{identity['did_aw']}/addresses")
     assert did_addresses.status_code == 200, did_addresses.text
-    assert {item["delivery"]["origin"] for item in did_addresses.json()["addresses"]} == {identity_origin}
+    assert {item["delivery"]["origin"] for item in did_addresses.json()["addresses"]} == {
+        origin for _, origin in domains
+    }
 
 
 @pytest.mark.parametrize("reachability", ["nobody", "org_only", "team_members_only", "public"])

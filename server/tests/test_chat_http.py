@@ -1093,8 +1093,8 @@ async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 404, resp.text
-    assert "Local did:key target requires an existing session" in resp.text
+    assert resp.status_code == 422, resp.text
+    assert "Federation first-contact target_address must be domain/name" in resp.text
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
 
 
@@ -1903,7 +1903,7 @@ async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_to_external_did_resolves_global_route_before_requiring_signature(aweb_cloud_db):
+async def test_create_chat_session_to_external_did_first_contact_fails_closed(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1919,14 +1919,13 @@ async def test_create_chat_session_to_external_did_resolves_global_route_before_
         alice_did_key,
     )
 
+    async def _resolve_key(did_aw: str):
+        if did_aw == "did:aw:alice":
+            return KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+        raise AssertionError("bare did:aw first-contact must not resolve by key")
+
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        side_effect=lambda did_aw: KeyResolution(
-            did_aw=did_aw,
-            current_did_key="did:key:bob" if did_aw == "did:aw:bob" else alice_did_key,
-            delivery_origin="https://remote.example" if did_aw == "did:aw:bob" else None,
-        )
-    )
+    registry.resolve_key = AsyncMock(side_effect=_resolve_key)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
@@ -1941,8 +1940,8 @@ async def test_create_chat_session_to_external_did_resolves_global_route_before_
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 422, resp.text
-    assert "Federated chat delivery requires session_id" in resp.text
-    registry.resolve_key.assert_any_await("did:aw:bob")
+    assert "Bare did:aw first-contact is unsupported" in resp.json()["detail"]
+    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
     registry.resolve_address.assert_not_called()
 
 

@@ -452,35 +452,11 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
     }
 
 
-async def _external_recipient_from_did_aw(registry_client, did_aw: str) -> dict | None:
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
-    try:
-        resolution = await registry_client.resolve_key(did_aw)
-        if not resolution and hasattr(registry_client, "resolve_key_fresh"):
-            resolution = await registry_client.resolve_key_fresh(did_aw)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
-    if resolution is None:
-        return None
-    resolved_did_aw = str(getattr(resolution, "did_aw", "") or "").strip()
-    if resolved_did_aw != did_aw:
-        raise HTTPException(status_code=422, detail="Recipient stable identity mismatch")
-    current_did_key = str(getattr(resolution, "current_did_key", "") or "").strip()
-    delivery_origin = str(getattr(resolution, "delivery_origin", "") or "").strip()
-    if not current_did_key:
-        raise HTTPException(status_code=422, detail="Recipient current key not found")
-    return {
-        "agent_id": None,
-        "team_id": None,
-        "alias": did_aw,
-        "address": did_aw,
-        "did_aw": did_aw,
-        "did_key": current_did_key,
-        "delivery_origin": delivery_origin,
-        "reachability": "public",
-        "external": True,
-    }
+def _raise_bare_did_first_contact_unsupported() -> None:
+    raise HTTPException(
+        status_code=422,
+        detail="Bare did:aw first-contact is unsupported; use to_address=domain/name or continue an existing conversation",
+    )
 
 
 def _sender_address(auth: MessagingAuth) -> str | None:
@@ -1242,9 +1218,8 @@ async def send_message(
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
             if recipient_did.startswith("did:aw:"):
-                recipient = await _external_recipient_from_did_aw(registry_client, recipient_did)
-            if recipient is None:
-                raise HTTPException(status_code=404, detail="Recipient agent not found")
+                _raise_bare_did_first_contact_unsupported()
+            raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1277,9 +1252,8 @@ async def send_message(
         recipient = await resolve_agent_by_did(db, requested_recipient_did)
         if recipient is None:
             if requested_recipient_did.startswith("did:aw:"):
-                recipient = await _external_recipient_from_did_aw(registry_client, requested_recipient_did)
-            if recipient is None:
-                raise HTTPException(status_code=404, detail="Recipient agent not found")
+                _raise_bare_did_first_contact_unsupported()
+            raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):

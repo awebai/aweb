@@ -40,13 +40,12 @@ that agent; they do not create independent routable principals.
 A **global agent** has:
 
 - a `did:aw` row in AWID;
-- a current `did:key` bound to that `did:aw`;
-- a canonical delivery origin for the identity; and
+- a current `did:key` bound to that `did:aw`; and
 - zero or more address aliases such as `acme.com/alice`.
 
-A global agent is globally discoverable to global senders and reachable by any
-sender with a valid route and signed payload. First contact can start from an
-address alias or, when the sender already knows it, from `did:aw`. A local agent
+A global agent is globally identifiable to global senders and reachable by any
+sender with a valid address route and signed payload. First contact starts from
+an address alias, not a bare `did:aw`. A local agent
 can also write outbound to a global agent through its home server. The sender and
 recipient still prove key possession with signed envelopes, but no team
 certificate, address visibility flag, contact list, or conversation id is needed
@@ -101,42 +100,30 @@ Consequences:
 - Address replacement changes which `did:aw` the alias points to; it does not
   mutate the old identity.
 
-### Delivery origin is identity-level
+### Delivery origin is route-level
 
-The target model uses an **identity-level canonical delivery origin**.
+The target model uses **route-level delivery origin**.
 
-AWID should expose the canonical delivery origin for a global `did:aw`, and
-address resolution should return that identity origin alongside the resolved
-identity key. All address aliases for the same `did:aw` therefore route to the
-same origin by construction.
+First contact to a global identity uses a concrete address (`domain/name`). AWID
+address resolution returns the address route: target `did:aw`, current
+`did:key`, and delivery origin for that address. In the current schema that
+origin may be inherited from `dns_namespaces.default_delivery_origin`; it is
+still metadata for the address route, not an identity-level canonical route.
 
-Write authority for this field belongs to the `did:aw` identity authority: the
-current identity key, or the hosted custodial service acting for that identity.
-Namespace and address controllers may assign or change aliases, but they must not
-be able to redirect an existing global agent's canonical delivery origin merely
-by adding, deleting, or changing an address alias.
-
-Transitional namespace/address delivery origins are migration inputs only. They
-are not ongoing authority after identity-level delivery origin exists. If the
-migration sees conflicting alias origins for one `did:aw`, global delivery for
-that identity must fail closed until an operator repairs the conflict and the
-identity authority (or hosted custodial service acting for it) sets the canonical
-origin.
+A single `did:aw` may have multiple addresses with different route origins. No
+resolver or server path may collapse them to one canonical identity origin.
+Direct bare `did:aw` first contact is unsupported unless an existing
+conversation/session supplies stored participant route state.
 
 Rationale:
 
-- It matches the `did:aw <-> actual agent` invariant.
-- It avoids routing one actual agent's aliases to different inbox servers.
-- It makes direct `did:aw` first contact possible without guessing from an
-  arbitrary address.
-- It simplifies delivery-origin rotation: rotate the identity route once rather
-  than chasing every alias.
-
-Compatibility note: the federation v1 design in `docs/federation-architecture.md`
-proposed namespace-level delivery origin. `aweb-aapf` supersedes that direction:
-namespace or address delivery metadata may remain as transitional input, but the
-steady-state resolver must enforce one canonical identity delivery origin for all
-aliases of a `did:aw`.
+- It preserves explicit route authority: address first contact or stored
+  participant route continuation.
+- It lets one global identity participate through multiple authorized address
+  routes without one alias overwriting another.
+- It avoids inventing delivery routes from `did:aw` key lookup alone.
+- It keeps namespace `default_delivery_origin` as address-route inheritance, not
+  identity routing authority.
 
 ### Conversation IDs are metadata only
 
@@ -203,7 +190,7 @@ longer grant special powers to discover or message a global address.
 
 1. Alice is global (`did:aw:alice`) and sends to `beta.example/bob`.
 2. Alice's client resolves `beta.example/bob` at AWID.
-3. AWID returns Bob's `did:aw`, current `did:key`, and identity delivery origin.
+3. AWID returns Bob's `did:aw`, current `did:key`, and the address-route delivery origin for `beta.example/bob`.
 4. Alice signs the message payload binding:
    - Alice `did:aw` and current `did:key`;
    - selected sender address, if any;
@@ -211,7 +198,7 @@ longer grant special powers to discover or message a global address.
    - resolved recipient `did:aw` and current `did:key`;
    - recipient delivery origin;
    - message id, type, body, and timestamp.
-5. Alice's aweb server delivers to Bob's identity delivery origin.
+5. Alice's aweb server delivers to Bob's address-route delivery origin.
 6. Bob's server verifies the signed payload, re-resolves or verifies the
    recipient identity binding, and stores the message.
 
@@ -224,7 +211,7 @@ needed for authorization.
 2. Bob's client uses the participant identity/route metadata from the received
    message as a convenience input.
 3. The reply is signed by Bob and binds Alice's global `did:aw`, current key,
-   and delivery origin.
+   and stored participant route origin.
 4. Alice's server accepts only if the signed sender identity and recipient
    identity/route verify.
 
@@ -236,7 +223,7 @@ reason delivery is allowed.
 1. Local agent `did:key:zLocal` has no `did:aw` and is known only to its local
    aweb server/team.
 2. It sends to global `beta.example/bob`.
-3. The local server resolves Bob's global identity and delivery origin.
+3. The local server resolves Bob's global address route and delivery origin.
 4. The local agent signs the message as `did:key:zLocal`.
 5. The local home server/transport adds a verifiable route assertion that
    identifies where replies for this local key should be delivered.
@@ -278,11 +265,13 @@ Target AWID identity records need to represent:
 - `did_aw`;
 - current `did_key`;
 - DID log / rotation state;
-- canonical identity delivery origin; and
 - address aliases bound to the identity.
 
+Delivery origin is address-route metadata, inherited from namespace default in
+the current schema, not identity record metadata.
+
 Address records should no longer carry reachability or `visible_to_team_id` as
-auth fields. Reads of addresses and identity delivery metadata are public
+auth fields. Reads of addresses and address-route metadata are public
 resolver operations. Write authority remains unchanged: identity key controls DID
 state; namespace controller controls address alias assignment.
 
@@ -290,7 +279,7 @@ state; namespace controller controls address alias assignment.
 
 The aweb server needs distinct routing tables for:
 
-- global identities (`did:aw`, current key, canonical delivery origin);
+- stored participant routes (`did:aw`, current key, address, delivery origin);
 - local agents (`did:key`, local server/team/workspace projection);
 - learned routes from inbound local-origin messages; and
 - UX thread/conversation metadata.
@@ -302,9 +291,9 @@ workspace, and presence. Those fields do not authorize global message delivery.
 
 CLI/channel send paths should classify targets as:
 
-- global address alias (`domain/name`) -> resolve to `did:aw` + key + identity
+- global address alias (`domain/name`) -> resolve to `did:aw` + key + address-route
   delivery origin;
-- global identity (`did:aw`) -> resolve key + identity delivery origin;
+- global identity (`did:aw`) -> unsupported for first contact unless stored route state exists;
 - local alias in the active team -> same-server local routing only;
 - local `did:key` -> allowed only with a learned route.
 
@@ -318,19 +307,16 @@ mismatched outer fields and stale routes.
 - Land this SOT.
 - Inventory all uses of address reachability, `visible_to_team_id`, private
   address lookup auth, legacy aweb delivery policy gates, conversation-id auth,
-  known-pin fallback, and namespace delivery origin.
+  known-pin fallback, and namespace/address delivery origin.
 - Add conformance cases for the five routing examples above before broad code
   deletion.
 
-### Phase 1: additive identity delivery origin
+### Phase 1: route-level delivery origin
 
-- Add identity-level delivery origin to AWID through a new ordered migration.
-- Backfill hosted global identities with the hosted aweb origin.
-- For existing namespace-level delivery origin rows, derive candidate identity
-  origins only when all active aliases for the `did:aw` agree. If aliases
-  disagree, mark the identity as migration-conflicted and fail closed for global
-  delivery until operator repair and identity-authorized origin publication are
-  complete.
+- Remove unshipped identity-level delivery-origin artifacts.
+- Use namespace `default_delivery_origin` as address-route inheritance.
+- Make address resolution return route origin for the concrete address.
+- Fail bare external `did:aw` first contact closed; use address first contact or stored participant route continuation.
 
 ### Phase 2: global resolver reads ignore reachability
 
@@ -371,7 +357,7 @@ mismatched outer fields and stale routes.
 ## Compatibility rules for existing users
 
 - Existing persistent identities become global identities once they have a
-  `did:aw` and an identity delivery origin.
+  `did:aw`; first-contact reachability additionally requires an address route.
 - Existing ephemeral identities become local identities. They retain team-local
   coordination behavior and may send outward to globals through learned-route
   capable aweb servers.
@@ -381,9 +367,9 @@ mismatched outer fields and stale routes.
 - Existing conversations continue to display and thread by their old ids, but
   continuation requests must be authorized by signed identity/route bindings,
   not by the id alone.
-- Existing namespace delivery origins are migration inputs only. The target
-  invariant is one canonical identity delivery origin for all aliases of one
-  `did:aw`.
+- Existing namespace/address delivery origins are route metadata. The target
+  invariant is no canonical identity delivery origin; each address route may have
+  its own origin.
 
 ## Blast radius
 
@@ -391,7 +377,7 @@ Implementation touches at least:
 
 - `docs/awid-sot.md`, `docs/aweb-sot.md`, and
   `docs/identity-messaging-contract.md`;
-- AWID schema/API/client models for identity delivery origin and address reads;
+- AWID schema/API/client models for address-route delivery origin and address reads;
 - aweb server mail/chat resolver, federation, signed-payload verification,
   conversation participant storage, contacts/messaging-policy enforcement, and
   known-peer fallback;

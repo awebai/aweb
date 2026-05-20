@@ -187,18 +187,19 @@ run_aw_in() {
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
 }
 
-set_identity_delivery_origin() {
-  local dir="$1" label="$2" origin="$3"
+set_namespace_delivery_origin() {
+  local dir="$1" label="$2" namespace="$3" origin="$4"
   local out status
-  out="$(run_aw_in "$dir" id set-delivery-origin \
+  out="$(run_aw_in "$dir" id namespace set-delivery-origin \
+    --namespace "$namespace" \
     --origin "$origin" \
     --json 2>/dev/null)"
   status="$(echo "$out" | jq_field status)"
-  if [[ "$status" == "updated" ]]; then
-    echo "  PASS: $label identity delivery origin set"
+  if [[ "$status" == "updated" || "$status" == "unchanged" ]]; then
+    echo "  PASS: $label namespace address-route delivery origin set"
     pass=$((pass + 1))
   else
-    echo "  FAIL: $label identity delivery origin setup failed: ${out:0:180}"
+    echo "  FAIL: $label namespace address-route delivery origin setup failed: ${out:0:180}"
     fail=$((fail + 1))
   fi
 }
@@ -427,10 +428,8 @@ run_aw_in "$BOB_DIR" init --url "$BETA_URL" --do-not-touch-agents-md >/dev/null 
 charlie_create="$(run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
 assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
-set_identity_delivery_origin "$ALICE_DIR" "alice" "$ALPHA_ORIGIN"
-set_identity_delivery_origin "$ANN_DIR" "ann" "$ALPHA_ORIGIN"
-set_identity_delivery_origin "$NED_DIR" "ned" "$ALPHA_ORIGIN"
-set_identity_delivery_origin "$BOB_DIR" "bob" "$BETA_ORIGIN"
+set_namespace_delivery_origin "$ALICE_DIR" "alpha" "alpha.test.local" "$ALPHA_ORIGIN"
+set_namespace_delivery_origin "$BOB_DIR" "beta" "beta.test.local" "$BETA_ORIGIN"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="

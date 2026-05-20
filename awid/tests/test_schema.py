@@ -34,7 +34,7 @@ async def test_dns_namespaces_scope_id_has_no_foreign_key(awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_global_local_identity_routing_adds_identity_delivery_origin(awid_db_infra):
+async def test_route_level_delivery_origin_schema(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
     rows = await db.fetch_all(
         """
@@ -49,18 +49,11 @@ async def test_global_local_identity_routing_adds_identity_delivery_origin(awid_
         WHERE attrelid = '{{tables.did_aw_mappings}}'::regclass
           AND attname = 'delivery_origin'
           AND NOT attisdropped
-        UNION ALL
-        SELECT 'teams' AS table_name, attname AS column_name
-        FROM pg_attribute
-        WHERE attrelid = '{{tables.teams}}'::regclass
-          AND attname = 'coordination_origin'
-          AND NOT attisdropped
         ORDER BY table_name, column_name
         """
     )
 
     assert [(row["table_name"], row["column_name"]) for row in rows] == [
-        ("did_aw_mappings", "delivery_origin"),
         ("dns_namespaces", "default_delivery_origin"),
     ]
 

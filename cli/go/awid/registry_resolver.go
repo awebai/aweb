@@ -60,10 +60,9 @@ type didKeyEvidenceWire struct {
 }
 
 type didKeyResolutionWire struct {
-	DIDAW          string              `json:"did_aw"`
-	CurrentDIDKey  string              `json:"current_did_key"`
-	DeliveryOrigin string              `json:"delivery_origin,omitempty"`
-	LogHead        *didKeyEvidenceWire `json:"log_head"`
+	DIDAW         string              `json:"did_aw"`
+	CurrentDIDKey string              `json:"current_did_key"`
+	LogHead       *didKeyEvidenceWire `json:"log_head"`
 }
 
 type registryAddressCacheValue struct {
@@ -124,7 +123,7 @@ func (r *RegistryResolver) SetFallbackRegistryURL(raw string) error {
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
 	if strings.HasPrefix(strings.TrimSpace(identifier), "did:aw:") {
-		return r.resolveStableIdentity(ctx, strings.TrimSpace(identifier))
+		return nil, fmt.Errorf("RegistryResolver: bare did:aw first-contact is unsupported; use domain/name address or stored route")
 	}
 
 	if teamID, alias, ok := splitTeamMemberReference(identifier); ok {
@@ -148,6 +147,20 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 			if err != nil {
 				return nil, fmt.Errorf("RegistryResolver: invalid current did:key: %w", err)
 			}
+			deliveryOrigin := ""
+			if domain, name, ok := splitRegistryAddress(address); ok {
+				addr, err := r.resolveAddress(ctx, domain, name)
+				if err != nil {
+					return nil, err
+				}
+				if strings.TrimSpace(addr.response.DIDAW) != stableID {
+					return nil, fmt.Errorf("RegistryResolver: team member address did:aw mismatch for %s", identifier)
+				}
+				deliveryOrigin, err = canonicalDeliveryOrigin(keyRes, addr.response)
+				if err != nil {
+					return nil, fmt.Errorf("RegistryResolver: %w", err)
+				}
+			}
 			return &ResolvedIdentity{
 				DID:            keyRes.CurrentDIDKey,
 				StableID:       stableID,
@@ -155,7 +168,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 				Handle:         member.response.Alias,
 				PublicKey:      ed25519.PublicKey(pub),
 				RegistryURL:    member.authority.RegistryURL,
-				DeliveryOrigin: strings.TrimSpace(keyRes.DeliveryOrigin),
+				DeliveryOrigin: deliveryOrigin,
 				Custody:        CustodySelf,
 				Lifetime:       member.response.Lifetime,
 				ResolvedAt:     r.now().UTC(),
@@ -233,63 +246,12 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 	}, nil
 }
 
-func (r *RegistryResolver) resolveStableIdentity(ctx context.Context, didAW string) (*ResolvedIdentity, error) {
-	registryURL := strings.TrimSpace(r.fallbackRegistryURL)
-	if registryURL == "" {
-		return nil, fmt.Errorf("RegistryResolver: no registry URL configured for %s", didAW)
-	}
-	keyRes, err := r.resolveKey(ctx, registryURL, didAW)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(keyRes.DIDAW) != didAW {
-		return nil, fmt.Errorf("RegistryResolver: key did:aw mismatch for %s", didAW)
-	}
-	r.mu.Lock()
-	cachedHead := r.headCache[didAW]
-	r.mu.Unlock()
-	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
-	if outcome == StableIdentityVerified && nextHead != nil {
-		r.mu.Lock()
-		r.headCache[didAW] = nextHead
-		r.mu.Unlock()
-	}
-	if outcome == StableIdentityHardError {
-		return nil, fmt.Errorf("RegistryResolver: invalid log head for %s: %w", didAW, verifyErr)
-	}
-	pub, err := ExtractPublicKey(keyRes.CurrentDIDKey)
-	if err != nil {
-		return nil, fmt.Errorf("RegistryResolver: invalid current did:key: %w", err)
-	}
-	return &ResolvedIdentity{
-		DID:            keyRes.CurrentDIDKey,
-		StableID:       keyRes.DIDAW,
-		PublicKey:      ed25519.PublicKey(pub),
-		RegistryURL:    registryURL,
-		DeliveryOrigin: strings.TrimSpace(keyRes.DeliveryOrigin),
-		Custody:        CustodySelf,
-		Lifetime:       LifetimePersistent,
-		ResolvedAt:     r.now().UTC(),
-		ResolvedVia:    "registry",
-	}, nil
-}
-
 func canonicalDeliveryOrigin(keyRes *DidKeyResolution, address *registryAddressResponse) (string, error) {
-	keyOrigin := ""
-	if keyRes != nil {
-		keyOrigin = strings.TrimSpace(keyRes.DeliveryOrigin)
-	}
-	addressOrigin := ""
+	_ = keyRes // Current-key resolution verifies identity binding only; route origin belongs to the address route.
 	if address != nil && address.Delivery != nil {
-		addressOrigin = strings.TrimSpace(address.Delivery.Origin)
+		return strings.TrimSpace(address.Delivery.Origin), nil
 	}
-	if keyOrigin != "" && addressOrigin != "" && keyOrigin != addressOrigin {
-		return "", fmt.Errorf("address delivery origin %q does not match identity delivery origin %q", addressOrigin, keyOrigin)
-	}
-	if keyOrigin != "" {
-		return keyOrigin, nil
-	}
-	return addressOrigin, nil
+	return "", nil
 }
 
 func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {
@@ -454,9 +416,8 @@ func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW st
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		DIDAW:          wire.DIDAW,
-		CurrentDIDKey:  wire.CurrentDIDKey,
-		DeliveryOrigin: wire.DeliveryOrigin,
+		DIDAW:         wire.DIDAW,
+		CurrentDIDKey: wire.CurrentDIDKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{

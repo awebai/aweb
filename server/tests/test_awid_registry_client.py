@@ -1082,7 +1082,6 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
             json={
                 "did_aw": did_aw,
                 "current_did_key": did_key,
-                "delivery_origin": "https://identity.example",
                 "log_head": None,
             },
         )
@@ -1097,9 +1096,7 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
     second = await client.resolve_key(did_aw)
 
     assert first.current_did_key == did_key
-    assert first.delivery_origin == "https://identity.example"
     assert second.current_did_key == did_key
-    assert second.delivery_origin == "https://identity.example"
     assert request_count["value"] == 1
 
 

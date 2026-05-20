@@ -164,27 +164,22 @@ If you are running an internal deployment that cannot perform public DNS
 verification, set `AWID_SKIP_DNS_VERIFY=1` on the `awid` server. That is the
 supported bypass for internal networks without DNS validation.
 
-### Publish the Delivery Origin
+### Publish the Address Route Delivery Origin
 
-Federated mail and chat need a delivery origin on each global identity. The
-identity key must authorize this setting. Run this from the workspace that holds
-the self-custodial identity key:
+Federated first-contact mail and chat need a delivery origin on the namespace
+address route. Run this from a workspace that holds the namespace controller key:
 
 ```bash
-aw id set-delivery-origin \
+aw id namespace set-delivery-origin \
+  --namespace acme.com \
   --origin "$AWEB_URL"
 ```
 
 The origin must be the public server origin, not the coordination API path. For
 example, use `https://aweb.acme.internal`, not
-`https://aweb.acme.internal/api`.
-The command uses `AWID_REGISTRY_URL` when it is set; otherwise it discovers the
-registry from the current identity metadata/DNS.
-
-Namespace default delivery origins are legacy metadata and are not routing
-authority for a `did:aw`. Do not rely on
-`aw id namespace set-delivery-origin` for federated delivery of a global
-identity. Hosted aweb.ai namespaces are configured by the hosted service.
+`https://aweb.acme.internal/api`. Namespace default delivery origin is inherited
+by addresses in that namespace; it is not a canonical route for bare `did:aw`
+first contact. Hosted aweb.ai namespaces are configured by the hosted service.
 
 ### Create a Team
 

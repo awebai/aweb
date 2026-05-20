@@ -37,15 +37,13 @@ hosted deployment codebase, not in this SOT.
    been revoked.
 5. **Identity and address are separate facts, separately authorized.**
    `register_did` binds `did_aw ↔ did_key` and is authorized by the
-   identity holder alone. The canonical mail/chat `delivery_origin` for a
-   global `did:aw` is also identity-authorized: only the current identity
-   key, or a hosted custodial service acting for that identity, may set or
-   rotate it. Binding that `did_aw` to a `(domain, name)` address is a
-   second operation authorized by the namespace controller. A namespace or
-   address controller may assign aliases, but must not be able to redirect
-   an existing global identity's delivery origin by changing an alias. A
-   `did_aw` must already be registered before any address can be bound to
-   it. See [Identity operations](#identity-operations).
+   identity holder alone. Delivery routing for first contact is not an
+   identity-level property: it comes from a concrete address route
+   (`domain/name`) authorized by the namespace/address route authority.
+   Binding a `did_aw` to a `(domain, name)` address is a second operation
+   authorized by the namespace controller. A `did_aw` must already be
+   registered before any address can be bound to it. See
+   [Identity operations](#identity-operations).
 
 ---
 
@@ -162,7 +160,7 @@ accepted the address).
 window. These fields are no longer resolver authorization for global
 identities. `GET /v1/namespaces/{domain}/addresses/{name}` resolves any
 active global address alias to its `did:aw`, current `did:key`, and
-identity-level delivery origin regardless of caller team certificate or
+address-route delivery origin regardless of caller team certificate or
 legacy reachability value. Namespace/address controllers may update these
 legacy fields until cleanup, but new delivery behavior must not depend on
 them.
@@ -186,19 +184,17 @@ policy, and spam/blocklist layers after identity/route resolution.
 
 ## Identity operations
 
-Identity at awid is a `did_aw ↔ did_key` binding plus optional
-identity-authorized delivery metadata. It carries no address or handle.
-An identity can exist without ever being bound to an address, and the
-same `did_aw` can subsequently hold zero, one, or many addresses across
-one or many namespaces. The optional `delivery_origin` is canonical for
-mail/chat routing for that `did:aw`; address aliases inherit it rather
-than defining independent routes.
+Identity at awid is a `did_aw ↔ did_key` binding. It carries no address,
+handle, or delivery route. An identity can exist without ever being bound
+to an address, and the same `did_aw` can subsequently hold zero, one, or
+many addresses across one or many namespaces. Each address is its own
+first-contact route and may inherit route origin from its namespace
+`default_delivery_origin`.
 
 ```
 POST   /v1/did                         register_did (identity auth)
 POST   /v1/did/{did_aw}/rotate         rotate_key (identity auth)
-GET    /v1/did/{did_aw}/key            Resolve current key and delivery origin (public)
-PUT    /v1/did/{did_aw}/delivery-origin Set/clear canonical delivery origin (identity auth)
+GET    /v1/did/{did_aw}/key            Resolve current key (public)
 GET    /v1/did/{did_aw}/full           Full info (identity auth)
 GET    /v1/did/{did_aw}/log            Audit log (public)
 GET    /v1/did/{did_aw}/addresses      List addresses (public)
@@ -294,9 +290,8 @@ POST /v1/did
 The state derivable from this entry is
 `{"current_did_key": new_did_key, "did_aw": did_aw}`. No `server`,
 `address`, `handle`, or delivery origin appears in the DID log entry;
-addresses are a separate concern maintained in `public_addresses`, and
-identity delivery origin is mutable identity metadata authorized by the
-current key.
+addresses and address-route delivery origins are separate concerns maintained
+under namespace/address route authority.
 
 ### `rotate_key`
 
@@ -336,18 +331,11 @@ enforcement of Principle 5.
 
 ### Read endpoints
 
-- `GET /v1/did/{did_aw}/key` — current `did_key` plus canonical
-  `delivery_origin`. Public. Used by aweb and other services for
-  message-signature verification and global routing.
-- `PUT /v1/did/{did_aw}/delivery-origin` — set or clear canonical
-  identity delivery origin. Identity auth: signature by the current
-  `did:key` over canonical JSON
-  `{did_aw, operation: "set_delivery_origin", delivery_origin, timestamp}`.
-  Hosted custodial services may call this while acting for the identity
-  they custody. Namespace and address controllers are not authority for
-  this field.
-- `GET /v1/did/{did_aw}/full` — full identity record including
-  metadata. Identity auth (the DID holder).
+- `GET /v1/did/{did_aw}/key` — current `did_key`. Public. Used by aweb
+  and other services for message-signature verification. It is not a
+  delivery route lookup.
+- `GET /v1/did/{did_aw}/full` — full identity record. Identity auth (the
+  DID holder).
 - `GET /v1/did/{did_aw}/log` — append-only audit log of `register_did`
   and `rotate_key` entries. Public. The log never contains address
   entries; address history lives with each address record.
@@ -705,15 +693,13 @@ CREATE TABLE did_aw_mappings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     did_aw          TEXT UNIQUE NOT NULL,
     current_did_key TEXT NOT NULL,
-    delivery_origin TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Identity rows carry no address or handle. delivery_origin is the
--- identity-authorized canonical mail/chat route for this did:aw.
--- Address records live in public_addresses; the (did_aw → addresses)
--- projection is served by GET /v1/did/{did_aw}/addresses.
+-- Identity rows carry no address, handle, or delivery route. Address
+-- records live in public_addresses; the (did_aw → addresses) projection
+-- is served by GET /v1/did/{did_aw}/addresses.
 
 CREATE TABLE did_aw_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -739,6 +725,7 @@ CREATE TABLE dns_namespaces (
     controller_did  TEXT,
     scope_id        UUID,
     verification_status TEXT NOT NULL DEFAULT 'pending',
+    default_delivery_origin TEXT,
     last_verified_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ
@@ -763,12 +750,12 @@ CREATE TABLE public_addresses (
     UNIQUE (domain, name)
 );
 
--- public_addresses does not store current_did_key or delivery_origin.
--- Address lookups that need the key or route (e.g., GET
--- /v1/namespaces/{domain}/addresses/{name}) JOIN on did_aw_mappings by
--- did_aw. The FK enforces the invariant that every address points to a
--- registered DID (Principle 5). reachability/visible_to_team_id are
--- legacy compatibility metadata and are not resolver auth for global
+-- public_addresses does not store current_did_key. Address lookups that
+-- need the key JOIN on did_aw_mappings by did_aw; address-route origin is
+-- route metadata, inherited from dns_namespaces.default_delivery_origin in
+-- the current schema. The FK enforces the invariant that every address
+-- points to a registered DID (Principle 5). reachability/visible_to_team_id
+-- are legacy compatibility metadata and are not resolver auth for global
 -- identities.
 
 CREATE TABLE teams (

@@ -344,7 +344,7 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 				"reachability":    "public",
 				"delivery": map[string]any{
 					"origin": deliveryOrigin,
-					"source": "identity",
+					"source": "namespace",
 				},
 				"created_at": "2026-04-04T00:00:00Z",
 			})
@@ -352,7 +352,6 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": did,
-				"delivery_origin": deliveryOrigin,
 			})
 		default:
 			http.NotFound(w, r)
@@ -419,7 +418,20 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": currentDIDKey,
-				"delivery_origin": deliveryOrigin,
+			})
+		case "/v1/namespaces/research.org/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-team-member",
+				"domain":          "research.org",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": currentDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"delivery": map[string]any{
+					"origin": deliveryOrigin,
+					"source": "namespace",
+				},
 			})
 		default:
 			http.NotFound(w, r)
@@ -429,6 +441,10 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	resolver.registryCache["research.org"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
 	}
@@ -578,51 +594,13 @@ func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 	}
 }
 
-func TestRegistryResolverResolvesStableDIDViaFallbackRegistry(t *testing.T) {
+func TestRegistryResolverRejectsStableDIDFirstContact(t *testing.T) {
 	t.Parallel()
 
-	pub, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := ComputeDIDKey(pub)
-	stableID := ComputeStableID(pub)
-	deliveryOrigin := "https://identity.stable.example"
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/did/" + stableID + "/key":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": did,
-				"delivery_origin": deliveryOrigin,
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
-	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
-		t.Fatal(err)
-	}
-
-	identity, err := resolver.Resolve(context.Background(), stableID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity.StableID != stableID {
-		t.Fatalf("StableID=%q, want %q", identity.StableID, stableID)
-	}
-	if identity.DID != did {
-		t.Fatalf("DID=%q, want %q", identity.DID, did)
-	}
-	if identity.RegistryURL != server.URL {
-		t.Fatalf("RegistryURL=%q, want %q", identity.RegistryURL, server.URL)
-	}
-	if identity.DeliveryOrigin != deliveryOrigin {
-		t.Fatalf("DeliveryOrigin=%q, want %q", identity.DeliveryOrigin, deliveryOrigin)
+	resolver := NewRegistryResolver(http.DefaultClient, staticTXTResolver{})
+	_, err := resolver.Resolve(context.Background(), "did:aw:stable")
+	if err == nil || !strings.Contains(err.Error(), "bare did:aw first-contact is unsupported") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

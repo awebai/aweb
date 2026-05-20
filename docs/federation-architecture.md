@@ -2,8 +2,8 @@
 
 Status: separate architecture model. Messaging federation v1 is implemented
 under epic `aweb-aaou`, but this model has not yet been folded into the SOT.
-Epic `aweb-aapf` supersedes this document's namespace-delivery-origin direction
-with the target identity-level delivery-origin model in
+Epic `aweb-aapg` supersedes this document's older identity-level-origin notes
+with the route-level model in
 [`global-local-identity-routing.md`](global-local-identity-routing.md).
 
 This note describes the federation model for OSS aweb and awid. It is
@@ -35,7 +35,7 @@ beta.example/bob         -> aweb.alpha.example/alice
 The trust model must remain the same:
 
 - awid is the source of truth for identities, namespace addresses,
-  identity delivery origins, team public keys, certificates, and revocation.
+  address-route delivery origins, team public keys, certificates, and revocation.
 - aweb is the source of truth for coordination state: mail, chat,
   conversations, tasks, presence, work queues, roles, and instructions.
 - A coordination server must not invent address authority from local rows.
@@ -239,14 +239,11 @@ An address lookup can return delivery metadata because an address selects a
 namespace. A bare `did:aw` lookup does not select a namespace, so it does not
 select a delivery origin.
 
-For the first federation cut, a bare `did:aw` send across servers should require
-one of:
+For the route-level model, a bare `did:aw` send across servers is limited to an
+existing conversation participant route. First contact must use a concrete
+address route.
 
-- an existing conversation participant route, or
-- an explicit delivery hint supplied by the caller and verified against the
-  recipient server's accepted identity.
-
-It should not guess a home server from arbitrary local rows or by listing all
+It must not guess a home server from arbitrary local rows or by listing all
 addresses for the identity. A later design can add a DID-level service record if
 we need first-contact `did:aw` sends without an address.
 
@@ -447,9 +444,8 @@ After review, update:
 3. Should the recipient server re-resolve the target address on every delivery,
    or accept a short-lived signed address-resolution proof from the sender?
 4. How should delivery-origin rotation work for existing conversations?
-5. Should a direct `did:aw` send require an explicit delivery hint, or should it
-   be limited to already-known conversation participants until a separate DID
-   service record exists?
+5. Direct bare `did:aw` first contact is unsupported; future DID service records
+   would require a separate design.
 6. Should we ever add per-address delivery override, or wait for a concrete case?
 
 ## Minimal First Cut

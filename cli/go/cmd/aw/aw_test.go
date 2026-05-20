@@ -956,7 +956,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 	}
 }
 
-func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
+func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -1046,39 +1046,15 @@ func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
+	if err == nil || !strings.Contains(string(out), "bare did:aw first-contact is unsupported") {
+		t.Fatalf("expected bare did:aw first-contact failure, err=%v out=%s", err, string(out))
 	}
-
-	// Verify the request carries identity fields.
-	if gotBody["from_did"] != did {
-		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
+	if gotBody != nil {
+		t.Fatalf("/v1/messages should not be called for bare did:aw first-contact: %#v", gotBody)
 	}
-	if gotBody["to_did"] != recipientCurrentDID {
-		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientCurrentDID)
+	if gotTeamCert != "" || gotStableID != "" || gotAuth != "" {
+		t.Fatalf("unexpected auth headers on unsent request team_cert=%q stable=%q auth=%q", gotTeamCert, gotStableID, gotAuth)
 	}
-	if gotBody["to_stable_id"] != recipientDID {
-		t.Fatalf("to_stable_id=%v, want %s", gotBody["to_stable_id"], recipientDID)
-	}
-	if gotTeamCert == "" {
-		t.Fatal("expected team certificate auth")
-	}
-	if gotStableID != "" {
-		t.Fatalf("X-AWEB-DID-AW=%q, want empty with team certificate auth", gotStableID)
-	}
-	if !strings.HasPrefix(gotAuth, "DIDKey ") {
-		t.Fatalf("Authorization=%q", gotAuth)
-	}
-	sig, ok := gotBody["signature"].(string)
-	if !ok || sig == "" {
-		t.Fatal("signature missing or empty")
-	}
-	msgID, ok := gotBody["message_id"].(string)
-	if !ok || msgID == "" {
-		t.Fatal("message_id missing or empty")
-	}
-
-	_ = msgID
 }
 
 func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
@@ -1573,7 +1549,7 @@ func requireSignedPayloadBindingForTest(t *testing.T, raw any, messageType, reci
 	}
 }
 
-func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testing.T) {
+func TestAwMailSendToDIDStandaloneFirstContactFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -1638,21 +1614,8 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	logDir := filepath.Join(tmp, ".config", "aw", "logs")
-	logName := commLogNameForSelection(&awconfig.Selection{StableID: stableID, DID: did})
-	entries, err := readCommLog(commLogPath(logDir, logName), 0)
-	if err != nil {
-		t.Fatalf("readCommLog: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("entries=%d, want 1", len(entries))
-	}
-	if entries[0].From != stableID {
-		t.Fatalf("from=%q, want stable id %q", entries[0].From, stableID)
+	if err == nil || !strings.Contains(string(out), "bare did:aw first-contact is unsupported") {
+		t.Fatalf("expected bare did:aw first-contact failure, err=%v out=%s", err, string(out))
 	}
 }
 

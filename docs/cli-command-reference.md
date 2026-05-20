@@ -140,7 +140,6 @@ Subcommands:
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current persistent identity signing key at the registry
-- `set-delivery-origin` Set the current did:aw delivery origin using the identity key
 - `show` Show the current identity and registry status
 - `sign` Sign a canonical JSON payload with the local identity key
 - `team` Team management (create, invite, membership)
@@ -263,10 +262,11 @@ Flags:
 
 ### `id namespace set-delivery-origin`
 
-Set legacy namespace default delivery-origin metadata. Requires the local
-namespace controller key. This is not routing authority for global `did:aw`
-federated delivery; use `aw id set-delivery-origin` for that. Uses
-`AWID_REGISTRY_URL` when set; otherwise discovers the registry from DNS.
+Set namespace default delivery-origin metadata for address routes. Requires the
+local namespace controller key. Addresses in the namespace inherit this route
+origin for federated first contact; it is not routing authority for bare
+`did:aw` first contact. Uses `AWID_REGISTRY_URL` when set; otherwise discovers
+the registry from DNS.
 
 Flags:
 - `--domain string Namespace domain`
@@ -282,20 +282,6 @@ Register the current persistent identity at the configured registry
 
 Flags:
 - `-h, --help help for register`
-
-## `id set-delivery-origin`
-
-### `id set-delivery-origin`
-
-Set the current did:aw delivery origin using the identity key. Requires the
-current identity to be persistent and self-custodial. This is the routing
-authority for global federated delivery; namespace default delivery origins are
-not used as the delivery route for a did:aw identity.
-
-Flags:
-- `--did-aw string did:aw identity to update (defaults to the current identity)`
-- `-h, --help help for set-delivery-origin`
-- `--origin string Canonical aweb server origin, for example https://aweb.example.com`
 
 ## `id request`
 
@@ -868,7 +854,7 @@ Flags:
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`
 - `--to-address string Recipient address (domain/name)`
-- `--to-did string Recipient stable identity (did:aw:...)`
+- `--to-did string Recipient DID for local or stored-route continuations; bare external did:aw first contact is unsupported`
 
 ## `mail show`
 

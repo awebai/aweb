@@ -36,11 +36,10 @@ func (e *AlreadyRegisteredError) Error() string {
 }
 
 type DIDMapping struct {
-	DIDAW          string    `json:"did_aw"`
-	CurrentDIDKey  string    `json:"current_did_key"`
-	DeliveryOrigin string    `json:"delivery_origin,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	DIDAW         string    `json:"did_aw"`
+	CurrentDIDKey string    `json:"current_did_key"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type RegistryNamespace struct {
@@ -94,10 +93,6 @@ type didUpdateRequest struct {
 	Signature     string `json:"signature"`
 }
 
-type didDeliveryOriginUpdateRequest struct {
-	DeliveryOrigin *string `json:"delivery_origin"`
-}
-
 func NewAWIDRegistryClient(httpClient *http.Client, dnsResolver TXTResolver) *RegistryClient {
 	resolver := NewRegistryResolver(httpClient, dnsResolver)
 	return &RegistryClient{
@@ -137,9 +132,8 @@ func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW st
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		DIDAW:          wire.DIDAW,
-		CurrentDIDKey:  wire.CurrentDIDKey,
-		DeliveryOrigin: wire.DeliveryOrigin,
+		DIDAW:         wire.DIDAW,
+		CurrentDIDKey: wire.CurrentDIDKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{
@@ -300,34 +294,6 @@ func (c *RegistryClient) RegisterIdentity(
 		}
 	}
 	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
-}
-
-func (c *RegistryClient) SetDIDDeliveryOriginAt(
-	ctx context.Context,
-	registryURL string,
-	didAW string,
-	deliveryOrigin string,
-	signingKey ed25519.PrivateKey,
-) (*DIDMapping, error) {
-	didAW = strings.TrimSpace(didAW)
-	deliveryOrigin = strings.TrimSpace(deliveryOrigin)
-	if !strings.HasPrefix(didAW, "did:aw:") {
-		return nil, fmt.Errorf("didAW must start with did:aw:")
-	}
-	if signingKey == nil {
-		return nil, fmt.Errorf("signing key is required")
-	}
-	var bodyOrigin *string
-	if deliveryOrigin != "" {
-		bodyOrigin = &deliveryOrigin
-	}
-	headers := signedDIDDeliveryOriginHeaders(didAW, deliveryOrigin, signingKey)
-	path := "/v1/did/" + urlPathEscape(didAW) + "/delivery-origin"
-	var out DIDMapping
-	if err := c.requestJSON(ctx, http.MethodPut, registryURL, path, headers, didDeliveryOriginUpdateRequest{DeliveryOrigin: bodyOrigin}, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 func (c *RegistryClient) RotateDIDKey(

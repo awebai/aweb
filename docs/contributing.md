@@ -107,7 +107,7 @@ gate is the matrix in
 [`identity-messaging-contract.md`](identity-messaging-contract.md#test-and-release-gates).
 At minimum, prove both mail and chat across address first-contact,
 `inbound_mode=open`, `inbound_mode=contacts_only`, unauthorized no-route
-fail-closed, and direct `did:aw`/stable identity sends. Cloud-only hosted
+fail-closed, bare external `did:aw` first-contact fail-closed, and stored-route continuations. Cloud-only hosted
 custody paths belong in the cloud e2e suite; shared identity/address behavior
 belongs in the OSS e2e suite.
 

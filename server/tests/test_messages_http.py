@@ -576,7 +576,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
 
 
 @pytest.mark.asyncio
-async def test_send_message_from_local_didkey_to_global_did_uses_identity_delivery_origin(aweb_cloud_db):
+async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_closed(aweb_cloud_db):
     local_sk, _, local_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     local_agent_id = await _insert_agent(
@@ -588,13 +588,7 @@ async def test_send_message_from_local_didkey_to_global_did_uses_identity_delive
         address="",
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(
-            did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
-            delivery_origin="https://remote.example",
-        )
-    )
+    registry.resolve_key = AsyncMock(side_effect=AssertionError("bare did:aw first-contact must not resolve by key"))
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://local.example"
     remote_requests = []
@@ -660,16 +654,10 @@ async def test_send_message_from_local_didkey_to_global_did_uses_identity_delive
             },
         )
 
-    assert resp.status_code == 200, resp.text
-    registry.resolve_key.assert_awaited_with("did:aw:bob")
-    assert len(remote_requests) == 1
-    envelope = json.loads(remote_requests[0].content)["envelope"]
-    assert str(remote_requests[0].url) == "https://remote.example/v1/federation/messages"
-    assert envelope["sender_did_aw"] == local_did_key
-    assert envelope["sender_current_did_key"] == local_did_key
-    assert envelope["sender_delivery_origin"] == "https://local.example"
-    assert envelope["target_address"] == "did:aw:bob"
-    assert envelope["target_delivery_origin"] == "https://remote.example"
+    assert resp.status_code == 422, resp.text
+    assert "Bare did:aw first-contact is unsupported" in resp.json()["detail"]
+    registry.resolve_key.assert_not_awaited()
+    assert remote_requests == []
 
 
 @pytest.mark.asyncio
@@ -3186,8 +3174,8 @@ async def test_receive_federated_mail_first_contact_to_unknown_local_didkey_fail
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 404, resp.text
-    assert "Federation recipient agent not found" in resp.text
+    assert resp.status_code == 422, resp.text
+    assert "Federation first-contact target_address must be domain/name" in resp.text
     registry.resolve_key.assert_awaited_once_with("did:aw:alice")
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
 
@@ -3223,8 +3211,8 @@ async def test_receive_federated_mail_existing_local_didkey_first_contact_fails_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 404, resp.text
-    assert "Local did:key target requires an existing conversation" in resp.text
+    assert resp.status_code == 422, resp.text
+    assert "Federation first-contact target_address must be domain/name" in resp.text
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
 
 

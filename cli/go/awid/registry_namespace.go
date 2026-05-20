@@ -448,16 +448,6 @@ func signedAddressHeaders(
 	}, signingKey, timestamp)
 }
 
-func signedDIDDeliveryOriginHeaders(didAW, deliveryOrigin string, signingKey ed25519.PrivateKey) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	return signedCanonicalHeaders(map[string]string{
-		"delivery_origin": strings.TrimSpace(deliveryOrigin),
-		"did_aw":          strings.TrimSpace(didAW),
-		"operation":       "set_delivery_origin",
-		"timestamp":       timestamp,
-	}, signingKey, timestamp)
-}
-
 func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	payload := canonicalRegistryJSON(fields)
