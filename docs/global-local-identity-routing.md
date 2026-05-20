@@ -364,9 +364,12 @@ mismatched outer fields and stale routes.
 - Existing ephemeral identities become local identities. They retain team-local
   coordination behavior and may send outward to globals through learned-route
   capable aweb servers.
-- Existing address reachability settings are migrated to no-op/deprecated state.
-  During the compatibility window, writes may be accepted for old clients but
-  must not affect resolver or delivery authorization.
+- Existing neutral/public address rows resolve by address-route metadata.
+  Existing non-neutral legacy rows (`reachability != public` or
+  `visible_to_team_id IS NOT NULL`) are migration-blocked for public address
+  resolution until an explicit owner/operator action normalizes them. During the
+  compatibility window, writes may be accepted for old clients but must not
+  affect resolver or delivery authorization.
 - Existing conversations continue to display and thread by their old ids, but
   continuation requests must be authorized by signed identity/route bindings,
   not by the id alone.
