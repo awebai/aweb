@@ -29,7 +29,7 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `send_mail` | `to`, `body`, `conversation_id=""`, `subject=""`, `priority="normal"` | Send asynchronous mail by routable address, DID, hosted handle, or same-team alias; or continue an existing mail conversation by `conversation_id`. |
+| `send_mail` | `to`, `body`, `conversation_id=""`, `subject=""`, `priority="normal"` | Send asynchronous mail by routable address, same-team alias, or stored-route DID continuation; or continue an existing mail conversation by `conversation_id`. Bare external `did:aw` first contact fails closed. |
 | `check_mail` | `unread_only=True`, `limit=50`, `include_bodies=True` | Read inbox mail. |
 
 ## Presence
@@ -43,7 +43,7 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `send_chat` | `to`, `message`, `conversation_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False` | Send a chat message by routable address, DID, hosted handle, or same-team alias; optionally wait for a reply; or continue an existing chat conversation by `conversation_id`. |
+| `send_chat` | `to`, `message`, `conversation_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False` | Send chat by routable address, same-team alias, or stored-route DID continuation; optionally wait for a reply; or continue an existing chat conversation by `conversation_id`. Bare external `did:aw` first contact fails closed. |
 | `check_chats` | none | List unread chat conversations waiting for you. |
 | `read_chat` | `conversation_id`, `unread_only=False`, `limit=50` | Read chat history for a conversation. |
 | `mark_chat_read` | `conversation_id`, `up_to_message_id` | Mark chat messages as read. |

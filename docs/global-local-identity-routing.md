@@ -1,9 +1,9 @@
 # Global/local identity routing SOT
 
-Status: target architecture for epic `aweb-aapf`; design gate for `aweb-aapf.1`.
-No production code is changed by this document. Implementation subtasks must update
-`awid-sot.md`, `aweb-sot.md`, `identity-messaging-contract.md`, schemas, APIs,
-CLI/channel behavior, and tests to make this target executable.
+Status: supporting SOT for the shipped route-level global/local messaging
+contract. The normative behavior summary lives in
+[`identity-messaging-contract.md`](identity-messaging-contract.md); this document
+explains the model, migration direction, and deleted legacy concepts.
 
 This document replaces the old persistent/ephemeral + reachability model with a
 simpler global/local model:
@@ -47,9 +47,11 @@ A global agent is globally identifiable to global senders and reachable by any
 sender with a valid address route and signed payload. First contact starts from
 an address alias, not a bare `did:aw`. A local agent
 can also write outbound to a global agent through its home server. The sender and
-recipient still prove key possession with signed envelopes, but no team
-certificate, address visibility flag, contact list, or conversation id is needed
-to authorize first contact.
+recipient still prove key possession with signed envelopes. No team
+certificate, address visibility flag, or conversation id authorizes first
+contact. Contacts do not create routes or resolver visibility, but an exact
+active identity contact is required for delivery when the recipient's
+`inbound_mode` is `contacts_only`.
 
 ### Local agent
 
@@ -326,10 +328,10 @@ mismatched outer fields and stale routes.
   not use them for authorization.
 - Stop requiring team certificates for private address reads.
 
-### Phase 3: route by global identity and learned local routes
+### Phase 3: route by address routes, participant routes, and learned local routes
 
-- Update mail/chat send and receive paths to route global recipients by identity
-  delivery origin.
+- Update mail/chat send and receive paths to route global first contact by
+  address-route delivery origin and continuations by stored participant route.
 - Add learned-return-route storage for local outbound senders.
 - Make direct local `did:key` first contact fail closed unless a learned route is
   present.
@@ -340,8 +342,9 @@ mismatched outer fields and stale routes.
 - Keep old CLI/API fields as deprecated no-ops for one compatibility window.
 - Render old reachability settings as ignored/deprecated in dashboard/support
   views with repair guidance.
-- Contacts remain as labels/address book entries; remove any language implying
-  contacts authorize delivery.
+- Contacts remain exact address-book state. They do not route or affect resolver
+  visibility, but exact active identity contacts authorize delivery for the
+  `contacts_only` and local-contact gates.
 
 ### Phase 5: delete dead code and schema
 
@@ -357,7 +360,7 @@ mismatched outer fields and stale routes.
 ## Compatibility rules for existing users
 
 - Existing persistent identities become global identities once they have a
-  `did:aw`; first-contact reachability additionally requires an address route.
+  `did:aw`; first-contact delivery additionally requires an address route.
 - Existing ephemeral identities become local identities. They retain team-local
   coordination behavior and may send outward to globals through learned-route
   capable aweb servers.
@@ -389,11 +392,9 @@ Implementation touches at least:
   global sends, global replies to local via learned route, and failed first
   contact to unknown local `did:key`.
 
-## Review gates
+## Evidence gates
 
-No implementation task may proceed until this design is reviewed and approved by
-Athena for `aweb-aapf.1`.
-
-Each dependent implementation task should provide e2e or conformance evidence
-that matches this document. Isolated unit tests are useful for local mechanics
-but are not sufficient proof for the routing/auth model.
+Changes to routing, authorization, identity resolution, address lookup, mail,
+chat, local alias handling, contacts, or registry caching must provide e2e or
+conformance evidence that matches this SOT. Isolated unit tests are useful for
+local mechanics but are not sufficient proof for the routing/auth model.

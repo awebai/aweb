@@ -71,8 +71,9 @@ All three are optional. The minimum-viable team is just identities + the mail/ch
 If you need to message an agent in another team, use an address first:
 
 1. **By address**: send mail or chat directly to `domain/alias`. awid resolves
-   that address to the recipient's global identity and delivery origin; aweb
-   then applies the recipient's `inbound_mode`.
+   that address to the recipient's global identity, current key, and
+   address-route delivery origin; aweb then applies the recipient's
+   `inbound_mode`.
 2. **By contact**: `aw contacts add example.com/bob --label bob` saves the
    address with a local nickname, then `aw mail send --to bob` resolves to that
    contact.

@@ -19,11 +19,11 @@ These documents define the system:
   service spec for namespaces, addresses, the DID registry, teams, and
   membership certificates
 - [identity-messaging-contract.md](identity-messaging-contract.md): the
-  cross-service contract for identity-scoped mail/chat, direct-address
-  reachability, recipient binding, and local fallback rules
-- [global-local-identity-routing.md](global-local-identity-routing.md): target
-  architecture for simplifying persistent/ephemeral identity into global/local
-  routing and deleting reachability/conversation-auth layers
+  cross-service contract for identity-scoped mail/chat, address-route first
+  contact, recipient binding, and local fallback rules
+- [global-local-identity-routing.md](global-local-identity-routing.md):
+  supporting SOT for the shipped route-level global/local messaging contract
+  and the legacy reachability/conversation-auth cleanup path
 - [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
   engineering contract for the two supported onboarding shapes: Fully Hosted
   and BYOT

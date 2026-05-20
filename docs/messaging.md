@@ -7,10 +7,11 @@
 
 Mail and chat are identity-scoped. First contact to a persistent address
 (`domain/name`) resolves through awid to the recipient identity, current key,
-and delivery origin, then aweb applies the recipient's `inbound_mode`
-(`open` or `contacts_only`). Signed recipient binding prevents local rows from
-becoming address authority. The normative trust boundary is
-[`identity-messaging-contract.md`](identity-messaging-contract.md).
+and address-route delivery origin, then aweb applies the recipient's
+`inbound_mode` (`open` or `contacts_only`). Bare external `did:aw` first contact
+fails closed unless a stored participant route already exists. Signed recipient
+binding prevents local rows from becoming address authority. The normative trust
+boundary is [`identity-messaging-contract.md`](identity-messaging-contract.md).
 
 Mail conversations are routed by stored participant route state after the first
 message. A participant can reply to an existing conversation without

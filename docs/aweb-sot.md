@@ -22,9 +22,8 @@ For supporting reference material that does not redefine the contract:
 - [`identity-key-verification.md`](identity-key-verification.md) —
   normative rules for verifying `GET /v1/did/{did_aw}/key` responses
 - [`global-local-identity-routing.md`](global-local-identity-routing.md) —
-  target architecture for epic `aweb-aapf`; it defines the planned
-  global/local simplification that replaces persistent/ephemeral routing and
-  legacy conversation-auth compatibility layers after review
+  supporting SOT for the shipped route-level global/local messaging contract
+  and the legacy reachability/conversation-auth cleanup path
 - The aweb server's REST API is documented by the live FastAPI
   `/docs` OpenAPI viewer, auto-generated from route signatures.
   There is no hand-maintained `server-api-reference.md` — a previous
@@ -55,11 +54,12 @@ For supporting reference material that does not redefine the contract:
 4. **team_id is the coordination scope for non-messaging state.** Tasks,
    claims, locks, roles, instructions, and presence are scoped to a
    `team_id` (e.g., `backend:acme.com`). **Messaging is
-   identity-scoped, not team-scoped.** Any agent can send a message to
-   any other agent by `did:aw`; delivery succeeds or fails based on the
-   recipient's explicit `inbound_mode`. Teams are orthogonal to messaging —
-   they are not the routing scope for message delivery. See the Messaging
-   section below for the full model.
+   identity-scoped, not team-scoped.** First contact to a global recipient uses
+   a concrete address route (`domain/name`); continuations use stored
+   participant route state. Delivery succeeds or fails based on the recipient's
+   explicit `inbound_mode`. Teams are orthogonal to messaging — they are not
+   the routing scope for message delivery. See the Messaging section below for
+   the full model.
 
 ---
 
@@ -743,17 +743,18 @@ CREATE TABLE audit_log (
 
 ### Messaging
 
-Messaging is **identity-scoped**: any agent can send a message to any
-other agent by `did:aw`. The sender proves their identity via a DIDKey
-signature. Delivery succeeds or fails based on the recipient's explicit
-`inbound_mode`, not on shared team membership.
+Messaging is **identity-scoped**: global first contact uses a concrete
+address route (`domain/name`), and continuations use stored participant route
+state. The sender proves their identity via a DIDKey signature. Delivery
+succeeds or fails based on the recipient's explicit `inbound_mode`, not on
+shared team membership.
 
 **Two independent layers control addressing and delivery:**
 
 1. **Address resolution (awid):** can the sender resolve the recipient's
-   address to `did:aw`, current `did:key`, and delivery origin? Legacy
-   address visibility metadata is compatibility/audit state only and is not
-   live delivery authorization.
+   concrete address to `did:aw`, current `did:key`, and address-route delivery
+   origin? Legacy address visibility metadata is compatibility/audit state only
+   and is not live delivery authorization.
 
 2. **Messaging visibility (aweb):** can the sender deliver a message
    to the recipient? Gated by the recipient's `inbound_mode` field.
@@ -775,15 +776,16 @@ certificate is NOT required for messaging — the sender's identity
 via the awid registry and evaluates the recipient's `inbound_mode` against
 the verified sender address.
 
-**Recipient resolution:** the sender specifies the recipient by
-`did:aw` (direct identity reference), by address (`domain/name`,
-resolved via awid), or by alias within a shared team (backwards-
-compatible shorthand that resolves locally).
+**Recipient resolution:** first-contact global mail/chat uses an address
+(`domain/name`) resolved via awid. A bare external `did:aw` is an identity
+binding, not a delivery route, and first-contact delivery fails closed unless an
+existing conversation/session supplies stored participant route state. Aliases
+within a shared team remain backwards-compatible local shorthand.
 
 Persistent address resolution is governed by the cross-service
 [`identity-messaging-contract.md`](identity-messaging-contract.md). In short:
 awid is authoritative for `domain/name` address bindings, current keys, and
-route/delivery metadata. Legacy reachability/visibility fields are
+address-route delivery metadata. Legacy reachability/visibility fields are
 compatibility/audit metadata, not live delivery authority. Aweb local persistent
 rows are routing/cache state, not address authority. If a persistent
 direct-address send cannot be resolved through awid, aweb may use a local
@@ -812,10 +814,10 @@ transient `did:key`.
 
 | Route | Notes |
 |-------|-------|
-| `POST /v1/messages` | Send mail to an agent by `did:aw`, address, or alias. Auth: DIDKey signature. Delivery gated by recipient `inbound_mode`. |
+| `POST /v1/messages` | Send mail by address first contact, stored-route continuation, or local alias. Auth: DIDKey signature. Delivery gated by recipient `inbound_mode`. Bare external `did:aw` first contact fails closed without stored route state. |
 | `GET /v1/messages/inbox` | Inbox for the authenticated agent (across all teams). Auth: DIDKey signature. |
 | `POST /v1/messages/{id}/ack` | Mark as read |
-| `POST /v1/chat/sessions` | Create chat session with participants by `did:aw`, address, or alias |
+| `POST /v1/chat/sessions` | Create chat session by address first contact, stored-route continuation, or local alias; bare external `did:aw` first contact fails closed without stored route state |
 | `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
 | `GET /v1/chat/sessions/{id}/messages` | Chat history |

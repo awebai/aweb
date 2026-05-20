@@ -5,11 +5,10 @@ that holds DIDs, namespaces, addresses, teams, and certificate issuance
 records. It is the implementation spec for the awid.ai service.
 
 aweb (the coordination server that depends on awid) is described in
-[`aweb-sot.md`](aweb-sot.md). The target architecture for epic `aweb-aapf`
-is [`global-local-identity-routing.md`](global-local-identity-routing.md),
-which plans the global/local identity simplification and removal of address
-reachability as a resolver/auth layer. Hosted deployment details live with the
-hosted deployment codebase, not in this SOT.
+[`aweb-sot.md`](aweb-sot.md). The supporting SOT for the shipped route-level
+global/local messaging contract and legacy reachability cleanup path is
+[`global-local-identity-routing.md`](global-local-identity-routing.md). Hosted
+deployment details live with the hosted deployment codebase, not in this SOT.
 
 ---
 
@@ -681,7 +680,7 @@ not need to authorize anything — the team controller is making a claim
 about who is in their team, not about who controls the external address.
 awid enforces that a non-empty `member_address` on a registered
 certificate resolves to the certificate's `member_did_aw`; services may
-also resolve the address when they need fresh reachability or current-key
+also resolve the address when they need fresh address-route or current-key
 data.
 
 ---

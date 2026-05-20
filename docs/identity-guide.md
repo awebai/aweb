@@ -218,8 +218,10 @@ Messaging has three recipient selectors:
 
 Address assignment is separate from delivery authorization. A persistent
 identity gets an address at creation time. awid resolves that address to the
-recipient identity and delivery origin; aweb then applies the recipient's
-`inbound_mode` (`open` or `contacts_only`).
+recipient identity, current key, and address-route delivery origin; aweb then
+applies the recipient's `inbound_mode` (`open` or `contacts_only`). Bare
+external `did:aw` first contact fails closed unless a stored participant route
+already exists.
 
 ---
 

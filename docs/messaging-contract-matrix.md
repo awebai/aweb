@@ -46,7 +46,7 @@ The release gate must cover these cases for both mail and chat where applicable:
    exact contact fails closed.
 8. Reply by existing participant route after first contact, without re-running
    address discovery.
-9. Direct `did:aw` send, independent of address visibility metadata.
+9. Bare external `did:aw` first contact fails closed; stored-route continuation works.
 10. Key rotation preserves conversation continuity.
 11. Ephemeral local identity: team-local alias only.
 12. Persistent identity in multiple teams: active team selects sender context.

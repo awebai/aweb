@@ -1,18 +1,18 @@
 # Federated Messaging Architecture
 
-Status: separate architecture model. Messaging federation v1 is implemented
-under epic `aweb-aaou`, but this model has not yet been folded into the SOT.
-Epic `aweb-aapg` supersedes this document's older identity-level-origin notes
-with the route-level model in
-[`global-local-identity-routing.md`](global-local-identity-routing.md).
+Status: historical architecture note updated to match the current route-level
+contract. The normative shipped contract lives in
+[`identity-messaging-contract.md`](identity-messaging-contract.md) and
+[`global-local-identity-routing.md`](global-local-identity-routing.md). If this
+note conflicts with those SOTs, the SOTs win. Epic `aweb-aapg` supersedes this
+document's older identity-level-origin notes with the route-level model.
 
-This note describes the federation model for OSS aweb and awid. It is
-kept separate from the SOTs for now; if the model is accepted, the SOTs should
-be updated explicitly in a later step.
+This note describes the federation model for OSS aweb and awid. Treat it as
+background and implementation history, not a second authority.
 
-Tracking epic: `aweb-aaou` — Federated messaging architecture: namespace
-delivery origins. The epic links back to this document and owns the
-implementation subtasks listed in [Implementation Plan](#implementation-plan).
+Historical tracking epic: `aweb-aaou` — Federated messaging architecture:
+namespace delivery origins. Current shipped guidance is the route-level contract
+in the SOTs linked above.
 
 Scope: federation v1 is **messaging-only**. It covers mail and chat. Tasks,
 work queues, presence, roles, instructions, team manuals, and other team-scoped
@@ -41,27 +41,21 @@ The trust model must remain the same:
 - A coordination server must not invent address authority from local rows.
 - A message must carry a verifiable signed binding to the resolved recipient.
 
-## Current State
+## Implemented Status
 
-The code already has the identity half of federation:
+The route-level contract is implemented by the `aweb-aapg` simplification work:
 
-- `domain/name` address lookup goes through awid.
-- awid resolves the address to `did:aw` plus current `did:key`; legacy
-  reachability metadata is not a resolver gate.
-- aweb mail/chat can build an "external recipient" when the recipient address
-  resolves at awid but is not present in the local aweb database.
+- first-contact `domain/name` address lookup goes through awid;
+- awid resolves the address to `did:aw`, current `did:key`, and address-route
+  delivery origin inherited from namespace `default_delivery_origin`;
+- legacy reachability metadata is not a resolver or delivery-auth gate;
+- aweb mail/chat use the address route for first contact and stored participant
+  route state for continuation;
+- bare external `did:aw` first contact fails closed without stored route state.
 
-The missing half is delivery:
-
-- awid namespace/address records currently do not return a destination aweb
-  server for mail/chat delivery.
-- aweb external-recipient handling stores the message in the sender's local
-  database instead of POSTing it to the recipient's home aweb server.
-
-Local bootstrap state does carry an aweb URL (`.aw/workspace.yaml`,
-`.aw/teams.yaml`, local invite tokens, hosted invite responses), but that is
-not globally discoverable by another sender. Federation needs discoverable
-delivery metadata.
+Local bootstrap state may also carry an aweb URL (`.aw/workspace.yaml`,
+`.aw/teams.yaml`, local invite tokens, hosted invite responses), but that local
+state is not global route authority for first contact.
 
 ## Scope And Granularity
 
@@ -102,7 +96,7 @@ This also matches the authority model: a namespace controller can already assign
 or reassign `domain/name` to a `did:aw`, so allowing it to declare the namespace
 mail/chat delivery origin does not introduce a stronger authority.
 
-### Proposed Rule
+### Route Rule
 
 ```text
 Namespace owns the default mail/chat delivery origin.
@@ -114,18 +108,18 @@ Conversation participants store the concrete return route for replies.
 Team-scoped coordination is not federated in v1.
 ```
 
-## Proposed Registry Model
+## Registry Model
 
-Add a default mail/chat delivery origin to awid namespace metadata:
+AWID namespace metadata carries a default mail/chat delivery origin:
 
 ```text
 dns_namespaces.default_delivery_origin = "https://aweb.example.com"
 ```
 
-Address records inherit that value. Do not add per-address override in the first
-cut; it is easy to add later and complicates authority and migration now.
+Address records inherit that value. Per-address override is a future extension;
+the current route-level contract uses namespace default inheritance.
 
-Address lookup would return identity and delivery metadata:
+Address lookup returns identity and delivery metadata:
 
 ```json
 {
@@ -139,7 +133,7 @@ Address lookup would return identity and delivery metadata:
 }
 ```
 
-Namespace lookup would return:
+Namespace lookup returns:
 
 ```json
 {
@@ -155,7 +149,7 @@ not changed by messaging federation v1.
 
 ## Sending Path
 
-When Alice sends to `beta.example/bob`:
+For first contact, Alice sends to `beta.example/bob`:
 
 1. Alice's local client selects her active team.
 2. Alice resolves `beta.example/bob` through awid; address lookup is not an authorization surface.
@@ -177,8 +171,13 @@ When Alice sends to `beta.example/bob`:
 7. Alice's aweb server sends the federation request to the target delivery
    origin.
 8. The recipient aweb server verifies the preserved sender-signed payload,
-   re-resolves the target address/delivery origin, and stores the message in
-   the recipient's local inbox/chat state.
+   re-resolves the first-contact target address/delivery origin, and stores the
+   message in the recipient's local inbox/chat state.
+
+For continuation, the target route comes from stored participant/session route
+state rather than address rediscovery. The recipient server validates that stored
+route state, including the participant identity binding and current key when
+known, before accepting the continued message.
 
 The sender's local aweb server may keep a local conversation projection, but
 the authoritative recipient inbox lives on the recipient delivery server.
@@ -190,15 +189,20 @@ The recipient server must verify:
 1. The sender DIDKey signature over the preserved mail/chat message payload.
 2. The sender `did:key` is current for sender `did:aw`, unless a valid rotation
    window or signed key evidence is explicitly accepted by the SOT.
-3. The signed `to_address` still resolves through awid to the signed recipient
-   `did:aw` and current `did:key`.
-4. The resolved namespace delivery origin matches this server's origin, or this
+3. For address first-contact, the signed `to_address` still resolves through
+   awid to the signed recipient `did:aw`, current `did:key`, and address-route
+   delivery origin.
+4. For continuation, stored participant/session route state validates the
+   recipient identity binding, current key when known, and delivery origin. A
+   bare `did:aw` or conversation id alone is not routing authority.
+5. The resolved or stored delivery origin matches this server's origin, or this
    server is explicitly authorized to accept for that origin.
-5. The timestamp is inside the accepted skew window.
-6. The message id has not already been accepted for this sender/recipient route.
+6. The timestamp is inside the accepted skew window.
+7. The message id has not already been accepted for this sender/recipient route.
    Duplicate message ids are idempotent, not double-delivered.
-7. The sender is allowed by the recipient's `inbound_mode`.
-8. Conversation continuation is valid if `conversation_id` is present.
+8. The sender is allowed by the recipient's `inbound_mode`.
+9. Conversation continuation is valid only when the caller is an existing
+   participant and the stored participant route state validates.
 
 If any identity, address, or delivery binding disagrees, the recipient server
 must fail closed.
@@ -282,183 +286,43 @@ certificate, not proof that the member's address inbox lives on the same server.
 That certificate does not create a cross-server task store or authorize
 recipient delivery.
 
-## Required OSS Changes
+## Historical Implementation Notes
 
-### awid Schema
+The original `aweb-aaou` plan was the implementation path for namespace
+`default_delivery_origin`, address-route delivery metadata, remote mail/chat
+federation, participant route storage, and self-hosting setup. Those proposal
+sections are no longer live implementation guidance; the current contract is the
+route-level model captured in the SOTs.
 
-Add new migrations, never editing existing `001_registry.sql`:
+Current shipped guidance:
 
-- Add `default_delivery_origin` to `dns_namespaces`.
-- Decide migration/backfill behavior for existing namespaces. The likely safe
-  behavior is no implicit delivery origin by default, with hosted/operator
-  tooling setting values explicitly. Do not guess production defaults.
+- namespace `default_delivery_origin` is address-route inheritance metadata;
+- address reads return the concrete route metadata needed for first contact;
+- mail/chat first contact uses concrete address routes;
+- replies and continuations use stored participant/session route state;
+- recipient servers validate identity binding, current key when known, delivery
+  origin, replay/idempotency, and `inbound_mode`;
+- MCP and hosted surfaces call the same mail/chat semantics rather than defining
+  a separate federation model.
 
-### awid API
+Historical tests from the original plan remain useful as regression categories
+when they are phrased against the current contract: cross-server address first
+contact for `open` and `contacts_only`, contacts-only rejection without an exact
+active identity contact, stored-route replies, recipient-binding mismatch,
+replay/idempotency, multi-team sender context, local alias non-federation, and
+fail-closed behavior when a namespace/address route lacks a delivery origin.
 
-Extend:
+## Future Design Questions
 
-- namespace create/update/read responses with `default_delivery_origin`
-- address read/list responses with inherited delivery metadata
+These are not open gates for the current route-level contract; they are possible
+future extensions:
 
-Add or update authorization:
+1. Whether to add per-address delivery-origin overrides or keep namespace
+   inheritance until a concrete use case requires override authority.
+2. Whether direct bare `did:aw` first contact should ever be supported through a
+   DID service record. It is unsupported today and requires a separate design.
+3. How to represent delivery-origin rotation for long-lived stored participant
+   routes beyond the current fail-closed validation model.
 
-- namespace controller authorizes namespace default delivery origin
-
-Validation:
-
-- `default_delivery_origin` must be a canonical HTTPS origin for public
-  federation; local/dev registries may allow `http://localhost`.
-- Address resolution without delivery metadata must fail closed for federated
-  delivery.
-
-### Go awid Client
-
-Extend data structures:
-
-- `Namespace`
-- `Address`
-- namespace update requests
-
-Extend resolver behavior so CLI and aweb server can read delivery metadata from
-normal address resolution.
-
-### aweb Server
-
-Add remote delivery capability for mail and chat:
-
-- When recipient address resolves to this server's delivery origin, keep the
-  local path.
-- When recipient address resolves to a different delivery origin, send a signed
-  federation request to that origin.
-- Add a recipient-side federation endpoint for mail.
-- Add a recipient-side federation endpoint for chat session create and message
-  continuation.
-- Store participant route metadata for replies.
-- Preserve existing fail-closed recipient-binding checks.
-
-Each aweb server must be configured with its public federation origin
-(`AWEB_PUBLIC_ORIGIN`). Recipient-side federation endpoints reject envelopes
-whose target delivery origin does not match this configured origin.
-
-The recipient-side endpoint is `POST /v1/federation/messages`. The auth mode is
-explicit: a remote server does not need a local workspace row for the sender;
-the recipient authenticates the signed identity envelope and applies recipient
-`inbound_mode`.
-
-### aweb CLI
-
-Update send paths:
-
-- resolve target address
-- include delivery metadata in signed payloads or request context
-- preserve active-team sender selection
-- avoid local-only assumptions when target has a remote delivery origin
-
-Update diagnostics:
-
-- `aw doctor` should report whether the sender address and target address have
-  delivery metadata
-- `aw id address show` or equivalent should show inherited namespace delivery
-  origin
-
-### MCP
-
-MCP tools should not need a separate federation model. They call the same
-mail/chat implementation as CLI/REST. Hosted OAuth/custodial MCP remains an
-operator layer, but once the core sender path supports remote delivery, MCP
-senders inherit it.
-
-### Tests
-
-Required OSS tests before shipping:
-
-- namespace lookup returns default delivery origin
-- address lookup returns inherited delivery metadata
-- cross-server mail first contact with `inbound_mode=open`
-- cross-server chat first contact with `inbound_mode=open`
-- cross-server contacts-only first contact with an exact active identity contact
-- cross-server contacts-only first contact without an exact contact fails closed
-- reply by stored participant route across servers
-- recipient-binding mismatch fails closed
-- replayed federation envelope is idempotent and not double-delivered
-- multi-team identity sends from selected team and uses the selected sender
-  context
-- local same-server behavior remains unchanged
-- existing local aliases remain local and do not trigger federation
-- namespace without delivery origin fails closed for federated delivery
-
-The e2e test should run two aweb servers and one awid registry. A stronger
-matrix can run two awid registries using DNS `registry=` overrides, but the
-first implementation can prove delivery federation with one registry.
-
-## Implementation Plan
-
-The executable plan lives in `aw` under epic `aweb-aaou`. Subtasks:
-
-1. `aweb-aaou.1` — Federation model review gate and SOT patch plan.
-2. `aweb-aaou.2` — awid schema: namespace `default_delivery_origin`.
-3. `aweb-aaou.3` — awid API: expose and authorize namespace delivery origins.
-4. `aweb-aaou.4` — Go awid client and resolver support for federation metadata.
-5. `aweb-aaou.5` — Federation envelope contract for mail and chat.
-6. `aweb-aaou.6` — aweb server: outbound remote mail delivery.
-7. `aweb-aaou.7` — aweb server: inbound federated mail receiver.
-8. `aweb-aaou.8` — aweb server: outbound remote chat first contact and
-   continuation.
-9. `aweb-aaou.9` — aweb server: inbound federated chat receiver.
-10. `aweb-aaou.10` — Conversation route metadata and delivery-origin rotation
-    behavior.
-11. `aweb-aaou.11` — CLI send paths and diagnostics for federated delivery.
-12. `aweb-aaou.12` — MCP federation inheritance through core mail/chat tools.
-13. `aweb-aaou.13` — Federation e2e matrix: two aweb servers and one awid
-    registry.
-14. `aweb-aaou.14` — Docs and SOT updates after federation model acceptance.
-15. `aweb-aaou.15` — Supported namespace delivery-origin setup path; no direct
-    SQL fixture shortcuts in e2e.
-16. `aweb-aaou.16` — Hosted namespaces register or repair delivery origin when
-    AC holds the namespace controller key.
-17. `aweb-aaou.17` — Self-hosting docs for `AWEB_PUBLIC_ORIGIN` and controller
-    authorized delivery-origin publication.
-18. `aweb-aaou.18` — Hosted root federation ingress at
-    `POST /v1/federation/messages`.
-
-## SOT Updates Needed If This Model Is Accepted
-
-After review, update:
-
-- `docs/awid-sot.md`: namespace default delivery origin, address response
-  shape, auth rules, and schema.
-- `docs/aweb-sot.md`: federated delivery path, recipient-side auth, conversation
-  route metadata, reply semantics, and the explicit v1 boundary that only
-  mail/chat are federated.
-- `docs/identity-messaging-contract.md`: direct-address send protocol should
-  include delivery metadata and remote recipient-server verification.
-- `docs/self-hosting-guide.md`: how a self-hosted operator publishes namespace
-  delivery origin.
-
-## Open Questions
-
-1. Should `default_delivery_origin` be required at namespace creation or optional
-   until federation is enabled?
-2. Should existing hosted namespaces be backfilled by operator tooling or by a
-   one-time migration with explicit configuration?
-3. Should the recipient server re-resolve the target address on every delivery,
-   or accept a short-lived signed address-resolution proof from the sender?
-4. How should delivery-origin rotation work for existing conversations?
-5. Direct bare `did:aw` first contact is unsupported; future DID service records
-   would require a separate design.
-6. Should we ever add per-address delivery override, or wait for a concrete case?
-
-## Minimal First Cut
-
-The smallest coherent implementation is:
-
-1. `dns_namespaces.default_delivery_origin`
-2. address read returns inherited delivery metadata
-3. mail remote first contact
-4. chat remote first contact
-5. conversation participant route metadata
-6. replies by existing conversation id
-7. inbound federation replay/idempotency protection
-
-That gives real federation for address-routed mail/chat while leaving team
-coordination local.
+The minimal shipped shape is address-routed mail/chat first contact, stored
+participant-route continuation, and local-only team coordination.
