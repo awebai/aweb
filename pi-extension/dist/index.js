@@ -6062,8 +6062,11 @@ async function dispatchMailEvent(options, dispatched, event) {
       continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
-    if (dispatched.has(key) || options.deliveryStore?.has(key))
+    if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+      if (!msg.read_at)
+        await ackMessage(options.client, msg.message_id);
       continue;
+    }
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;
@@ -6109,8 +6112,10 @@ async function dispatchChatEvent(options, dispatched, event) {
       continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
     const key = dispatchKey("chat", conversationID, msg.message_id);
-    if (dispatched.has(key) || options.deliveryStore?.has(key))
+    if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+      lastMessageId = msg.message_id;
       continue;
+    }
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;

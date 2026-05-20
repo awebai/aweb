@@ -1,8 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DeliveryStore,
   dispatchAgentEvent,
   PinStore,
   type AgentEvent,
@@ -113,6 +116,92 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "hello",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-1" });
+  });
+
+  test("retries mail ack without re-delivering when previous ack failed after delivery", async () => {
+    const onAwakening = vi.fn();
+    const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
+    const dispatched = new Set<string>();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-retry",
+          conversation_id: "conv-retry",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "deliver once",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn()
+        .mockRejectedValueOnce(new Error("aweb: http 503"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const options = {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      deliveryStore,
+      onAwakening,
+    };
+    const event = { type: "mail_message", message_id: "mail-retry" } satisfies AgentEvent;
+
+    await expect(dispatchAgentEvent(options, dispatched, event)).rejects.toThrow("503");
+    await dispatchAgentEvent(options, dispatched, event);
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledTimes(2);
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/messages/mail-retry/ack");
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/messages/mail-retry/ack");
+  });
+
+  test("retries chat read receipt without re-delivering when previous read failed after delivery", async () => {
+    const onAwakening = vi.fn();
+    const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
+    const dispatched = new Set<string>();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-retry",
+          conversation_id: "sess-retry",
+          from_agent: "alice",
+          from_address: "acme.com/alice",
+          body: "deliver once",
+          timestamp: "2025-01-01T00:00:00Z",
+          sender_leaving: false,
+        }],
+      }),
+      post: vi.fn()
+        .mockRejectedValueOnce(new Error("aweb: http 503"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const options = {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      deliveryStore,
+      onAwakening,
+    };
+    const event = {
+      type: "chat_message",
+      session_id: "sess-retry",
+      conversation_id: "sess-retry",
+      message_id: "chat-retry",
+    } satisfies AgentEvent;
+
+    await expect(dispatchAgentEvent(options, dispatched, event)).rejects.toThrow("503");
+    await dispatchAgentEvent(options, dispatched, event);
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledTimes(2);
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-retry/read", { up_to_message_id: "chat-retry" });
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-retry/read", { up_to_message_id: "chat-retry" });
   });
 
   test("mail trust uses signed-payload did:key when envelope carries stable did:aw", async () => {

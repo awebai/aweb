@@ -371,6 +371,35 @@ describe("dispatchEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
+  test("retries mail ack without duplicate notification when prior ack failed", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [{ ...(await signedInboxMail("msg-ack-retry")), conversation_id: "conv-ack-retry" }] }),
+      post: vi.fn()
+        .mockRejectedValueOnce(new Error("aweb: http 503"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+    const dispatched = new Set<string>();
+    const event = {
+      type: "mail_message",
+      message_id: "msg-ack-retry",
+      conversation_id: "conv-ack-retry",
+    } satisfies AgentEvent;
+
+    await expect(dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event)).rejects.toThrow("503");
+    await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
+
+    expect(notification).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledTimes(2);
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/messages/msg-ack-retry/ack");
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/messages/msg-ack-retry/ack");
+  });
+
   test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
@@ -497,6 +526,49 @@ describe("dispatchEvent", () => {
       },
     });
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-msg-windowed" });
+  });
+
+  test("retries chat mark-read without duplicate notification when prior read failed", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-read-retry",
+          conversation_id: "sess-read-retry",
+          from_agent: "alice",
+          from_address: "acme.com/alice",
+          body: "hello",
+          timestamp: "2025-01-01T00:00:00Z",
+          sender_leaving: false,
+          from_did: vectors.did,
+          from_stable_id: vectors.stableID,
+          verification_status: "verified",
+        }],
+      }),
+      post: vi.fn()
+        .mockRejectedValueOnce(new Error("aweb: http 503"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+    const dispatched = new Set<string>();
+    const event = {
+      type: "chat_message",
+      session_id: "sess-read-retry",
+      conversation_id: "sess-read-retry",
+      message_id: "chat-read-retry",
+    } satisfies AgentEvent;
+
+    await expect(dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event)).rejects.toThrow("503");
+    await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
+
+    expect(notification).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledTimes(2);
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-read-retry/read", { up_to_message_id: "chat-read-retry" });
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-read-retry/read", { up_to_message_id: "chat-read-retry" });
   });
 
   test("skips self-authored mail by concrete address", async () => {
