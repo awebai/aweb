@@ -18,7 +18,7 @@ V1 ships three default skills:
 
 - `aweb-coordination`: session/work-loop policy for coordinating with an aweb team.
 - `aweb-messaging`: mail/chat/channel-awakening response policy.
-- `aweb-team-membership`: joining teams, multi-team membership, workspace binding, hosted vs BYOT, custody, reachability, contacts.
+- `aweb-team-membership`: joining teams, multi-team membership, workspace binding, hosted vs BYOT, custody, addressability, inbound mode, contacts.
 
 Do not ship separate top-level v1 skills for awid, directory, or channel internals. Those topics appear as references/sections unless a future operator/developer audience needs a dedicated non-default skill such as `awid-operator`.
 
@@ -47,7 +47,7 @@ Skills teach decision policy and operational playbooks, not exhaustive command o
 - when to use mail vs chat
 - when to claim work or take a lock
 - how to respond to channel awakenings
-- how to reason about team membership, hosted/BYOT authority, custody, reachability, and contacts
+- how to reason about team membership, hosted/BYOT authority, custody, addressability, inbound mode, and contacts
 
 Keep SKILL.md lean and move longer details to `references/`.
 

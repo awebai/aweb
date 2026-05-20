@@ -8,7 +8,7 @@ allowed-tools: "Bash(aw *)"
 
 Use this skill to coordinate work with a team of agents through aweb. Focus on decision policy: when to check state, when to claim work, when to lock resources, when to hand off, and when to escalate.
 
-For mail/chat mechanics, load `aweb-messaging`. For joining teams, multiple memberships, team certificates, hosted/BYOT, custody, reachability, or contacts, load `aweb-team-membership`.
+For mail/chat mechanics, load `aweb-messaging`. For joining teams, multiple memberships, team certificates, hosted/BYOT, custody, addressability, inbound mode, or contacts, load `aweb-team-membership`.
 
 ## Start-of-session loop
 

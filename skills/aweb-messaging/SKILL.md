@@ -10,14 +10,14 @@ This skill is the playbook for aweb channel awakenings. When you receive an inje
 
 It also covers explicit user requests to send mail or chat through aweb.
 
-If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient reachability, team membership, or multi-team identity questions, load `aweb-team-membership`.
+If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient addressability, inbound-mode policy, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
 ## Read the event first
 
 For channel awakenings, parse the injected metadata before acting:
 
 - `type`: mail, chat, control, work, or claim.
-- `from`: sender alias or persistent address.
+- `from`: sender alias or global address.
 - `message_id`: durable message identifier.
 - `conversation_id` or `session_id`: thread/session to continue.
 - `sender_waiting`: true means the sender is blocked waiting for a reply.
@@ -111,9 +111,9 @@ Prefer the most specific address that matches the situation:
 
 - same team: alias, e.g. `alice`
 - same organization, different team: team-qualified alias when supported, e.g. `ops~alice`
-- cross-organization or persistent identity: namespace address, e.g. `acme.com/alice`
+- cross-organization or global identity: namespace address, e.g. `acme.com/alice`
 
-If recipient resolution fails, load `aweb-team-membership` to reason about reachability, contacts, active team, and identity state.
+If recipient resolution fails, load `aweb-team-membership` to reason about address routes, `inbound_mode`, contacts, active team, and identity state.
 
 ## Response quality
 

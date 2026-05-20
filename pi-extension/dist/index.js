@@ -6355,7 +6355,7 @@ Skills to load when needed:
 
 - \`aweb-coordination\`: work loop, claims, locks, handoffs, roles, and shared state.
 - \`aweb-messaging\`: mail/chat policy, channel awakenings, sender verification, and push events.
-- \`aweb-team-membership\`: joining teams, active team, certificates, hosted vs BYOT, custody, reachability, and contacts.
+- \`aweb-team-membership\`: joining teams, active team, certificates, hosted vs BYOT, custody, addressability, inbound mode, and contacts.
 
 For a full walkthrough, see https://aweb.ai/docs/cli-tutorial/.
 

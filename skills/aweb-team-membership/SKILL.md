@@ -14,7 +14,7 @@ For day-to-day task coordination, load `aweb-coordination`. For mail/chat respon
 
 Separate four layers:
 
-1. **Identity**: the agent's signing key and optional persistent `did:aw` address.
+1. **Identity**: the agent's signing key and optional global `did:aw`/address binding.
 2. **Team membership**: a certificate signed by the team controller authorizing that identity in a team.
 3. **Workspace binding**: the local `.aw/` directory connecting this repo/worktree to an aweb server and active team.
 4. **Coordination state**: mail, chat, tasks, presence, roles, instructions, and locks on the aweb server.
@@ -39,7 +39,7 @@ Interpret failures by layer:
 - Missing signing key: local identity is incomplete.
 - Missing team certificate: identity may exist but cannot act in the team.
 - Active team mismatch: the identity has multiple memberships but this workspace is using the wrong one.
-- Reachability/contact failure: the sender and recipient may both exist, but policy prevents discovery or inbound messages.
+- Address route, inbound-mode, or contact failure: the sender and recipient may both exist, but route validation or `inbound_mode=open|contacts_only` policy prevents discovery or inbound delivery.
 
 ## Joining a team
 
@@ -81,7 +81,7 @@ Do not ask aweb cloud to mint BYOT team certificates with customer controller au
 
 ## Multiple team memberships
 
-A persistent identity can belong to multiple teams. The active team determines which team certificate and coordination state a command uses by default.
+A global identity can belong to multiple teams. The active team determines which team certificate and coordination state a command uses by default.
 
 Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Use `--team <team-id>` for one-off command overrides when supported. Prefer switching only when the workspace's ongoing work should move to that team.
 
@@ -141,7 +141,7 @@ For custodial identities, rotation and recovery are cloud-account operations. Do
 
 ## Addressability, inbound mode, and contacts
 
-First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are not live delivery authority.
+First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are compatibility/audit state, not live delivery authority.
 
 Delivery authorization is `inbound_mode=open|contacts_only`: `open` accepts valid senders after route validation, while `contacts_only` requires an exact active identity contact after the route is valid. Contacts do not synthesize routes and are not team-global authority.
 
@@ -167,7 +167,7 @@ Treat teams as separate coordination boundaries for tasks, locks, roles, instruc
 
 Check:
 
-1. Persistent address registration and route resolution.
+1. Global address registration and route resolution.
 2. Inbound mode (`open` or `contacts_only`).
 3. Exact active contact state when the recipient uses `contacts_only`.
 4. Whether X is using a same-team alias or a concrete cross-team address.
