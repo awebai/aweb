@@ -9,3 +9,4 @@ def test_defaults_and_migrations_are_packaged():
     assert (package_root / "migrations" / "aweb" / "001_initial.sql").is_file()
     assert (package_root / "migrations" / "aweb" / "002_conversations.sql").is_file()
     assert (package_root / "migrations" / "aweb" / "003_conversations_constraints.sql").is_file()
+    assert (package_root / "migrations" / "aweb" / "008_agent_inbound_mode.sql").is_file()

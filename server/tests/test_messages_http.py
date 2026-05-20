@@ -3752,7 +3752,7 @@ async def test_receive_federated_mail_rejects_target_binding_mismatch(aweb_cloud
 
 
 @pytest.mark.asyncio
-async def test_receive_federated_mail_enforces_recipient_policy(aweb_cloud_db):
+async def test_receive_federated_mail_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
@@ -3786,12 +3786,12 @@ async def test_receive_federated_mail_enforces_recipient_policy(aweb_cloud_db):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
     count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
         UUID(payload["envelope"]["message_id"]),
     )
-    assert count == 0
+    assert count == 1
 
 
 @pytest.mark.asyncio
@@ -5781,7 +5781,7 @@ async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_send_message_returns_403_for_policy_violation(aweb_cloud_db):
+async def test_send_message_global_recipient_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -5819,7 +5819,7 @@ async def test_send_message_returns_403_for_policy_violation(aweb_cloud_db):
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_did": "did:aw:bob", "subject": "blocked", "body": "hi"}
+    payload = {"to_did": "did:aw:bob", "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
@@ -5828,11 +5828,21 @@ async def test_send_message_returns_403_for_policy_violation(aweb_cloud_db):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
+    contact_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*) FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice'
+          AND contact_address = 'otherco.com/bob'
+          AND reference_type = 'identity'
+          AND status = 'active'
+        """
+    )
+    assert contact_count == 1
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_address_enforces_local_recipient_policy(aweb_cloud_db):
+async def test_send_message_to_global_address_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -5869,7 +5879,7 @@ async def test_send_message_to_address_enforces_local_recipient_policy(aweb_clou
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}
+    payload = {"to_address": "otherco.com/bob", "subject": "allowed", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
@@ -5878,7 +5888,7 @@ async def test_send_message_to_address_enforces_local_recipient_policy(aweb_clou
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -5919,7 +5929,7 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 403, resp.text
-    assert "Recipient does not accept messages" in resp.text
+    assert "Local recipient only accepts" in resp.text
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
-    evaluate_messaging_policy,
+    authorize_message_delivery,
     get_agent_by_alias,
     resolve_agent_by_did,
     utc_iso as _utc_iso,
@@ -363,12 +363,12 @@ async def send_mail(
 
     try:
         if not (recipient or {}).get("external"):
-            await evaluate_messaging_policy(
+            await authorize_message_delivery(
                 db_infra,
-                registry_client=registry_client,
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
+                sender_team_id=auth.team_id,
             )
         if (recipient or {}).get("external"):
             if not (recipient or {}).get("delivery_origin"):

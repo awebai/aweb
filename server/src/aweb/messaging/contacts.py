@@ -146,6 +146,71 @@ async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids:
     return {r["contact_address"] for r in rows}
 
 
+async def has_exact_active_identity_contact(
+    db,
+    *,
+    owner_did: str | None = None,
+    owner_dids: list[str] | None = None,
+    contact_address: str | None,
+) -> bool:
+    """Return whether owner has an exact active identity contact.
+
+    This helper is intentionally narrower than ``is_address_in_contacts``: it
+    does not allow domain-level matching, pending rows, handle rows, labels, or
+    display names to authorize delivery.
+    """
+    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
+    addr = normalize_hosted_handle_reference(contact_address or "")
+    if not owner_keys or not addr:
+        return False
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT 1
+        FROM {{tables.contacts}}
+        WHERE owner_did = ANY($1::text[])
+          AND reference_type = 'identity'
+          AND status = 'active'
+          AND contact_address = $2
+        LIMIT 1
+        """,
+        owner_keys,
+        addr,
+    )
+    return row is not None
+
+
+async def upsert_successful_identity_contact(
+    db,
+    *,
+    owner_did: str,
+    contact_address: str | None,
+    label: str = "",
+) -> bool:
+    """Idempotently add an active identity contact after accepted delivery.
+
+    Existing rows are left unchanged so repeat sends do not mutate label/status.
+    Returns True only when a new contact row was inserted.
+    """
+    owner = str(owner_did or "").strip()
+    addr = normalize_hosted_handle_reference(contact_address or "")
+    if not owner or not addr or not CONTACT_ADDRESS_PATTERN.match(addr):
+        return False
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label, reference_type, status)
+        VALUES ($1, $2, $3, 'identity', 'active')
+        ON CONFLICT DO NOTHING
+        RETURNING contact_id
+        """,
+        owner,
+        addr,
+        label or "",
+    )
+    return row is not None
+
+
 async def resolve_handle_contact_agent(
     db,
     *,

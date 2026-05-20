@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from pgdbm.errors import QueryError
 
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
+from aweb.messaging.contacts import has_exact_active_identity_contact
 from aweb.messaging.messages import (
     deliver_message,
     get_agent_by_alias,
@@ -28,30 +30,6 @@ class _DbShim:
 
     def get_manager(self, name="aweb"):
         return self._db
-
-
-class _RegistryStub:
-    def __init__(self, team_members: dict[tuple[str, str], list[dict[str, str]]]):
-        self.team_members = team_members
-
-    async def list_team_certificates(self, domain: str, name: str, *, active_only: bool = True):
-        assert active_only is True
-        return [
-            type(
-                "TeamCertificate",
-                (),
-                {
-                    "certificate_id": item.get("certificate_id", "cert-1"),
-                    "member_did_key": item.get("member_did_key", ""),
-                    "member_did_aw": item.get("member_did_aw"),
-                    "member_address": item.get("member_address"),
-                    "alias": item.get("alias", ""),
-                    "lifetime": item.get("lifetime", "persistent"),
-                    "issued_at": item.get("issued_at", "2026-01-01T00:00:00Z"),
-                },
-            )()
-            for item in self.team_members.get((domain, name), [])
-        ]
 
 
 async def _insert_team(aweb_db, team_id: str):
@@ -77,13 +55,14 @@ async def _insert_agent(
     did_aw: str,
     address: str,
     messaging_policy: str = "everyone",
+    inbound_mode: str | None = "open",
 ):
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, inbound_mode
         )
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6)
+        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6, $7)
         RETURNING agent_id
         """,
         team_id,
@@ -92,8 +71,39 @@ async def _insert_agent(
         address,
         alias,
         messaging_policy,
+        inbound_mode,
     )
     return str(row["agent_id"])
+
+
+@pytest.mark.asyncio
+async def test_agents_inbound_mode_schema_default_and_constraint(aweb_cloud_db):
+    await _insert_team(aweb_cloud_db.aweb_db, "default:example.com")
+    agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:example.com",
+        alias="alice",
+        did_key=_make_did_key(),
+        did_aw="did:aw:alice-schema",
+        address="example.com/alice",
+        inbound_mode=None,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET inbound_mode = DEFAULT WHERE agent_id = $1",
+        agent_id,
+    )
+    inbound_mode = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
+        agent_id,
+    )
+    assert inbound_mode == "open"
+
+    with pytest.raises(QueryError) as invalid_mode:
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET inbound_mode = 'team' WHERE agent_id = $1",
+            agent_id,
+        )
+    assert "agents_inbound_mode_valid" in str(invalid_mode.value)
 
 
 @pytest.mark.asyncio
@@ -123,6 +133,7 @@ async def test_deliver_message_cross_identity_to_contact(aweb_cloud_db):
         did_aw=bob_did_aw,
         address="otherco.com/bob",
         messaging_policy="contacts",
+        inbound_mode="contacts_only",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -181,6 +192,7 @@ async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
         did_aw=bob_did_aw,
         address="otherco.com/bob",
         messaging_policy="contacts",
+        inbound_mode="contacts_only",
     )
 
     with pytest.raises(ForbiddenError, match="contacts"):
@@ -198,212 +210,72 @@ async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_policy_requires_shared_team(aweb_cloud_db):
+async def test_deliver_message_legacy_team_org_nobody_rows_require_migration(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
 
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="alice",
-        did_key=_make_did_key(),
-        did_aw=alice_did_aw,
-        address="acme.com/alice",
-    )
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:otherco.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="otherco.com/bob",
-        messaging_policy="team",
-    )
-
-    registry = _RegistryStub({})
-
-    with pytest.raises(ForbiddenError, match="shared-team"):
-        await deliver_message(
-            db_shim,
-            registry_client=registry,
-            from_did=alice_did_aw,
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
+    for legacy_policy in ("team", "org", "nobody"):
+        bob_did_aw = f"did:aw:bob-{legacy_policy}"
+        await _insert_agent(
+            aweb_cloud_db.aweb_db,
+            team_id="ops:otherco.com",
+            alias=f"bob-{legacy_policy}",
+            did_key=_make_did_key(),
+            did_aw=bob_did_aw,
+            address=f"otherco.com/bob-{legacy_policy}",
+            messaging_policy=legacy_policy,
+            inbound_mode=None,
         )
 
-
-@pytest.mark.asyncio
-async def test_deliver_message_team_policy_allows_active_shared_team_cert(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-
-    alice_did_key = _make_did_key()
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        messaging_policy="team",
-    )
-    registry = _RegistryStub(
-        {
-            ("acme.com", "backend"): [
-                {
-                    "member_did_aw": alice_did_aw,
-                    "member_did_key": alice_did_key,
-                    "alias": "alice",
-                }
-            ]
-        }
-    )
-
-    msg_id, _ = await deliver_message(
-        db_shim,
-        registry_client=registry,
-        from_did=alice_did_aw,
-        to_did=bob_did_aw,
-        from_alias="alice",
-        to_alias="bob",
-        sender_address="acme.com/alice",
-        subject="Hello",
-        body="Hi Bob!",
-        priority="normal",
-    )
-    assert msg_id is not None
+        with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+            await deliver_message(
+                db_shim,
+                from_did="did:aw:alice",
+                to_did=bob_did_aw,
+                from_alias="alice",
+                to_alias=f"bob-{legacy_policy}",
+                sender_address="acme.com/alice",
+                subject="Hello",
+                body="Hi Bob!",
+                priority="normal",
+            )
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_policy_blocks_revoked_or_missing_active_cert(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        messaging_policy="team",
-    )
-    registry = _RegistryStub({("acme.com", "backend"): []})
-
-    with pytest.raises(ForbiddenError, match="shared-team"):
-        await deliver_message(
-            db_shim,
-            registry_client=registry,
-            from_did=alice_did_aw,
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
+async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, label, reference_type, status, handle_namespace, target_agent_name
         )
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_org_policy_allows_same_namespace_active_cert(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:acme.com")
-
-    alice_did_key = _make_did_key()
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        messaging_policy="org",
-    )
-    registry = _RegistryStub(
-        {
-            ("acme.com", "backend"): [
-                {
-                    "member_did_aw": alice_did_aw,
-                    "member_did_key": alice_did_key,
-                    "alias": "alice",
-                }
-            ]
-        }
+        VALUES
+          ('did:aw:bob', 'acme.com/alice', 'Alice', 'identity', 'active', NULL, NULL),
+          ('did:aw:bob', 'example.com', 'Domain', 'identity', 'active', NULL, NULL),
+          ('did:aw:bob', 'acme.com/pending', 'Pending', 'identity', 'pending', NULL, NULL),
+          ('did:aw:bob', NULL, 'Handle', 'handle', 'active', 'acme.com', 'handle')
+        """
     )
 
-    msg_id, _ = await deliver_message(
-        db_shim,
-        registry_client=registry,
-        from_did=alice_did_aw,
-        to_did=bob_did_aw,
-        from_alias="alice",
-        to_alias="bob",
-        sender_address="acme.com/alice",
-        subject="Hello",
-        body="Hi Bob!",
-        priority="normal",
+    assert await has_exact_active_identity_contact(
+        _DbShim(aweb_cloud_db.aweb_db),
+        owner_did="did:aw:bob",
+        contact_address="acme.com/alice",
     )
-    assert msg_id is not None
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_org_policy_blocks_other_namespace(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:acme.com")
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:otherco.com")
-
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        messaging_policy="org",
+    assert not await has_exact_active_identity_contact(
+        _DbShim(aweb_cloud_db.aweb_db),
+        owner_did="did:aw:bob",
+        contact_address="example.com/alice",
     )
-    registry = _RegistryStub(
-        {
-            ("otherco.com", "backend"): [
-                {
-                    "member_did_aw": alice_did_aw,
-                    "member_did_key": _make_did_key(),
-                    "alias": "alice",
-                }
-            ]
-        }
+    assert not await has_exact_active_identity_contact(
+        _DbShim(aweb_cloud_db.aweb_db),
+        owner_did="did:aw:bob",
+        contact_address="acme.com/pending",
     )
-
-    with pytest.raises(ForbiddenError, match="same org"):
-        await deliver_message(
-            db_shim,
-            registry_client=registry,
-            from_did=alice_did_aw,
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="otherco.com/alice",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
-        )
+    assert not await has_exact_active_identity_contact(
+        _DbShim(aweb_cloud_db.aweb_db),
+        owner_did="did:aw:bob",
+        contact_address="acme.com/handle",
+    )
 
 
 @pytest.mark.asyncio
@@ -441,7 +313,7 @@ async def test_deliver_message_everyone_allows_unconnected_sender(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_nobody_blocks_all_delivery(aweb_cloud_db):
+async def test_deliver_message_legacy_nobody_without_inbound_mode_fails_migration_required(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
     bob_did_aw = "did:aw:bob"
@@ -453,9 +325,10 @@ async def test_deliver_message_nobody_blocks_all_delivery(aweb_cloud_db):
         did_aw=bob_did_aw,
         address="otherco.com/bob",
         messaging_policy="nobody",
+        inbound_mode=None,
     )
 
-    with pytest.raises(ForbiddenError, match="does not accept"):
+    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
         await deliver_message(
             db_shim,
             from_did="did:aw:alice",

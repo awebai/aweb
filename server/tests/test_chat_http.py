@@ -2063,7 +2063,7 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_returns_403_for_policy_violation(aweb_cloud_db):
+async def test_create_chat_session_global_recipient_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2086,7 +2086,7 @@ async def test_create_chat_session_returns_403_for_policy_violation(aweb_cloud_d
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_dids": ["did:aw:bob"], "message": "blocked"}
+    payload = {"to_dids": ["did:aw:bob"], "message": "allowed"}
     body = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
@@ -2095,11 +2095,21 @@ async def test_create_chat_session_returns_403_for_policy_violation(aweb_cloud_d
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
+    contact_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*) FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice'
+          AND contact_address = 'otherco.com/bob'
+          AND reference_type = 'identity'
+          AND status = 'active'
+        """
+    )
+    assert contact_count == 1
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_to_address_enforces_local_recipient_policy(aweb_cloud_db):
+async def test_create_chat_session_to_global_address_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2133,7 +2143,7 @@ async def test_create_chat_session_to_address_enforces_local_recipient_policy(aw
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_addresses": ["otherco.com/bob"], "message": "blocked"}
+    payload = {"to_addresses": ["otherco.com/bob"], "message": "allowed"}
     body = json.dumps(payload).encode()
     headers = {
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
@@ -2142,7 +2152,7 @@ async def test_create_chat_session_to_address_enforces_local_recipient_policy(aw
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -2180,7 +2190,7 @@ async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agen
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 403, resp.text
-    assert "Recipient does not accept messages" in resp.text
+    assert "Local recipient only accepts" in resp.text
 
 
 @pytest.mark.asyncio

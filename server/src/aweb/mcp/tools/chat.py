@@ -27,7 +27,7 @@ from aweb.messaging.alias_targets import (
 )
 from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.messages import evaluate_messaging_policy
+from aweb.messaging.messages import authorize_message_delivery
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -385,12 +385,12 @@ async def chat_send(
             return json.dumps({"error": "Cannot chat with yourself"})
         if not target.get("external"):
             try:
-                await evaluate_messaging_policy(
+                await authorize_message_delivery(
                     db_infra,
-                    registry_client=registry_client,
                     recipient_agent=target,
                     sender_did=actor_did,
                     sender_address=sender_address,
+                    sender_team_id=auth.team_id,
                 )
             except ServiceError as exc:
                 return json.dumps({"error": exc.detail})

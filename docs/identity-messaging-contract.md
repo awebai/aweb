@@ -25,6 +25,18 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
+Global recipients expose a two-state delivery-time `inbound_mode`:
+
+- `open`: accept valid senders after address route and identity binding
+  validation.
+- `contacts_only`: after the same route and identity validation, accept only an
+  exact active identity contact for the verified sender address.
+
+Old five-value `messaging_policy` rows are legacy migration input only. `everyone`
+can map to `open`; `contacts` can map to `contacts_only`; unresolved
+`team`, `org`, and `nobody` rows must fail with an explicit migration-required
+diagnostic rather than silently widening to open.
+
 ## Direct Address Send Protocol
 
 For a send to a global address (`domain/name`):
@@ -78,7 +90,8 @@ recipient selection, or signed-payload validation.
 - Do not pass a caller `did:key`, team certificate, or forwarded lookup header to
   AWID as private address-read authority.
 - Do not treat address reachability, `visible_to_team_id`, contact membership,
-  or conversation ID as routing authority.
+  or conversation ID as routing authority. Contacts authorize only the explicit
+  delivery-time `contacts_only`/local-contact gate and never create a route.
 - Do not use stale cache entries as evidence for a recipient binding.
 - Do not infer a canonical sender address by listing all addresses for a
   `did:aw`; use the selected identity address for that context.

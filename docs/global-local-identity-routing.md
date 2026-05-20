@@ -181,11 +181,14 @@ The target model deletes these concepts as resolver/auth layers:
 - `visible_to_team_id` on address rows.
 - Private address lookup authorization through team certificates.
 - Team-certificate address visibility gates.
-- aweb recipient messaging policy as a delivery authorization gate
-  (`everyone`, `contacts`, `team`, `org`, `nobody`). Contacts may remain as UX
-  labels or address-book state, not as delivery auth. Recipient-side blocklists,
-  abuse throttles, and spam controls may still run after identity/route
-  resolution; they are not resolver visibility rules.
+- aweb recipient `messaging_policy` as a five-value delivery authorization gate
+  (`everyone`, `contacts`, `team`, `org`, `nobody`). The replacement live surface
+  is the narrow global `inbound_mode=open|contacts_only`; `team`, `org`, and
+  `nobody` semantics are not renamed or preserved. Contacts may authorize the
+  explicit `contacts_only` delivery gate or local-contact gate, but they remain
+  exact address-book state and never resolver visibility or routing authority.
+  Recipient-side blocklists, abuse throttles, and spam controls may still run
+  after identity/route resolution; they are not resolver visibility rules.
 - Known-pin or local-row fallback that bypasses global identity resolution for a
   global address.
 - Conversation-id auth bypasses for mail/chat continuation.

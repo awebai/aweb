@@ -53,9 +53,9 @@ from aweb.messaging.chat import (
     send_in_session,
 )
 from aweb.messaging.conversations import close_conversation
-from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
+from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts, upsert_successful_identity_contact
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.messages import evaluate_messaging_policy, utc_iso as _utc_iso
+from aweb.messaging.messages import authorize_message_delivery, utc_iso as _utc_iso
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.messaging.waiting import (
     get_waiting_agents,
@@ -217,6 +217,32 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload sender_leaving must match the chat message")
     if bool(payload.get("hang_on")) != hang_on:
         raise HTTPException(status_code=422, detail="signed_payload hang_on must match the chat message")
+
+
+async def _record_successful_chat_contacts(
+    db,
+    *,
+    owner_did: str,
+    sender_team_id: str | None,
+    recipients: list[dict[str, Any]],
+) -> None:
+    owner = str(owner_did or "").strip()
+    sender_team = str(sender_team_id or "").strip()
+    if not owner:
+        return
+    for recipient in recipients:
+        address = str(recipient.get("address") or "").strip()
+        if "/" not in address:
+            continue
+        recipient_team = str(recipient.get("team_id") or "").strip()
+        if sender_team and recipient_team and sender_team == recipient_team:
+            continue
+        await upsert_successful_identity_contact(
+            db,
+            owner_did=owner,
+            contact_address=address,
+            label=str(recipient.get("alias") or address),
+        )
 
 
 def _signed_payload_conversation_id(signed_payload: str | None) -> str:
@@ -815,12 +841,12 @@ async def _resolve_chat_targets(
         if row.get("external"):
             continue
         try:
-            await evaluate_messaging_policy(
+            await authorize_message_delivery(
                 db,
-                registry_client=registry_client,
                 recipient_agent=row,
                 sender_did=actor_did,
                 sender_address=sender_address,
+                sender_team_id=auth.team_id,
             )
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1272,6 +1298,13 @@ async def create_or_send(
         raise
     if msg_row is None:
         raise HTTPException(status_code=500, detail="Failed to send message")
+
+    await _record_successful_chat_contacts(
+        db,
+        owner_did=(auth.did_aw or actor_did).strip(),
+        sender_team_id=auth.team_id,
+        recipients=target_rows,
+    )
 
     if payload.wait_seconds is not None:
         await aweb_db.execute(

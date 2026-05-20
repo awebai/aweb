@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts, normalize_owner_dids
+from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
@@ -32,7 +32,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -41,7 +41,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -58,7 +58,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -75,7 +75,7 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_aw = $1 OR did_key = $1)
@@ -87,86 +87,96 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     return None if not row else dict(row)
 
 
-async def evaluate_messaging_policy(
+LEGACY_POLICY_MIGRATION_REQUIRED = {"team", "org", "nobody"}
+INBOUND_MODES = {"open", "contacts_only"}
+
+
+def _is_global_recipient(recipient_agent: dict) -> bool:
+    return str(recipient_agent.get("did_aw") or "").strip().startswith("did:aw:")
+
+
+def _effective_inbound_mode(recipient_agent: dict) -> str:
+    mode = str(recipient_agent.get("inbound_mode") or "").strip().lower()
+    if mode in INBOUND_MODES:
+        return mode
+
+    # Legacy compatibility/migration input only. New live delivery decisions are
+    # made from inbound_mode; unresolved legacy rows fail closed rather than
+    # silently widening team/org/nobody semantics to open.
+    legacy_policy = str(recipient_agent.get("messaging_policy") or "everyone").strip().lower()
+    if legacy_policy == "everyone":
+        return "open"
+    if legacy_policy == "contacts":
+        return "contacts_only"
+    if legacy_policy in LEGACY_POLICY_MIGRATION_REQUIRED:
+        raise ForbiddenError(
+            f"Recipient inbound_mode migration required for legacy messaging_policy={legacy_policy}"
+        )
+    raise ForbiddenError("Recipient inbound_mode is unsupported")
+
+
+async def _recipient_has_exact_sender_contact(
     db,
     *,
-    registry_client,
+    recipient_agent: dict,
+    sender_address: str | None,
+) -> bool:
+    owner_dids = normalize_owner_dids(
+        owner_dids=[
+            recipient_agent.get("did_aw"),
+            recipient_agent.get("did_key"),
+        ]
+    )
+    if not owner_dids:
+        raise ForbiddenError("Recipient identity is incomplete")
+    return await has_exact_active_identity_contact(
+        db,
+        owner_dids=owner_dids,
+        contact_address=sender_address,
+    )
+
+
+async def authorize_message_delivery(
+    db,
+    *,
     recipient_agent: dict,
     sender_did: str,
     sender_address: str | None,
+    sender_team_id: str | None = None,
+    stored_route_continuation: bool = False,
 ) -> None:
-    policy = (recipient_agent.get("messaging_policy") or "everyone").strip().lower()
-    if policy == "everyone":
-        return
-    if policy == "nobody":
-        raise ForbiddenError("Recipient does not accept messages")
-    if policy == "contacts":
-        owner_dids = normalize_owner_dids(
-            owner_dids=[
-                recipient_agent.get("did_aw"),
-                recipient_agent.get("did_key"),
-            ]
-        )
-        if not owner_dids:
-            raise ForbiddenError("Recipient identity is incomplete")
-        contacts = await get_contact_addresses(db, owner_dids=owner_dids)
-        if sender_address and is_address_in_contacts(sender_address, contacts):
+    del sender_did  # sender identity binding is verified by the caller/signature path.
+
+    if _is_global_recipient(recipient_agent):
+        mode = _effective_inbound_mode(recipient_agent)
+        if mode == "open":
             return
-        raise ForbiddenError("Recipient only accepts messages from contacts")
+        if await _recipient_has_exact_sender_contact(
+            db,
+            recipient_agent=recipient_agent,
+            sender_address=sender_address,
+        ):
+            return
+        raise ForbiddenError("Recipient only accepts messages from exact active contacts")
 
-    if registry_client is None:
-        raise ForbiddenError("Recipient policy requires team membership verification")
+    if stored_route_continuation:
+        return
 
-    aweb_db = db.get_manager("aweb")
-    recipient_team_rows = await aweb_db.fetch_all(
-        """
-        SELECT DISTINCT a.team_id, t.namespace, t.team_name
-        FROM {{tables.agents}} a
-        JOIN {{tables.teams}} t ON t.team_id = a.team_id
-        WHERE a.deleted_at IS NULL
-          AND (a.did_aw = $1 OR a.did_key = $1)
-        """,
-        (recipient_agent.get("did_aw") or recipient_agent.get("did_key") or "").strip(),
+    recipient_team_id = str(recipient_agent.get("team_id") or "").strip()
+    sender_team = str(sender_team_id or "").strip()
+    if sender_team and recipient_team_id and sender_team == recipient_team_id:
+        return
+
+    if await _recipient_has_exact_sender_contact(
+        db,
+        recipient_agent=recipient_agent,
+        sender_address=sender_address,
+    ):
+        return
+
+    raise ForbiddenError(
+        "Local recipient only accepts same-team, exact-contact, or stored-route continuation delivery"
     )
-    recipient_team_ids = [str(row["team_id"]) for row in recipient_team_rows]
-    if not recipient_team_ids:
-        raise ForbiddenError("Recipient team context is unavailable")
-
-    async def _sender_has_active_cert_for(row: dict) -> bool:
-        certs = await registry_client.list_team_certificates(
-            row["namespace"],
-            row["team_name"],
-            active_only=True,
-        )
-        for cert in certs:
-            member_did_aw = (cert.member_did_aw or "").strip()
-            member_did_key = (cert.member_did_key or "").strip()
-            if sender_did == member_did_aw or sender_did == member_did_key:
-                return True
-        return False
-
-    if policy == "team":
-        for row in recipient_team_rows:
-            if await _sender_has_active_cert_for(row):
-                return
-        raise ForbiddenError("Recipient only accepts messages from shared-team members")
-
-    if policy == "org":
-        recipient_namespaces = {row["namespace"] for row in recipient_team_rows}
-        namespace_rows = await aweb_db.fetch_all(
-            """
-            SELECT team_id, namespace, team_name
-            FROM {{tables.teams}}
-            WHERE namespace = ANY($1::text[])
-            """,
-            list(recipient_namespaces),
-        )
-        for row in namespace_rows:
-            if await _sender_has_active_cert_for(row):
-                return
-        raise ForbiddenError("Recipient only accepts messages from the same org")
-
-    raise ForbiddenError(f"Unsupported messaging policy: {policy}")
 
 
 async def deliver_message(
@@ -205,12 +215,12 @@ async def deliver_message(
         raise NotFoundError("Recipient agent not found")
 
     if not skip_policy_check and not recipient.get("external"):
-        await evaluate_messaging_policy(
+        await authorize_message_delivery(
             db,
-            registry_client=registry_client,
             recipient_agent=recipient,
             sender_did=sender_did,
             sender_address=sender_address,
+            sender_team_id=team_id,
         )
 
     if created_at is None:

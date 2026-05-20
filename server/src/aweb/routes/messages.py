@@ -39,6 +39,7 @@ from aweb.messaging.conversations import (
     get_conversation,
     touch_conversation_activity,
 )
+from aweb.messaging.contacts import upsert_successful_identity_contact
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.mail_routing import (
     MailContinuationContext,
@@ -51,8 +52,8 @@ from aweb.messaging.mail_routing import (
 )
 from aweb.messaging.messages import (
     MessagePriority,
+    authorize_message_delivery,
     deliver_message,
-    evaluate_messaging_policy,
     get_agent_by_alias,
     get_agent_by_id,
     resolve_agent_by_did,
@@ -602,6 +603,33 @@ def _local_public_origin(request: Request) -> str:
     return get_settings().public_origin
 
 
+def _concrete_contact_address(recipient: dict | None) -> str:
+    address = str((recipient or {}).get("address") or "").strip()
+    return address if "/" in address else ""
+
+
+async def record_successful_contact_side_effect(
+    db,
+    *,
+    owner_did: str,
+    sender_team_id: str | None,
+    recipient: dict | None,
+) -> bool:
+    recipient_address = _concrete_contact_address(recipient)
+    if not recipient_address:
+        return False
+    recipient_team_id = str((recipient or {}).get("team_id") or "").strip()
+    sender_team = str(sender_team_id or "").strip()
+    if sender_team and recipient_team_id and sender_team == recipient_team_id:
+        return False
+    return await upsert_successful_identity_contact(
+        db,
+        owner_did=owner_did,
+        contact_address=recipient_address,
+        label=str((recipient or {}).get("alias") or recipient_address),
+    )
+
+
 async def _deliver_remote_mail_and_project_locally(
     request: Request,
     payload: SendMessageRequest,
@@ -773,6 +801,13 @@ async def _deliver_remote_mail_and_project_locally(
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    await record_successful_contact_side_effect(
+        db,
+        owner_did=sender_routing_did,
+        sender_team_id=auth.team_id,
+        recipient=recipient,
+    )
 
     await fire_mutation_hook(
         request,
@@ -1406,12 +1441,12 @@ async def send_message(
 
     try:
         if not (recipient or {}).get("external"):
-            await evaluate_messaging_policy(
+            await authorize_message_delivery(
                 db,
-                registry_client=registry_client,
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
+                sender_team_id=auth.team_id,
             )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
@@ -1463,6 +1498,13 @@ async def send_message(
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    await record_successful_contact_side_effect(
+        db,
+        owner_did=(auth.did_aw or sender_did).strip(),
+        sender_team_id=auth.team_id,
+        recipient=recipient,
+    )
 
     await fire_mutation_hook(
         request,

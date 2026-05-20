@@ -25,7 +25,7 @@ from aweb.messaging.conversations import (
 from aweb.messaging.chat import ensure_session, send_in_session
 from aweb.messaging.messages import (
     deliver_message,
-    evaluate_messaging_policy,
+    authorize_message_delivery,
     resolve_agent_by_did,
     utc_iso,
 )
@@ -333,6 +333,19 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
     return conversation["conversation_id"]
 
 
+async def _federated_stored_route_continuation_exists(db, envelope: FederationEnvelope) -> bool:
+    if not envelope.conversation_id:
+        return False
+    conversation = await get_conversation(db, conversation_id=envelope.conversation_id)
+    if conversation is None or conversation.get("status") != "active":
+        return False
+    if conversation.get("conversation_type") != envelope.type:
+        return False
+    participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
+    dids = {item["did"] for item in participants}
+    return envelope.sender_did_aw in dids and envelope.target_did_aw in dids
+
+
 async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recipient: dict) -> str:
     if not envelope.conversation_id:
         raise HTTPException(status_code=422, detail="Federated chat requires conversation_id")
@@ -446,13 +459,17 @@ async def receive_federated_message(
     if recipient is None:
         raise HTTPException(status_code=404, detail="Federation recipient agent not found")
 
+    stored_route_continuation = await _federated_stored_route_continuation_exists(db, envelope)
+    if _is_local_did_key(envelope.target_did_aw) and not stored_route_continuation:
+        detail = "Local did:key target requires an existing session" if envelope.type == "chat" else "Local did:key target requires an existing conversation"
+        raise HTTPException(status_code=404, detail=detail)
     try:
-        await evaluate_messaging_policy(
+        await authorize_message_delivery(
             db,
-            registry_client=registry_client,
             recipient_agent=recipient,
             sender_did=envelope.sender_did_aw,
             sender_address=envelope.sender_address,
+            stored_route_continuation=stored_route_continuation,
         )
     except ForbiddenError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
