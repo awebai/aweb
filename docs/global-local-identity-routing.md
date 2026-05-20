@@ -181,12 +181,12 @@ The target model deletes these concepts as resolver/auth layers:
 - `visible_to_team_id` on address rows.
 - Private address lookup authorization through team certificates.
 - Team-certificate address visibility gates.
-- aweb recipient `messaging_policy` as a five-value delivery authorization gate
-  (`everyone`, `contacts`, `team`, `org`, `nobody`). The replacement live surface
-  is the narrow global `inbound_mode=open|contacts_only`; `team`, `org`, and
-  `nobody` semantics are not renamed or preserved. Contacts may authorize the
-  explicit `contacts_only` delivery gate or local-contact gate, but they remain
-  exact address-book state and never resolver visibility or routing authority.
+- The old five-value recipient policy gate as a live delivery authorization
+  surface. The replacement live surface is the narrow global
+  `inbound_mode=open|contacts_only`; broader team/org/block-all semantics are
+  not renamed or preserved. Contacts may authorize the explicit
+  `contacts_only` delivery gate or local-contact gate, but they remain exact
+  address-book state and never resolver visibility or routing authority.
   Recipient-side blocklists, abuse throttles, and spam controls may still run
   after identity/route resolution; they are not resolver visibility rules.
 - Known-pin or local-row fallback that bypasses global identity resolution for a
@@ -317,8 +317,8 @@ mismatched outer fields and stale routes.
 
 - Land this SOT.
 - Inventory all uses of address reachability, `visible_to_team_id`, private
-  address lookup auth, aweb messaging policy, conversation-id auth, known-pin
-  fallback, and namespace delivery origin.
+  address lookup auth, legacy aweb delivery policy gates, conversation-id auth,
+  known-pin fallback, and namespace delivery origin.
 - Add conformance cases for the five routing examples above before broad code
   deletion.
 

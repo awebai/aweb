@@ -37,7 +37,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -46,7 +46,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -60,7 +60,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -77,7 +77,7 @@ async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -92,7 +92,7 @@ async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_aw = $1 OR did_key = $1)

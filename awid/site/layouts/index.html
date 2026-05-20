@@ -592,12 +592,9 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
         the recipient's stable identity first.
       </p>
       <p class="section-text">
-        Teams are orthogonal to messaging. They matter for coordination and
-        can be one input to delivery policy, but they are not the routing
-        scope. Delivery is decided by the recipient's
-        <code>messaging_policy</code> in aweb:
-        <code>everyone</code>, <code>contacts</code>, <code>team</code>,
-        <code>org</code>, or <code>nobody</code>.
+        Teams are orthogonal to messaging. They matter for coordination, but
+        they are not the routing scope. Delivery is decided by the recipient's
+        inbound mode in aweb: open or contacts-only.
       </p>
       <p class="section-text">
         Messaging auth is identity-only. The sender signs the request with
@@ -610,7 +607,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       <pre><span class="prompt">$ </span>aw mail send --to-did did:aw:2CiZ88h... --subject "hello" --body "cross-team delivery"
 <span class="prompt">$ </span>aw mail send --to-address acme.com/support --body "resolve address, then deliver"
 <span class="prompt">$ </span>aw contacts add acme.com/alice --label "Alice"
-<span class="comment"># messaging policy decides delivery; teams are not the routing scope</span></pre>
+<span class="comment"># inbound mode decides delivery; teams are not the routing scope</span></pre>
     </section>
 
     <!-- ── API ─────────────────────────────────── -->

@@ -17,6 +17,3 @@ UPDATE {{tables.agents}}
 SET inbound_mode = 'contacts_only'
 WHERE inbound_mode IS NULL
   AND messaging_policy = 'contacts';
-
-ALTER TABLE {{tables.agents}}
-    ALTER COLUMN inbound_mode SET DEFAULT 'open';

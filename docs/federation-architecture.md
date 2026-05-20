@@ -202,7 +202,7 @@ The recipient server must verify:
 5. The timestamp is inside the accepted skew window.
 6. The message id has not already been accepted for this sender/recipient route.
    Duplicate message ids are idempotent, not double-delivered.
-7. The sender is allowed by recipient messaging policy.
+7. The sender is allowed by the recipient's `inbound_mode`.
 8. Conversation continuation is valid if `conversation_id` is present.
 
 If any identity, address, or delivery binding disagrees, the recipient server

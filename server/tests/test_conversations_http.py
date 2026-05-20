@@ -390,32 +390,10 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            (
-                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-                'ops:acme.com',
-                'did:key:alice-current',
-                'did:aw:alice',
-                'acme.com/alice',
-                'alice',
-                'persistent',
-                'developer',
-                'everyone'
-            ),
-            (
-                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-                'ops:acme.com',
-                'did:key:bob-current',
-                'did:aw:bob',
-                'acme.com/bob',
-                'bob',
-                'persistent',
-                'developer',
-                'everyone'
-            )
+            ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ops:acme.com', 'did:key:alice-current', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'ops:acme.com', 'did:key:bob-current', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -514,32 +492,10 @@ async def test_conversations_filters_mail_by_participant_before_limit(aweb_cloud
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            (
-                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-                'ops:acme.com',
-                'did:key:alice-current',
-                'did:aw:alice',
-                'acme.com/alice',
-                'alice',
-                'persistent',
-                'developer',
-                'everyone'
-            ),
-            (
-                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-                'ops:acme.com',
-                'did:key:bob-current',
-                'did:aw:bob',
-                'acme.com/bob',
-                'bob',
-                'persistent',
-                'developer',
-                'everyone'
-            )
+            ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ops:acme.com', 'did:key:alice-current', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'ops:acme.com', 'did:key:bob-current', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
     await aweb_cloud_db.aweb_db.execute(

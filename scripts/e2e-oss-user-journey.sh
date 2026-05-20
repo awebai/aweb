@@ -281,13 +281,13 @@ else:
 "
 }
 
-set_messaging_policy() {
-  local did_aw="$1" policy="$2"
+set_inbound_mode() {
+  local did_aw="$1" mode="$2"
   (
     cd "$SERVER_DIR"
     docker compose --env-file .env.e2e exec -T postgres \
       psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
-      -c "UPDATE aweb.agents SET messaging_policy = '${policy}' WHERE did_aw = '${did_aw}';" >/dev/null
+      -c "UPDATE aweb.agents SET inbound_mode = '${mode}' WHERE did_aw = '${did_aw}';" >/dev/null
   )
 }
 
@@ -872,7 +872,7 @@ run_aw_in "$DAVE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
 dave_init_exit=$?
 assert_eq "dave init exit" "0" "$dave_init_exit"
 
-set_messaging_policy "$ALICE_DID_AW" "contacts"
+set_inbound_mode "$ALICE_DID_AW" "contacts_only"
 run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>&1
 contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
@@ -901,19 +901,19 @@ else
   carol_direct_exit=$?
 fi
 if [[ "$carol_direct_exit" != "0" ]] && echo "$carol_direct_out" | grep -qi "contacts\|403\|forbidden"; then
-  echo "  PASS: carol blocked by alice contacts policy"
+  echo "  PASS: carol blocked by alice contacts-only inbound mode"
   pass=$((pass + 1))
 else
-  echo "  FAIL: carol should be blocked by alice contacts policy (exit=$carol_direct_exit output=${carol_direct_out:0:160})"
+  echo "  FAIL: carol should be blocked by alice contacts-only inbound mode (exit=$carol_direct_exit output=${carol_direct_out:0:160})"
   fail=$((fail + 1))
 fi
 
-set_messaging_policy "$ALICE_DID_AW" "everyone"
+set_inbound_mode "$ALICE_DID_AW" "open"
 run_aw_in "$CAROL_DIR" mail send \
   --to-did "$ALICE_DID_AW" \
   --body "Direct hello from carol" >/dev/null 2>&1
 carol_retry_exit=$?
-assert_eq "carol direct mail succeeds after policy change" "0" "$carol_retry_exit"
+assert_eq "carol direct mail succeeds after inbound mode change" "0" "$carol_retry_exit"
 
 alice_all_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_carol_message="$(echo "$alice_all_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from carol'), ''))" 2>/dev/null || echo "")"

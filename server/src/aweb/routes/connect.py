@@ -143,8 +143,8 @@ async def _ensure_agent(
             """
             INSERT INTO {{tables.agents}}
                 (agent_id, team_id, did_key, did_aw, address,
-                 alias, lifetime, human_name, agent_type, role)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 alias, lifetime, human_name, agent_type, role, inbound_mode)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
             ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
             """,
             agent_id,

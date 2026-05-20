@@ -134,8 +134,8 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, alias, lifetime, role, messaging_policy)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'alice', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, alias, lifetime, role, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'alice', 'persistent', 'developer', 'open')
         """,
         agent_id,
     )

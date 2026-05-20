@@ -45,7 +45,6 @@ def participant_recipient(participant: dict) -> dict:
         "address": participant.get("address"),
         "did_aw": did if did.startswith("did:aw:") else None,
         "did_key": did if did.startswith("did:key:") else None,
-        "messaging_policy": None,
         "external": True,
     }
 
@@ -98,8 +97,7 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
                 "did_key": participant_did,
                 "delivery_origin": delivery_origin,
                 "reachability": "public",
-                "messaging_policy": None,
-                "external": True,
+                        "external": True,
             }
         raise ValidationError("Remote mail recipient has no stored routable identity")
     current_did = str(participant.get("current_did_key") or participant.get("did_key") or "").strip()
@@ -121,7 +119,6 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
         "did_key": current_did,
         "delivery_origin": delivery_origin,
         "reachability": "public",
-        "messaging_policy": None,
         "external": True,
     }
 

@@ -32,10 +32,8 @@ Global recipients expose a two-state delivery-time `inbound_mode`:
 - `contacts_only`: after the same route and identity validation, accept only an
   exact active identity contact for the verified sender address.
 
-Old five-value `messaging_policy` rows are legacy migration input only. `everyone`
-can map to `open`; `contacts` can map to `contacts_only`; unresolved
-`team`, `org`, and `nobody` rows must fail with an explicit migration-required
-diagnostic rather than silently widening to open.
+Rows without an explicit `inbound_mode` require migration and must fail with an
+explicit migration-required diagnostic rather than silently widening to open.
 
 ## Direct Address Send Protocol
 

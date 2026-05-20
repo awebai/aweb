@@ -1,4 +1,4 @@
-"""Tests for identity-scoped messaging delivery and policy checks."""
+"""Tests for identity-scoped message delivery authorization."""
 
 from __future__ import annotations
 
@@ -54,15 +54,12 @@ async def _insert_agent(
     did_key: str,
     did_aw: str,
     address: str,
-    messaging_policy: str = "everyone",
     inbound_mode: str | None = "open",
 ):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, inbound_mode
-        )
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6, $7)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6)
         RETURNING agent_id
         """,
         team_id,
@@ -70,14 +67,13 @@ async def _insert_agent(
         did_aw,
         address,
         alias,
-        messaging_policy,
         inbound_mode,
     )
     return str(row["agent_id"])
 
 
 @pytest.mark.asyncio
-async def test_agents_inbound_mode_schema_default_and_constraint(aweb_cloud_db):
+async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(aweb_cloud_db):
     await _insert_team(aweb_cloud_db.aweb_db, "default:example.com")
     agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -88,15 +84,11 @@ async def test_agents_inbound_mode_schema_default_and_constraint(aweb_cloud_db):
         address="example.com/alice",
         inbound_mode=None,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode = DEFAULT WHERE agent_id = $1",
-        agent_id,
-    )
     inbound_mode = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
     )
-    assert inbound_mode == "open"
+    assert inbound_mode is None
 
     with pytest.raises(QueryError) as invalid_mode:
         await aweb_cloud_db.aweb_db.execute(
@@ -132,7 +124,6 @@ async def test_deliver_message_cross_identity_to_contact(aweb_cloud_db):
         did_key=bob_did_key,
         did_aw=bob_did_aw,
         address="otherco.com/bob",
-        messaging_policy="contacts",
         inbound_mode="contacts_only",
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -191,7 +182,6 @@ async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
         did_key=_make_did_key(),
         did_aw=bob_did_aw,
         address="otherco.com/bob",
-        messaging_policy="contacts",
         inbound_mode="contacts_only",
     )
 
@@ -207,38 +197,6 @@ async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
             body="Hi Bob!",
             priority="normal",
         )
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_legacy_team_org_nobody_rows_require_migration(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
-
-    for legacy_policy in ("team", "org", "nobody"):
-        bob_did_aw = f"did:aw:bob-{legacy_policy}"
-        await _insert_agent(
-            aweb_cloud_db.aweb_db,
-            team_id="ops:otherco.com",
-            alias=f"bob-{legacy_policy}",
-            did_key=_make_did_key(),
-            did_aw=bob_did_aw,
-            address=f"otherco.com/bob-{legacy_policy}",
-            messaging_policy=legacy_policy,
-            inbound_mode=None,
-        )
-
-        with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
-            await deliver_message(
-                db_shim,
-                from_did="did:aw:alice",
-                to_did=bob_did_aw,
-                from_alias="alice",
-                to_alias=f"bob-{legacy_policy}",
-                sender_address="acme.com/alice",
-                subject="Hello",
-                body="Hi Bob!",
-                priority="normal",
-            )
 
 
 @pytest.mark.asyncio
@@ -279,7 +237,7 @@ async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_everyone_allows_unconnected_sender(aweb_cloud_db):
+async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
     bob_did_aw = "did:aw:bob"
@@ -290,7 +248,6 @@ async def test_deliver_message_everyone_allows_unconnected_sender(aweb_cloud_db)
         did_key=_make_did_key(),
         did_aw=bob_did_aw,
         address="otherco.com/bob",
-        messaging_policy="everyone",
     )
 
     msg_id, _ = await deliver_message(
@@ -313,7 +270,7 @@ async def test_deliver_message_everyone_allows_unconnected_sender(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_legacy_nobody_without_inbound_mode_fails_migration_required(aweb_cloud_db):
+async def test_deliver_message_null_inbound_mode_fails_migration_required(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
     bob_did_aw = "did:aw:bob"
@@ -324,7 +281,6 @@ async def test_deliver_message_legacy_nobody_without_inbound_mode_fails_migratio
         did_key=_make_did_key(),
         did_aw=bob_did_aw,
         address="otherco.com/bob",
-        messaging_policy="nobody",
         inbound_mode=None,
     )
 

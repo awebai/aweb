@@ -101,12 +101,10 @@ async def test_workspace_status_uses_workspace_rows_as_primary_identity(aweb_clo
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, alias, human_name, role, lifetime, status, agent_type, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, human_name, role, lifetime, status, agent_type, inbound_mode)
         VALUES
-            ($1, $2, 'did:key:alice', 'alice', 'Alice', 'developer', 'persistent', 'active', 'agent', 'everyone'),
-            ($3, $2, 'did:key:bob', 'bob', 'Bob', 'reviewer', 'persistent', 'active', 'agent', 'everyone')
+            ($1, $2, 'did:key:alice', 'alice', 'Alice', 'developer', 'persistent', 'active', 'agent', 'open'),
+            ($3, $2, 'did:key:bob', 'bob', 'Bob', 'reviewer', 'persistent', 'active', 'agent', 'open')
         """,
         alice_agent_id,
         team_id,

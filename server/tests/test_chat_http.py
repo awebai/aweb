@@ -138,9 +138,8 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
@@ -291,9 +290,8 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(a
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
@@ -386,9 +384,8 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
@@ -574,9 +571,8 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
@@ -726,9 +722,8 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
@@ -930,9 +925,8 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     )
     bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         bob_did_key,
@@ -1077,8 +1071,8 @@ async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'open')
         """,
         local_did_key,
     )
@@ -1117,8 +1111,8 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
     )
     local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'open')
         RETURNING agent_id
         """,
         local_did_key,
@@ -1289,8 +1283,8 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     )
     local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', $1, 'local', 'ephemeral', 'developer', 'open')
         RETURNING agent_id
         """,
         local_did_key,
@@ -1368,9 +1362,8 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob', 'persistent', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -1432,9 +1425,8 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob', 'persistent', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -1541,12 +1533,10 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1602,12 +1592,10 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1669,13 +1657,8 @@ async def test_create_chat_session_external_address_without_delivery_origin_fail
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES (
-            'backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice',
-            'alice', 'persistent', 'developer', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1733,13 +1716,8 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES (
-            'backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice',
-            'alice', 'persistent', 'developer', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1799,12 +1777,10 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -1890,13 +1866,8 @@ async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES (
-            'backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice',
-            'alice', 'persistent', 'developer', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1942,13 +1913,8 @@ async def test_create_chat_session_to_external_did_resolves_global_route_before_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES (
-            'backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice',
-            'alice', 'persistent', 'developer', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -1993,12 +1959,10 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2077,10 +2041,8 @@ async def test_create_chat_session_rejects_invalid_tilde_alias_targets(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2127,12 +2089,10 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2171,7 +2131,7 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_global_recipient_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
+async def test_create_chat_session_global_recipient_allows_explicit_inbound_mode_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2181,10 +2141,8 @@ async def test_create_chat_session_global_recipient_ignores_legacy_nobody_when_i
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'nobody')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2217,7 +2175,7 @@ async def test_create_chat_session_global_recipient_ignores_legacy_nobody_when_i
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_to_global_address_ignores_legacy_nobody_when_inbound_mode_defaults_open(aweb_cloud_db):
+async def test_create_chat_session_to_global_address_allows_explicit_inbound_mode_open(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2227,10 +2185,8 @@ async def test_create_chat_session_to_global_address_ignores_legacy_nobody_when_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'nobody')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2264,6 +2220,49 @@ async def test_create_chat_session_to_global_address_ignores_legacy_nobody_when_
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_global_recipient_null_inbound_mode_fails_migration_required(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob-migration', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'persistent', 'developer', NULL)
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_dids": ["did:aw:bob-migration"], "message": "blocked"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 403, resp.text
+    assert "inbound_mode migration required" in resp.text
+    contact_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*) FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice'
+          AND contact_address = 'otherco.com/bob-migration'
+        """
+    )
+    assert contact_count == 0
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agent(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -2274,10 +2273,8 @@ async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agen
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'nobody')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'open')
         """
     )
 
@@ -2312,10 +2309,8 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2358,10 +2353,8 @@ async def test_create_chat_session_to_address_uses_same_team_local_recipient_whe
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open')
         """,
         recipient_lifetime,
     )
@@ -2407,10 +2400,8 @@ async def test_create_chat_session_to_address_rejects_cross_team_local_persisten
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2449,10 +2440,8 @@ async def test_create_chat_session_to_did_and_address_uses_local_persistent_when
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2498,10 +2487,8 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open')
         """,
         recipient_lifetime,
     )
@@ -2564,10 +2551,8 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
         """
     )
 
@@ -2626,12 +2611,10 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2678,12 +2661,10 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2747,12 +2728,10 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2814,12 +2793,10 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2881,12 +2858,10 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(awe
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2947,13 +2922,11 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -3014,12 +2987,10 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -3080,12 +3051,10 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -3202,12 +3171,10 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -3300,18 +3267,16 @@ async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_sessi
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         alice_did_key,
     )
     bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
-        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
-        VALUES ('backend:acme.com', 'bob', $1, 'did:aw:bob', 'acme.com/bob',
-                'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, inbound_mode)
+        VALUES ('backend:acme.com', 'bob', $1, 'did:aw:bob', 'acme.com/bob', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         bob_did_key,
@@ -3745,13 +3710,11 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone'),
-            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'everyone')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open'),
+            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -3967,13 +3930,8 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES (
-            'support:juan.aweb.ai', 'did:key:amy', 'did:aw:amy',
-            'juan.aweb.ai/amy', 'amy', 'persistent', 'developer', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('support:juan.aweb.ai', 'did:key:amy', 'did:aw:amy', 'juan.aweb.ai/amy', 'amy', 'persistent', 'developer', 'open')
         """
     )
 
@@ -4061,12 +4019,10 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
         VALUES
-            ('ops:acme.com', 'did:key:alice', NULL, NULL, 'alice', 'ephemeral', 'developer', 'everyone'),
-            ('ops:acme.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'everyone')
+            ('ops:acme.com', 'did:key:alice', NULL, NULL, 'alice', 'ephemeral', 'developer', 'open'),
+            ('ops:acme.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'open')
         """
     )
 

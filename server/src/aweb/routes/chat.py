@@ -411,7 +411,6 @@ async def _external_chat_recipient_from_did_aw(registry_client, did_aw: str) -> 
         "did_aw": did_aw,
         "did_key": current_did,
         "delivery_origin": delivery_origin,
-        "messaging_policy": None,
         "external": True,
     }
 
@@ -798,8 +797,7 @@ async def _resolve_chat_targets(
                     "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
                     "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
                     "reachability": (getattr(resolution, "reachability", "") or "").strip(),
-                    "messaging_policy": None,
-                    "external": True,
+                                "external": True,
                 }
             resolved[resolution.did_aw] = row
             continue

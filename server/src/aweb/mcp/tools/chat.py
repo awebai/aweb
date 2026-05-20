@@ -354,8 +354,7 @@ async def chat_send(
                         "delivery_origin": registry_delivery_origin(resolved),
                         "reachability": (getattr(resolved, "reachability", "") or "public").strip()
                         or "public",
-                        "messaging_policy": None,
-                        "external": True,
+                                        "external": True,
                     }
             else:
                 try:

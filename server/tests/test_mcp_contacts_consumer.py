@@ -66,14 +66,10 @@ async def _seed_team(aweb_db) -> tuple[str, str]:
     )
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, messaging_policy
-        )
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, inbound_mode)
         VALUES
-            ($1, 'ops:acme.com', 'did:key:alice', 'did:aw:alice',
-             'acme.com/alice', 'alice', 'persistent', 'developer', 'active', 'everyone'),
-            ($2, 'ops:acme.com', 'did:key:bob', 'did:aw:bob',
-             'acme.com/bob', 'bob', 'persistent', 'developer', 'active', 'everyone')
+            ($1, 'ops:acme.com', 'did:key:alice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'active', 'open'),
+            ($2, 'ops:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -91,13 +87,8 @@ async def _seed_hosted_target(aweb_db) -> str:
     )
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, messaging_policy
-        )
-        VALUES (
-            $1, 'default:jane.aweb.ai', 'did:key:c3po', 'did:aw:c3po',
-            'jane.aweb.ai/c3po', 'c3po', 'persistent', 'developer', 'active', 'everyone'
-        )
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, inbound_mode)
+        VALUES ($1, 'default:jane.aweb.ai', 'did:key:c3po', 'did:aw:c3po', 'jane.aweb.ai/c3po', 'c3po', 'persistent', 'developer', 'active', 'open')
         """,
         c3po_agent_id,
     )
@@ -502,13 +493,13 @@ async def test_consumer_mcp_send_message_to_handle_contact_uses_recent_active_ag
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, created_at
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, inbound_mode, created_at
         )
         VALUES
             ($1, 'ops:acme.com', 'did:key:older', 'did:aw:older',
-             'acme.com/older', 'older', 'persistent', 'developer', 'active', '2026-01-01T00:00:00Z'),
+             'acme.com/older', 'older', 'persistent', 'developer', 'active', 'open', '2026-01-01T00:00:00Z'),
             ($2, 'ops:acme.com', 'did:key:recent', 'did:aw:recent',
-             'acme.com/recent', 'recent', 'persistent', 'developer', 'active', '2026-01-02T00:00:00Z')
+             'acme.com/recent', 'recent', 'persistent', 'developer', 'active', 'open', '2026-01-02T00:00:00Z')
         """,
         older_id,
         recent_id,

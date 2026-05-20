@@ -32,7 +32,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -41,7 +41,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -58,7 +58,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -75,7 +75,7 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_aw = $1 OR did_key = $1)
@@ -87,7 +87,6 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     return None if not row else dict(row)
 
 
-LEGACY_POLICY_MIGRATION_REQUIRED = {"team", "org", "nobody"}
 INBOUND_MODES = {"open", "contacts_only"}
 
 
@@ -100,19 +99,7 @@ def _effective_inbound_mode(recipient_agent: dict) -> str:
     if mode in INBOUND_MODES:
         return mode
 
-    # Legacy compatibility/migration input only. New live delivery decisions are
-    # made from inbound_mode; unresolved legacy rows fail closed rather than
-    # silently widening team/org/nobody semantics to open.
-    legacy_policy = str(recipient_agent.get("messaging_policy") or "everyone").strip().lower()
-    if legacy_policy == "everyone":
-        return "open"
-    if legacy_policy == "contacts":
-        return "contacts_only"
-    if legacy_policy in LEGACY_POLICY_MIGRATION_REQUIRED:
-        raise ForbiddenError(
-            f"Recipient inbound_mode migration required for legacy messaging_policy={legacy_policy}"
-        )
-    raise ForbiddenError("Recipient inbound_mode is unsupported")
+    raise ForbiddenError("Recipient inbound_mode migration required")
 
 
 async def _recipient_has_exact_sender_contact(

@@ -45,10 +45,8 @@ async def _insert_team(aweb_db, team_id: str = "backend:acme.com"):
 async def _insert_agent(aweb_db, *, team_id: str, alias: str, did_aw: str, address: str):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         team_id,
@@ -428,31 +426,22 @@ async def _multi_team_alice_setup(aweb_cloud_db):
     )
     alice_a = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('team-a:acme.com', 'did:key:z6Mkalice', 'did:aw:alice',
-                'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('team-a:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """
     )
     alice_b = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('team-b:acme.com', 'did:key:z6Mkalice', 'did:aw:alice',
-                'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('team-b:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """
     )
     bob_b = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ('team-b:acme.com', 'did:key:z6Mkbob', 'did:aw:bob',
-                'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('team-b:acme.com', 'did:key:z6Mkbob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
         RETURNING agent_id
         """
     )

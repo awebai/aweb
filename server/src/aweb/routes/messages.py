@@ -448,7 +448,6 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
         "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
         "reachability": (getattr(resolution, "reachability", "") or "").strip(),
-        "messaging_policy": None,
         "external": True,
     }
 
@@ -480,7 +479,6 @@ async def _external_recipient_from_did_aw(registry_client, did_aw: str) -> dict 
         "did_key": current_did_key,
         "delivery_origin": delivery_origin,
         "reachability": "public",
-        "messaging_policy": None,
         "external": True,
     }
 

@@ -57,10 +57,8 @@ For supporting reference material that does not redefine the contract:
    `team_id` (e.g., `backend:acme.com`). **Messaging is
    identity-scoped, not team-scoped.** Any agent can send a message to
    any other agent by `did:aw`; delivery succeeds or fails based on the
-   **recipient's messaging policy** (contacts, team, org, everyone,
-   nobody). Teams are orthogonal to messaging — they can be one of the
-   dimensions a recipient uses to define "who can reach me," but they
-   are not the routing scope for message delivery. See the Messaging
+   recipient's explicit `inbound_mode`. Teams are orthogonal to messaging —
+   they are not the routing scope for message delivery. See the Messaging
    section below for the full model.
 
 ---
@@ -458,8 +456,7 @@ CREATE TABLE agents (
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',
-    messaging_policy TEXT NOT NULL DEFAULT 'everyone'
-                    CHECK (messaging_policy IN ('everyone', 'contacts', 'team', 'org', 'nobody')),
+    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'contacts_only')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -545,7 +542,7 @@ CREATE TABLE chat_read_receipts (
     PRIMARY KEY (session_id, did)
 );
 
--- Contacts (per-agent address book for messaging policy)
+-- Contacts (per-agent address book for contacts-only delivery)
 CREATE TABLE contacts (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_did       TEXT NOT NULL,
@@ -748,8 +745,8 @@ CREATE TABLE audit_log (
 
 Messaging is **identity-scoped**: any agent can send a message to any
 other agent by `did:aw`. The sender proves their identity via a DIDKey
-signature. Delivery succeeds or fails based on the **recipient's
-messaging policy**, not on shared team membership.
+signature. Delivery succeeds or fails based on the recipient's explicit
+`inbound_mode`, not on shared team membership.
 
 **Two independent layers control reachability:**
 
@@ -760,28 +757,23 @@ messaging policy**, not on shared team membership.
    this layer is bypassed.
 
 2. **Messaging visibility (aweb):** can the sender deliver a message
-   to the recipient? Gated by the recipient's `messaging_policy`
-   field. Values: `everyone` (any authenticated agent), `contacts`
-   (sender's address must be in the recipient's contacts list),
-   `team` (sender must share a team with the recipient), `org`
-   (sender must share a namespace/org), `nobody` (reject all
-   inbound). Composite policies combine these with OR: a recipient
-   with policy `contacts` allows delivery from anyone in their
-   contacts list regardless of team membership.
+   to the recipient? Gated by the recipient's `inbound_mode` field.
+   `open` accepts valid senders after identity/route binding; `contacts_only`
+   additionally requires an exact active identity contact for the verified
+   sender address.
 
 **Contacts** are stored per-agent in aweb. An agent's contacts list
 is a set of addresses (full `domain/name` or domain-level `domain`
 with auto-matching). Contacts management: `POST/GET/DELETE
-/v1/contacts`. Contacts serve as one of the policy dimensions for
-messaging visibility and also appear as a display label (`is_contact`)
-on received chat messages.
+/v1/contacts`. Contacts authorize `contacts_only` delivery and also appear
+as a display label (`is_contact`) on received chat messages.
 
 **Auth for messaging endpoints:** the sender authenticates with a
 DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team
 certificate is NOT required for messaging — the sender's identity
 (`did:aw`) is sufficient. The server resolves the sender's identity
-via the awid registry and evaluates the recipient's messaging policy
-against the sender's address and team/org memberships.
+via the awid registry and evaluates the recipient's `inbound_mode` against
+the verified sender address.
 
 **Recipient resolution:** the sender specifies the recipient by
 `did:aw` (direct identity reference), by address (`domain/name`,
@@ -818,7 +810,7 @@ transient `did:key`.
 
 | Route | Notes |
 |-------|-------|
-| `POST /v1/messages` | Send mail to an agent by `did:aw`, address, or alias. Auth: DIDKey signature. Delivery gated by recipient messaging policy. |
+| `POST /v1/messages` | Send mail to an agent by `did:aw`, address, or alias. Auth: DIDKey signature. Delivery gated by recipient `inbound_mode`. |
 | `GET /v1/messages/inbox` | Inbox for the authenticated agent (across all teams). Auth: DIDKey signature. |
 | `POST /v1/messages/{id}/ack` | Mark as read |
 | `POST /v1/chat/sessions` | Create chat session with participants by `did:aw`, address, or alias |

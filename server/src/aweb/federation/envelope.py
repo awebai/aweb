@@ -42,7 +42,7 @@ class FederationEnvelope(BaseModel):
     sender_delivery_origin: str | None = Field(default=None, min_length=1, max_length=512)
     # Deprecated v1 compatibility fields accepted only to tolerate old senders
     # during a bounded rollout window. They are intentionally ignored by all
-    # routing, lookup, authorization, and policy checks.
+    # routing, lookup, authorization, and delivery checks.
     sender_active_team_id: str | None = None
     sender_team_certificate: dict[str, Any] | None = None
     target_address_lookup_authorization: str | None = None

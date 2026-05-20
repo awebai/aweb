@@ -23,10 +23,8 @@ async def _insert_team(aweb_db, team_id: str = "backend:acme.com"):
 async def _insert_agent(aweb_db, *, team_id: str, alias: str, did_aw: str, address: str):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
-        )
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', 'everyone')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', 'open')
         RETURNING agent_id
         """,
         team_id,

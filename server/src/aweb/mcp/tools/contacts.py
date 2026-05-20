@@ -301,7 +301,6 @@ async def _target_from_contact_reference(db_infra, *, contact: dict) -> dict:
         "address": address,
         "did_aw": "",
         "did_key": "",
-        "messaging_policy": None,
         "external": True,
     }
 
@@ -332,8 +331,7 @@ async def _resolve_contact_target(db_infra, *, registry_client, contact: dict) -
                 "address": address,
                 "did_aw": resolved.did_aw.strip(),
                 "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
-                "messaging_policy": None,
-                "external": True,
+                        "external": True,
             }
     if target is None:
         try:
@@ -348,8 +346,7 @@ async def _resolve_contact_target(db_infra, *, registry_client, contact: dict) -
             "address": address,
             "did_aw": "",
             "did_key": "",
-            "messaging_policy": None,
-            "external": True,
+                "external": True,
         }
     copied = dict(target)
     copied["address"] = (copied.get("address") or "").strip() or address
