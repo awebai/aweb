@@ -871,6 +871,7 @@ def _federated_chat_payload(
     body: str = "hello from another server",
     message_id: str | None = None,
     conversation_id: str | None = None,
+    signed_to_did: str | None = None,
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
@@ -885,7 +886,7 @@ def _federated_chat_payload(
             "message_id": message_id,
             "timestamp": timestamp,
             "to": target_address,
-            "to_did": target_did_key,
+            "to_did": signed_to_did or target_did_key,
             "to_stable_id": target_did_aw,
             "type": "chat",
         }
@@ -1268,6 +1269,95 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
     assert len(remote_requests) == 1
     registry.resolve_key.assert_not_called()
     registry.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_key(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    wrong_bob_key = "did:key:z6MkWrongBobKey"
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        """
+    )
+    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        VALUES ('backend:beta.example', $1, 'did:aw:bob', 'beta.example/bob', 'bob', 'persistent', 'developer', 'open')
+        RETURNING agent_id
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'chat', 'backend:beta.example', 'did:aw:alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4, 'local', 'participant')
+        """,
+        session_id,
+        alice_did_key,
+        bob_agent_id,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'backend:beta.example', 'did:aw:alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'https://sender.example', $2),
+            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4)
+        """,
+        session_id,
+        alice_did_key,
+        bob_agent_id,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("stored-route rejection must not rediscover target address"))
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_chat_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_address="did:aw:bob",
+        target_did_aw="did:aw:bob",
+        target_did_key=wrong_bob_key,
+        target_delivery_origin="https://recipient.example",
+        signed_to_did="did:aw:bob",
+        body="must reject before storing",
+        conversation_id=str(session_id),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/federation/messages", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert "Federation target current key mismatch" in resp.text
+    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
+    registry.resolve_address.assert_not_called()
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE session_id = $1",
+        session_id,
+    ) == 0
 
 
 @pytest.mark.asyncio

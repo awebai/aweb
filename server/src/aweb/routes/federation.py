@@ -333,6 +333,18 @@ async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, 
     return conversation["conversation_id"]
 
 
+def _validate_stored_target_current_key(*, envelope: FederationEnvelope, participant: dict | None) -> None:
+    target_did = str(envelope.target_did_aw or "").strip()
+    target_key = str(envelope.target_current_did_key or "").strip()
+    if _is_local_did_key(target_did):
+        if target_key != target_did:
+            raise HTTPException(status_code=422, detail="Federation target current key mismatch")
+        return
+    stored_key = str((participant or {}).get("current_did_key") or "").strip()
+    if stored_key and stored_key != target_key:
+        raise HTTPException(status_code=422, detail="Federation target current key mismatch")
+
+
 async def _federated_stored_route_continuation_exists(db, envelope: FederationEnvelope) -> bool:
     if not envelope.conversation_id:
         return False
@@ -342,8 +354,35 @@ async def _federated_stored_route_continuation_exists(db, envelope: FederationEn
     if conversation.get("conversation_type") != envelope.type:
         return False
     participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
-    dids = {item["did"] for item in participants}
-    return envelope.sender_did_aw in dids and envelope.target_did_aw in dids
+    by_did = {item["did"]: item for item in participants}
+    if envelope.sender_did_aw not in by_did or envelope.target_did_aw not in by_did:
+        return False
+    _validate_stored_target_current_key(envelope=envelope, participant=by_did.get(envelope.target_did_aw))
+
+    if envelope.type == "chat":
+        aweb_db = db.get_manager("aweb")
+        existing_session = await aweb_db.fetch_one(
+            "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
+            UUID(envelope.conversation_id),
+        )
+        if existing_session is None:
+            return False
+        session_participants = await aweb_db.fetch_all(
+            """
+            SELECT did, current_did_key
+            FROM {{tables.chat_participants}}
+            WHERE session_id = $1
+              AND did = ANY($2::text[])
+            """,
+            UUID(envelope.conversation_id),
+            [envelope.sender_did_aw, envelope.target_did_aw],
+        )
+        session_by_did = {item["did"]: item for item in session_participants}
+        if envelope.sender_did_aw not in session_by_did or envelope.target_did_aw not in session_by_did:
+            raise HTTPException(status_code=403, detail="Federation chat session participants mismatch")
+        _validate_stored_target_current_key(envelope=envelope, participant=session_by_did.get(envelope.target_did_aw))
+
+    return True
 
 
 async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recipient: dict) -> str:
@@ -463,6 +502,9 @@ async def receive_federated_message(
         recipient = await resolve_agent_by_did(db, envelope.target_current_did_key)
     if recipient is None:
         raise HTTPException(status_code=404, detail="Federation recipient agent not found")
+    recipient_did_key = str(recipient.get("did_key") or "").strip()
+    if recipient_did_key and recipient_did_key != envelope.target_current_did_key:
+        raise HTTPException(status_code=422, detail="Federation target current key mismatch")
 
     if _is_local_did_key(envelope.target_did_aw) and not stored_route_continuation:
         detail = "Local did:key target requires an existing session" if envelope.type == "chat" else "Local did:key target requires an existing conversation"

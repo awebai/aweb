@@ -3038,6 +3038,7 @@ def _federated_mail_payload(
     priority: str = "normal",
     message_id: str | None = None,
     conversation_id: str | None = None,
+    signed_to_did: str | None = None,
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
@@ -3054,7 +3055,7 @@ def _federated_mail_payload(
             "subject": subject,
             "timestamp": timestamp,
             "to": target_address,
-            "to_did": target_did_key,
+            "to_did": signed_to_did or target_did_key,
             "to_stable_id": target_did_aw,
             "type": "mail",
         }
@@ -3531,6 +3532,72 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
     assert missing_key.status_code == 422, missing_key.text
     assert missing_key.json()["detail"] == "Remote mail recipient stored route is missing current did:key"
     assert len(remote_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_federated_mail_stored_route_rejects_wrong_target_current_key(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    wrong_bob_key = "did:key:z6MkWrongBobKey"
+    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:beta.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="beta.example/bob",
+    )
+    conversation_id = str(uuid4())
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'mail', 'default:beta.example', 'did:aw:alice')
+        """,
+        UUID(conversation_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4, 'local', 'participant')
+        """,
+        UUID(conversation_id),
+        alice_did_key,
+        bob_agent_id,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("stored-route rejection must not rediscover target address"))
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_mail_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_address="did:aw:bob",
+        target_did_aw="did:aw:bob",
+        target_did_key=wrong_bob_key,
+        target_delivery_origin="https://recipient.example",
+        signed_to_did="did:aw:bob",
+        subject="wrong key continuation",
+        body="must reject before storing",
+        conversation_id=conversation_id,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/federation/messages", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert "Federation target current key mismatch" in resp.text
+    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
+    registry.resolve_address.assert_not_called()
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE conversation_id = $1",
+        UUID(conversation_id),
+    ) == 0
 
 
 @pytest.mark.asyncio
