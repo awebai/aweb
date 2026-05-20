@@ -150,15 +150,16 @@ aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
 # Signs an ephemeral certificate for that key
 ```
 
-#### Hosted identities
+#### Hosted teams and hosted identities
 
-A hosted operator (like app.aweb.ai) manages namespaces on your behalf.
-Identity creation happens through the operator's onboarding flow rather
-than through `aw id` directly.  See the
-[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for the hosted
-onboarding paths, including `aw init` (interactive wizard),
-`AWEB_API_KEY`-based bootstrap, and `aw workspace add-worktree` for
-adding ephemeral agents to an existing team.
+A hosted operator (like app.aweb.ai) can manage namespaces and team authority on
+your behalf, but hosted does not always mean custodial. Terminal agents use local
+self-custodial CLI workspaces: `aw init`, `AWEB_API_KEY`-based team bootstrap,
+and `aw workspace add-worktree` create or bind local `.aw/` state and local
+signing keys. Browser/MCP agents use hosted custodial addressed identities
+created through the dashboard or OAuth flow because those clients cannot keep
+local key files. See the [aweb agent guide](https://aweb.ai/docs/agent-guide.md)
+for the hosted onboarding paths.
 
 ---
 

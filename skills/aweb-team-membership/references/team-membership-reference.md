@@ -13,7 +13,7 @@ These layers can combine in multiple ways. Do not assume one from another. The c
 
 Fully Hosted means aweb operates namespace and team authority for hosted domains such as `*.aweb.ai`. It can mint hosted team certificates and provide simple onboarding. This is the simple default for most users.
 
-Hosted OAuth/bootstrap flows may provision identity, personal team, and harness credentials before a local CLI workspace exists. In those flows, use CLI checks for diagnosis only; do not force BYOT setup.
+Hosted OAuth/MCP flows provision custodial addressed/global identities, personal team membership, and harness credentials before a local CLI workspace exists. Team API-key CLI bootstrap is different: it creates a local self-custodial CLI workspace in a hosted team. In OAuth/MCP flows, use CLI checks for diagnosis only when a local workspace is actually involved; do not force BYOT setup.
 
 ## BYOT
 
@@ -34,16 +34,17 @@ aw id team import-request --namespace <domain> --team <team> --organization-id <
 
 Use current `aw ... --help` for exact flags. Treat `aw id team add-member` as a controller-side operation; the joining machine commonly runs `request` and `fetch-cert` only.
 
-## Reachability vs access-mode
+## Addressability, inbound mode, and contacts
 
-Directory reachability and contact-add policy are separate:
+Addressability and delivery authorization are separate:
 
-- Reachability flags/fields control directory visibility with tiers `nobody`, `org_only`, `team_members_only`, and `public`.
-- The `access_mode` field controls who may add the identity as a contact.
+- First contact uses a concrete address route (`domain/alias`).
+- `did:aw` is identity binding, not a first-contact delivery route.
+- `inbound_mode=open|contacts_only` controls delivery after route validation.
+- Exact active identity contacts authorize `contacts_only`; contacts do not create routes or resolver visibility.
+- Legacy reachability/access-mode fields may still appear in support or migration output, but they are compatibility/audit state, not live delivery authority.
 - `aw contacts ...` manages saved contact relationships.
 - `aw directory <domain>/<alias>` performs directory lookup.
-
-Do not use contact-only language as a reachability tier.
 
 ## Multi-team safety checklist
 

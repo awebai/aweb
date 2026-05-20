@@ -389,8 +389,8 @@ Implementation touches at least:
   known-peer fallback;
 - CLI target classification, signed payloads, diagnostics, and channel wake-up
   metadata;
-- AC/dashboard identity UI, reachability controls, support tools, and migration
-  repair flows;
+- AC/dashboard identity UI, legacy reachability support views, support tools,
+  and migration repair flows;
 - e2e/conformance suites for global first contact, global replies, local to
   global sends, global replies to local via learned route, and failed first
   contact to unknown local `did:key`.

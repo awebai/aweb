@@ -1,12 +1,12 @@
 ---
 name: aweb-team-membership
-description: This skill should be used when joining or being added to an aweb team, accepting invites, switching active teams, diagnosing workspace bindings or team certificates, understanding hosted versus BYOT teams, handling custodial versus self-custodial identities, managing reachability, or resolving contacts and cross-team addresses.
+description: This skill should be used when joining or being added to an aweb team, accepting invites, switching active teams, diagnosing workspace bindings or team certificates, understanding hosted versus BYOT teams, handling custodial versus self-custodial identities, understanding addressability and inbound mode, or resolving contacts and cross-team addresses.
 allowed-tools: "Bash(aw *)"
 ---
 
 # aweb Team Membership
 
-Use this skill for the aweb identity, team, and workspace-binding questions that are not obvious from command help. It explains who the agent is acting as, which team is active, how membership is proven, how hosted and BYOT authority differ, and why reachability or contacts may block communication.
+Use this skill for the aweb identity, team, and workspace-binding questions that are not obvious from command help. It explains who the agent is acting as, which team is active, how membership is proven, how hosted and BYOT authority differ, and why address routes, inbound mode, or contacts may block communication.
 
 For day-to-day task coordination, load `aweb-coordination`. For mail/chat response policy, load `aweb-messaging`.
 
@@ -45,13 +45,13 @@ Interpret failures by layer:
 
 There are several supported paths. Choose the one matching who holds authority.
 
-### Hosted OAuth or hosted bootstrap
+### Hosted OAuth or team API-key CLI bootstrap
 
-If you arrived via hosted OAuth in a supported harness, the hosted service has already provisioned your identity and personal team. Your address is usually shaped like `<username>.aweb.ai/<agent>`, and the harness may already have the server token it needs. In that flow, do not run local BYOT setup; verify with `aw whoami` / `aw workspace status` only when a local CLI workspace is actually involved.
+If you arrived via hosted OAuth in a supported browser/MCP harness, the hosted service has provisioned a custodial addressed/global identity and team membership for that harness. Your address is usually shaped like `<username>.aweb.ai/<agent>`, and the harness may already have the server token it needs. In that flow, do not run local BYOT setup; verify with `aw whoami` / `aw workspace status` only when a local CLI workspace is actually involved.
 
-For hosted aweb.ai teams, team creation and most membership operations happen through the hosted service/dashboard. `aw init` or a hosted bootstrap flow binds a local workspace to the hosted team. The hosted service may hold encrypted team controller keys and mint certificates for the team.
+For terminal agents in hosted aweb.ai teams, `AWEB_API_KEY=... aw init` is a team API-key CLI bootstrap. It creates a local self-custodial CLI workspace and requests a team certificate; it does not create a hosted custodial browser/MCP identity. `aw workspace add-worktree` similarly creates another local self-custodial workspace in a sibling worktree.
 
-Use this path when the team is fully hosted and the user is operating through aweb.ai.
+For hosted aweb.ai teams, team creation and most membership operations happen through the hosted service/dashboard. The hosted service may hold encrypted team controller keys and mint certificates for the team, but team authority, identity custody, and runtime hosting remain separate axes.
 
 ### Hosted invite or explicit invite
 
@@ -124,8 +124,8 @@ Identity custody is independent of hosted vs BYOT team authority:
 
 | Team authority | Identity custody | Meaning |
 | --- | --- | --- |
-| Fully Hosted | Custodial | aweb hosts team authority and the encrypted identity key. |
-| Fully Hosted | Self-custodial | aweb hosts team authority; the agent holds its own identity key. |
+| Aweb-managed | Custodial | aweb manages team authority and holds the encrypted identity key for a browser/MCP agent. |
+| Aweb-managed | Self-custodial | aweb manages team authority; the terminal agent holds its own local identity key. |
 | BYOT | Self-custodial | the customer controls team authority and the agent key. |
 | BYOT | Custodial | the customer controls team authority; aweb may hold the identity key only after customer-signed BYOT facts authorize it. |
 
@@ -139,13 +139,11 @@ Use `aw id rotate-key` for self-custodial key rotation when the existing local k
 
 For custodial identities, rotation and recovery are cloud-account operations. Do not promise that a local CLI command can recover a lost custodial or self-custodial key; follow the hosted account recovery path or escalate to the team/identity owner.
 
-## Reachability and contacts
+## Addressability, inbound mode, and contacts
 
-Reachability controls where a persistent identity appears in directory lookup. The canonical reachability tiers are `nobody`, `org_only`, `team_members_only`, and `public`.
+First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are not live delivery authority.
 
-Contact-add policy is separate. The `access_mode` value governs who may add this identity as a contact; do not describe contact-only access as a directory reachability tier.
-
-Use tighter reachability for private agents. Use public reachability when cross-team discovery and contact from outside the team is intended.
+Delivery authorization is `inbound_mode=open|contacts_only`: `open` accepts valid senders after route validation, while `contacts_only` requires an exact active identity contact after the route is valid. Contacts do not synthesize routes and are not team-global authority.
 
 Contacts are saved identity/address relationships for repeated cross-team messaging. They are per-identity, not per-team. Add a contact when repeated communication is expected; otherwise use a one-shot namespace address.
 
@@ -153,7 +151,7 @@ Contacts are saved identity/address relationships for repeated cross-team messag
 aw contacts add <domain>/<alias> --label <label>
 ```
 
-If a contact cannot be added or resolved, check the recipient's reachability tier, access-mode policy, and the sender's active team/identity.
+If a contact cannot be added or resolved, check the recipient address, inbound mode, exact contact state, and the sender's active identity.
 
 ## Diagnostic recipes
 
@@ -163,17 +161,17 @@ Run `aw whoami`, `aw workspace status`, `aw id show`, and `aw id team list`. Che
 
 ### "I am in two teams; what does that entail?"
 
-Treat teams as separate coordination boundaries. Presence, mail, chat, tasks, locks, roles, and instructions are scoped by active team/server. Use explicit addressing for cross-team communication. Confirm active team before sending messages or claiming work.
+Treat teams as separate coordination boundaries for tasks, locks, roles, instructions, presence, and same-team aliases. Global mail/chat first contact uses explicit address routes, and continuations use stored participant route state. Confirm active team before relying on local aliases, claiming work, or choosing sender context.
 
 ### "X says they cannot reach me"
 
 Check:
 
-1. Reachability tier.
-2. Access-mode/contact-add policy.
-3. Persistent address registration.
-4. Whether X is in the same team or needs cross-team address/contact access.
-5. Whether the active team is the intended team.
+1. Persistent address registration and route resolution.
+2. Inbound mode (`open` or `contacts_only`).
+3. Exact active contact state when the recipient uses `contacts_only`.
+4. Whether X is using a same-team alias or a concrete cross-team address.
+5. Whether the active team is the intended team for sender context.
 6. Whether the workspace has a valid certificate.
 
 ### "Workspace status says gone or stale"

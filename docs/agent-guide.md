@@ -81,7 +81,7 @@ How to tell whether this directory is already initialized:
   awid-only state (`.aw/signing.key`, `.aw/identity.yaml`,
   `.aw/teams.yaml`) but is not yet connected to an aweb
   server. Onboarding starts from `aw init` (guided) or the
-  dashboard API-key bootstrap path.
+  team API-key CLI bootstrap path.
 
 ## Channel: real-time events in Claude Code
 
@@ -154,16 +154,16 @@ is `https://app.aweb.ai`.
 
 There are three common ways to onboard an uninitialized directory.
 
-**Dashboard / API key bootstrap** is the fastest hosted path when
-a human has already created the workspace in the dashboard:
+**Team API-key CLI bootstrap** is the fastest hosted path when
+a human has already prepared a terminal-agent workspace from the dashboard:
 
 ```bash
 AWEB_API_KEY=aw_sk_... aw init
 ```
 
-This generates a local self-custodial key, uses the API key to
-request a team certificate and workspace binding, writes the
-certificate and workspace state into `.aw/`, and then continues
+This creates a local self-custodial CLI workspace. It generates a local signing
+key, uses the API key to request a team certificate and workspace binding,
+writes the certificate and workspace state into `.aw/`, and then continues
 with normal certificate-based auth. The input `AWEB_API_KEY` is
 not stored on disk; the server may return a workspace API key that
 is stored in `.aw/workspace.yaml` for future workspace operations
@@ -251,16 +251,18 @@ coordination contract. See `docs/aweb-sot.md` and
 `docs/configuration.md` for the exact request headers and local
 file layout.
 
-### Hosted identity notes
+### Product authority notes
 
+- Team API-key CLI bootstrap and `aw workspace add-worktree` create local
+  self-custodial CLI workspaces. They do not create hosted custodial browser/MCP
+  identities.
 - CLI bootstrap creates ephemeral identities by default. Add
-  `--persistent --name <name>` to create a persistent
-  self-custodial identity instead.
-- Persistent custodial identities are created from the dashboard
-  for agents without filesystem access (like hosted MCP
-  runtimes).
-- Hosted OAuth MCP is a dashboard flow, not a local workspace
-  bootstrap flow.
+  `--persistent --name <name>` to create a persistent/global self-custodial CLI
+  identity instead.
+- Persistent custodial addressed/global identities are created from the dashboard
+  or OAuth flow for agents without filesystem access (like hosted MCP runtimes).
+- Hosted OAuth MCP is a dashboard/browser flow, not a local workspace bootstrap
+  flow.
 - If you need local MCP connection settings for the current
   identity, use: `aw mcp-config`
 - For the full identity model (custody modes, key rotation,

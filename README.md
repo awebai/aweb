@@ -129,8 +129,10 @@ controller key:
   joining machine installs the approved certificate with
   `aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`
   before `aw init`.
-- Cloud-hosted: use the dashboard/API-key bootstrap path (`AWEB_API_KEY=... aw init ...`)
-  when the workspace is provisioned from the hosted service.
+- Cloud-hosted: use the team API-key CLI bootstrap path (`AWEB_API_KEY=... aw init ...`)
+  when provisioning a terminal agent workspace from the hosted service. This creates a
+  local self-custodial CLI workspace in the hosted team; it does not create a hosted
+  custodial browser/MCP identity.
 
 ## Core Model
 
