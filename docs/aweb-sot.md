@@ -24,6 +24,9 @@ For supporting reference material that does not redefine the contract:
 - [`global-local-identity-routing.md`](global-local-identity-routing.md) —
   supporting SOT for the shipped route-level global/local messaging contract
   and the legacy reachability/conversation-auth cleanup path
+- [`product-authority-sot.md`](product-authority-sot.md) — supporting SOT for
+  identity custody, addressability, team authority, runtime hosting, app
+  portability, and the supported terminal/browser composition paths
 - The aweb server's REST API is documented by the live FastAPI
   `/docs` OpenAPI viewer, auto-generated from route signatures.
   There is no hand-maintained `server-api-reference.md` — a previous

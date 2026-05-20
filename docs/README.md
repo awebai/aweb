@@ -24,6 +24,9 @@ These documents define the system:
 - [global-local-identity-routing.md](global-local-identity-routing.md):
   supporting SOT for the shipped route-level global/local messaging contract
   and the legacy reachability/conversation-auth cleanup path
+- [product-authority-sot.md](product-authority-sot.md): supporting SOT for
+  identity custody, addressability, team authority, runtime hosting, app
+  portability, and the supported terminal/browser composition paths
 - [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
   engineering contract for the two supported onboarding shapes: Fully Hosted
   and BYOT
