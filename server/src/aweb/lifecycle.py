@@ -251,7 +251,7 @@ def _validate_request(request: LifecycleCascadeRequest) -> list[LifecycleError]:
         errors.append(
             LifecycleError(
                 code="conflicting_agent_lifecycle_action",
-                message="Global archive cannot also mark an local agent deleted.",
+                message="Global archive cannot also mark a local agent deleted.",
             )
         )
     return errors

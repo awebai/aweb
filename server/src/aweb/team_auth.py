@@ -71,9 +71,9 @@ def parse_and_verify_certificate(
             True if the certificate has been revoked.
 
     Returns:
-        Dict with team_id, alias, did_key, lifetime, certificate_id,
-        member_did_aw, member_address. The last two are empty strings for
-        ephemeral certificates.
+        Dict with team_id, alias, did_key, identity_scope, certificate_id,
+        member_did_aw, member_address, plus compatibility lifetime. The last
+        two identity fields are empty strings for local certificates.
 
     Raises:
         ValueError: If the certificate is invalid, tampered, revoked, or mismatched.
