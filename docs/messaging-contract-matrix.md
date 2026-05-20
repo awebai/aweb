@@ -12,20 +12,21 @@ than we re-grounded them against all messaging use cases.
 
 The intended authority split is:
 
-- `awid` owns identity, address bindings, reachability, team membership,
-  certificates, and key rotation.
+- `awid` owns identity, address bindings, route/delivery metadata, team
+  membership, certificates, and key rotation.
 - `aweb` owns coordination state: mail, chat, conversations, tasks, roles, and
   workspace behavior.
-- Address reachability controls first contact and discovery.
-- Once a conversation exists, replies are authorized by conversation
-  participation, not by re-running public address discovery.
+- Address resolution controls first contact routing; delivery authorization is
+  the recipient's aweb `inbound_mode`.
+- Once a conversation exists, replies are authorized by stored conversation
+  participation and route state, not by re-running address discovery.
 - A persistent identity can belong to multiple teams without becoming a new
   identity.
 - Bare aliases are local to the active team/namespace. Cross-namespace
   communication uses an address or an explicit selector.
 
-This is necessary complexity for BYOIDT, hosted identities, non-public
-addresses, key rotation, and multi-team membership. The main architectural smell
+This is necessary complexity for BYOIDT, hosted identities, address routing,
+key rotation, and multi-team membership. The main architectural smell
 is duplicated authority: some routes historically inferred visibility from mail
 rows, while conversation continuation relies on `conversation_participants`.
 Conversation participants must be the authority for existing conversations.
@@ -38,12 +39,14 @@ The release gate must cover these cases for both mail and chat where applicable:
 2. Same-team full address.
 3. Same-team alias-first, then full-address continuation.
 4. Cross-team same namespace with explicit team selector.
-5. Cross-namespace public address first contact.
-6. Non-public address first contact with a valid team certificate.
-7. Non-public address first contact without authorization fails closed.
-8. Reply by existing `conversation_id` after first contact, even if the address
-   is hidden.
-9. Direct `did:aw` send, independent of address reachability.
+5. Cross-namespace address first contact with `inbound_mode=open`.
+6. Cross-namespace address first contact with `inbound_mode=contacts_only` and
+   an exact active identity contact.
+7. Cross-namespace address first contact without a valid route or required
+   exact contact fails closed.
+8. Reply by existing participant route after first contact, without re-running
+   address discovery.
+9. Direct `did:aw` send, independent of address visibility metadata.
 10. Key rotation preserves conversation continuity.
 11. Ephemeral local identity: team-local alias only.
 12. Persistent identity in multiple teams: active team selects sender context.
@@ -59,12 +62,13 @@ The release gate must cover these cases for both mail and chat where applicable:
 
 ## Current Documentation Anchors
 
-- `docs/awid-sot.md`: identity, address, team certs, reachability.
+- `docs/awid-sot.md`: identity, address, delivery metadata, team certs, and
+  legacy reachability compatibility/audit state.
 - `docs/aweb-sot.md`: aweb coordination and identity-scoped messaging.
 - `docs/identity-messaging-contract.md`: messaging authority split and direct
   address send protocol.
 - `docs/contributing.md`: release validation expectations.
-- `scripts/e2e-oss-user-journey.sh`: executable OSS messaging/reachability
+- `scripts/e2e-oss-user-journey.sh`: executable OSS messaging and inbound-mode
   matrix.
 
 ## Release Discipline

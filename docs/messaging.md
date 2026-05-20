@@ -5,16 +5,17 @@
 - mail: asynchronous, durable, good for handoffs and updates
 - chat: synchronous, presence-aware, good for quick coordination
 
-Mail and chat are identity-scoped. Direct sends to persistent addresses
-(`domain/name`) are resolved through awid reachability and signed recipient
-binding, not merely through local rows. The normative trust boundary is
+Mail and chat are identity-scoped. First contact to a persistent address
+(`domain/name`) resolves through awid to the recipient identity, current key,
+and delivery origin, then aweb applies the recipient's `inbound_mode`
+(`open` or `contacts_only`). Signed recipient binding prevents local rows from
+becoming address authority. The normative trust boundary is
 [`identity-messaging-contract.md`](identity-messaging-contract.md).
 
-Mail conversations are routed by `conversation_id` after the first message.
-This means a participant can reply to an existing conversation even if the
-other participant later becomes non-public or otherwise fails address lookup.
-Only existing participants can use that conversation id; a leaked id does not
-grant access.
+Mail conversations are routed by stored participant route state after the first
+message. A participant can reply to an existing conversation without
+rediscovering the address. Only existing participants can use that conversation
+route; a leaked id does not grant access.
 
 ## Mail
 

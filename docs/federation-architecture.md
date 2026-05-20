@@ -89,9 +89,8 @@ sender can belong to several teams, and they may or may not share any team.
 Choosing one recipient team as the delivery route is a phantom decision: the
 message is addressed to `domain/name`, not to one of the recipient's teams.
 
-The sender's active team still matters for sender context and for presenting a
-team certificate to awid when a non-public address requires one. It should not
-choose the recipient's inbox server.
+The sender's active team may select sender context such as the sender address.
+It does not choose the recipient's inbox server or authorize recipient delivery.
 
 ### Why Namespace
 
@@ -133,7 +132,6 @@ Address lookup would return identity and delivery metadata:
   "address": "beta.example/bob",
   "did_aw": "did:aw:...",
   "current_did_key": "did:key:...",
-  "reachability": "public",
   "delivery": {
     "origin": "https://aweb.beta.example",
     "source": "namespace_default"
@@ -175,9 +173,6 @@ When Alice sends to `beta.example/bob`:
 6. Alice's aweb server wraps that preserved signed payload in a federation
    transport envelope that adds:
    - sender delivery origin, as route metadata for replies
-   - sender active team id, if any
-   - sender active team certificate, when it was presented to awid to satisfy
-     non-public target reachability
    - target delivery origin
 7. Alice's aweb server sends the federation request to the target delivery
    origin.
@@ -235,7 +230,7 @@ route metadata, not identity authority. The sender identity authority remains
 the preserved sender-signed mail/chat payload and AWID current-key check.
 
 This is what lets a local or legacy address reply after first contact:
-conversation participation stores the reply route; address reachability is not
+conversation participation stores the reply route; address rediscovery is not
 routing authority.
 
 ## Direct `did:aw` Sends
@@ -266,10 +261,9 @@ did:aw:athena
   member of backend:alpha.example -> https://aweb.alpha.example
 ```
 
-Sending always uses the active team context. That selected team determines:
+Sending may use the active team context to choose local sender presentation.
+That selected context determines:
 
-- sender certificate
-- sender policy context
 - sender address for that team, if any
 - sender route metadata for replies
 
@@ -288,8 +282,8 @@ hosts that team.
 
 Cross-server team membership can still exist because membership is a
 certificate, not proof that the member's address inbox lives on the same server.
-That certificate may be needed to resolve or send to a non-public address. It
-does not create a cross-server task store.
+That certificate does not create a cross-server task store or authorize
+recipient delivery.
 
 ## Required OSS Changes
 
@@ -351,8 +345,8 @@ whose target delivery origin does not match this configured origin.
 
 The recipient-side endpoint is `POST /v1/federation/messages`. The auth mode is
 explicit: a remote server does not need a local workspace row for the sender;
-the recipient authenticates the signed identity envelope and any presented team
-certificate.
+the recipient authenticates the signed identity envelope and applies recipient
+`inbound_mode`.
 
 ### aweb CLI
 
@@ -383,15 +377,13 @@ Required OSS tests before shipping:
 
 - namespace lookup returns default delivery origin
 - address lookup returns inherited delivery metadata
-- public cross-server mail first contact
-- public cross-server chat first contact
-- reply by conversation id across servers
-- non-public address with authorized team certificate
-- non-public address without authorization fails closed
+- cross-server mail first contact with `inbound_mode=open`
+- cross-server chat first contact with `inbound_mode=open`
+- cross-server contacts-only first contact with an exact active identity contact
+- cross-server contacts-only first contact without an exact contact fails closed
+- reply by stored participant route across servers
 - recipient-binding mismatch fails closed
 - replayed federation envelope is idempotent and not double-delivered
-- non-public federation send carries the sender team certificate and recipient
-  server re-verifies it
 - multi-team identity sends from selected team and uses the selected sender
   context
 - local same-server behavior remains unchanged
@@ -472,5 +464,5 @@ The smallest coherent implementation is:
 6. replies by existing conversation id
 7. inbound federation replay/idempotency protection
 
-That gives real federation for public and authorized private addresses while
-leaving team coordination local.
+That gives real federation for address-routed mail/chat while leaving team
+coordination local.

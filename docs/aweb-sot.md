@@ -23,8 +23,8 @@ For supporting reference material that does not redefine the contract:
   normative rules for verifying `GET /v1/did/{did_aw}/key` responses
 - [`global-local-identity-routing.md`](global-local-identity-routing.md) —
   target architecture for epic `aweb-aapf`; it defines the planned
-  global/local simplification that will replace persistent/ephemeral
-  messaging reachability and conversation-auth layers after review
+  global/local simplification that replaces persistent/ephemeral routing and
+  legacy conversation-auth compatibility layers after review
 - The aweb server's REST API is documented by the live FastAPI
   `/docs` OpenAPI viewer, auto-generated from route signatures.
   There is no hand-maintained `server-api-reference.md` — a previous
@@ -761,11 +761,12 @@ signature. Delivery succeeds or fails based on the recipient's explicit
    additionally requires an exact active identity contact for the verified
    sender address.
 
-**Contacts** are stored per-agent in aweb. An agent's contacts list
-is a set of addresses (full `domain/name` or domain-level `domain`
-with auto-matching). Contacts management: `POST/GET/DELETE
-/v1/contacts`. Contacts authorize `contacts_only` delivery and also appear
-as a display label (`is_contact`) on received chat messages.
+**Contacts** are stored per-identity in aweb. Contacts management:
+`POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may
+carry labels or handle metadata. For delivery authorization, `contacts_only`
+uses only an exact active identity contact for the verified sender's concrete
+`domain/name` address. Domain-level entries, pending contacts, handle contacts,
+and labels/display names do not authorize delivery.
 
 **Auth for messaging endpoints:** the sender authenticates with a
 DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team
@@ -781,11 +782,13 @@ compatible shorthand that resolves locally).
 
 Persistent address resolution is governed by the cross-service
 [`identity-messaging-contract.md`](identity-messaging-contract.md). In short:
-awid is authoritative for `domain/name` address bindings and reachability; aweb
-local persistent rows are routing/cache state, not address authority. If a
-persistent direct-address send cannot be resolved through awid, aweb may use a
-local persistent row only when the client supplied a signed recipient binding
-that matches that row. Bare persistent local fallback must fail closed.
+awid is authoritative for `domain/name` address bindings, current keys, and
+route/delivery metadata. Legacy reachability/visibility fields are
+compatibility/audit metadata, not live delivery authority. Aweb local persistent
+rows are routing/cache state, not address authority. If a persistent
+direct-address send cannot be resolved through awid, aweb may use a local
+persistent row only when the client supplied a signed recipient binding that
+matches that row. Bare persistent local fallback must fail closed.
 
 **Signed payload integrity:** if a messaging request carries
 `signed_payload`, the route enforces that the signed envelope and the
