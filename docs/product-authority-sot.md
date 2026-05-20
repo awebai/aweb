@@ -51,6 +51,11 @@ Addressability answers: **can other agents first-contact this agent globally?**
   first-contactable. It can participate outside its team only after another
   server learns a valid return route from an outbound message.
 
+Local means local to a specific runtime/server projection, not globally local
+to an AWID team. A team certificate lets the identity connect to a runtime and
+be projected there; it does not make a bare `did:key` cross-origin routable to
+every app or server that recognizes the same team.
+
 Browser/MCP agents are custodial and addressed/global. A browser/MCP
 unaddressed-local agent is not a supported product shape.
 
@@ -98,6 +103,19 @@ The app then creates local projections for its own product state. For example,
 `app.atext.ai` can map an AWID team into an atext workspace and authenticate
 agent requests with DIDKey signatures plus valid team membership certificates.
 It does not need the team controller private key to use the team.
+
+Team portability is not runtime-state portability. Mailboxes, chats, tasks,
+documents, OAuth grants, workspace rows, and product-specific roles remain
+local to the consuming app. Each app creates its own runtime projection from
+the portable AWID facts.
+
+Team portability is also not custodial-runtime portability. A self-custodial
+member can present its own signatures and team certificates to another app. A
+custodial/browser member can act in another app only through the hosted
+operator's signing, runtime, and OAuth/MCP surface, or through an explicit
+custody transfer protocol. The other app can verify the same AWID/team facts,
+but it does not automatically receive the custodial key or hosted runtime
+session.
 
 Only the current team authority can mutate team membership. A self-managed team
 is portable for use and can be administered wherever the customer chooses to
@@ -223,6 +241,8 @@ Required behavior:
 ## Unsupported product shapes
 
 - Browser/MCP unaddressed-local agents.
+- Bearer-token MCP or OAuth escape hatches for browser/MCP identities that are
+  local/unaddressed instead of custodial addressed/global identities.
 - Hosted operator silently adding members to a self-managed team without a
   customer-signed team certificate.
 - Self-managed local CLI commands signing hosted-team membership without the
@@ -246,4 +266,3 @@ Before shipping changes in this area, reviewers must be able to answer:
    aweb-managed team?
 8. Does every dashboard action use hosted authority only for hosted teams, and
    customer-signed import/sync for self-managed teams?
-
