@@ -35,7 +35,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "persistent"),
+        "identity_scope": kwargs.get("identity_scope", "global"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -129,7 +129,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
         team_sk, team_did_key, agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
-        lifetime="persistent",
+        identity_scope="global",
     )
     cert_header = _encode_certificate(cert)
 
@@ -174,7 +174,7 @@ async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
         agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
-        lifetime="persistent",
+        identity_scope="global",
     )
     cert_header = _encode_certificate(cert)
 
@@ -264,7 +264,7 @@ async def test_connect_http_ephemeral_agents_store_no_stable_identity(aweb_cloud
         alice_did_key,
         team_id="default:local",
         alias="alice",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     bob_cert = _make_certificate(
         team_sk,
@@ -272,7 +272,7 @@ async def test_connect_http_ephemeral_agents_store_no_stable_identity(aweb_cloud
         bob_did_key,
         team_id="default:local",
         alias="bob",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     body = {"hostname": "Mac.local", "workspace_path": "/tmp/repo"}
     body_bytes = json.dumps(body).encode()
@@ -302,7 +302,7 @@ async def test_connect_http_ephemeral_agents_store_no_stable_identity(aweb_cloud
 
     rows = await aweb_cloud_db.aweb_db.fetch_all(
         """
-        SELECT alias, did_key, did_aw, address, lifetime
+        SELECT alias, did_key, did_aw, address, identity_scope
         FROM {{tables.agents}}
         WHERE team_id = 'default:local'
         ORDER BY alias
@@ -313,7 +313,7 @@ async def test_connect_http_ephemeral_agents_store_no_stable_identity(aweb_cloud
     assert rows[1]["did_key"] == bob_did_key
     assert all(row["did_aw"] is None for row in rows)
     assert all(row["address"] is None for row in rows)
-    assert all(row["lifetime"] == "ephemeral" for row in rows)
+    assert all(row["identity_scope"] == "local" for row in rows)
 
 
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
         team_sk, team_did_key, agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
-        lifetime="persistent",
+        identity_scope="global",
     )
 
     await aweb_cloud_db.aweb_db.execute(
@@ -343,8 +343,8 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, human_name, agent_type, role, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'Old Name', 'old-type', 'old-role', 'retired')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, human_name, agent_type, role, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'Old Name', 'old-type', 'old-role', 'retired')
         """,
         existing_agent_id,
         "backend:acme.com",
@@ -472,8 +472,8 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'global', 'active')
         """,
         first_agent_id,
         "backend:acme.com",
@@ -545,8 +545,8 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'global', 'active')
         """,
         existing_agent_id,
         "backend:acme.com",
@@ -604,7 +604,7 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db
         team_sk, team_did_key, agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
-        lifetime="persistent",
+        identity_scope="global",
     )
 
     await aweb_cloud_db.aweb_db.execute(
@@ -621,8 +621,8 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status, deleted_at)
-        VALUES ($1, $2, $3, $4, 'persistent', 'deleted', NOW())
+            (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at)
+        VALUES ($1, $2, $3, $4, 'global', 'deleted', NOW())
         """,
         deleted_agent_id,
         "backend:acme.com",

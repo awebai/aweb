@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from awid.team_ids import parse_team_id
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
+from aweb.identity_scope import normalize_identity_scope
 from aweb.team_auth_deps import verify_request_certificate
 
 router = APIRouter(prefix="/v1", tags=["connect"])
@@ -82,7 +83,7 @@ async def _ensure_agent(
     did_aw: str,
     address: str,
     alias: str,
-    lifetime: str,
+    identity_scope: str,
     human_name: str,
     agent_type: str,
     role: str,
@@ -90,7 +91,7 @@ async def _ensure_agent(
     """Find or create the agent row. Returns agent_id as string.
 
     did_aw and address come from the certificate's member_did_aw /
-    member_address fields. Empty strings are stored as NULL (ephemeral
+    member_address fields. Empty strings are stored as NULL (local
     certificates do not carry these fields).
     """
     existing_agent = await db.fetch_one(
@@ -110,13 +111,13 @@ async def _ensure_agent(
         await db.execute(
             """
             UPDATE {{tables.agents}}
-            SET did_aw = $1, address = $2, lifetime = $3, human_name = $4,
+            SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
                 agent_type = $5, role = $6, status = 'active'
             WHERE agent_id = $7
             """,
             did_aw or None,
             address or None,
-            lifetime,
+            identity_scope,
             human_name,
             agent_type,
             role,
@@ -143,7 +144,7 @@ async def _ensure_agent(
             """
             INSERT INTO {{tables.agents}}
                 (agent_id, team_id, did_key, did_aw, address,
-                 alias, lifetime, human_name, agent_type, role, inbound_mode)
+                 alias, identity_scope, human_name, agent_type, role, inbound_mode)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
             ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
             """,
@@ -153,7 +154,7 @@ async def _ensure_agent(
             did_aw or None,
             address or None,
             alias,
-            lifetime,
+            identity_scope,
             human_name,
             agent_type,
             role,
@@ -178,13 +179,13 @@ async def _ensure_agent(
             await db.execute(
                 """
                 UPDATE {{tables.agents}}
-                SET did_aw = $1, address = $2, lifetime = $3, human_name = $4,
+                SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
                     agent_type = $5, role = $6, status = 'active'
                 WHERE agent_id = $7
                 """,
                 did_aw or None,
                 address or None,
-                lifetime,
+                identity_scope,
                 human_name,
                 agent_type,
                 role,
@@ -361,7 +362,7 @@ async def connect_agent(
 
     Args:
         db: The aweb database manager.
-        cert_info: Verified certificate fields (team_id, alias, did_key, lifetime).
+        cert_info: Verified certificate fields (team_id, alias, did_key, identity scope).
         team_did_key: The team's public key from awid registry.
         hostname: Agent's hostname.
         workspace_path: Agent's workspace path.
@@ -376,7 +377,7 @@ async def connect_agent(
     team_id = cert_info["team_id"]
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
-    lifetime = cert_info["lifetime"]
+    identity_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
     did_aw = cert_info.get("member_did_aw", "")
     address = cert_info.get("member_address", "")
 
@@ -389,7 +390,7 @@ async def connect_agent(
         did_aw=did_aw,
         address=address,
         alias=alias,
-        lifetime=lifetime,
+        identity_scope=identity_scope,
         human_name=human_name,
         agent_type=agent_type,
         role=role,

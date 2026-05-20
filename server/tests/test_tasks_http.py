@@ -45,7 +45,7 @@ async def _fake_team_identity(request, db_infra) -> TeamIdentity:
         did_aw="did:aw:alice",
         address="acme.com/alice",
         agent_id=str(uuid4()),
-        lifetime="persistent",
+        identity_scope="global",
         certificate_id="cert-001",
     )
 

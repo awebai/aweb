@@ -39,7 +39,7 @@ class AgentView(BaseModel):
     status: str = "offline"
     last_seen: Optional[str] = None
     online: bool = False
-    lifetime: str = "ephemeral"
+    identity_scope: str = "local"
 
 
 class ListAgentsResponse(BaseModel):
@@ -154,7 +154,7 @@ async def list_agents(
     rows = await aweb_db.fetch_all(
         """
         SELECT agent_id, alias, did_key, did_aw, address,
-               human_name, agent_type, role, lifetime, status
+               human_name, agent_type, role, identity_scope, status
         FROM {{tables.agents}}
         WHERE team_id = $1 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -220,7 +220,7 @@ async def list_agents(
                 status=status,
                 last_seen=last_seen,
                 online=online,
-                lifetime=str(r.get("lifetime") or "ephemeral"),
+                identity_scope=str(r.get("identity_scope") or "local"),
             )
         )
 

@@ -106,8 +106,11 @@ class Address:
     name: str
     did_aw: str
     current_did_key: str
-    reachability: str
     created_at: str
+    # Legacy compatibility only: older callers/tests may still construct or
+    # read these fields from older AWID services. Current AWID responses omit
+    # them and routing must not consult them.
+    reachability: str = ""
     visible_to_team_id: str | None = None
     delivery: AddressDelivery = field(
         default_factory=lambda: AddressDelivery(origin=None),
@@ -1644,8 +1647,8 @@ def _address_from_json(data: dict[str, Any]) -> Address:
         name=data["name"],
         did_aw=data["did_aw"],
         current_did_key=data["current_did_key"],
-        reachability=data["reachability"],
         created_at=data["created_at"],
+        reachability=data.get("reachability", ""),
         visible_to_team_id=data.get("visible_to_team_id"),
         delivery=_address_delivery_from_json(data.get("delivery")),
     )

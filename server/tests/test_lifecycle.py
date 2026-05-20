@@ -14,7 +14,7 @@ from aweb.lifecycle import (
 )
 
 
-async def _seed_workspace_with_claim(aweb_db, *, lifetime: str = "ephemeral"):
+async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
     team_id = "backend:acme.com"
     agent_id = uuid4()
     workspace_id = uuid4()
@@ -27,12 +27,12 @@ async def _seed_workspace_with_claim(aweb_db, *, lifetime: str = "ephemeral"):
     )
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role)
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
         VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', $3, 'developer')
         """,
         agent_id,
         team_id,
-        lifetime,
+        identity_scope,
     )
     await aweb_db.execute(
         """
@@ -72,7 +72,7 @@ def _request(
     *, team_id: str, agent_id, workspace_id, dry_run: bool = False
 ) -> LifecycleCascadeRequest:
     return LifecycleCascadeRequest(
-        operation="delete_ephemeral_workspace",
+        operation="delete_local_workspace",
         actor=LifecycleActor(
             actor_id=str(agent_id),
             actor_type="agent",
@@ -83,9 +83,9 @@ def _request(
         target_workspace_ids=(str(workspace_id),),
         workspace_scope="explicit",
         dry_run=dry_run,
-        require_lifetime="ephemeral",
+        require_identity_scope="local",
         stale_before=datetime.now(timezone.utc) - timedelta(minutes=10),
-        mark_ephemeral_agent_deleted=True,
+        mark_local_agent_deleted=True,
     )
 
 
@@ -173,13 +173,13 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
+async def test_lifecycle_archive_global_agent_cleans_coordination_state(
     aweb_cloud_db,
     monkeypatch,
 ):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db,
-        lifetime="persistent",
+        identity_scope="global",
     )
     second_workspace_id = uuid4()
     session_id = uuid4()
@@ -259,7 +259,7 @@ async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
         aweb_cloud_db.aweb_db,
         redis,
         LifecycleCascadeRequest(
-            operation="archive_persistent_agent",
+            operation="archive_global_agent",
             actor=LifecycleActor(
                 actor_id="support-1",
                 actor_type="support",
@@ -268,7 +268,7 @@ async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
             team_id=team_id,
             target_agent_id=str(agent_id),
             workspace_scope="all_for_agent",
-            require_lifetime="persistent",
+            require_identity_scope="global",
         ),
     )
 
@@ -281,7 +281,7 @@ async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
     assert result.chat_waiting_session_clear_count == 1
     assert result.chat_waiting_cleared_count == 1
     assert len(result.workspace_changes) == 2
-    assert "agent.archive_persistent" in result.completed_mutations
+    assert "agent.archive_global" in result.completed_mutations
     assert redis.zrem_calls == [(f"chat:waiting:{session_id}", "did:key:z6Mkalice")]
 
     agent = await aweb_cloud_db.aweb_db.fetch_one(
@@ -328,7 +328,7 @@ async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_archive_persistent_agent_without_workspace_archives_agent(
+async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
     aweb_cloud_db,
 ):
     team_id = "backend:acme.com"
@@ -342,8 +342,8 @@ async def test_lifecycle_archive_persistent_agent_without_workspace_archives_age
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'global', 'developer')
         """,
         agent_id,
         team_id,
@@ -353,7 +353,7 @@ async def test_lifecycle_archive_persistent_agent_without_workspace_archives_age
         aweb_cloud_db.aweb_db,
         None,
         LifecycleCascadeRequest(
-            operation="archive_persistent_agent",
+            operation="archive_global_agent",
             actor=LifecycleActor(
                 actor_id="support-1",
                 actor_type="support",
@@ -362,7 +362,7 @@ async def test_lifecycle_archive_persistent_agent_without_workspace_archives_age
             team_id=team_id,
             target_agent_id=str(agent_id),
             workspace_scope="all_for_agent",
-            require_lifetime="persistent",
+            require_identity_scope="global",
         ),
     )
 
@@ -379,19 +379,19 @@ async def test_lifecycle_archive_persistent_agent_without_workspace_archives_age
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_archive_persistent_agent_rejects_workspace_subset(
+async def test_lifecycle_archive_global_agent_rejects_workspace_subset(
     aweb_cloud_db,
 ):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db,
-        lifetime="persistent",
+        identity_scope="global",
     )
 
     result = await apply_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
         None,
         LifecycleCascadeRequest(
-            operation="archive_persistent_agent",
+            operation="archive_global_agent",
             actor=LifecycleActor(
                 actor_id="support-1",
                 actor_type="support",
@@ -401,12 +401,12 @@ async def test_lifecycle_archive_persistent_agent_rejects_workspace_subset(
             target_agent_id=str(agent_id),
             target_workspace_ids=(str(workspace_id),),
             workspace_scope="explicit",
-            require_lifetime="persistent",
+            require_identity_scope="global",
         ),
     )
 
     assert [error.code for error in result.errors] == [
-        "persistent_archive_requires_all_agent_workspaces"
+        "global_archive_requires_all_agent_workspaces"
     ]
     agent = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1",
@@ -427,19 +427,19 @@ async def test_lifecycle_archive_persistent_agent_rejects_workspace_subset(
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_archive_persistent_agent_rejects_non_persistent_target(
+async def test_lifecycle_archive_global_agent_rejects_non_global_target(
     aweb_cloud_db,
 ):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db,
-        lifetime="ephemeral",
+        identity_scope="local",
     )
 
     result = await apply_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
         None,
         LifecycleCascadeRequest(
-            operation="archive_persistent_agent",
+            operation="archive_global_agent",
             actor=LifecycleActor(
                 actor_id="support-1",
                 actor_type="support",
@@ -448,11 +448,11 @@ async def test_lifecycle_archive_persistent_agent_rejects_non_persistent_target(
             team_id=team_id,
             target_agent_id=str(agent_id),
             workspace_scope="all_for_agent",
-            require_lifetime="persistent",
+            require_identity_scope="global",
         ),
     )
 
-    assert "lifecycle_lifetime_precondition_failed" in {
+    assert "lifecycle_identity_scope_precondition_failed" in {
         error.code for error in result.errors
     }
     agent = await aweb_cloud_db.aweb_db.fetch_one(

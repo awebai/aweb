@@ -46,8 +46,8 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'ephemeral', 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'local', 'developer')
         """,
         agent_id,
     )
@@ -134,8 +134,8 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, alias, lifetime, role, inbound_mode)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'alice', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'alice', 'global', 'developer', 'open')
         """,
         agent_id,
     )

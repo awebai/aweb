@@ -84,10 +84,12 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
         FROM information_schema.columns
         WHERE table_schema = current_schema()
           AND table_name = 'public_addresses'
-          AND column_name = 'current_did_key'
-        """
+          AND column_name = ANY($1::text[])
+        ORDER BY column_name
+        """,
+        ["current_did_key", "reachability", "visible_to_team_id"],
     )
-    assert rows == []
+    assert [row["column_name"] for row in rows] == []
 
     now = datetime.now(timezone.utc)
     namespace_id = uuid4()
@@ -105,8 +107,8 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
         await db.execute(
             """
             INSERT INTO {{tables.public_addresses}}
-                (address_id, namespace_id, name, did_aw, reachability, created_at)
-            VALUES ($1, $2, $3, $4, 'public', $5)
+                (address_id, namespace_id, name, did_aw, created_at)
+            VALUES ($1, $2, $3, $4, $5)
             """,
             uuid4(),
             namespace_id,

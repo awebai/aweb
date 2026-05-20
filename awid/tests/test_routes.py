@@ -44,8 +44,8 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
     await db.execute(
         """
         INSERT INTO {{tables.public_addresses}}
-            (address_id, namespace_id, name, did_aw, reachability, created_at)
-        VALUES ($1, $2, $3, $4, 'public', $5)
+            (address_id, namespace_id, name, did_aw, created_at)
+        VALUES ($1, $2, $3, $4, $5)
         """,
         address_id,
         namespace_id,
@@ -64,8 +64,6 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
             "name": "support",
             "did_aw": did_aw,
             "current_did_key": did_key,
-            "reachability": "public",
-            "visible_to_team_id": None,
             "delivery": {
                 "origin": None,
                 "source": "namespace",

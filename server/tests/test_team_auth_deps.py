@@ -38,7 +38,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "persistent"),
+        "identity_scope": kwargs.get("identity_scope", "global"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -78,7 +78,7 @@ class TestTeamIdentity:
             did_aw="did:aw:alice",
             address="acme.com/alice",
             agent_id="agent-uuid",
-            lifetime="persistent",
+            identity_scope="global",
             certificate_id="cert-001",
         )
 
@@ -88,7 +88,7 @@ class TestTeamIdentity:
         assert identity.did_aw == "did:aw:alice"
         assert identity.address == "acme.com/alice"
         assert identity.agent_id == "agent-uuid"
-        assert identity.lifetime == "persistent"
+        assert identity.identity_scope == "global"
         assert identity.certificate_id == "cert-001"
 
     def test_frozen(self):
@@ -101,7 +101,7 @@ class TestTeamIdentity:
             did_aw="did:aw:alice",
             address="acme.com/alice",
             agent_id="agent-uuid",
-            lifetime="persistent",
+            identity_scope="global",
             certificate_id="cert-001",
         )
 
@@ -130,7 +130,7 @@ class TestResolveTeamIdentity:
                 "did_key": agent_did_key,
                 "member_did_aw": "did:aw:alice",
                 "member_address": "acme.com/alice",
-                "lifetime": "persistent",
+                "identity_scope": "global",
                 "certificate_id": "cert-001",
             },
             team_did_key=team_did_key,
@@ -148,7 +148,7 @@ class TestResolveTeamIdentity:
             "did_key": agent_did_key,
             "member_did_aw": "did:aw:alice",
             "member_address": "acme.com/alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-001",
         }
 
@@ -160,7 +160,7 @@ class TestResolveTeamIdentity:
         assert identity.did_aw == "did:aw:alice"
         assert identity.address == "acme.com/alice"
         assert identity.agent_id == result["agent_id"]
-        assert identity.lifetime == "persistent"
+        assert identity.identity_scope == "global"
         assert identity.certificate_id == "cert-001"
 
     @pytest.mark.asyncio
@@ -174,7 +174,7 @@ class TestResolveTeamIdentity:
             "team_id": "backend:acme.com",
             "alias": "unknown",
             "did_key": unknown_did_key,
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
             "certificate_id": "cert-002",
         }
 
@@ -199,7 +199,7 @@ async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch)
             "did_key": agent_did_key,
             "member_did_aw": "did:aw:alice",
             "member_address": "acme.com/alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-raw-manager",
         },
         team_did_key=team_did_key,
@@ -218,7 +218,7 @@ async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch)
             "did_key": agent_did_key,
             "member_did_aw": "did:aw:alice",
             "member_address": "acme.com/alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-raw-manager",
         }
 
@@ -250,8 +250,8 @@ async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'active')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'active')
         """,
         agent_id,
         "backend:acme.com",
@@ -269,7 +269,7 @@ async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch
             did_aw="did:aw:alice",
             address="acme.com/alice",
             agent_id=str(agent_id),
-            lifetime="persistent",
+            identity_scope="global",
             certificate_id="cert-1",
         )
 
@@ -304,8 +304,8 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
-        VALUES ($1, 'ops:gsk.aweb.ai', $2, NULL, NULL, 'gsk', 'ephemeral', 'active')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status)
+        VALUES ($1, 'ops:gsk.aweb.ai', $2, NULL, NULL, 'gsk', 'local', 'active')
         """,
         agent_id,
         "did:key:z6MkGsk",
@@ -325,7 +325,7 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
     assert auth.team_id == "ops:gsk.aweb.ai"
     assert auth.alias == "gsk"
     assert auth.agent_id == str(agent_id)
-    assert auth.lifetime == "ephemeral"
+    assert auth.identity_scope == "local"
 
 
 @pytest.mark.asyncio
@@ -343,10 +343,10 @@ async def test_get_messaging_auth_rejects_ambiguous_identity_auth_agent_rows(awe
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, did_aw, address, alias, lifetime, status)
+            (team_id, did_key, did_aw, address, alias, identity_scope, status)
         VALUES
-            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', NULL, NULL, 'gsk', 'ephemeral', 'active'),
-            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', NULL, NULL, 'gsk', 'ephemeral', 'active')
+            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', NULL, NULL, 'gsk', 'local', 'active'),
+            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', NULL, NULL, 'gsk', 'local', 'active')
         """
     )
 
@@ -379,10 +379,10 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, did_aw, address, alias, lifetime, status)
+            (team_id, did_key, did_aw, address, alias, identity_scope, status)
         VALUES
-            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'persistent', 'active'),
-            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'persistent', 'active')
+            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active'),
+            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'global', 'active')
         """
     )
 

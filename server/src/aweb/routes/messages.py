@@ -447,7 +447,6 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "did_aw": resolution.did_aw.strip(),
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
         "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
-        "reachability": (getattr(resolution, "reachability", "") or "").strip(),
         "external": True,
     }
 

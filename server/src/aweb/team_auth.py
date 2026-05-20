@@ -18,6 +18,7 @@ import jwt as pyjwt
 
 from awid.did import public_key_from_did
 from awid.signing import canonical_json_bytes, verify_signature_with_public_key, VerifyResult
+from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +112,13 @@ def parse_and_verify_certificate(
     if revocation_checker(team_id, certificate_id):
         raise ValueError(f"Certificate {certificate_id} has been revoked")
 
+    identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
     return {
         "team_id": team_id,
         "alias": cert.get("alias", ""),
         "did_key": member_did_key,
-        "lifetime": cert.get("lifetime", "ephemeral"),
+        "identity_scope": identity_scope,
+        "lifetime": legacy_lifetime_for_scope(identity_scope),
         "certificate_id": certificate_id,
         "member_did_aw": cert.get("member_did_aw", ""),
         "member_address": cert.get("member_address", ""),

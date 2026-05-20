@@ -217,9 +217,9 @@ async def resolve_handle_contact_agent(
     handle_namespace: str,
     target_agent_name: str | None = None,
 ) -> dict | None:
-    """Resolve an active persistent agent for a handle contact.
+    """Resolve an active global agent for a handle contact.
 
-    Bare handles intentionally choose the recently active persistent agent by
+    Bare handles intentionally choose the recently active global agent by
     database state; callers do not scan messages or conversations.
     """
     aweb_db = db.get_manager("aweb")
@@ -231,7 +231,7 @@ async def resolve_handle_contact_agent(
         row = await aweb_db.fetch_one(
             """
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
-                   a.lifetime, a.status, a.created_at,
+                   a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
             FROM {{tables.agents}} a
             LEFT JOIN {{tables.workspaces}} w
@@ -239,10 +239,10 @@ async def resolve_handle_contact_agent(
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
-              AND a.lifetime = 'persistent'
+              AND a.identity_scope = 'global'
               AND a.address = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
-                     a.lifetime, a.status, a.created_at
+                     a.identity_scope, a.status, a.created_at
             ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC
             LIMIT 1
             """,
@@ -252,7 +252,7 @@ async def resolve_handle_contact_agent(
         row = await aweb_db.fetch_one(
             """
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
-                   a.lifetime, a.status, a.created_at,
+                   a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
             FROM {{tables.agents}} a
             LEFT JOIN {{tables.workspaces}} w
@@ -260,10 +260,10 @@ async def resolve_handle_contact_agent(
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
-              AND a.lifetime = 'persistent'
+              AND a.identity_scope = 'global'
               AND a.address LIKE $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
-                     a.lifetime, a.status, a.created_at
+                     a.identity_scope, a.status, a.created_at
             ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC
             LIMIT 1
             """,
@@ -278,7 +278,7 @@ async def resolve_handle_contact_agent(
         "did_aw": row["did_aw"],
         "address": row["address"],
         "alias": row["alias"],
-        "lifetime": row["lifetime"],
+        "identity_scope": row["identity_scope"],
         "status": row["status"],
         "created_at": row["created_at"].isoformat(),
         "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,

@@ -374,14 +374,14 @@ def _workspace_delete_conflict_detail(
     code: str,
     workspace_id: str,
     identity_id,
-    lifetime: str | None,
+    identity_scope: str | None,
     recommended_next_step: str,
 ):
     return {
         "code": code,
         "workspace_id": workspace_id,
         "identity_id": str(identity_id) if identity_id is not None else None,
-        "lifetime": lifetime or "unknown",
+        "identity_scope": identity_scope or "unknown",
         "recommended_next_step": recommended_next_step,
     }
 
@@ -393,7 +393,7 @@ async def delete_workspace(
     db: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
 ) -> DeleteWorkspaceResponse:
-    """Soft-delete a stale ephemeral workspace and its bound identity."""
+    """Soft-delete a stale local workspace and its bound identity."""
     try:
         validated_id = str(UUID(workspace_id))
     except ValueError:
@@ -413,7 +413,7 @@ async def delete_workspace(
             w.team_id,
             w.deleted_at,
             w.last_seen_at,
-            a.lifetime AS agent_lifetime
+            a.identity_scope AS agent_identity_scope
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.agents}} a
           ON a.agent_id = w.agent_id
@@ -437,38 +437,38 @@ async def delete_workspace(
             detail=f"Workspace {workspace_id} is already deleted",
         )
 
-    agent_lifetime = str(existing.get("agent_lifetime") or "").strip()
-    if not agent_lifetime:
+    agent_identity_scope = str(existing.get("agent_identity_scope") or "").strip()
+    if not agent_identity_scope:
         raise HTTPException(
             status_code=409,
             detail=_workspace_delete_conflict_detail(
-                code="unknown_lifetime_no_cleanup",
+                code="unknown_identity_scope_no_cleanup",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
-                lifetime=None,
+                identity_scope=None,
                 recommended_next_step="Inspect the workspace identity before attempting lifecycle cleanup.",
             ),
         )
-    if agent_lifetime == "persistent":
+    if agent_identity_scope == "global":
         raise HTTPException(
             status_code=409,
             detail=_workspace_delete_conflict_detail(
-                code="persistent_identity_not_cleanup_eligible",
+                code="global_identity_not_cleanup_eligible",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
-                lifetime=agent_lifetime,
-                recommended_next_step="Persistent identities outlive workspace paths; use reconnect/rebind diagnostics or an explicit archive/replace flow.",
+                identity_scope=agent_identity_scope,
+                recommended_next_step="Global identities outlive workspace paths; use reconnect/rebind diagnostics or an explicit archive/replace flow.",
             ),
         )
-    if agent_lifetime != "ephemeral":
+    if agent_identity_scope != "local":
         raise HTTPException(
             status_code=409,
             detail=_workspace_delete_conflict_detail(
-                code="unknown_lifetime_no_cleanup",
+                code="unknown_identity_scope_no_cleanup",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
-                lifetime=agent_lifetime,
-                recommended_next_step="Inspect the workspace identity lifetime before attempting lifecycle cleanup.",
+                identity_scope=agent_identity_scope,
+                recommended_next_step="Inspect the workspace identity scope before attempting lifecycle cleanup.",
             ),
         )
 
@@ -478,11 +478,11 @@ async def delete_workspace(
         raise HTTPException(
             status_code=409,
             detail=_workspace_delete_conflict_detail(
-                code="ephemeral_workspace_still_active",
+                code="local_workspace_still_active",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
-                lifetime=agent_lifetime,
-                recommended_next_step="Wait until presence is stale before deleting an ephemeral workspace.",
+                identity_scope=agent_identity_scope,
+                recommended_next_step="Wait until presence is stale before deleting a local workspace.",
             ),
         )
 
@@ -491,7 +491,7 @@ async def delete_workspace(
         aweb_db,
         redis,
         LifecycleCascadeRequest(
-            operation="delete_ephemeral_workspace",
+            operation="delete_local_workspace",
             actor=LifecycleActor(
                 actor_id=getattr(identity, "agent_id", None),
                 actor_type="agent",
@@ -503,10 +503,10 @@ async def delete_workspace(
             ),
             target_workspace_ids=(validated_id,),
             workspace_scope="explicit",
-            require_lifetime="ephemeral",
+            require_identity_scope="local",
             stale_before=stale_cutoff,
             deleted_at=deleted_at,
-            mark_ephemeral_agent_deleted=True,
+            mark_local_agent_deleted=True,
         ),
     )
     if cascade_result.errors:
@@ -517,7 +517,7 @@ async def delete_workspace(
                 code=error.code,
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
-                lifetime=agent_lifetime,
+                identity_scope=agent_identity_scope,
                 recommended_next_step=error.message,
             ),
         )
@@ -565,7 +565,7 @@ class WorkspaceInfo(BaseModel):
 
     workspace_id: str
     alias: str
-    agent_lifetime: Optional[str] = None
+    agent_identity_scope: Optional[str] = None
     human_name: Optional[str] = None
     context_kind: Optional[str] = None
     team_id: Optional[str] = None
@@ -696,7 +696,7 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             END AS context_kind,
             w.team_id,
             w.role,
-            a.lifetime AS agent_lifetime,
+            a.identity_scope AS agent_identity_scope,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,
@@ -788,7 +788,7 @@ def _row_to_workspace_info(
     return WorkspaceInfo(
         workspace_id=workspace_id,
         alias=row["alias"],
-        agent_lifetime=row.get("agent_lifetime"),
+        agent_identity_scope=row.get("agent_identity_scope"),
         human_name=row["human_name"],
         context_kind=row.get("context_kind"),
         team_id=row["team_id"],
@@ -900,7 +900,7 @@ async def list_workspaces(
             w.human_name,
             w.team_id,
             w.role,
-            a.lifetime AS agent_lifetime,
+            a.identity_scope AS agent_identity_scope,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,

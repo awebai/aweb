@@ -20,12 +20,6 @@ from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
-_NEUTRAL_REACHABILITY = "public"
-_MIGRATION_REQUIRED_DETAIL = (
-    "Address blocked by legacy migration state; normalize reachability to public "
-    "and visible_to_team_id to null before public resolution"
-)
-
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 logger = logging.getLogger(__name__)
 
@@ -139,8 +133,8 @@ async def _lock_address_registration_key(tx, *, namespace_id, name: str) -> None
 async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str):
     return await tx.fetch_one(
         """
-        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key,
+               ns.default_delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -223,8 +217,6 @@ class AddressResponse(BaseModel):
     name: str
     did_aw: str
     current_did_key: str
-    reachability: str
-    visible_to_team_id: str | None = None
     delivery: AddressDeliveryResponse
     created_at: str
 
@@ -247,18 +239,6 @@ def _validate_domain(domain: str) -> str:
     return domain
 
 
-def _is_neutral_address_row(row) -> bool:
-    return (
-        str(row.get("reachability") or "nobody") == _NEUTRAL_REACHABILITY
-        and row.get("visible_to_team_id") is None
-    )
-
-
-def _raise_if_legacy_migration_blocked(row) -> None:
-    if not _is_neutral_address_row(row):
-        raise HTTPException(status_code=409, detail=_MIGRATION_REQUIRED_DETAIL)
-
-
 def _address_response(row, domain: str) -> AddressResponse:
     return AddressResponse(
         address_id=str(row["address_id"]),
@@ -266,8 +246,6 @@ def _address_response(row, domain: str) -> AddressResponse:
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        reachability=str(row.get("reachability") or "nobody"),
-        visible_to_team_id=row.get("visible_to_team_id"),
         delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )
@@ -349,8 +327,6 @@ async def register_address(
             namespace_id=ns_row["namespace_id"],
             name=body.name,
         )
-        reachability = _NEUTRAL_REACHABILITY
-        visible_to_team_id = None
         existing = await _fetch_active_address_for_registration(
             tx,
             namespace_id=ns_row["namespace_id"],
@@ -370,15 +346,13 @@ async def register_address(
             await tx.execute(
                 """
                 INSERT INTO {{tables.public_addresses}}
-                    (address_id, namespace_id, name, did_aw, reachability, visible_to_team_id, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    (address_id, namespace_id, name, did_aw, created_at)
+                VALUES ($1, $2, $3, $4, $5)
                 """,
                 addr_id,
                 ns_row["namespace_id"],
                 body.name,
                 body.did_aw,
-                reachability,
-                visible_to_team_id,
                 now,
             )
         except asyncpg.UniqueViolationError as e:
@@ -396,8 +370,6 @@ async def register_address(
         name=body.name,
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        reachability=reachability,
-        visible_to_team_id=visible_to_team_id,
         delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
         created_at=now.isoformat(),
     )
@@ -420,8 +392,8 @@ async def get_address(
     ns_row = await _require_namespace(db, domain)
     row = await db.fetch_one(
         """
-        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-               pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key,
+               ns.default_delivery_origin, pa.created_at
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -435,7 +407,6 @@ async def get_address(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
-    _raise_if_legacy_migration_blocked(row)
     return _address_response(row, domain)
 
 
@@ -466,8 +437,6 @@ async def list_addresses(
         "pa.namespace_id = $1",
         "pa.deleted_at IS NULL",
         "ns.deleted_at IS NULL",
-        "pa.reachability = 'public'",
-        "pa.visible_to_team_id IS NULL",
     ]
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
@@ -477,8 +446,8 @@ async def list_addresses(
         where_clauses.append(f"pa.name > ${len(params)}")
     params.append(validated_limit + 1)
     query = (
-        "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
-        " pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
+        "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key,"
+        " ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -542,8 +511,8 @@ async def update_address(
 
         row = await tx.fetch_one(
             """
-            SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                   pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
+            SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key,
+                   ns.default_delivery_origin, pa.created_at
             FROM {{tables.public_addresses}} pa
             JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
             JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
@@ -556,37 +525,12 @@ async def update_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        next_reachability = _NEUTRAL_REACHABILITY
-        next_visible_to_team_id = None
-        if next_reachability != row["reachability"] or row.get("visible_to_team_id") is not None:
-            row = await tx.fetch_one(
-                """
-                UPDATE {{tables.public_addresses}} pa
-                SET reachability = $1,
-                    visible_to_team_id = $2
-                FROM {{tables.did_aw_mappings}} m,
-                     {{tables.dns_namespaces}} ns
-                WHERE pa.address_id = $3
-                  AND m.did_aw = pa.did_aw
-                  AND ns.namespace_id = pa.namespace_id
-                RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
-                          pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at
-                """,
-                next_reachability,
-                next_visible_to_team_id,
-                row["address_id"],
-            )
-            if row is None:
-                raise HTTPException(status_code=404, detail="Address not found")
-
     return AddressResponse(
         address_id=str(row["address_id"]),
         domain=domain,
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        reachability=str(row.get("reachability") or "nobody"),
-        visible_to_team_id=row.get("visible_to_team_id"),
         delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )
@@ -699,7 +643,7 @@ async def reassign_address(
 
         row = await tx.fetch_one(
             """
-            SELECT address_id, name, reachability, visible_to_team_id, created_at
+            SELECT address_id, name, created_at
             FROM {{tables.public_addresses}}
             WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
@@ -720,9 +664,7 @@ async def reassign_address(
             await tx.execute(
                 """
                 UPDATE {{tables.public_addresses}}
-                SET did_aw = $1,
-                    reachability = 'public',
-                    visible_to_team_id = NULL
+                SET did_aw = $1
                 WHERE address_id = $2
                 """,
                 body.did_aw,
@@ -740,8 +682,6 @@ async def reassign_address(
         name=row["name"],
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        reachability=_NEUTRAL_REACHABILITY,
-        visible_to_team_id=None,
         delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )

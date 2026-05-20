@@ -116,7 +116,7 @@ class AgentSummary(BaseModel):
     agent_type: str
     role: str
     status: str
-    lifetime: str
+    identity_scope: str
     last_seen: Optional[str]
     workspace_path: Optional[str]
     created_at: str
@@ -130,7 +130,7 @@ class AgentDetail(BaseModel):
     address: Optional[str]
     role: str
     status: str
-    lifetime: str
+    identity_scope: str
     human_name: str
     agent_type: str
     created_at: str
@@ -324,7 +324,7 @@ async def list_team_agents(
     rows = await aweb_db.fetch_all(
         """
         SELECT a.agent_id, a.alias, a.did_key, a.human_name, a.address, a.agent_type,
-               a.role, a.status, a.lifetime, a.created_at,
+               a.role, a.status, a.identity_scope, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
         LEFT JOIN LATERAL (
@@ -352,7 +352,7 @@ async def list_team_agents(
                 agent_type=r["agent_type"],
                 role=r["role"],
                 status=r["status"],
-                lifetime=r["lifetime"],
+                identity_scope=r["identity_scope"],
                 last_seen=(r["last_seen_at"].isoformat() if r["last_seen_at"] else None),
                 workspace_path=r["workspace_path"],
                 created_at=r["created_at"].isoformat(),
@@ -393,7 +393,7 @@ async def get_team_agent(
 
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, alias, did_key, did_aw, address, role, status, lifetime,
+        SELECT agent_id, alias, did_key, did_aw, address, role, status, identity_scope,
                human_name, agent_type, created_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
@@ -413,7 +413,7 @@ async def get_team_agent(
         address=row.get("address"),
         role=row["role"],
         status=row["status"],
-        lifetime=row["lifetime"],
+        identity_scope=row["identity_scope"],
         human_name=row["human_name"],
         agent_type=row["agent_type"],
         created_at=row["created_at"].isoformat(),

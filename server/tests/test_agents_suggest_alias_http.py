@@ -35,7 +35,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "ephemeral"),
+        "identity_scope": kwargs.get("identity_scope", "local"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -150,11 +150,11 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, identity_scope, status)
         VALUES
-            ($1, $2, $3, $4, 'ephemeral', 'active'),
-            ($5, $2, $6, 'bob', 'ephemeral', 'active'),
-            ($7, $2, $8, 'alice-01', 'ephemeral', 'active')
+            ($1, $2, $3, $4, 'local', 'active'),
+            ($5, $2, $6, 'bob', 'local', 'active'),
+            ($7, $2, $8, 'alice-01', 'local', 'active')
         """,
         alice_agent_id,
         "backend:acme.com",
@@ -220,8 +220,8 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'ephemeral', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
         """,
         uuid4(),
         "backend:acme.com",
@@ -268,8 +268,8 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'ephemeral', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
         """,
         agent_id,
         "backend:acme.com",

@@ -5,8 +5,21 @@ from dataclasses import dataclass
 from awid.did import stable_id_from_did_key
 
 
-IDENTITY_LIFETIMES = ("ephemeral", "persistent")
+IDENTITY_SCOPES = ("local", "global")
 IDENTITY_CUSTODY_MODES = ("self", "custodial")
+_LEGACY_SCOPE_ALIASES = {
+    "ephemeral": "local",
+    "persistent": "global",
+}
+
+
+def normalize_identity_scope(value: str | None) -> str:
+    """Normalize current scope names and stale lifetime aliases."""
+    scope = (value or "local").strip().lower() or "local"
+    scope = _LEGACY_SCOPE_ALIASES.get(scope, scope)
+    if scope not in IDENTITY_SCOPES:
+        raise ValueError("identity_scope must be 'global' or 'local'")
+    return scope
 
 
 @dataclass(frozen=True)
@@ -14,20 +27,35 @@ class ResolvedIdentityContract:
     did: str | None
     public_key: str | None
     custody: str
-    lifetime: str
+    identity_scope: str
     stable_id: str | None
 
     @property
-    def is_ephemeral(self) -> bool:
-        return self.lifetime == "ephemeral"
+    def is_local(self) -> bool:
+        return self.identity_scope == "local"
 
     @property
-    def is_persistent(self) -> bool:
-        return self.lifetime == "persistent"
+    def is_global(self) -> bool:
+        return self.identity_scope == "global"
 
     @property
     def can_have_address(self) -> bool:
-        return self.is_persistent
+        return self.is_global
+
+    @property
+    def lifetime(self) -> str:
+        """Deprecated compatibility alias for older callers."""
+        return "persistent" if self.is_global else "ephemeral"
+
+    @property
+    def is_ephemeral(self) -> bool:
+        """Deprecated compatibility alias for older callers."""
+        return self.is_local
+
+    @property
+    def is_persistent(self) -> bool:
+        """Deprecated compatibility alias for older callers."""
+        return self.is_global
 
 
 def resolve_identity_contract(
@@ -35,16 +63,14 @@ def resolve_identity_contract(
     did: str | None,
     public_key: str | None,
     custody: str | None,
-    lifetime: str | None,
+    identity_scope: str | None = None,
+    lifetime: str | None = None,
     namespace: str | None = None,
 ) -> ResolvedIdentityContract:
     did = (did or "").strip() or None
     public_key = (public_key or "").strip() or None
     custody = (custody or "").strip() or None
-    lifetime = (lifetime or "ephemeral").strip() or "ephemeral"
-
-    if lifetime not in IDENTITY_LIFETIMES:
-        raise ValueError("lifetime must be 'persistent' or 'ephemeral'")
+    scope = normalize_identity_scope(identity_scope if identity_scope is not None else lifetime)
 
     if (did is None) != (public_key is None):
         raise ValueError("did and public_key must be provided together")
@@ -60,19 +86,24 @@ def resolve_identity_contract(
     if custody == "custodial" and (did is not None or public_key is not None):
         raise ValueError("Custodial identities must not provide did/public_key")
 
-    if namespace is not None and namespace.strip() and lifetime != "persistent":
-        raise ValueError("Only persistent identities may own or publish addresses")
+    if namespace is not None and namespace.strip() and scope != "global":
+        raise ValueError("Only global identities may own or publish addresses")
 
-    stable_id = stable_id_from_did_key(did) if did is not None and lifetime == "persistent" else None
+    stable_id = stable_id_from_did_key(did) if did is not None and scope == "global" else None
     return ResolvedIdentityContract(
         did=did,
         public_key=public_key,
         custody=custody,
-        lifetime=lifetime,
+        identity_scope=scope,
         stable_id=stable_id,
     )
 
 
-def assert_persistent_identity(*, lifetime: str | None) -> None:
-    if (lifetime or "").strip() != "persistent":
-        raise ValueError("Only persistent identities support this operation")
+def assert_global_identity(*, identity_scope: str | None = None, lifetime: str | None = None) -> None:
+    if normalize_identity_scope(identity_scope if identity_scope is not None else lifetime) != "global":
+        raise ValueError("Only global identities support this operation")
+
+
+def assert_persistent_identity(*, lifetime: str | None = None, identity_scope: str | None = None) -> None:
+    """Deprecated compatibility wrapper for older callers."""
+    assert_global_identity(identity_scope=identity_scope, lifetime=lifetime)

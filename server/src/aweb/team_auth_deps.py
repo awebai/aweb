@@ -20,6 +20,7 @@ from pgdbm import AsyncDatabaseManager
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
+from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,13 @@ class TeamIdentity:
     did_aw: str
     address: str
     agent_id: str
-    lifetime: str
+    identity_scope: str
     certificate_id: str
+
+    @property
+    def lifetime(self) -> str:
+        """Deprecated certificate compatibility alias."""
+        return legacy_lifetime_for_scope(self.identity_scope)
 
 
 async def resolve_team_identity(
@@ -90,7 +96,7 @@ async def resolve_team_identity(
         did_aw=(cert_info.get("member_did_aw") or "").strip(),
         address=(cert_info.get("member_address") or "").strip(),
         agent_id=str(row["agent_id"]),
-        lifetime=cert_info.get("lifetime", "ephemeral"),
+        identity_scope=normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime")),
         certificate_id=cert_info.get("certificate_id", ""),
     )
 
@@ -110,9 +116,9 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     4. Resolve team public key from awid registry
     5. Check revocation list from awid registry
 
-    Returns cert_info dict (team_id, alias, did_key, lifetime,
+    Returns cert_info dict (team_id, alias, did_key, identity_scope,
     certificate_id, member_did_aw, member_address). The last two are
-    empty strings for ephemeral certificates. Does NOT look up the agent
+    empty strings for local certificates. Does NOT look up the agent
     in the local DB — suitable for /v1/connect where the agent may not
     exist yet.
 

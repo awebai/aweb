@@ -225,23 +225,21 @@ async def _mark_address_legacy_metadata(
     reachability: str,
     visible_to_team_id: str | None = None,
 ) -> None:
+    """Compatibility no-op for tests exercising stale request names."""
     db = awid_db_infra.get_manager("aweb")
-    await db.execute(
+    row = await db.fetch_one(
         """
-        UPDATE {{tables.public_addresses}} pa
-        SET reachability = $3,
-            visible_to_team_id = $4
-        FROM {{tables.dns_namespaces}} ns
-        WHERE ns.namespace_id = pa.namespace_id
-          AND ns.domain = $1
+        SELECT 1
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
+        WHERE ns.domain = $1
           AND pa.name = $2
           AND pa.deleted_at IS NULL
         """,
         domain,
         name,
-        reachability,
-        visible_to_team_id,
     )
+    assert row is not None
 
 
 def _signed_certificate_header(
@@ -1659,7 +1657,7 @@ async def test_org_only_address_get_allows_global_resolution_without_team_visibi
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
     assert owner_resp.status_code == 200, owner_resp.text
-    assert owner_resp.json()["reachability"] == "public"
+    assert "reachability" not in owner_resp.json()
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
     member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
@@ -1718,7 +1716,7 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
     resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
+    assert "reachability" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -1869,7 +1867,7 @@ async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate
         reachability="team_members_only",
         visible_to_team_id=f"backend:{domain}",
     )
-    assert address["visible_to_team_id"] is None
+    assert "visible_to_team_id" not in address
 
     backend_cert = await _register_certificate(
         client,
@@ -2019,8 +2017,8 @@ async def test_register_address_ignores_deprecated_reachability_values(client, c
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
-    assert resp.json()["visible_to_team_id"] is None
+    assert "reachability" not in resp.json()
+    assert "visible_to_team_id" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -2348,8 +2346,8 @@ async def test_register_address_ignores_deprecated_team_members_only_without_vis
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
-    assert resp.json()["visible_to_team_id"] is None
+    assert "reachability" not in resp.json()
+    assert "visible_to_team_id" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -2374,8 +2372,8 @@ async def test_register_address_ignores_deprecated_visible_to_team_id(client, co
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
-    assert resp.json()["visible_to_team_id"] is None
+    assert "reachability" not in resp.json()
+    assert "visible_to_team_id" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -2411,8 +2409,8 @@ async def test_update_address_normalizes_legacy_reachability_metadata(client, co
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
-    assert resp.json()["visible_to_team_id"] is None
+    assert "reachability" not in resp.json()
+    assert "visible_to_team_id" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -2447,8 +2445,8 @@ async def test_update_address_ignores_deprecated_visible_to_team_id(client, cont
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reachability"] == "public"
-    assert resp.json()["visible_to_team_id"] is None
+    assert "reachability" not in resp.json()
+    assert "visible_to_team_id" not in resp.json()
 
 
 @pytest.mark.asyncio
@@ -2504,23 +2502,12 @@ async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origi
     }
 
 
-@pytest.mark.parametrize(
-    ("reachability", "visible_scope", "blocked"),
-    [
-        ("nobody", None, True),
-        ("org_only", None, True),
-        ("team_members_only", "backend", True),
-        ("public", None, False),
-    ],
-)
+@pytest.mark.parametrize("reachability", ["nobody", "org_only", "team_members_only", "public"])
 @pytest.mark.asyncio
-async def test_legacy_non_neutral_address_rows_fail_closed_for_get_and_list(
+async def test_legacy_address_request_metadata_does_not_affect_get_or_list(
     client,
     controller_identity,
-    awid_db_infra,
     reachability,
-    visible_scope,
-    blocked,
 ):
     ns_key, ns_did = controller_identity
     domain = f"migration-{reachability.replace('_', '-')}.example"
@@ -2538,8 +2525,6 @@ async def test_legacy_non_neutral_address_rows_fail_closed_for_get_and_list(
         headers=headers,
     )
     assert ns_resp.status_code == 200, ns_resp.text
-    if visible_scope is not None:
-        await _create_team(client, ns_key, ns_did, domain, visible_scope)
 
     legacy_address = await _register_address_for_identity(
         client,
@@ -2547,7 +2532,8 @@ async def test_legacy_non_neutral_address_rows_fail_closed_for_get_and_list(
         ns_did,
         domain,
         "alice",
-        reachability="public",
+        reachability=reachability,
+        visible_to_team_id=f"backend:{domain}",
     )
     await _register_address_for_identity(
         client,
@@ -2557,31 +2543,18 @@ async def test_legacy_non_neutral_address_rows_fail_closed_for_get_and_list(
         "public-alice",
         reachability="public",
     )
-    visible_to_team_id = f"{visible_scope}:{domain}" if visible_scope else None
-    await _mark_address_legacy_metadata(
-        awid_db_infra,
-        domain=domain,
-        name="alice",
-        reachability=reachability,
-        visible_to_team_id=visible_to_team_id,
-    )
 
     get_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
-    if blocked:
-        assert get_resp.status_code == 409, get_resp.text
-        assert "legacy migration state" in get_resp.json()["detail"]
-    else:
-        assert get_resp.status_code == 200, get_resp.text
-        assert get_resp.json()["did_aw"] == legacy_address["did_aw"]
-        assert get_resp.json()["delivery"] == {"origin": namespace_origin, "source": "namespace"}
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.json()["did_aw"] == legacy_address["did_aw"]
+    assert get_resp.json()["delivery"] == {"origin": namespace_origin, "source": "namespace"}
+    assert "reachability" not in get_resp.json()
+    assert "visible_to_team_id" not in get_resp.json()
 
     list_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert list_resp.status_code == 200, list_resp.text
-    names = [item["name"] for item in list_resp.json()["addresses"]]
-    if blocked:
-        assert names == ["public-alice"]
-    else:
-        assert names == ["alice", "public-alice"]
+    assert [item["name"] for item in list_resp.json()["addresses"]] == ["alice", "public-alice"]
+    assert all("reachability" not in item for item in list_resp.json()["addresses"])
 
 
 @pytest.mark.asyncio

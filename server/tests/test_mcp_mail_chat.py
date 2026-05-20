@@ -46,10 +46,10 @@ async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -119,8 +119,8 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'global', 'active')
         """,
         agent_id,
         team_id,
@@ -146,7 +146,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
             "alias": "alice",
             "member_did_aw": "did:aw:alice",
             "member_address": "acme.com/alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-1",
         }
 
@@ -187,8 +187,8 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'global', 'active')
         """,
         agent_id,
         team_id,
@@ -203,7 +203,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
             "alias": "alice",
             "member_did_aw": "did:aw:alice",
             "member_address": "acme.com/alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-1",
         }
 
@@ -240,8 +240,8 @@ async def test_mcp_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, mon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status)
-        VALUES ($1, $2, $3, 'gsk', 'ephemeral', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, 'gsk', 'local', 'active')
         """,
         agent_id,
         team_id,
@@ -282,8 +282,8 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
-        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status)
+        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active')
         """,
         agent_id,
         team_id,
@@ -481,10 +481,10 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -575,10 +575,10 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -686,8 +686,8 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
         """,
         alice_agent_id,
         team_id,
@@ -826,10 +826,10 @@ async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, $5, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, $5, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -962,8 +962,8 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
         """,
         alice_agent_id,
         team_id,
@@ -1134,10 +1134,10 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         alice_did,
@@ -1194,10 +1194,10 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, 'did:key:z6MkAlice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, 'did:key:z6MkAlice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -1246,10 +1246,10 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, 'did:key:z6MkAlice', 'alice', 'persistent', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'bob', 'persistent', 'active', 'open')
+            ($1, $3, 'did:key:z6MkAlice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -1472,8 +1472,8 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
         """,
         alice_agent_id,
         team_id,
@@ -1644,10 +1644,10 @@ async def test_mcp_chat_send_rejects_cross_team_local_persistent_when_awid_misse
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open'),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'active', 'open')
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         alice_did,
@@ -1797,8 +1797,8 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, inbound_mode)
-        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'open')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open')
         """,
         alice_agent_id,
         team_id,

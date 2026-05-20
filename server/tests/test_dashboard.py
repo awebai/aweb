@@ -214,11 +214,11 @@ async def _seed(aweb_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, human_name, agent_type
+            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type
         )
         VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'active', 'Alice', 'coder'),
-            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'ephemeral', 'reviewer', 'active', 'Bob', 'reviewer')
+            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'active', 'Alice', 'coder'),
+            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'local', 'reviewer', 'active', 'Bob', 'reviewer')
         """,
         alice_id, bob_id,
     )
@@ -386,10 +386,10 @@ async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, human_name, agent_type
+            agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, status, human_name, agent_type
         )
         VALUES
-            ($1, 'backend:acme.com', 'did:key:z6Mkjuan', 'did:aw:juan', NULL, 'cowork-gzo3o2loh252', 'persistent', 'developer', 'active', 'Juan', 'human')
+            ($1, 'backend:acme.com', 'did:key:z6Mkjuan', 'did:aw:juan', NULL, 'cowork-gzo3o2loh252', 'global', 'developer', 'active', 'Juan', 'human')
         """,
         human_attribution_id,
     )

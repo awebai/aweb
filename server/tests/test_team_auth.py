@@ -34,7 +34,7 @@ def _make_certificate(
     *,
     team_id: str = "backend:acme.com",
     alias: str = "alice",
-    lifetime: str = "persistent",
+    identity_scope: str = "global",
     certificate_id: str = "cert-001",
     member_did_aw: str = "",
     member_address: str = "",
@@ -48,7 +48,7 @@ def _make_certificate(
         "member_did_aw": member_did_aw,
         "member_address": member_address,
         "alias": alias,
-        "lifetime": lifetime,
+        "identity_scope": identity_scope,
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     # Sign the cert without the signature field (canonical JSON, sorted keys)
@@ -154,7 +154,7 @@ class TestParseAndVerifyCertificate:
             team_sk, team_did_key, agent_did_key,
             team_id="backend:acme.com",
             alias="alice",
-            lifetime="persistent",
+            identity_scope="global",
         )
         encoded = _encode_certificate(cert)
 
@@ -168,7 +168,7 @@ class TestParseAndVerifyCertificate:
         assert result["team_id"] == "backend:acme.com"
         assert result["alias"] == "alice"
         assert result["did_key"] == agent_did_key
-        assert result["lifetime"] == "persistent"
+        assert result["identity_scope"] == "global"
         assert result["certificate_id"] == "cert-001"
 
     def test_malformed_base64_rejected(self):
@@ -221,7 +221,7 @@ class TestParseAndVerifyCertificate:
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
-            lifetime="persistent",
+            identity_scope="global",
             member_did_aw="did:aw:z6Mkstable",
             member_address="acme.com/alice",
         )
@@ -245,7 +245,7 @@ class TestParseAndVerifyCertificate:
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
-            lifetime="ephemeral",
+            identity_scope="local",
             member_did_aw="",
             member_address="",
         )

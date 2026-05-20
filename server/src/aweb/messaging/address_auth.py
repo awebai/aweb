@@ -13,7 +13,7 @@ def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) ->
 
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
-    return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
+    return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
 def verified_signed_payload_json(

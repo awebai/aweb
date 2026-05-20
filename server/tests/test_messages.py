@@ -58,8 +58,8 @@ async def _insert_agent(
 ):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'global', 'developer', $6)
         RETURNING agent_id
         """,
         team_id,

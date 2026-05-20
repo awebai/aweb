@@ -41,7 +41,7 @@ class TestConnect:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-001",
         }
 
@@ -81,7 +81,7 @@ class TestConnect:
         assert agent is not None
         assert agent["alias"] == "alice"
         assert agent["did_key"] == agent_did_key
-        assert agent["lifetime"] == "persistent"
+        assert agent["identity_scope"] == "global"
 
     @pytest.mark.asyncio
     async def test_idempotent_reconnect(self, aweb_cloud_db):
@@ -96,7 +96,7 @@ class TestConnect:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-001",
         }
 
@@ -132,7 +132,7 @@ class TestConnect:
             "team_id": "frontend:example.org",
             "alias": "bob",
             "did_key": agent_did_key,
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
             "certificate_id": "cert-002",
         }
 
@@ -168,7 +168,7 @@ class TestConnect:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-persistent-001",
             "member_did_aw": "did:aw:z6Mkstable",
             "member_address": "acme.com/alice",
@@ -206,7 +206,7 @@ class TestConnect:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
             "certificate_id": "cert-ephemeral-001",
             "member_did_aw": "",
             "member_address": "",
@@ -244,7 +244,7 @@ class TestConnect:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate_id": "cert-001",
         }
 

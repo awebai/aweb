@@ -35,7 +35,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": kwargs.get("member_did_aw", ""),
         "member_address": kwargs.get("member_address", ""),
         "alias": kwargs.get("alias", "bob"),
-        "lifetime": kwargs.get("lifetime", "persistent"),
+        "identity_scope": kwargs.get("identity_scope", "global"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -126,7 +126,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
         bob_did_key,
         team_id="backend:acme.com",
         alias="bob",
-        lifetime="persistent",
+        identity_scope="global",
         member_did_aw="did:aw:bob",
     )
     cert_header = _encode_certificate(cert)
@@ -144,8 +144,8 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, address, lifetime, role)
-        VALUES ($1, $2, 'alice', 'acme.com/alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, address, identity_scope, role)
+        VALUES ($1, $2, 'alice', 'acme.com/alice', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -153,8 +153,8 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     )
     bob = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, 'bob', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -206,7 +206,7 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
         bob_did_key,
         team_id="backend:acme.com",
         alias="bob",
-        lifetime="persistent",
+        identity_scope="global",
         member_did_aw="did:aw:bob",
     )
     cert_header = _encode_certificate(cert)
@@ -223,8 +223,8 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, 'bob', 'global', 'developer')
         """,
         "backend:acme.com",
         bob_did_key,
@@ -257,7 +257,7 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
         bob_did_key,
         team_id="backend:acme.com",
         alias="bob",
-        lifetime="persistent",
+        identity_scope="global",
         member_did_aw="did:aw:bob",
     )
     cert_header = _encode_certificate(cert)
@@ -275,8 +275,8 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, lifetime, role)
-        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, role)
+        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -285,8 +285,8 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
     )
     bob = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, 'bob', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -406,7 +406,7 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
         bob_did_key,
         team_id="backend:acme.com",
         alias="bob",
-        lifetime="persistent",
+        identity_scope="global",
         member_did_aw="did:aw:bob",
     )
     cert_header = _encode_certificate(cert)
@@ -424,8 +424,8 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, lifetime, role)
-        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope, role)
+        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -434,8 +434,8 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     )
     bob = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, 'bob', 'global', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",

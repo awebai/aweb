@@ -46,16 +46,16 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
-        VALUES ($1, $2, 'did:aw:alice', 'alice', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'global')
         RETURNING agent_id
         """,
         team_id, alice_did,
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
-        VALUES ($1, $2, 'did:aw:bob', 'bob', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'global')
         RETURNING agent_id
         """,
         team_id, bob_did,
@@ -241,8 +241,8 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
-        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'ephemeral')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
+        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'local')
         RETURNING agent_id
         """,
         charlie_did,
@@ -350,8 +350,8 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
     alice_new_did_key = _make_did_key()
     old_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
-        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
+        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'global')
         RETURNING agent_id
         """,
         alice_old_did_key,
@@ -359,8 +359,8 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
     )
     new_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
-        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, identity_scope)
+        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'global')
         RETURNING agent_id
         """,
         alice_new_did_key,

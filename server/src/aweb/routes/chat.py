@@ -375,7 +375,6 @@ async def _resolve_remote_chat_route(
         "did_aw": target_stable_id,
         "current_did_key": target_current_did,
         "delivery_origin": delivery_origin,
-        "reachability": str(getattr(resolution, "reachability", "") or "").strip() or "public",
     }
 
 
@@ -419,8 +418,7 @@ async def _resolve_stored_remote_chat_route(
         "did_aw": did_aw,
         "current_did_key": current_did,
         "delivery_origin": delivery_origin,
-        # Existing conversation route metadata is sufficient authority to reply;
-        # recipient address reachability is not re-litigated on continuation.
+        # Existing conversation route metadata is sufficient authority to reply.
     }
 
 
@@ -767,8 +765,7 @@ async def _resolve_chat_targets(
                     "did_aw": resolution.did_aw.strip(),
                     "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
                     "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
-                    "reachability": (getattr(resolution, "reachability", "") or "").strip(),
-                                "external": True,
+                    "external": True,
                 }
             resolved[resolution.did_aw] = row
             continue

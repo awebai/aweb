@@ -352,9 +352,7 @@ async def chat_send(
                         "did_aw": resolved.did_aw.strip(),
                         "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
                         "delivery_origin": registry_delivery_origin(resolved),
-                        "reachability": (getattr(resolved, "reachability", "") or "public").strip()
-                        or "public",
-                                        "external": True,
+                        "external": True,
                     }
             else:
                 try:

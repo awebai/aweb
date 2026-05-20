@@ -44,7 +44,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": kwargs.get("member_did_aw", ""),
         "member_address": kwargs.get("member_address", ""),
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "persistent"),
+        "identity_scope": kwargs.get("identity_scope", "global"),
         "issued_at": kwargs.get("issued_at", datetime.now(timezone.utc).isoformat()),
     }
     payload = canonical_json_bytes(cert)
@@ -143,7 +143,7 @@ def _cert(certificate_id: str, member_did_aw: str, member_did_key: str, alias: s
         "member_did_key": member_did_key,
         "member_address": "",
         "alias": alias,
-        "lifetime": "persistent",
+        "identity_scope": "global",
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -173,8 +173,8 @@ async def _insert_agent(
 ):
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ($1, $2, $3, $4, $5, 'persistent', 'developer', $6)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, $2, $3, $4, $5, 'global', 'developer', $6)
         RETURNING agent_id
         """,
         team_id,
@@ -2150,15 +2150,15 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open')
         """,
         alice_current_did,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -2202,8 +2202,8 @@ async def test_messages_inbox_prefers_stored_sender_address_without_local_metada
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -2280,10 +2280,10 @@ async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db)
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2364,8 +2364,8 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'contacts_only')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'contacts_only')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2422,8 +2422,8 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2552,10 +2552,10 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -2673,12 +2673,12 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('dev:acme.com', 'did:key:dev-bob', 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'persistent', 'developer', 'open')
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('dev:acme.com', 'did:key:dev-bob', 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'global', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -2751,8 +2751,8 @@ async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_cur
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -2809,8 +2809,8 @@ async def test_send_message_to_current_did_remains_visible_after_recipient_rotat
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         bob_old_did_key,
     )
@@ -2872,10 +2872,10 @@ async def test_send_message_rejects_mismatched_to_did_and_to_stable_id(aweb_clou
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -2916,8 +2916,8 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', $1, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         carol_did_key,
     )
@@ -2971,10 +2971,10 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_did_key,
     )
@@ -3806,10 +3806,10 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('stable:identity.local', $2, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $2, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_old_did_key,
         bob_current_did_key,
@@ -3861,10 +3861,10 @@ async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_id
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_did_key,
     )
@@ -3915,10 +3915,10 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(aweb
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -3964,10 +3964,10 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_stable_id(aweb_cl
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4009,8 +4009,8 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -4062,8 +4062,8 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk', 'ephemeral', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk', 'local', 'developer', 'open')
         """,
         bob_did_key,
     )
@@ -4137,10 +4137,10 @@ async def test_send_message_rejects_mismatched_local_to_address_binding_when_awi
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk', 'ephemeral', 'developer', 'open'),
-            ('ops:test.local', $2, 'did:aw:carol', 'test.local/carol', 'carol', 'ephemeral', 'developer', 'open')
+            ('ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk', 'local', 'developer', 'open'),
+            ('ops:test.local', $2, 'did:aw:carol', 'test.local/carol', 'carol', 'local', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4185,10 +4185,10 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4234,10 +4234,10 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4281,10 +4281,10 @@ async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_did_key,
     )
@@ -4335,10 +4335,10 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_address(aweb_c
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4396,10 +4396,10 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_address(aweb_clou
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4455,10 +4455,10 @@ async def test_send_message_accepts_to_address_alias_binding_with_duplicate_iden
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_did_key,
     )
@@ -4521,10 +4521,10 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_clo
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open'),
-            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'persistent', 'developer', 'open')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol', 'global', 'developer', 'open')
         """,
         bob_did_key,
         carol_did_key,
@@ -4571,10 +4571,10 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode, created_at)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, created_at)
         VALUES
-            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open', '2026-04-25T00:00:00Z'),
-            ('ops:otherco.com', $2, 'did:aw:bob', NULL, 'bob-stable', 'persistent', 'developer', 'open', '2026-04-26T00:00:00Z')
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', '2026-04-25T00:00:00Z'),
+            ('ops:otherco.com', $2, 'did:aw:bob', NULL, 'bob-stable', 'global', 'developer', 'open', '2026-04-26T00:00:00Z')
         """,
         bob_old_did_key,
         bob_current_did_key,
@@ -4630,8 +4630,8 @@ async def test_send_message_contacts_only_accepts_equivalent_owner_did(aweb_clou
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'contacts_only')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'contacts_only')
         """,
         bob_did_key,
     )
@@ -4694,10 +4694,10 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -4746,10 +4746,10 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open'),
-            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'open')
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -4834,8 +4834,8 @@ async def test_send_message_rejects_invalid_tilde_alias_targets(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -4877,10 +4877,10 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('default:local', $1, NULL, NULL, 'alice', 'ephemeral', 'developer', 'open'),
-            ('default:local', $2, NULL, NULL, 'bob', 'ephemeral', 'developer', 'open')
+            ('default:local', $1, NULL, NULL, 'alice', 'local', 'developer', 'open'),
+            ('default:local', $2, NULL, NULL, 'bob', 'local', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -4892,7 +4892,7 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
         alice_did_key,
         team_id="default:local",
         alias="alice",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     bob_cert = _make_certificate(
         team_sk,
@@ -4900,7 +4900,7 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
         bob_did_key,
         team_id="default:local",
         alias="bob",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
@@ -4991,10 +4991,10 @@ async def test_identity_auth_mail_derives_sender_address_from_agent_row(aweb_clo
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('ops:gsk.aweb.ai', $1, NULL, NULL, 'gsk', 'ephemeral', 'developer', 'open'),
-            ('ops:gsk.aweb.ai', $2, NULL, NULL, 'amy', 'ephemeral', 'developer', 'open')
+            ('ops:gsk.aweb.ai', $1, NULL, NULL, 'gsk', 'local', 'developer', 'open'),
+            ('ops:gsk.aweb.ai', $2, NULL, NULL, 'amy', 'local', 'developer', 'open')
         """,
         alice_did_key,
         bob_did_key,
@@ -5043,10 +5043,10 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
-            ('backend:acme.com', $1, NULL, NULL, 'alice', 'persistent', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'contacts_only')
+            ('backend:acme.com', $1, NULL, NULL, 'alice', 'global', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
         """,
         alice_did_key,
         bob_did_key,
@@ -5151,8 +5151,8 @@ async def test_messages_inbox_and_ack_accept_persistent_cert_auth(aweb_cloud_db)
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -5217,8 +5217,8 @@ async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('default:local', $1, NULL, NULL, 'alice', 'ephemeral', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('default:local', $1, NULL, NULL, 'alice', 'local', 'developer', 'open')
         """,
         alice_did_key,
     )
@@ -5247,7 +5247,7 @@ async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(aweb_cloud_db):
         alice_did_key,
         team_id="default:local",
         alias="alice",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     cert_header = _encode_certificate(cert)
     registry = AsyncMock()
@@ -5281,8 +5281,8 @@ async def test_send_message_requires_timestamp_when_signature_is_provided(aweb_c
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5324,8 +5324,8 @@ async def test_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5383,8 +5383,8 @@ async def test_send_message_rejects_signed_payload_priority_mismatch(aweb_cloud_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5443,8 +5443,8 @@ async def test_send_message_rejects_signed_payload_recipient_mismatch(aweb_cloud
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5502,8 +5502,8 @@ async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5562,8 +5562,8 @@ async def test_send_message_rejects_signed_payload_from_mismatch(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5621,8 +5621,8 @@ async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5665,8 +5665,8 @@ async def test_send_message_global_recipient_allows_explicit_inbound_mode_open(a
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5721,8 +5721,8 @@ async def test_send_message_to_global_address_contacts_only_rejects_non_contact(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob-contacts', 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'persistent', 'developer', 'contacts_only')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob-contacts', 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'contacts_only')
         """
     )
 
@@ -5774,8 +5774,8 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5819,8 +5819,8 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob-migration', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'persistent', 'developer', NULL)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob-migration', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL)
         """
     )
 
@@ -5862,8 +5862,8 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'local', 'developer', 'open')
         """
     )
 
@@ -5898,8 +5898,8 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -5924,15 +5924,15 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
 
 
-@pytest.mark.parametrize("recipient_lifetime", ["persistent", "ephemeral"])
+@pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
 @pytest.mark.asyncio
 async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_misses(
     aweb_cloud_db,
-    recipient_lifetime,
+    recipient_identity_scope,
 ):
     # The persistent branch is guarded by requires_registry_address_binding();
     # the ephemeral branch bypasses that predicate. Keep these as twins so
-    # address routing cannot be accidentally covered with only one lifetime.
+    # address routing cannot be accidentally covered with only one identity_scope.
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -5942,10 +5942,10 @@ async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open')
         """,
-        recipient_lifetime,
+        recipient_identity_scope,
     )
 
     registry = AsyncMock()
@@ -5963,7 +5963,7 @@ async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    subject = f"same team hidden {recipient_lifetime}"
+    subject = f"same team hidden {recipient_identity_scope}"
     payload = {"to_address": "otherco.com/bob", "subject": subject, "body": "hi"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", json=payload)
@@ -5991,8 +5991,8 @@ async def test_send_message_to_address_rejects_cross_team_local_persistent_when_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -6031,8 +6031,8 @@ async def test_send_message_to_address_uses_local_persistent_when_registry_uncon
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -6070,8 +6070,8 @@ async def test_send_message_to_stable_id_address_binding_uses_local_persistent_w
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 
@@ -6103,11 +6103,11 @@ async def test_send_message_to_stable_id_address_binding_uses_local_persistent_w
     assert row["to_alias"] == "bob"
 
 
-@pytest.mark.parametrize("recipient_lifetime", ["persistent", "ephemeral"])
+@pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
 @pytest.mark.asyncio
 async def test_send_message_to_private_address_uses_client_recipient_binding(
     aweb_cloud_db,
-    recipient_lifetime,
+    recipient_identity_scope,
 ):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -6118,10 +6118,10 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open')
         """,
-        recipient_lifetime,
+        recipient_identity_scope,
     )
 
     registry = AsyncMock()
@@ -6141,7 +6141,7 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
             "from_stable_id": "did:aw:alice",
             "message_id": message_id,
             "priority": "normal",
-            "subject": f"private bound {recipient_lifetime}",
+            "subject": f"private bound {recipient_identity_scope}",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
             "to_did": "did:key:bob",
@@ -6152,7 +6152,7 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     payload = {
         "to_address": "otherco.com/bob",
         "to_stable_id": "did:aw:bob",
-        "subject": f"private bound {recipient_lifetime}",
+        "subject": f"private bound {recipient_identity_scope}",
         "body": "hi",
         "from_did": "did:aw:alice",
         "message_id": message_id,
@@ -6193,8 +6193,8 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, lifetime, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'open')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open')
         """
     )
 

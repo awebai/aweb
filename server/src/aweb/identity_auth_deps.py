@@ -31,7 +31,7 @@ class MessagingAuth:
     team_id: str | None = None
     alias: str | None = None
     agent_id: str | None = None
-    lifetime: str | None = None
+    identity_scope: str | None = None
     certificate_id: str | None = None
 
 
@@ -116,13 +116,13 @@ async def lookup_identity_agent_context(
     *,
     did_key: str,
     did_aw: str | None = None,
-    allow_ambiguous_persistent_identity: bool = False,
+    allow_ambiguous_global_identity: bool = False,
 ) -> dict | None:
     did_aw_value = (did_aw or "").strip()
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias, did_aw, address, lifetime
+        SELECT agent_id, team_id, alias, did_aw, address, identity_scope
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_key = $1 OR ($2 <> '' AND did_aw = $2))
@@ -135,7 +135,7 @@ async def lookup_identity_agent_context(
     if not rows:
         return None
     if len(rows) > 1:
-        if allow_ambiguous_persistent_identity and did_aw_value:
+        if allow_ambiguous_global_identity and did_aw_value:
             return None
         raise HTTPException(status_code=409, detail="Authenticated DID matches multiple active local agents")
     return dict(rows[0])
@@ -162,18 +162,18 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             team_id=team_identity.team_id,
             alias=team_identity.alias,
             agent_id=team_identity.agent_id,
-            lifetime=team_identity.lifetime,
+            identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
         )
 
     identity = await resolve_identity_auth(request)
-    # Identity-scoped messaging routes by DID/address; a persistent identity may
+    # Identity-scoped messaging routes by DID/address; a global identity may
     # have multiple local team rows, so ambiguity must not force a team choice.
     row = await lookup_identity_agent_context(
         db,
         did_key=identity.did_key,
         did_aw=identity.did_aw,
-        allow_ambiguous_persistent_identity=True,
+        allow_ambiguous_global_identity=True,
     )
     return MessagingAuth(
         did_key=identity.did_key,
@@ -182,5 +182,5 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
         agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
-        lifetime=(row or {}).get("lifetime") or None,
+        identity_scope=(row or {}).get("identity_scope") or None,
     )

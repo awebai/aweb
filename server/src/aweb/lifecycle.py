@@ -23,16 +23,17 @@ from .events import (
     publish_event,
     publish_team_event,
 )
+from .identity_scope import normalize_identity_scope
 from .messaging.waiting import unregister_waiting
 from .presence import clear_workspace_presence
 
 logger = logging.getLogger(__name__)
 
 LifecycleOperation = Literal[
-    "delete_ephemeral_workspace",
+    "delete_local_workspace",
     "cleanup_agent_coordination_state",
     "agent_deleted_cascade",
-    "archive_persistent_agent",
+    "archive_global_agent",
 ]
 WorkspaceScope = Literal["explicit", "latest_for_agent", "all_for_agent"]
 ActorType = Literal["agent", "human", "support", "system"]
@@ -64,10 +65,11 @@ class LifecycleCascadeRequest:
     reason: str | None = None
     ticket_id: str | None = None
     dry_run: bool = False
+    require_identity_scope: Literal["local", "global"] | None = None
     require_lifetime: Literal["ephemeral", "persistent"] | None = None
     stale_before: datetime | None = None
     deleted_at: datetime | None = None
-    mark_ephemeral_agent_deleted: bool = False
+    mark_local_agent_deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,7 +93,7 @@ class WorkspaceLifecycleChange:
     agent_id: str | None
     action: str
     status: str
-    lifetime: str | None = None
+    identity_scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,10 +132,10 @@ class LifecycleCascadeResult:
 
 
 _VALID_OPERATIONS = {
-    "delete_ephemeral_workspace",
+    "delete_local_workspace",
     "cleanup_agent_coordination_state",
     "agent_deleted_cascade",
-    "archive_persistent_agent",
+    "archive_global_agent",
 }
 _VALID_SCOPES = {"explicit", "latest_for_agent", "all_for_agent"}
 
@@ -148,10 +150,10 @@ def _planned_mutations(request: LifecycleCascadeRequest) -> tuple[str, ...]:
         "task_unclaim_events.publish",
         "presence.clear",
     ]
-    if request.mark_ephemeral_agent_deleted:
-        mutations.append("agent.mark_ephemeral_deleted")
-    if request.operation == "archive_persistent_agent":
-        mutations.append("agent.archive_persistent")
+    if request.mark_local_agent_deleted:
+        mutations.append("agent.mark_local_deleted")
+    if request.operation == "archive_global_agent":
+        mutations.append("agent.archive_global")
     return tuple(mutations)
 
 
@@ -212,41 +214,44 @@ def _validate_request(request: LifecycleCascadeRequest) -> list[LifecycleError]:
                 message="Agent workspace scope requires target_agent_id.",
             )
         )
-    if request.operation == "archive_persistent_agent" and not request.target_agent_id:
+    if request.operation == "archive_global_agent" and not request.target_agent_id:
         errors.append(
             LifecycleError(
-                code="persistent_archive_requires_agent_target",
-                message="Persistent archive requires target_agent_id.",
+                code="global_archive_requires_agent_target",
+                message="Global archive requires target_agent_id.",
             )
         )
     if (
-        request.operation == "archive_persistent_agent"
+        request.operation == "archive_global_agent"
         and request.workspace_scope != "all_for_agent"
     ):
         errors.append(
             LifecycleError(
-                code="persistent_archive_requires_all_agent_workspaces",
-                message="Persistent archive must clean all active workspaces for the target agent.",
+                code="global_archive_requires_all_agent_workspaces",
+                message="Global archive must clean all active workspaces for the target agent.",
             )
         )
+    required_archive_scope = request.require_identity_scope or (
+        normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
+    )
     if (
-        request.operation == "archive_persistent_agent"
-        and request.require_lifetime != "persistent"
+        request.operation == "archive_global_agent"
+        and required_archive_scope != "global"
     ):
         errors.append(
             LifecycleError(
-                code="persistent_archive_requires_persistent_lifetime",
-                message="Persistent archive requires require_lifetime='persistent'.",
+                code="global_archive_requires_global_scope",
+                message="Global archive requires require_identity_scope='global'.",
             )
         )
     if (
-        request.operation == "archive_persistent_agent"
-        and request.mark_ephemeral_agent_deleted
+        request.operation == "archive_global_agent"
+        and request.mark_local_agent_deleted
     ):
         errors.append(
             LifecycleError(
                 code="conflicting_agent_lifecycle_action",
-                message="Persistent archive cannot also mark an ephemeral agent deleted.",
+                message="Global archive cannot also mark an local agent deleted.",
             )
         )
     return errors
@@ -262,7 +267,7 @@ async def _load_target_agent(db, request: LifecycleCascadeRequest) -> dict | Non
     if request.team_id is None:
         row = await db.fetch_one(
             """
-            SELECT agent_id, team_id, lifetime, deleted_at
+            SELECT agent_id, team_id, identity_scope, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1
               AND deleted_at IS NULL
@@ -272,7 +277,7 @@ async def _load_target_agent(db, request: LifecycleCascadeRequest) -> dict | Non
     else:
         row = await db.fetch_one(
             """
-            SELECT agent_id, team_id, lifetime, deleted_at
+            SELECT agent_id, team_id, identity_scope, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1
               AND team_id = $2
@@ -293,7 +298,7 @@ async def _load_target_workspaces(db, request: LifecycleCascadeRequest) -> list[
             w.alias,
             w.deleted_at,
             w.last_seen_at,
-            a.lifetime AS agent_lifetime
+            a.identity_scope AS agent_identity_scope
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.agents}} a
           ON a.agent_id = w.agent_id
@@ -383,28 +388,29 @@ def _precondition_errors(
     errors: list[LifecycleError] = []
     for workspace in workspaces:
         workspace_id = str(workspace["workspace_id"])
-        lifetime = str(workspace.get("agent_lifetime") or "").strip()
-        if request.require_lifetime and not lifetime:
+        identity_scope = str(workspace.get("agent_identity_scope") or "").strip()
+        required_scope = request.require_identity_scope or (normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None)
+        if required_scope and not identity_scope:
             errors.append(
                 LifecycleError(
-                    code="unknown_lifetime_no_cleanup",
-                    message="Workspace is missing an active bound identity lifetime.",
+                    code="unknown_identity_scope_no_cleanup",
+                    message="Workspace is missing an active bound identity scope.",
                     target=workspace_id,
                 )
             )
             continue
-        if request.require_lifetime and lifetime != request.require_lifetime:
+        if required_scope and normalize_identity_scope(identity_scope) != required_scope:
             code = (
-                "persistent_identity_not_cleanup_eligible"
-                if lifetime == "persistent"
-                else "lifecycle_lifetime_precondition_failed"
+                "global_identity_not_cleanup_eligible"
+                if normalize_identity_scope(identity_scope) == "global"
+                else "lifecycle_identity_scope_precondition_failed"
             )
             errors.append(
                 LifecycleError(
                     code=code,
                     message=(
-                        f"Workspace identity lifetime {lifetime!r} does not match "
-                        f"required lifetime {request.require_lifetime!r}."
+                        f"Workspace identity scope {identity_scope!r} does not match "
+                        f"required scope {required_scope!r}."
                     ),
                     target=workspace_id,
                 )
@@ -417,7 +423,7 @@ def _precondition_errors(
         ):
             errors.append(
                 LifecycleError(
-                    code="ephemeral_workspace_still_active",
+                    code="local_workspace_still_active",
                     message="Workspace presence is not stale enough for lifecycle cleanup.",
                     target=workspace_id,
                 )
@@ -428,24 +434,24 @@ def _precondition_errors(
 def _agent_precondition_errors(
     request: LifecycleCascadeRequest, agent: dict | None
 ) -> list[LifecycleError]:
-    if request.operation != "archive_persistent_agent":
+    if request.operation != "archive_global_agent":
         return []
     if agent is None:
         return [
             LifecycleError(
                 code="agent_not_found",
-                message="Persistent archive target agent was not found.",
+                message="Global archive target agent was not found.",
                 target=request.target_agent_id,
             )
         ]
-    lifetime = str(agent.get("lifetime") or "").strip()
-    if lifetime != "persistent":
+    identity_scope = str(agent.get("identity_scope") or "").strip()
+    if normalize_identity_scope(identity_scope) != "global":
         return [
             LifecycleError(
-                code="lifecycle_lifetime_precondition_failed",
+                code="lifecycle_identity_scope_precondition_failed",
                 message=(
-                    f"Target agent lifetime {lifetime!r} does not match "
-                    "required lifetime 'persistent'."
+                    f"Target agent identity scope {identity_scope!r} does not match "
+                    "required scope 'global'."
                 ),
                 target=str(agent["agent_id"]),
             )
@@ -485,7 +491,7 @@ def _target_agent_ids(
     request: LifecycleCascadeRequest, workspaces: list[dict]
 ) -> list[UUID]:
     agent_ids = _workspace_agent_ids(workspaces)
-    if request.operation == "archive_persistent_agent" and request.target_agent_id:
+    if request.operation == "archive_global_agent" and request.target_agent_id:
         target_agent_id = UUID(str(request.target_agent_id))
         if target_agent_id not in agent_ids:
             agent_ids.append(target_agent_id)
@@ -669,7 +675,7 @@ async def _table_has_column(db, column_name: str) -> bool:
     return bool(row and row["has_column"])
 
 
-async def _archive_persistent_agents(
+async def _archive_global_agents(
     db, agent_ids: list[UUID], team_id: str | None, deleted_at: datetime
 ) -> int:
     if not agent_ids:
@@ -686,7 +692,7 @@ async def _archive_persistent_agents(
                 {signing_key_update}
             WHERE agent_id = ANY($1::uuid[])
               AND deleted_at IS NULL
-              AND lifetime = 'persistent'
+              AND identity_scope = 'global'
             RETURNING agent_id
             """,
             agent_ids,
@@ -702,7 +708,7 @@ async def _archive_persistent_agents(
             WHERE agent_id = ANY($1::uuid[])
               AND team_id = $3
               AND deleted_at IS NULL
-              AND lifetime = 'persistent'
+              AND identity_scope = 'global'
             RETURNING agent_id
             """,
             agent_ids,
@@ -727,7 +733,7 @@ def _workspace_changes(
             ),
             action="soft_delete",
             status=status,
-            lifetime=str(workspace.get("agent_lifetime") or "") or None,
+            identity_scope=str(workspace.get("agent_identity_scope") or "local"),
         )
         for workspace in workspaces
     )
@@ -954,7 +960,7 @@ async def apply_lifecycle_cascade(
                     )
                 )
             if (
-                request.mark_ephemeral_agent_deleted
+                request.mark_local_agent_deleted
                 and workspace.get("agent_id") is not None
             ):
                 deleted_agent = await tx.fetch_one(
@@ -965,7 +971,7 @@ async def apply_lifecycle_cascade(
                     WHERE agent_id = $1
                       AND team_id = $3
                       AND deleted_at IS NULL
-                      AND lifetime = 'ephemeral'
+                      AND identity_scope = 'local'
                     RETURNING agent_id
                     """,
                     workspace["agent_id"],
@@ -982,9 +988,9 @@ async def apply_lifecycle_cascade(
         )
         chat_participant_cleanup_count = len(chat_participants)
 
-        if request.operation == "archive_persistent_agent":
+        if request.operation == "archive_global_agent":
             identity_archived = (
-                await _archive_persistent_agents(
+                await _archive_global_agents(
                     tx, agent_ids, request.team_id, deleted_at
                 )
                 > 0
@@ -1024,9 +1030,9 @@ async def apply_lifecycle_cascade(
     if chat_waiting_status == "cleared" or chat_waiting_session_clear_count:
         completed_mutations.append("chat_waiting.clear")
     if identity_deleted:
-        completed_mutations.append("agent.mark_ephemeral_deleted")
+        completed_mutations.append("agent.mark_local_deleted")
     if identity_archived:
-        completed_mutations.append("agent.archive_persistent")
+        completed_mutations.append("agent.archive_global")
     if event_status == "completed":
         completed_mutations.append("task_unclaim_events.publish")
     if presence_status == "cleared":

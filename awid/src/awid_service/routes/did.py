@@ -324,8 +324,6 @@ async def list_did_addresses(
         "pa.did_aw = $1",
         "pa.deleted_at IS NULL",
         "ns.deleted_at IS NULL",
-        "pa.reachability = 'public'",
-        "pa.visible_to_team_id IS NULL",
     ]
     if decoded_cursor is not None:
         cursor_domain = decoded_cursor.get("domain")
@@ -338,7 +336,7 @@ async def list_did_addresses(
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
-        " pa.reachability, pa.visible_to_team_id, ns.default_delivery_origin, pa.created_at"
+        " ns.default_delivery_origin, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
@@ -359,8 +357,6 @@ async def list_did_addresses(
                 name=row["name"],
                 did_aw=row["did_aw"],
                 current_did_key=row["current_did_key"],
-                reachability=str(row.get("reachability") or "nobody"),
-                visible_to_team_id=row.get("visible_to_team_id"),
                 delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
                 created_at=row["created_at"].isoformat(),
             )

@@ -35,7 +35,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "bob"),
-        "lifetime": kwargs.get("lifetime", "ephemeral"),
+        "identity_scope": kwargs.get("identity_scope", "local"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
@@ -159,7 +159,7 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
         agent_did_key,
         team_id=team_id,
         alias="bob",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
@@ -177,8 +177,8 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
         """,
         agent_id,
         team_id,
@@ -286,7 +286,7 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
         agent_did_key,
         team_id=team_id,
         alias="maintainer",
-        lifetime="persistent",
+        identity_scope="global",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
@@ -304,8 +304,8 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role)
-        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'developer')
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, $5, $6, 'global', 'developer')
         """,
         agent_id,
         team_id,
@@ -350,10 +350,10 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
 
     assert resp.status_code == 409
     body = resp.json()
-    assert body["detail"]["code"] == "persistent_identity_not_cleanup_eligible"
+    assert body["detail"]["code"] == "global_identity_not_cleanup_eligible"
     assert body["detail"]["workspace_id"] == str(workspace_id)
     assert body["detail"]["identity_id"] == str(agent_id)
-    assert body["detail"]["lifetime"] == "persistent"
+    assert body["detail"]["identity_scope"] == "global"
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -364,7 +364,7 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     )
     agent_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT deleted_at, status, did_key, did_aw, address, lifetime FROM {{tables.agents}}
+        SELECT deleted_at, status, did_key, did_aw, address, identity_scope FROM {{tables.agents}}
         WHERE agent_id = $1
         """,
         agent_id,
@@ -382,12 +382,12 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     assert agent_row["did_key"] == agent_did_key
     assert agent_row["did_aw"] == "did:aw:maintainer"
     assert agent_row["address"] == "acme.com/maintainer"
-    assert agent_row["lifetime"] == "persistent"
+    assert agent_row["identity_scope"] == "global"
     assert claims_row["count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
+async def test_delete_workspace_unknown_identity_scope_fails_closed(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     team_id = "backend:acme.com"
@@ -400,7 +400,7 @@ async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
         agent_did_key,
         team_id=team_id,
         alias="orphan",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
@@ -418,8 +418,8 @@ async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, 'ephemeral', 'developer')
+            (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, 'local', 'developer')
         """,
         team_id,
         agent_did_key,
@@ -461,10 +461,10 @@ async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
 
     assert resp.status_code == 409
     body = resp.json()
-    assert body["detail"]["code"] == "unknown_lifetime_no_cleanup"
+    assert body["detail"]["code"] == "unknown_identity_scope_no_cleanup"
     assert body["detail"]["workspace_id"] == str(workspace_id)
     assert body["detail"]["identity_id"] == str(missing_agent_id)
-    assert body["detail"]["lifetime"] == "unknown"
+    assert body["detail"]["identity_scope"] == "unknown"
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -498,7 +498,7 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         agent_did_key,
         team_id=team_id,
         alias="bot",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
@@ -516,8 +516,8 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
         """,
         agent_id,
         team_id,
@@ -546,7 +546,7 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
     assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "ephemeral_workspace_still_active"
+    assert resp.json()["detail"]["code"] == "local_workspace_still_active"
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -582,7 +582,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
         agent_did_key,
         team_id=team_b_address,
         alias="eve",
-        lifetime="ephemeral",
+        identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_b_address)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
@@ -604,8 +604,8 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
         """,
         agent_id,
         team_a_address,
@@ -615,8 +615,8 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, 'ephemeral', 'developer')
+            (team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, 'local', 'developer')
         """,
         team_b_address,
         agent_did_key,
