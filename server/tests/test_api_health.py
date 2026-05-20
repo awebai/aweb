@@ -5,7 +5,7 @@ import logging
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from aweb.api import create_app
+from aweb.api import _cached_body_receive, create_app
 
 
 class _FailingRedis:
@@ -53,3 +53,16 @@ async def test_health_hides_internal_exception_details(monkeypatch, caplog):
     assert "postgres://secret@db.internal/aweb refused" not in response.text
     assert "Health check failed for Redis" in caplog.text
     assert "Health check failed for database" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_cached_body_receive_terminates_after_replay():
+    receive = _cached_body_receive(b'{"hello":"world"}')
+
+    first = await receive()
+    second = await receive()
+    third = await receive()
+
+    assert first == {"type": "http.request", "body": b'{"hello":"world"}', "more_body": False}
+    assert second == {"type": "http.request", "body": b"", "more_body": False}
+    assert third == {"type": "http.request", "body": b"", "more_body": False}

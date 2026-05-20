@@ -39,6 +39,27 @@ from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
 
+
+def _cached_body_receive(body: bytes):
+    """Return an ASGI receive callable that replays a cached request body.
+
+    After the cached body has been replayed, subsequent reads must terminate
+    immediately with an empty request-body event. Waiting on the original
+    receive callable here can hang POST error responses under Uvicorn because
+    Starlette may poll the request stream after the endpoint has already raised.
+    """
+    replayed = False
+
+    async def _receive():
+        nonlocal replayed
+        if not replayed:
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return _receive
+
+
 async def _mount_mcp_app(
     app: FastAPI,
     db_infra: DatabaseInfra,
@@ -265,26 +286,10 @@ def create_app(
             request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
             return await call_next(request)
 
-        original_receive = request._receive
         body = await request.body()
         request.state.cached_body = body
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
-        replayed = False
-
-        async def _receive():
-            nonlocal replayed
-            if not replayed:
-                replayed = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            while True:
-                message = await original_receive()
-                if message["type"] == "http.disconnect":
-                    return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
-                    continue
-                return message
-
-        request._receive = _receive
+        request._receive = _cached_body_receive(body)
         return await call_next(request)
 
     @app.exception_handler(ServiceError)
