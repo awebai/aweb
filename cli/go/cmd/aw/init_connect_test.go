@@ -340,7 +340,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	// Write signing key only (ephemeral — no identity.yaml)
+	// Write signing key only for local mode (no identity.yaml)
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
 		t.Fatal(err)
 	}

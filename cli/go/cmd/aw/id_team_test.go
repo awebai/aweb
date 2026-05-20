@@ -539,7 +539,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	}
 }
 
-func TestTeamInviteDefaultsToActiveTeamAndEphemeral(t *testing.T) {
+func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
@@ -666,11 +666,12 @@ func TestTeamInviteDefaultsToActiveTeamAndEphemeral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("lifetime=%q want %q", cert.Lifetime, awid.LifetimeEphemeral)
+	wantLifetime := awid.LifetimeEphemeral
+	if cert.Lifetime != wantLifetime {
+		t.Fatalf("lifetime=%q want %q", cert.Lifetime, wantLifetime)
 	}
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
-		t.Fatalf("ephemeral cert should not include persistent identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
+		t.Fatalf("local cert should not include global identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
 	}
 	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
 		t.Fatalf("registry lifetime=%v", registeredCert["lifetime"])
@@ -903,7 +904,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 		t.Fatalf("unexpected cert alias/lifetime: %q/%q", cert.Alias, cert.Lifetime)
 	}
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
-		t.Fatalf("hosted ephemeral cert has persistent fields: %q %q", cert.MemberDIDAW, cert.MemberAddress)
+		t.Fatalf("local workspace cert has global fields: %q %q", cert.MemberDIDAW, cert.MemberAddress)
 	}
 	if _, err := os.Stat(filepath.Join(acceptDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
 		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
@@ -1066,7 +1067,7 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	}
 }
 
-func TestTeamAcceptInviteRejectsAddressOnEphemeralInvite(t *testing.T) {
+func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1117,7 +1118,7 @@ func TestTeamAcceptInviteRejectsAddressOnEphemeralInvite(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
-		t.Fatalf("ephemeral cert should not be written, stat err=%v", err)
+		t.Fatalf("local cert should not be written, stat err=%v", err)
 	}
 }
 
@@ -1219,7 +1220,7 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 	}
 }
 
-func TestEphemeralAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
+func TestLocalAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
@@ -1727,7 +1728,7 @@ func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 	}
 }
 
-func TestTeamAddMemberByDIDIssuesEphemeralCertificate(t *testing.T) {
+func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
@@ -1808,7 +1809,7 @@ func TestTeamAddMemberByDIDIssuesEphemeralCertificate(t *testing.T) {
 	}
 }
 
-func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t *testing.T) {
+func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
@@ -1868,7 +1869,7 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("add-member by did persistent failed: %v\n%s", err, string(out))
+		t.Fatalf("add-member by did global compatibility path failed: %v\n%s", err, string(out))
 	}
 
 	var got map[string]any

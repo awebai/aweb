@@ -17,7 +17,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestInitPersistentCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *testing.T) {
+func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -481,7 +481,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 			t.Fatalf("child %s workspace_id=%q", alias, membership.WorkspaceID)
 		}
 		if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-			t.Fatalf("child %s should be ephemeral without identity.yaml: %v", alias, err)
+			t.Fatalf("child %s should be local without identity.yaml: %v", alias, err)
 		}
 	}
 
@@ -761,7 +761,7 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		t.Fatalf("did registrations=%d want 0", didRegisterCalls)
 	}
 	if signupBody["did_aw"] != "" {
-		t.Fatalf("ephemeral signup did_aw=%v want empty string", signupBody["did_aw"])
+		t.Fatalf("local signup did_aw=%v want empty string", signupBody["did_aw"])
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -776,8 +776,9 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 	if cert.MemberAddress != "" {
 		t.Fatalf("cert member_address=%q want empty", cert.MemberAddress)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, awid.LifetimeEphemeral)
+	wantLifetime := awid.LifetimeEphemeral
+	if cert.Lifetime != wantLifetime {
+		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, wantLifetime)
 	}
 
 	var got map[string]any

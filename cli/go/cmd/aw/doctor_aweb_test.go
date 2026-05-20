@@ -347,7 +347,7 @@ func TestAwDoctorAwebURLConfusionHostedBase(t *testing.T) {
 
 	local := localRuntimePathCheck("https://app.aweb.ai")
 	if local.Status != doctorStatusWarn || local.Detail["recommended_aweb_url"] != "https://app.aweb.ai/api" {
-		t.Fatalf("hosted local classification=%#v", local)
+		t.Fatalf("local runtime classification=%#v", local)
 	}
 }
 

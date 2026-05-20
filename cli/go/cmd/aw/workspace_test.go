@@ -596,7 +596,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
+func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -695,7 +695,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -749,7 +749,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			t.Fatalf("persistent gone-workspace path must not call DELETE")
+			t.Fatalf("global gone-workspace path must not call DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -782,7 +782,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 	if deletedWorkspace.Load() {
-		t.Fatal("persistent gone-workspace path called DELETE")
+		t.Fatal("global gone-workspace path called DELETE")
 	}
 	if !strings.Contains(string(out), "gone_persistent_path_only") || !strings.Contains(string(out), "no cleanup attempted") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
@@ -1416,10 +1416,10 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatal("expected child certificate registration")
 	}
 	if _, ok := registeredChild["member_did_aw"]; ok {
-		t.Fatalf("ephemeral child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
+		t.Fatalf("local child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
 	}
 	if _, ok := registeredChild["member_address"]; ok {
-		t.Fatalf("ephemeral child cert registration should omit member_address: %v", registeredChild["member_address"])
+		t.Fatalf("local child cert registration should omit member_address: %v", registeredChild["member_address"])
 	}
 	mu.Unlock()
 
@@ -1666,27 +1666,27 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--alias", "alice", "--role", "developer")
 
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("parent identity.yaml should not exist after ephemeral API-key bootstrap: %v", err)
+		t.Fatalf("parent identity.yaml should not exist after local API-key bootstrap: %v", err)
 	}
 	parentCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(repo, teamID))
 	if err != nil {
 		t.Fatalf("load parent cert: %v", err)
 	}
 	if parentCert.MemberDIDAW != "" {
-		t.Fatalf("parent ephemeral cert member_did_aw=%q", parentCert.MemberDIDAW)
+		t.Fatalf("parent local cert member_did_aw=%q", parentCert.MemberDIDAW)
 	}
 
 	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--alias", "charlie")
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("child identity.yaml should not exist after ephemeral add-worktree: %v", err)
+		t.Fatalf("child identity.yaml should not exist after local add-worktree: %v", err)
 	}
 	childCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(child, teamID))
 	if err != nil {
 		t.Fatalf("load child cert: %v", err)
 	}
 	if childCert.MemberDIDAW != "" {
-		t.Fatalf("child ephemeral cert member_did_aw=%q", childCert.MemberDIDAW)
+		t.Fatalf("child local cert member_did_aw=%q", childCert.MemberDIDAW)
 	}
 
 	runAW(repo, baseEnv, "mail", "send", "--to", "charlie", "--body", "hello child", "--json")
@@ -2110,7 +2110,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 	buildAwBinary(t, ctx, bin)
 
 	// No team key written — simulate hosted/API-key bootstrapped workspace.
-	// No identity.yaml — ephemeral.
+	// No identity.yaml for local mode.
 	binding := workspaceBinding(server.URL, teamID, "alice", "source-1")
 	binding.APIKey = "aw_sk_parent_key"
 	writeWorkspaceBindingForTest(t, repo, binding)

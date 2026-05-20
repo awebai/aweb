@@ -58,7 +58,7 @@ func TestAwIDSignWorksWithStandaloneIdentity(t *testing.T) {
 	}, timestamp, signature)
 }
 
-func TestAwIDSignWorksWithEphemeralWorkspace(t *testing.T) {
+func TestAwIDSignWorksWithLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := awid.GenerateKeypair()

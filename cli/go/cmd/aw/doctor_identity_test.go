@@ -221,7 +221,7 @@ func TestAwDoctorIdentityAutoDoesNotContactAWID(t *testing.T) {
 	}
 }
 
-func TestAwDoctorIdentityPersistentHappyPath(t *testing.T) {
+func TestAwDoctorIdentityGlobalHappyPath(t *testing.T) {
 	t.Parallel()
 
 	fixture := writeDoctorIdentityFixture(t, "")
@@ -247,7 +247,7 @@ func TestAwDoctorIdentityPersistentHappyPath(t *testing.T) {
 	}
 }
 
-func TestAwDoctorIdentityEphemeralSkipsPublicRegistry(t *testing.T) {
+func TestAwDoctorIdentityLocalSkipsPublicRegistry(t *testing.T) {
 	t.Parallel()
 
 	var hits atomic.Int32
@@ -280,11 +280,11 @@ func TestAwDoctorIdentityEphemeralSkipsPublicRegistry(t *testing.T) {
 		t.Fatalf("local registry reason=%v", check.Detail["reason"])
 	}
 	if hits.Load() != 0 {
-		t.Fatalf("ephemeral registry contacted awid %d times", hits.Load())
+		t.Fatalf("local registry contacted awid %d times", hits.Load())
 	}
 }
 
-func TestAwDoctorIdentityPersistentMissingIdentityYAMLFails(t *testing.T) {
+func TestAwDoctorIdentityGlobalMissingIdentityYAMLFails(t *testing.T) {
 	t.Parallel()
 
 	fixture := writeDoctorIdentityFixture(t, "")

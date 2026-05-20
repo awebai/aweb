@@ -128,7 +128,7 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 	}
 }
 
-func TestGlobalLocalHelpDoesNotAdvertisePersistentEphemeralFlags(t *testing.T) {
+func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -137,6 +137,15 @@ func TestGlobalLocalHelpDoesNotAdvertisePersistentEphemeralFlags(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
+
+	legacyPersistentIdentity := "Persistent" + " identity"
+	legacyEphemeralIdentity := "ephemeral" + " identity"
+	legacyPersistentInvite := "persistent" + " member invite"
+	legacyEphemeralInvite := "ephemeral" + " member invite"
+	legacyPersistent := "persistent"
+	legacyEphemeral := "ephemeral"
+	legacyPersistentFlag := "--" + legacyPersistent
+	legacyEphemeralFlag := "--" + legacyEphemeral
 
 	cases := []struct {
 		name       string
@@ -148,19 +157,19 @@ func TestGlobalLocalHelpDoesNotAdvertisePersistentEphemeralFlags(t *testing.T) {
 			name:       "init",
 			args:       []string{"init", "--help"},
 			want:       []string{"--global", "Global identity name", "Local workspace routing alias"},
-			mustAbsent: []string{"--persistent", "ephemeral identity", "Persistent identity"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity},
 		},
 		{
 			name:       "team invite",
 			args:       []string{"id", "team", "invite", "--help"},
 			want:       []string{"--global", "--local", "global member invite", "local workspace member invite"},
-			mustAbsent: []string{"--persistent", "--ephemeral", "persistent member invite", "ephemeral member invite"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralFlag, legacyPersistentInvite, legacyEphemeralInvite},
 		},
 		{
 			name:       "team add-member",
 			args:       []string{"id", "team", "add-member", "--help"},
 			want:       []string{"--global", "--local", "Global member address", "local workspace member certificate"},
-			mustAbsent: []string{"--lifetime", "persistent", "ephemeral"},
+			mustAbsent: []string{"--lifetime", legacyPersistent, legacyEphemeral},
 		},
 	}
 
@@ -1322,7 +1331,7 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 		SigningKey:  priv,
 	})
 	// aako-pattern workspace: the active team certificate supplies the
-	// messaging address, while the persistent identity carries the registry URL.
+	// messaging address, while the global identity carries the registry URL.
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:         did,
 		StableID:    stableID,

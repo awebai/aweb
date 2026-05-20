@@ -6,7 +6,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
-func TestSelectionAddressFallsBackForEphemeralIdentity(t *testing.T) {
+func TestSelectionAddressFallsBackForLocalIdentity(t *testing.T) {
 	t.Parallel()
 
 	sel := &awconfig.Selection{
@@ -20,7 +20,7 @@ func TestSelectionAddressFallsBackForEphemeralIdentity(t *testing.T) {
 	}
 }
 
-func TestSelectionAddressFallsBackForManagedPersistentIdentity(t *testing.T) {
+func TestSelectionAddressFallsBackForManagedGlobalIdentity(t *testing.T) {
 	t.Parallel()
 
 	sel := &awconfig.Selection{

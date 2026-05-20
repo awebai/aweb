@@ -159,7 +159,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral API-key init: %v", err)
+		t.Fatalf("identity.yaml should not exist for local API-key init: %v", err)
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
@@ -176,7 +176,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	}
 }
 
-func TestInitAPIKeyPersistentNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
+func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_persistent"
@@ -282,7 +282,7 @@ func TestInitAPIKeyPersistentNameCreatesSelfCustodialGlobalCLIIdentity(t *testin
 		Persistent:  true,
 	})
 	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit persistent: %v", err)
+		t.Fatalf("runAPIKeyBootstrapInit global: %v", err)
 	}
 
 	if got, want := strings.Join(requestOrder[:3], ","), "register_identity,did_full,workspace_init"; got != want {
@@ -295,7 +295,7 @@ func TestInitAPIKeyPersistentNameCreatesSelfCustodialGlobalCLIIdentity(t *testin
 		t.Fatalf("init name=%v", initBody["name"])
 	}
 	if a, ok := initBody["alias"]; ok && strings.TrimSpace(a.(string)) != "" {
-		t.Fatalf("persistent init should not send alias, got %v", a)
+		t.Fatalf("global init should not send alias, got %v", a)
 	}
 	if initBody["custody"] != awid.CustodySelf {
 		t.Fatalf("init custody=%v", initBody["custody"])
@@ -350,7 +350,7 @@ func TestInitAPIKeyPersistentNameCreatesSelfCustodialGlobalCLIIdentity(t *testin
 	}
 }
 
-func TestRunAPIKeyBootstrapInitPersistentResumesPartialAfterWorkspaceInitFailure(t *testing.T) {
+func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "")
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -506,7 +506,7 @@ func TestRunAPIKeyBootstrapInitPersistentResumesPartialAfterWorkspaceInitFailure
 	}
 }
 
-func TestRunAPIKeyBootstrapInitPersistentRejectsPartialContextMismatch(t *testing.T) {
+func TestRunAPIKeyBootstrapInitGlobalRejectsPartialContextMismatch(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "")
 
 	tmp := t.TempDir()

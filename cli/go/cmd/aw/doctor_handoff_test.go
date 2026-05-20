@@ -29,13 +29,13 @@ func TestAwDoctorHandoffJSONContractCategories(t *testing.T) {
 		auth   doctorAuthority
 	}{
 		{
-			name:   "persistent lifecycle review",
+			name:   "global lifecycle review",
 			input:  persistentLifecycleReviewHandoff(),
 			action: "persistent_lifecycle_review",
 			auth:   doctorAuthorityTeamAdmin,
 		},
 		{
-			name:   "persistent replacement review",
+			name:   "global replacement review",
 			input:  persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil),
 			action: "persistent_replacement_review",
 			auth:   doctorAuthorityTeamAdmin,
@@ -128,7 +128,7 @@ func TestAwDoctorHandoffCallerRepairCommandRequiresPresentAuthority(t *testing.T
 	}
 }
 
-func TestAwDoctorHandoffMissingPersistentStateNeedsExternalReview(t *testing.T) {
+func TestAwDoctorHandoffMissingGlobalStateNeedsExternalReview(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)

@@ -693,7 +693,7 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "persistent lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
+		{name: "global lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
 		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "persistent_identity_lifecycle"},
 		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "persistent_identity_lifecycle"},
 		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "persistent_identity_lifecycle"},
@@ -787,7 +787,7 @@ func TestAwDoctorFixHandlerRegistryCleanup(t *testing.T) {
 	}
 }
 
-func TestAwDoctorLocalChecksValidEphemeralWorkspace(t *testing.T) {
+func TestAwDoctorLocalChecksValidLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
@@ -807,7 +807,7 @@ func TestAwDoctorLocalChecksValidEphemeralWorkspace(t *testing.T) {
 	}
 }
 
-func TestAwDoctorLocalChecksValidPersistentWorkspace(t *testing.T) {
+func TestAwDoctorLocalChecksValidGlobalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
@@ -1009,7 +1009,7 @@ func TestAwDoctorLocalChecksSigningKeyCertificateDIDMismatch(t *testing.T) {
 	}
 }
 
-func TestAwDoctorLocalChecksPersistentMissingIdentity(t *testing.T) {
+func TestAwDoctorLocalChecksGlobalMissingIdentity(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
@@ -1027,7 +1027,7 @@ func TestAwDoctorLocalChecksPersistentMissingIdentity(t *testing.T) {
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityParse, doctorStatusBlocked)
 }
 
-func TestAwDoctorLocalChecksCorruptEphemeralIdentityFails(t *testing.T) {
+func TestAwDoctorLocalChecksCorruptLocalIdentityFails(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)

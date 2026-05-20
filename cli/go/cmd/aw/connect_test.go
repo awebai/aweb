@@ -17,7 +17,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestConnectBootstrapPersistent(t *testing.T) {
+func TestConnectBootstrapGlobal(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -27,14 +27,14 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var (
-		persistentDidAW  string
-		persistentDidKey string
-		didRegistered    bool
-		redeemBodyBytes  []byte
-		redeemBody       map[string]any
-		redeemAuth       string
-		redeemTimestamp  string
-		onboardingURL    string
+		globalDidAW     string
+		globalDidKey    string
+		didRegistered   bool
+		redeemBodyBytes []byte
+		redeemBody      map[string]any
+		redeemAuth      string
+		redeemTimestamp string
+		onboardingURL   string
 	)
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +51,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["new_did_key"].(string)
+			globalDidAW, _ = payload["did_aw"].(string)
+			globalDidKey, _ = payload["new_did_key"].(string)
 			for _, field := range []string{"did_key", "server", "address", "handle"} {
 				if _, ok := payload[field]; ok {
 					t.Fatalf("register_did payload unexpectedly carried %q", field)
@@ -60,10 +60,10 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			}
 			didRegistered = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case r.Method == http.MethodGet && persistentDidAW != "" && r.URL.Path == "/v1/did/"+persistentDidAW+"/full":
+		case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          persistentDidAW,
-				"current_did_key": persistentDidKey,
+				"did_aw":          globalDidAW,
+				"current_did_key": globalDidKey,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -81,8 +81,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:          "default:juanre.aweb.ai",
-				MemberDIDKey:  persistentDidKey,
-				MemberDIDAW:   persistentDidAW,
+				MemberDIDKey:  globalDidKey,
+				MemberDIDAW:   globalDidAW,
 				MemberAddress: "juanre.aweb.ai/laptop-agent",
 				Alias:         "laptop-agent",
 				Lifetime:      awid.LifetimePersistent,
@@ -99,7 +99,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				"team_id":        "default:juanre.aweb.ai",
 				"lifetime":       "persistent",
 				"alias":          "laptop-agent",
-				"did_aw":         persistentDidAW,
+				"did_aw":         globalDidAW,
 				"member_address": "juanre.aweb.ai/laptop-agent",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
@@ -144,18 +144,18 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	if redeemBody["token"] != "tok-123" {
 		t.Fatalf("token=%v", redeemBody["token"])
 	}
-	if redeemBody["did_key"] != persistentDidKey {
-		t.Fatalf("did_key=%v want %v", redeemBody["did_key"], persistentDidKey)
+	if redeemBody["did_key"] != globalDidKey {
+		t.Fatalf("did_key=%v want %v", redeemBody["did_key"], globalDidKey)
 	}
-	if redeemBody["did_aw"] != persistentDidAW {
-		t.Fatalf("did_aw=%v want %v", redeemBody["did_aw"], persistentDidAW)
+	if redeemBody["did_aw"] != globalDidAW {
+		t.Fatalf("did_aw=%v want %v", redeemBody["did_aw"], globalDidAW)
 	}
 
 	parts := strings.Fields(redeemAuth)
-	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != persistentDidKey {
+	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != globalDidKey {
 		t.Fatalf("Authorization=%q", redeemAuth)
 	}
-	if !verifyCloudDIDPayload(t, mustExtractPublicKey(t, persistentDidKey), http.MethodPost, "/api/v1/onboarding/bootstrap-redeem", redeemTimestamp, redeemBodyBytes, parts[2]) {
+	if !verifyCloudDIDPayload(t, mustExtractPublicKey(t, globalDidKey), http.MethodPost, "/api/v1/onboarding/bootstrap-redeem", redeemTimestamp, redeemBodyBytes, parts[2]) {
 		t.Fatal("bootstrap-redeem signed payload did not verify")
 	}
 
@@ -163,8 +163,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identity.yaml missing: %v", err)
 	}
-	if identity.StableID != persistentDidAW {
-		t.Fatalf("stable_id=%q want %q", identity.StableID, persistentDidAW)
+	if identity.StableID != globalDidAW {
+		t.Fatalf("stable_id=%q want %q", identity.StableID, globalDidAW)
 	}
 	if identity.Address != "juanre.aweb.ai/laptop-agent" {
 		t.Fatalf("address=%q", identity.Address)
@@ -251,7 +251,7 @@ func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 	}
 }
 
-func TestConnectBootstrapEphemeral(t *testing.T) {
+func TestConnectBootstrapLocal(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -272,7 +272,7 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 				"version":        "1.7.0",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			t.Fatal("ephemeral connect should not register did:aw")
+			t.Fatal("local connect should not register did:aw")
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
 			data, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -332,10 +332,10 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 	}
 
 	if _, exists := redeemBody["did_aw"]; exists {
-		t.Fatalf("ephemeral redeem unexpectedly sent did_aw: %v", redeemBody["did_aw"])
+		t.Fatalf("local redeem unexpectedly sent did_aw: %v", redeemBody["did_aw"])
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral connect: %v", err)
+		t.Fatalf("identity.yaml should not exist for local connect: %v", err)
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
@@ -400,10 +400,10 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var (
-		persistentDidAW  string
-		persistentDidKey string
-		onboardingURL    string
-		connectCalls     int
+		globalDidAW   string
+		globalDidKey  string
+		onboardingURL string
+		connectCalls  int
 	)
 
 	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -438,13 +438,13 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["new_did_key"].(string)
+			globalDidAW, _ = payload["did_aw"].(string)
+			globalDidKey, _ = payload["new_did_key"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case r.Method == http.MethodGet && persistentDidAW != "" && r.URL.Path == "/v1/did/"+persistentDidAW+"/full":
+		case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          persistentDidAW,
-				"current_did_key": persistentDidKey,
+				"did_aw":          globalDidAW,
+				"current_did_key": globalDidKey,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -455,8 +455,8 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 			}
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:          "default:juanre.aweb.ai",
-				MemberDIDKey:  persistentDidKey,
-				MemberDIDAW:   persistentDidAW,
+				MemberDIDKey:  globalDidKey,
+				MemberDIDAW:   globalDidAW,
 				MemberAddress: "juanre.aweb.ai/laptop-agent",
 				Alias:         "laptop-agent",
 				Lifetime:      awid.LifetimePersistent,
@@ -473,7 +473,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				"team_id":        "default:juanre.aweb.ai",
 				"lifetime":       "persistent",
 				"alias":          "laptop-agent",
-				"did_aw":         persistentDidAW,
+				"did_aw":         globalDidAW,
 				"member_address": "juanre.aweb.ai/laptop-agent",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":

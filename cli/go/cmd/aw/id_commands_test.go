@@ -1522,7 +1522,7 @@ func TestExecuteIDNamespaceRotateControllerRejectsLocalDomain(t *testing.T) {
 	}
 }
 
-func TestAwIDShowWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+func TestAwIDShowWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1563,14 +1563,14 @@ func TestAwIDShowWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
 		t.Fatalf("registry_status=%v", got["registry_status"])
 	}
 	if _, ok := got["did_aw"]; ok {
-		t.Fatalf("did_aw should be absent for ephemeral identity, got %v", got["did_aw"])
+		t.Fatalf("did_aw should be absent for local identity, got %v", got["did_aw"])
 	}
 	if _, ok := got["address"]; ok {
-		t.Fatalf("address should be absent for ephemeral identity, got %v", got["address"])
+		t.Fatalf("address should be absent for local identity, got %v", got["address"])
 	}
 }
 
-func TestAwIDVerifyWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+func TestAwIDVerifyWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := awid.GenerateKeypair()
@@ -1625,7 +1625,7 @@ func TestAwIDVerifyWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
 	}
 }
 
-func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1640,7 +1640,7 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *te
 		t.Fatal(err)
 	}
 	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("unexpected network call during ephemeral rotate-key failure: %s %s", r.Method, r.URL.Path)
+		t.Fatalf("unexpected network call during local rotate-key failure: %s %s", r.Method, r.URL.Path)
 	}))
 	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
@@ -1656,7 +1656,7 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *te
 	}
 }
 
-func TestAwIDRegisterFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+func TestAwIDRegisterFailsClearlyWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1671,7 +1671,7 @@ func TestAwIDRegisterFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *tes
 		t.Fatal(err)
 	}
 	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("unexpected network call during ephemeral register failure: %s %s", r.Method, r.URL.Path)
+		t.Fatalf("unexpected network call during local register failure: %s %s", r.Method, r.URL.Path)
 	}))
 	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
@@ -1775,7 +1775,7 @@ func TestAwIDShowFailsForIdentityDIDMismatch(t *testing.T) {
 	}
 }
 
-func TestAwIDShowFailsWhenEphemeralCertMissingMemberDIDKey(t *testing.T) {
+func TestAwIDShowFailsWhenLocalCertMissingMemberDIDKey(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -2241,7 +2241,7 @@ func writeEphemeralIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverUR
 	})
 	writeWorkspaceBindingForTest(t, workingDir, workspace)
 	if _, err := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should be absent for ephemeral workspace, err=%v", err)
+		t.Fatalf("identity.yaml should be absent for local workspace, err=%v", err)
 	}
 	return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 }
