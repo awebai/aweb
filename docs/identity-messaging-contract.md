@@ -44,7 +44,8 @@ For a send to a global address (`domain/name`):
    alias.
 2. AWID resolves the address to the target `did:aw`, current `did:key`, and
    address-route delivery origin. Legacy reachability metadata is not consulted
-   as a resolver or authorization gate.
+   as a resolver or authorization gate; non-neutral legacy rows are a migration
+   state and fail closed until explicitly normalized.
 3. The client signs the mail or chat payload, including the target address and
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping

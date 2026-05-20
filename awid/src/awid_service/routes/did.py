@@ -320,7 +320,13 @@ async def list_did_addresses(
 
     db = _db(request)
     params: list[object] = [did_aw]
-    where_clauses = ["pa.did_aw = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
+    where_clauses = [
+        "pa.did_aw = $1",
+        "pa.deleted_at IS NULL",
+        "ns.deleted_at IS NULL",
+        "pa.reachability = 'public'",
+        "pa.visible_to_team_id IS NULL",
+    ]
     if decoded_cursor is not None:
         cursor_domain = decoded_cursor.get("domain")
         cursor_name = decoded_cursor.get("name")

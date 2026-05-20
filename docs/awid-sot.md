@@ -157,12 +157,14 @@ accepted the address).
 `reachability` values (`public`, `nobody`, `org_only`,
 `team_members_only`) and `visible_to_team_id` during the compatibility
 window. These fields are no longer resolver authorization for global
-identities. `GET /v1/namespaces/{domain}/addresses/{name}` resolves any
-active global address alias to its `did:aw`, current `did:key`, and
-address-route delivery origin regardless of caller team certificate or
-legacy reachability value. Namespace/address controllers may update these
-legacy fields until cleanup, but new delivery behavior must not depend on
-them.
+identities. During migration, public address reads fail closed for non-neutral
+rows (`reachability != public` or `visible_to_team_id IS NOT NULL`) with a
+migration-required diagnostic, and namespace address listings omit those rows.
+This prevents silent widening until the namespace/address controller explicitly
+normalizes an approved row to `reachability='public'` and
+`visible_to_team_id=NULL`. Neutral rows resolve to their `did:aw`, current
+`did:key`, and address-route delivery origin regardless of caller team
+certificate.
 
 **Authenticated address read compatibility.** `GET /v1/namespaces/{domain}/addresses/{name}`
 may receive the old optional signed-request envelope from existing clients,

@@ -21,6 +21,10 @@ from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
 _NEUTRAL_REACHABILITY = "public"
+_MIGRATION_REQUIRED_DETAIL = (
+    "Address blocked by legacy migration state; normalize reachability to public "
+    "and visible_to_team_id to null before public resolution"
+)
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 logger = logging.getLogger(__name__)
@@ -243,6 +247,18 @@ def _validate_domain(domain: str) -> str:
     return domain
 
 
+def _is_neutral_address_row(row) -> bool:
+    return (
+        str(row.get("reachability") or "nobody") == _NEUTRAL_REACHABILITY
+        and row.get("visible_to_team_id") is None
+    )
+
+
+def _raise_if_legacy_migration_blocked(row) -> None:
+    if not _is_neutral_address_row(row):
+        raise HTTPException(status_code=409, detail=_MIGRATION_REQUIRED_DETAIL)
+
+
 def _address_response(row, domain: str) -> AddressResponse:
     return AddressResponse(
         address_id=str(row["address_id"]),
@@ -419,6 +435,7 @@ async def get_address(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
+    _raise_if_legacy_migration_blocked(row)
     return _address_response(row, domain)
 
 
@@ -445,7 +462,13 @@ async def list_addresses(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     params: list[object] = [ns_row["namespace_id"]]
-    where_clauses = ["pa.namespace_id = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
+    where_clauses = [
+        "pa.namespace_id = $1",
+        "pa.deleted_at IS NULL",
+        "ns.deleted_at IS NULL",
+        "pa.reachability = 'public'",
+        "pa.visible_to_team_id IS NULL",
+    ]
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
         if not isinstance(cursor_name, str):
@@ -697,7 +720,9 @@ async def reassign_address(
             await tx.execute(
                 """
                 UPDATE {{tables.public_addresses}}
-                SET did_aw = $1
+                SET did_aw = $1,
+                    reachability = 'public',
+                    visible_to_team_id = NULL
                 WHERE address_id = $2
                 """,
                 body.did_aw,
@@ -715,8 +740,8 @@ async def reassign_address(
         name=row["name"],
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        reachability=str(row.get("reachability") or "nobody"),
-        visible_to_team_id=row.get("visible_to_team_id"),
+        reachability=_NEUTRAL_REACHABILITY,
+        visible_to_team_id=None,
         delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
         created_at=row["created_at"].isoformat(),
     )
