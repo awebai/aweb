@@ -56,7 +56,7 @@ export interface ResolvedRegistryIdentity {
   address: string;
   controllerDid: string;
   custody: "self";
-  lifetime: "persistent";
+  identityScope: "global";
 }
 
 function pathSafeSegment(value: string): string {
@@ -77,8 +77,6 @@ interface AddressResponse {
   name: string;
   did_aw: string;
   current_did_key: string;
-  reachability: string;
-  visible_to_team_id?: string | null;
   created_at: string;
 }
 
@@ -192,7 +190,7 @@ export class RegistryResolver {
       address: `${split.domain}/${split.name}`,
       controllerDid: authority.controllerDid,
       custody: "self",
-      lifetime: "persistent",
+      identityScope: "global",
     };
   }
 

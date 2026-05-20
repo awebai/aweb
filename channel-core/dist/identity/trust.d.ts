@@ -1,7 +1,7 @@
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { RegistryResolver } from "./registry.js";
-import { PinStore } from "./pinstore.js";
+import { PinStore, type IdentityScope } from "./pinstore.js";
 export interface RotationAnnouncement {
     old_did: string;
     new_did: string;
@@ -20,6 +20,7 @@ export interface TrustResult {
     status: VerificationStatus | undefined;
     stored: boolean;
 }
+export declare function normalizeIdentityScope(identityScope: string | undefined, legacyLifetime: string | undefined, defaultScope: IdentityScope): IdentityScope;
 export declare class SenderTrustManager {
     private readonly client;
     private readonly registry;

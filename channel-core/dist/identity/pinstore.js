@@ -4,9 +4,9 @@ import yaml from "js-yaml";
 export class PinStore {
     pins = new Map();
     addresses = new Map();
-    /** Check whether a DID matches the stored pin for an address. */
-    checkPin(address, did, lifetime) {
-        if (lifetime === "ephemeral")
+    /** Check whether a DID matches the stored pin for a global address. */
+    checkPin(address, did, identityScope) {
+        if (identityScope === "local")
             return "skipped";
         const pinnedDID = this.addresses.get(address);
         if (pinnedDID === undefined)

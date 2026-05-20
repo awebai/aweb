@@ -4,7 +4,7 @@ import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
 import { RegistryResolver } from "./registry.js";
-import { PinStore } from "./pinstore.js";
+import { PinStore, type IdentityScope } from "./pinstore.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -32,11 +32,11 @@ interface ResolvedIdentity {
   address: string;
   controllerDid?: string;
   custody: string;
-  lifetime: string;
+  identityScope: IdentityScope;
 }
 
 interface AgentMeta {
-  lifetime: string;
+  identityScope: IdentityScope;
   custody: string;
   controllerDid?: string;
   resolved: boolean;
@@ -45,6 +45,21 @@ interface AgentMeta {
 export interface TrustResult {
   status: VerificationStatus | undefined;
   stored: boolean;
+}
+
+export function normalizeIdentityScope(
+  identityScope: string | undefined,
+  legacyLifetime: string | undefined,
+  defaultScope: IdentityScope,
+): IdentityScope {
+  const normalizedScope = (identityScope || "").trim().toLowerCase();
+  if (normalizedScope === "global" || normalizedScope === "local") return normalizedScope;
+
+  const normalizedLegacy = (legacyLifetime || "").trim().toLowerCase();
+  if (normalizedLegacy === "persistent") return "global";
+  if (normalizedLegacy === "ephemeral") return "local";
+
+  return defaultScope;
 }
 
 export class SenderTrustManager {
@@ -170,7 +185,7 @@ export class SenderTrustManager {
       return { status, stored: false };
     }
 
-    if (meta.lifetime === "ephemeral") {
+    if (meta.identityScope === "local") {
       let removed = store.removeAddress(trustAddress);
       if (rawAddress && rawAddress !== trustAddress) {
         removed = store.removeAddress(rawAddress) || removed;
@@ -201,7 +216,7 @@ export class SenderTrustManager {
       }
     }
 
-    const pinResult = store.checkPin(trustAddress, pinKey, meta.lifetime);
+    const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
     switch (pinResult) {
       case "new":
         store.storePin(pinKey, trustAddress, "", "");
@@ -215,8 +230,8 @@ export class SenderTrustManager {
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
-            // A verified registry chain is authoritative for persistent
-            // identities; stale local TOFU must not block archive/recreate.
+            // A verified registry chain is authoritative for global identities;
+            // stale local TOFU must not block archive/recreate.
             // Security assumption: awid enforces a did:aw belongs to one
             // current address; the client does not independently prove that.
             if (registryConfirmedCurrentKey) {
@@ -389,7 +404,7 @@ export class SenderTrustManager {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
-      return { lifetime: "persistent", custody: "self", resolved: false };
+      return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
     if (cached) return cached;
@@ -397,7 +412,7 @@ export class SenderTrustManager {
     try {
       const identity = await this.resolveIdentity(rawAddress);
       const meta: AgentMeta = {
-        lifetime: identity.lifetime || "persistent",
+        identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,
         resolved: true,
@@ -405,7 +420,7 @@ export class SenderTrustManager {
       this.metaCache.set(trustAddress, meta);
       return meta;
     } catch {
-      return { lifetime: "persistent", custody: "self", resolved: false };
+      return { identityScope: "global", custody: "self", resolved: false };
     }
   }
 
@@ -425,6 +440,7 @@ export class SenderTrustManager {
       did_key?: string;
       did_aw?: string;
       address?: string;
+      identity_scope?: string;
       lifetime?: string;
     }>(
       `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`,
@@ -434,7 +450,7 @@ export class SenderTrustManager {
       stableID: response.did_aw,
       address: response.address || `${this.teamID}/${trimmed}`,
       custody: "self",
-      lifetime: response.lifetime || "ephemeral",
+      identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
   }
 }

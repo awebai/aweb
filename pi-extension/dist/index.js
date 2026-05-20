@@ -4974,9 +4974,9 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 var PinStore = class _PinStore {
   pins = /* @__PURE__ */ new Map();
   addresses = /* @__PURE__ */ new Map();
-  /** Check whether a DID matches the stored pin for an address. */
-  checkPin(address, did, lifetime) {
-    if (lifetime === "ephemeral")
+  /** Check whether a DID matches the stored pin for a global address. */
+  checkPin(address, did, identityScope) {
+    if (identityScope === "local")
       return "skipped";
     const pinnedDID = this.addresses.get(address);
     if (pinnedDID === void 0)
@@ -5172,7 +5172,7 @@ var RegistryResolver = class {
       address: `${split2.domain}/${split2.name}`,
       controllerDid: authority.controllerDid,
       custody: "self",
-      lifetime: "persistent"
+      identityScope: "global"
     };
   }
   async discoverRegistry(domain) {
@@ -5563,6 +5563,17 @@ function escapeJSON2(s) {
 // ../channel-core/dist/identity/trust.js
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+function normalizeIdentityScope(identityScope, legacyLifetime, defaultScope) {
+  const normalizedScope = (identityScope || "").trim().toLowerCase();
+  if (normalizedScope === "global" || normalizedScope === "local")
+    return normalizedScope;
+  const normalizedLegacy = (legacyLifetime || "").trim().toLowerCase();
+  if (normalizedLegacy === "persistent")
+    return "global";
+  if (normalizedLegacy === "ephemeral")
+    return "local";
+  return defaultScope;
+}
 var SenderTrustManager = class {
   client;
   registry;
@@ -5624,7 +5635,7 @@ var SenderTrustManager = class {
     if (!status || status !== "verified" && status !== "verified_custodial" || !fromDID || !trustAddress || !meta.resolved) {
       return { status, stored: false };
     }
-    if (meta.lifetime === "ephemeral") {
+    if (meta.identityScope === "local") {
       let removed = store.removeAddress(trustAddress);
       if (rawAddress && rawAddress !== trustAddress) {
         removed = store.removeAddress(rawAddress) || removed;
@@ -5651,7 +5662,7 @@ var SenderTrustManager = class {
         }
       }
     }
-    const pinResult = store.checkPin(trustAddress, pinKey, meta.lifetime);
+    const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
     switch (pinResult) {
       case "new":
         store.storePin(pinKey, trustAddress, "", "");
@@ -5777,7 +5788,7 @@ var SenderTrustManager = class {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
-      return { lifetime: "persistent", custody: "self", resolved: false };
+      return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
     if (cached)
@@ -5785,7 +5796,7 @@ var SenderTrustManager = class {
     try {
       const identity = await this.resolveIdentity(rawAddress);
       const meta = {
-        lifetime: identity.lifetime || "persistent",
+        identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,
         resolved: true
@@ -5793,7 +5804,7 @@ var SenderTrustManager = class {
       this.metaCache.set(trustAddress, meta);
       return meta;
     } catch {
-      return { lifetime: "persistent", custody: "self", resolved: false };
+      return { identityScope: "global", custody: "self", resolved: false };
     }
   }
   async resolveIdentity(address) {
@@ -5813,7 +5824,7 @@ var SenderTrustManager = class {
       stableID: response.did_aw,
       address: response.address || `${this.teamID}/${trimmed}`,
       custody: "self",
-      lifetime: response.lifetime || "ephemeral"
+      identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local")
     };
   }
 };

@@ -237,7 +237,7 @@ describe("trust conformance vectors", () => {
           fromStableID: string | undefined,
           rotationAnnouncement: RotationAnnouncement | undefined,
           replacementAnnouncement: ReplacementAnnouncement | undefined,
-          meta: { lifetime: string; custody: string; controllerDid?: string; resolved: boolean },
+          meta: { identityScope: "global" | "local"; custody: string; controllerDid?: string; resolved: boolean },
           registryConfirmedCurrentKey: boolean,
         ): { status: VerificationStatus | undefined; stored: boolean };
       };
@@ -252,7 +252,7 @@ describe("trust conformance vectors", () => {
         await buildRotationAnnouncement(vector.rotation_announcement),
         await buildReplacementAnnouncement(vector.replacement_announcement),
         {
-          lifetime: vector.agent_meta.lifetime,
+          identityScope: vector.agent_meta.lifetime === "ephemeral" ? "local" : "global",
           custody: vector.agent_meta.custody,
           controllerDid: vector.agent_meta.controller_did,
           resolved: true,

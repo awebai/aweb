@@ -97,7 +97,7 @@ export class RegistryResolver {
             address: `${split.domain}/${split.name}`,
             controllerDid: authority.controllerDid,
             custody: "self",
-            lifetime: "persistent",
+            identityScope: "global",
         };
     }
     async discoverRegistry(domain) {

@@ -3,6 +3,7 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import yaml from "js-yaml";
 
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
+export type IdentityScope = "global" | "local";
 
 export interface Pin {
   address: string;
@@ -18,9 +19,9 @@ export class PinStore {
   pins: Map<string, Pin> = new Map();
   addresses: Map<string, string> = new Map();
 
-  /** Check whether a DID matches the stored pin for an address. */
-  checkPin(address: string, did: string, lifetime: string): PinResult {
-    if (lifetime === "ephemeral") return "skipped";
+  /** Check whether a DID matches the stored pin for a global address. */
+  checkPin(address: string, did: string, identityScope: IdentityScope): PinResult {
+    if (identityScope === "local") return "skipped";
 
     const pinnedDID = this.addresses.get(address);
     if (pinnedDID === undefined) return "new";

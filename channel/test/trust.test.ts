@@ -35,7 +35,7 @@ describe("SenderTrustManager", () => {
     const { did } = await didFromSeed(1);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      { get: async () => ({ did, lifetime: "persistent", custody: "self" }) } as never,
+      { get: async () => ({ did, identity_scope: "global", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "did:key:zrecipient",
@@ -58,7 +58,7 @@ describe("SenderTrustManager", () => {
           address: "acme.com/alice",
           controllerDid: "did:key:zcontroller",
           custody: "custodial",
-          lifetime: "persistent",
+          identityScope: "global",
         }),
       } as never,
       "backend:acme.com",
@@ -70,8 +70,26 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("acme.com/alice")).toBe(did);
   });
 
-  test("removes pins for ephemeral senders", async () => {
+  test("removes pins for local-scope senders", async () => {
     const { did } = await didFromSeed(3);
+    const store = new PinStore();
+    store.storePin(did, "backend:acme.com/alice", "", "");
+
+    const trust = new SenderTrustManager(
+      { get: async () => ({ did, identity_scope: "local", custody: "self" }) } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
+    expect(result.status).toBe("verified");
+    expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
+    expect(store.pins.size).toBe(0);
+  });
+
+  test("normalizes legacy ephemeral lifetime metadata as local scope", async () => {
+    const { did } = await didFromSeed(30);
     const store = new PinStore();
     store.storePin(did, "backend:acme.com/alice", "", "");
 
@@ -86,6 +104,21 @@ describe("SenderTrustManager", () => {
     expect(result.status).toBe("verified");
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
     expect(store.pins.size).toBe(0);
+  });
+
+  test("normalizes legacy persistent lifetime metadata as global scope", async () => {
+    const { did } = await didFromSeed(31);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      { get: async () => ({ did, lifetime: "persistent", custody: "self" }) } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
+    expect(result.status).toBe("verified");
+    expect(store.addresses.get("backend:acme.com/alice")).toBe(did);
   });
 
   test("accepts valid rotation announcements", async () => {
@@ -106,7 +139,7 @@ describe("SenderTrustManager", () => {
     const store = new PinStore();
     store.storePin(oldIdentity.did, "backend:acme.com/alice", "", "");
     const trust = new SenderTrustManager(
-      { get: async () => ({ did: newIdentity.did, lifetime: "persistent", custody: "self" }) } as never,
+      { get: async () => ({ did: newIdentity.did, identity_scope: "global", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
@@ -158,7 +191,7 @@ describe("SenderTrustManager", () => {
           address: "acme.com/alice",
           controllerDid: controller.did,
           custody: "self",
-          lifetime: "persistent",
+          identityScope: "global",
         }),
       } as never,
       "backend:acme.com",
@@ -191,7 +224,7 @@ describe("SenderTrustManager", () => {
           did_key: did,
           did_aw: stableID,
           address: "acme.com/alice",
-          lifetime: "persistent",
+          identity_scope: "global",
         };
       }),
     };
@@ -242,7 +275,7 @@ describe("SenderTrustManager", () => {
           address: "acme.com/amy",
           controllerDid: "did:key:zcontroller",
           custody: "self",
-          lifetime: "persistent",
+          identityScope: "global",
         }),
       } as never,
       "backend:acme.com",
@@ -277,7 +310,7 @@ describe("SenderTrustManager", () => {
           address: "acme.com/amy",
           controllerDid: "did:key:zcontroller",
           custody: "self",
-          lifetime: "persistent",
+          identityScope: "global",
         }),
       } as never,
       "backend:acme.com",
@@ -312,7 +345,7 @@ describe("SenderTrustManager", () => {
           address: "acme.com/amy",
           controllerDid: "did:key:zcontroller",
           custody: "self",
-          lifetime: "persistent",
+          identityScope: "global",
         }),
       } as never,
       "backend:acme.com",

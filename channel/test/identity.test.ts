@@ -139,24 +139,24 @@ describe("verifyMessage", () => {
 describe("PinStore", () => {
   test("new store returns 'new' for unknown address", () => {
     const store = new PinStore();
-    expect(store.checkPin("alice", vectors.did, "persistent")).toBe("new");
+    expect(store.checkPin("alice", vectors.did, "global")).toBe("new");
   });
 
-  test("returns 'skipped' for ephemeral agents", () => {
+  test("returns 'skipped' for local identities", () => {
     const store = new PinStore();
-    expect(store.checkPin("alice", vectors.did, "ephemeral")).toBe("skipped");
+    expect(store.checkPin("alice", vectors.did, "local")).toBe("skipped");
   });
 
   test("returns 'ok' after storing pin", () => {
     const store = new PinStore();
     store.storePin(vectors.did, "alice", "", "");
-    expect(store.checkPin("alice", vectors.did, "persistent")).toBe("ok");
+    expect(store.checkPin("alice", vectors.did, "global")).toBe("ok");
   });
 
   test("returns 'mismatch' for different DID", () => {
     const store = new PinStore();
     store.storePin(vectors.did, "alice", "", "");
-    expect(store.checkPin("alice", "did:key:zOTHER", "persistent")).toBe("mismatch");
+    expect(store.checkPin("alice", "did:key:zOTHER", "global")).toBe("mismatch");
   });
 
   test("updates last_seen on re-store", () => {
@@ -177,7 +177,7 @@ describe("PinStore", () => {
     const yaml = store.toYAML();
 
     const loaded = PinStore.fromYAML(yaml);
-    expect(loaded.checkPin("alice", vectors.did, "persistent")).toBe("ok");
+    expect(loaded.checkPin("alice", vectors.did, "global")).toBe("ok");
     expect(loaded.pins.get(vectors.did)!.handle).toBe("@alice");
   });
 });

@@ -34,7 +34,7 @@ export interface ResolvedRegistryIdentity {
     address: string;
     controllerDid: string;
     custody: "self";
-    lifetime: "persistent";
+    identityScope: "global";
 }
 interface VerifiedLogHead {
     seq: number;

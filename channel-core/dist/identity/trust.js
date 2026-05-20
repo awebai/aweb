@@ -3,6 +3,17 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import { extractPublicKey } from "./did.js";
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export function normalizeIdentityScope(identityScope, legacyLifetime, defaultScope) {
+    const normalizedScope = (identityScope || "").trim().toLowerCase();
+    if (normalizedScope === "global" || normalizedScope === "local")
+        return normalizedScope;
+    const normalizedLegacy = (legacyLifetime || "").trim().toLowerCase();
+    if (normalizedLegacy === "persistent")
+        return "global";
+    if (normalizedLegacy === "ephemeral")
+        return "local";
+    return defaultScope;
+}
 export class SenderTrustManager {
     client;
     registry;
@@ -72,7 +83,7 @@ export class SenderTrustManager {
             || !meta.resolved) {
             return { status, stored: false };
         }
-        if (meta.lifetime === "ephemeral") {
+        if (meta.identityScope === "local") {
             let removed = store.removeAddress(trustAddress);
             if (rawAddress && rawAddress !== trustAddress) {
                 removed = store.removeAddress(rawAddress) || removed;
@@ -99,7 +110,7 @@ export class SenderTrustManager {
                 }
             }
         }
-        const pinResult = store.checkPin(trustAddress, pinKey, meta.lifetime);
+        const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
         switch (pinResult) {
             case "new":
                 store.storePin(pinKey, trustAddress, "", "");
@@ -113,8 +124,8 @@ export class SenderTrustManager {
                 if (fromStableID) {
                     const pin = store.pins.get(pinKey);
                     if (pin?.did_key && pin.did_key !== fromDID) {
-                        // A verified registry chain is authoritative for persistent
-                        // identities; stale local TOFU must not block archive/recreate.
+                        // A verified registry chain is authoritative for global identities;
+                        // stale local TOFU must not block archive/recreate.
                         // Security assumption: awid enforces a did:aw belongs to one
                         // current address; the client does not independently prove that.
                         if (registryConfirmedCurrentKey) {
@@ -249,7 +260,7 @@ export class SenderTrustManager {
         const rawAddress = address.trim();
         const trustAddress = this.canonicalTrustAddress(rawAddress);
         if (!trustAddress) {
-            return { lifetime: "persistent", custody: "self", resolved: false };
+            return { identityScope: "global", custody: "self", resolved: false };
         }
         const cached = this.metaCache.get(trustAddress);
         if (cached)
@@ -257,7 +268,7 @@ export class SenderTrustManager {
         try {
             const identity = await this.resolveIdentity(rawAddress);
             const meta = {
-                lifetime: identity.lifetime || "persistent",
+                identityScope: identity.identityScope,
                 custody: identity.custody || "self",
                 controllerDid: identity.controllerDid,
                 resolved: true,
@@ -266,7 +277,7 @@ export class SenderTrustManager {
             return meta;
         }
         catch {
-            return { lifetime: "persistent", custody: "self", resolved: false };
+            return { identityScope: "global", custody: "self", resolved: false };
         }
     }
     async resolveIdentity(address) {
@@ -286,7 +297,7 @@ export class SenderTrustManager {
             stableID: response.did_aw,
             address: response.address || `${this.teamID}/${trimmed}`,
             custody: "self",
-            lifetime: response.lifetime || "ephemeral",
+            identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
         };
     }
 }

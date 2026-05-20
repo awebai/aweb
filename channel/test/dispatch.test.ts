@@ -309,7 +309,7 @@ describe("dispatchEvent", () => {
           address: "acme.com/alice",
           controllerDid: "did:key:zcontroller",
           custody: "self",
-          lifetime: "persistent",
+          identityScope: "global",
         })),
       } as never,
       "backend:acme.com",

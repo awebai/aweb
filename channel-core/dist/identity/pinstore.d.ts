@@ -1,4 +1,5 @@
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
+export type IdentityScope = "global" | "local";
 export interface Pin {
     address: string;
     handle: string;
@@ -11,8 +12,8 @@ export interface Pin {
 export declare class PinStore {
     pins: Map<string, Pin>;
     addresses: Map<string, string>;
-    /** Check whether a DID matches the stored pin for an address. */
-    checkPin(address: string, did: string, lifetime: string): PinResult;
+    /** Check whether a DID matches the stored pin for a global address. */
+    checkPin(address: string, did: string, identityScope: IdentityScope): PinResult;
     /** Record or update a TOFU pin. */
     storePin(did: string, address: string, handle: string, server: string): void;
     removeAddress(address: string): boolean;
