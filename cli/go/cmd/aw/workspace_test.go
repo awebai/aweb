@@ -965,7 +965,7 @@ func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
+func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -1083,10 +1083,10 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		t.Fatalf("registered lifetime=%v", registeredCert["lifetime"])
 	}
 	if _, ok := registeredCert["member_did_aw"]; ok {
-		t.Fatalf("ephemeral add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
+		t.Fatalf("local CLI add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
 	}
 	if _, ok := registeredCert["member_address"]; ok {
-		t.Fatalf("ephemeral add-worktree cert should not include member_address: %v", registeredCert["member_address"])
+		t.Fatalf("local CLI add-worktree cert should not include member_address: %v", registeredCert["member_address"])
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
@@ -1138,7 +1138,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for add-worktree ephemeral agent: %v", err)
+		t.Fatalf("identity.yaml should not exist for local CLI add-worktree workspace: %v", err)
 	}
 }
 
@@ -2016,7 +2016,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceAddWorktreeUsesCloudBootstrapWhenNoTeamKey(t *testing.T) {
+func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAPIKey(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2144,6 +2144,9 @@ func TestAwWorkspaceAddWorktreeUsesCloudBootstrapWhenNoTeamKey(t *testing.T) {
 	if initBody["alias"] != "grace" {
 		t.Fatalf("init alias=%v", initBody["alias"])
 	}
+	if _, ok := initBody["identity_type"]; ok {
+		t.Fatalf("local CLI add-worktree bootstrap must not send hosted identity_type: %v", initBody["identity_type"])
+	}
 
 	// Verify child worktree exists and has correct state.
 	child := filepath.Join(tmp, "repo-grace")
@@ -2160,7 +2163,7 @@ func TestAwWorkspaceAddWorktreeUsesCloudBootstrapWhenNoTeamKey(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral add-worktree agent: %v", err)
+		t.Fatalf("identity.yaml should not exist for local CLI add-worktree workspace: %v", err)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
+func TestInitPersistentCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -165,7 +165,7 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		"init",
 		"--persistent",
 		"--username", "juanre",
-		"--alias", "laptop",
+		"--name", "laptop",
 		"--url", server.URL,
 	)
 	run.Env = testCommandEnv(tmp)
@@ -257,14 +257,14 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	}
 	membership := workspace.Membership("default:juanre.aweb.ai")
 	if membership == nil {
-		t.Fatalf("workspace missing hosted team membership: %+v", workspace.Memberships)
+		t.Fatalf("workspace missing aweb-managed team membership: %+v", workspace.Memberships)
 	}
 	if membership.WorkspaceID != "workspace-hosted" {
 		t.Fatalf("membership workspace_id=%q", membership.WorkspaceID)
 	}
 }
 
-func TestInitHostedThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
+func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -440,7 +440,7 @@ func TestInitHostedThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/hosted-chain.git")
 	buildAwBinary(t, ctx, bin)
 
-	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--persistent", "--username", "hostedchain", "--alias", "laptop", "--url", server.URL)
+	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--persistent", "--username", "hostedchain", "--name", "laptop", "--url", server.URL)
 	initCmd.Env = testCommandEnv(tmp)
 	initCmd.Dir = repo
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -504,7 +504,7 @@ func TestInitHostedThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
 	}
 }
 
-func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
+func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -555,7 +555,7 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 				"log_head":        nil,
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			t.Fatalf("already-registered hosted init should not read full did state")
+			t.Fatalf("already-registered self-custodial CLI init should not read full did state")
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
 			signupCalled = true
 			signupBody = map[string]any{}
@@ -620,7 +620,7 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 		"init",
 		"--persistent",
 		"--username", "juanre",
-		"--alias", "laptop",
+		"--name", "laptop",
 		"--url", server.URL,
 	)
 	run.Env = testCommandEnv(tmp)
@@ -655,7 +655,7 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 	}
 }
 
-func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
+func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -682,9 +682,9 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
 			didRegisterCalls++
-			t.Fatalf("ephemeral hosted init should not register a did:aw")
+			t.Fatalf("local CLI workspace init should not register a did:aw")
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			t.Fatalf("ephemeral hosted init should not read back did:aw state")
+			t.Fatalf("local CLI workspace init should not read back did:aw state")
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
 			signupBody = map[string]any{}
 			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
@@ -755,7 +755,7 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral hosted init: %v", err)
+		t.Fatalf("identity.yaml should not exist for local CLI workspace init: %v", err)
 	}
 	if didRegisterCalls != 0 {
 		t.Fatalf("did registrations=%d want 0", didRegisterCalls)

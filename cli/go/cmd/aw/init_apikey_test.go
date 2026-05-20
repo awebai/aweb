@@ -18,7 +18,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
+func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "aw_sk_test_ephemeral"
@@ -121,6 +121,15 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	if initBody["lifetime"] != awid.LifetimeEphemeral {
 		t.Fatalf("init lifetime=%v", initBody["lifetime"])
 	}
+	if initBody["custody"] != awid.CustodySelf {
+		t.Fatalf("init custody=%v", initBody["custody"])
+	}
+	if _, ok := initBody["identity_type"]; ok {
+		t.Fatalf("local CLI workspace bootstrap must not send hosted identity_type: %v", initBody["identity_type"])
+	}
+	if _, ok := initBody["address"]; ok {
+		t.Fatalf("local CLI workspace bootstrap must not request an address: %v", initBody["address"])
+	}
 	if connectBody["role"] != "backend" {
 		t.Fatalf("connect role=%v", connectBody["role"])
 	}
@@ -167,7 +176,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	}
 }
 
-func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
+func TestInitAPIKeyPersistentNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_persistent"
@@ -322,6 +331,12 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	}
 	if identity.Address != "alice.aweb.ai/alice" {
 		t.Fatalf("address=%q", identity.Address)
+	}
+	if identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity custody=%q", identity.Custody)
+	}
+	if identity.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("identity lifetime=%q", identity.Lifetime)
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {

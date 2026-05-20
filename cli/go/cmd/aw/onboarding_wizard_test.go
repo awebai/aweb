@@ -1140,11 +1140,11 @@ func TestExecuteBYODPathDoesNotPromptForDNSWhenNonInteractive(t *testing.T) {
 	}
 }
 
-// TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup exercises the
-// hosted path under the --persistent flag (Persistent:true): the wizard no
-// longer prompts for lifetime; the resulting signup is persistent with a
-// registered did:aw and on-disk identity.yaml.
-func TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup(t *testing.T) {
+// TestExecuteHostedPathWithPersistentFlagCreatesSelfCustodialGlobalCLIIdentity exercises
+// the aweb-managed CLI signup path under the --persistent flag (Persistent:true):
+// the wizard no longer prompts for lifetime; the resulting terminal identity is
+// self-custodial/global with a registered did:aw and on-disk identity.yaml.
+func TestExecuteHostedPathWithPersistentFlagCreatesSelfCustodialGlobalCLIIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "")
@@ -1281,7 +1281,7 @@ func TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup(t *testing.T) 
 	}
 
 	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
-		t.Fatalf("signup did_aw must be set for persistent hosted identity; signup=%v", signupBody)
+		t.Fatalf("signup did_aw must be set for self-custodial global CLI identity; signup=%v", signupBody)
 	}
 	if got, _ := signupBody["alias"].(string); got != "laptop" {
 		t.Fatalf("signup alias=%v want laptop", got)
