@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 
 EVENTS_POLL_INTERVAL = 1.0  # seconds between polls
-EVENTS_HEARTBEAT_INTERVAL = 15.0  # seconds between idle SSE heartbeat comments
+EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
 
 
