@@ -293,6 +293,7 @@ Flags:
 - `--raw Print only the upstream response body`
 - `--sign string JSON object describing the signed payload fields`
 - `--sign-file string Read the JSON sign payload from a file`
+- `--team-auth Attach the active team certificate and sign a team-bound request payload`
 
 ## `id resolve`
 

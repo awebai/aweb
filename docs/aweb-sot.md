@@ -1332,6 +1332,40 @@ X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
+External AWCO/BYOIDT-style services use the same membership proof when a
+local CLI agent needs to act outside aweb without a `did:aw` identity
+row. `aw id request --team-auth` sends:
+
+```
+Authorization: DIDKey <member did:key> <signature>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp>
+X-AWEB-Signed-Payload: <base64url canonical JSON>
+X-AWID-Team-Certificate: <base64-encoded certificate JSON>
+```
+
+The signed payload must bind `aud`, `method`, `path`, `team_id`,
+`body_sha256`, and `timestamp`, plus operation-specific fields. The
+service verifier extracts the DIDKey public key, verifies the signature
+over `X-AWEB-Signed-Payload`, decodes and verifies
+`X-AWID-Team-Certificate` against AWID team authority/revocation state,
+requires `certificate.member_did_key == signed did:key`, checks the
+request target/body hash against the live HTTP request, and then applies
+service-local authorization. No AWID identity row is required for local
+agents; the team certificate is the team-membership credential.
+
+The external verifier's AWID lookup path is:
+
+1. Parse `team_id` as `{name}:{domain}`.
+2. `GET /v1/namespaces/{domain}/teams/{name}` to obtain the current
+   `team_did_key`.
+3. Verify the certificate signature against that team key and reject if
+   the certificate `team_id` or `member_did_key` does not match the
+   signed request.
+4. Check revocation with
+   `GET /v1/namespaces/{domain}/teams/{name}/revocations` (or an
+   equivalent cached revocation feed). Reject the certificate if its
+   `certificate_id` is listed.
+
 The MCP middleware (`MCPAuthMiddleware` in
 `server/src/aweb/mcp/auth.py`) parses both headers, runs the same
 verification protocol as the REST API (parse signature, verify against

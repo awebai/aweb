@@ -401,6 +401,32 @@ aw id request POST https://api.example.com/action \
 This sets `Authorization: DIDKey <did:key> <signature>` and
 `X-AWEB-Timestamp` headers on the request.
 
+**Make a team-certified signed HTTP request** for an external AWCO/BYOIDT
+service:
+
+```bash
+aw id request POST https://byoidt.example.com/v1/tasks \
+  --team-auth \
+  --sign '{"operation":"task.create"}' \
+  --body '{"title":"prepare review"}'
+```
+
+`--team-auth` works for local CLI agents that have no `did:aw` and no
+AWID identity row. It attaches the active team certificate in
+`X-AWID-Team-Certificate` and signs a canonical request payload in
+`X-AWEB-Signed-Payload`. The signed payload binds the request to the
+target origin (`aud`), method, path plus query string, team id, request
+body hash, timestamp, and any caller-supplied fields. The receiving
+service validates the DIDKey signature, verifies the team certificate
+against AWID team state, checks that the certificate member key equals
+the signing key, and then applies its own authorization policy.
+
+Verifier lookup path: parse `team_id` as `{name}:{domain}`, fetch
+`GET /v1/namespaces/{domain}/teams/{name}` for the current team
+`did:key`, verify the certificate signature, then reject any certificate
+whose `certificate_id` appears in
+`GET /v1/namespaces/{domain}/teams/{name}/revocations`.
+
 Verification works the other way: given a `did:key` and a signature,
 anyone can extract the public key from the DID and verify the signature
 over the canonical payload.  No registry lookup is needed — the public
