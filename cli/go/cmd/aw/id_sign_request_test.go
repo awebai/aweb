@@ -588,6 +588,8 @@ func TestAwIDRequestTeamAuthVerifierFixtureRejectsMismatches(t *testing.T) {
 	if err := verifyTeamAuthRequestFixtureForTest(validReq, requestBody, now, teamKeys, nil); err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)
 	}
+	missingCertHeaders := headers.Clone()
+	missingCertHeaders.Del("X-AWID-Team-Certificate")
 
 	cases := []struct {
 		name     string
@@ -595,6 +597,7 @@ func TestAwIDRequestTeamAuthVerifierFixtureRejectsMismatches(t *testing.T) {
 		body     []byte
 		now      time.Time
 		teamKeys map[string]ed25519.PublicKey
+		revoked  map[string]bool
 	}{
 		{
 			name: "wrong body hash",
@@ -644,6 +647,19 @@ func TestAwIDRequestTeamAuthVerifierFixtureRejectsMismatches(t *testing.T) {
 			body: requestBody,
 			now:  now,
 		},
+		{
+			name: "missing certificate",
+			req:  requestForTeamAuthFixture(t, http.MethodPost, requestURL, missingCertHeaders),
+			body: requestBody,
+			now:  now,
+		},
+		{
+			name:    "revoked certificate",
+			req:     requestForTeamAuthFixture(t, http.MethodPost, requestURL, headers),
+			body:    requestBody,
+			now:     now,
+			revoked: map[string]bool{cert.CertificateID: true},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -651,7 +667,7 @@ func TestAwIDRequestTeamAuthVerifierFixtureRejectsMismatches(t *testing.T) {
 			if teamKeySet == nil {
 				teamKeySet = teamKeys
 			}
-			if err := verifyTeamAuthRequestFixtureForTest(tc.req, tc.body, tc.now, teamKeySet, nil); err == nil {
+			if err := verifyTeamAuthRequestFixtureForTest(tc.req, tc.body, tc.now, teamKeySet, tc.revoked); err == nil {
 				t.Fatal("expected verifier rejection, got success")
 			}
 		})
