@@ -389,6 +389,48 @@ async def test_get_team_not_found(client, controller_identity):
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_get_team_read_only_availability_contract(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "avail.com")
+
+    # Free team name: AC can treat unauthenticated 404 as available.
+    resp = await client.get("/v1/namespaces/avail.com/teams/default")
+    assert resp.status_code == 404
+
+    _, pub = generate_keypair()
+    headers = _sign(signing_key, controller_did, domain="avail.com", operation="create_team", name="default")
+    resp = await client.post(
+        "/v1/namespaces/avail.com/teams",
+        json={"name": "default", "team_did_key": did_from_public_key(pub)},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Existing active team: unauthenticated 200 means unavailable/taken.
+    resp = await client.get("/v1/namespaces/avail.com/teams/default")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["team_id"] == "default:avail.com"
+
+    headers = _sign(signing_key, controller_did, domain="avail.com", operation="delete_team", team_name="default")
+    resp = await client.delete("/v1/namespaces/avail.com/teams/default", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    # Deleted teams no longer block the availability check, matching create semantics.
+    resp = await client.get("/v1/namespaces/avail.com/teams/default")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_team_availability_contract_rejects_invalid_slug(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "badslug.com")
+
+    resp = await client.get("/v1/namespaces/badslug.com/teams/BadSlug")
+    assert resp.status_code == 422
+    assert "lowercase alphanumeric" in resp.text
+
+
 # ---------------------------------------------------------------------------
 # DELETE /v1/namespaces/{domain}/teams/{name}
 # ---------------------------------------------------------------------------

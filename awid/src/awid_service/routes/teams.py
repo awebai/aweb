@@ -95,6 +95,15 @@ async def _require_team_controller(
     return caller_did, row
 
 
+def _validate_team_name_path(name: str) -> str:
+    if not _TEAM_NAME_PATTERN.fullmatch(name):
+        raise HTTPException(
+            status_code=422,
+            detail="team name must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')",
+        )
+    return name
+
+
 def _parse_member_address(member_address: str) -> tuple[str, str]:
     parts = member_address.strip().split("/", 1)
     if len(parts) != 2:
@@ -536,6 +545,7 @@ async def list_teams(
     dependencies=[Depends(rate_limit_dep("team_get"))],
 )
 async def get_team(domain: str, name: str, db_infra=Depends(get_db)) -> TeamResponse:
+    name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
