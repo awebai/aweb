@@ -375,17 +375,17 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 				Lifetime:     awid.LifetimeEphemeral,
 			})
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        alias,
-				"team_id":      teamID,
-				"workspace_id": "ws-" + alias,
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
-				"api_key":      "aw_sk_child_" + alias,
-				"team_did_key": teamDIDKey,
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          alias,
+				"team_id":        teamID,
+				"workspace_id":   "ws-" + alias,
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "aw_sk_child_" + alias,
+				"team_did_key":   teamDIDKey,
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -495,8 +495,11 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 		if workspaceInits[i]["role_name"] != "developer" {
 			t.Fatalf("workspace init %d role_name=%v", i, workspaceInits[i]["role_name"])
 		}
-		if workspaceInits[i]["lifetime"] != awid.LifetimeEphemeral {
-			t.Fatalf("workspace init %d lifetime=%v", i, workspaceInits[i]["lifetime"])
+		if _, ok := workspaceInits[i]["lifetime"]; ok {
+			t.Fatalf("workspace init %d must not send lifetime: %v", i, workspaceInits[i]["lifetime"])
+		}
+		if workspaceInits[i]["identity_scope"] != awid.IdentityModeLocal {
+			t.Fatalf("workspace init %d identity_scope=%v", i, workspaceInits[i]["identity_scope"])
 		}
 	}
 	if strings.Join(connectAliases, ",") != "laptop,bob,carol" {

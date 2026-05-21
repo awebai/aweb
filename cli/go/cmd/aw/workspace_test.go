@@ -1522,16 +1522,16 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 			didToAlias[didKey] = alias
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   "http://" + r.Host + "/api",
-				"team_cert":    encoded,
-				"alias":        alias,
-				"team_id":      teamID,
-				"workspace_id": "workspace-parent",
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
-				"api_key":      "workspace-sk-parent",
+				"server_url":     "http://" + r.Host + "/api",
+				"team_cert":      encoded,
+				"alias":          alias,
+				"team_id":        teamID,
+				"workspace_id":   "workspace-parent",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-parent",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
 			cert := requireCertificateAuthForTest(t, r)
@@ -2071,17 +2071,17 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 			}
 			teamDIDKey := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   "http://" + r.Host,
-				"team_cert":    encoded,
-				"alias":        alias,
-				"team_id":      teamID,
-				"workspace_id": "ws-grace",
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
-				"api_key":      "aw_sk_child_key",
-				"team_did_key": teamDIDKey,
+				"server_url":     "http://" + r.Host,
+				"team_cert":      encoded,
+				"alias":          alias,
+				"team_id":        teamID,
+				"workspace_id":   "ws-grace",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "aw_sk_child_key",
+				"team_did_key":   teamDIDKey,
 			})
 		case "/v1/connect":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2138,8 +2138,11 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 	if initBody["custody"] != awid.CustodySelf {
 		t.Fatalf("init custody=%v", initBody["custody"])
 	}
-	if initBody["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("init lifetime=%v", initBody["lifetime"])
+	if _, ok := initBody["lifetime"]; ok {
+		t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
+	}
+	if initBody["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("init identity_scope=%v", initBody["identity_scope"])
 	}
 	if initBody["alias"] != "grace" {
 		t.Fatalf("init alias=%v", initBody["alias"])

@@ -66,16 +66,16 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL + "/api",
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "backend:acme.com",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
-				"api_key":      "workspace-sk-ephemeral",
+				"server_url":     server.URL + "/api",
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "backend:acme.com",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-ephemeral",
 			})
 		case "/api/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -118,8 +118,11 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	if initBody["role_name"] != "backend" {
 		t.Fatalf("init role_name=%v", initBody["role_name"])
 	}
-	if initBody["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("init lifetime=%v", initBody["lifetime"])
+	if _, ok := initBody["lifetime"]; ok {
+		t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
+	}
+	if initBody["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("init identity_scope=%v", initBody["identity_scope"])
 	}
 	if initBody["custody"] != awid.CustodySelf {
 		t.Fatalf("init custody=%v", initBody["custody"])
@@ -241,16 +244,16 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "default:alice.aweb.ai",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    stableID,
-				"lifetime":     awid.LifetimePersistent,
-				"custody":      awid.CustodySelf,
-				"api_key":      "workspace-sk-persistent",
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "default:alice.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      stableID,
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-persistent",
 			})
 		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -288,8 +291,11 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	if got, want := strings.Join(requestOrder[:3], ","), "register_identity,did_full,workspace_init"; got != want {
 		t.Fatalf("request order=%q want %q", got, want)
 	}
-	if initBody["lifetime"] != awid.LifetimePersistent {
-		t.Fatalf("init lifetime=%v", initBody["lifetime"])
+	if _, ok := initBody["lifetime"]; ok {
+		t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
+	}
+	if initBody["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("init identity_scope=%v", initBody["identity_scope"])
 	}
 	if initBody["name"] != "alice" {
 		t.Fatalf("init name=%v", initBody["name"])
@@ -425,16 +431,16 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "default:alice.aweb.ai",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    stableID,
-				"lifetime":     awid.LifetimePersistent,
-				"custody":      awid.CustodySelf,
-				"api_key":      "workspace-sk-persistent",
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "default:alice.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      stableID,
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-persistent",
 			})
 		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -682,15 +688,15 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "backend:acme.com",
-				"workspace_id": "ws-1",
-				"did":          "did:key:z6MkrWrongResponseDid11111111111111111111111",
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "backend:acme.com",
+				"workspace_id":   "ws-1",
+				"did":            "did:key:z6MkrWrongResponseDid11111111111111111111111",
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -708,7 +714,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 	}
 }
 
-func TestRunAPIKeyBootstrapInitRejectsResponseLifetimeMismatch(t *testing.T) {
+func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -742,15 +748,15 @@ func TestRunAPIKeyBootstrapInitRejectsResponseLifetimeMismatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "default:alice.aweb.ai",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    "did:aw:alice",
-				"lifetime":     awid.LifetimePersistent,
-				"custody":      awid.CustodySelf,
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "default:alice.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      "did:aw:alice",
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -763,7 +769,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseLifetimeMismatch(t *testing.T) {
 		AwebURL:    externalLikeTestURL(t, server.URL),
 		APIKey:     "aw_sk_test",
 	})
-	if err == nil || !strings.Contains(err.Error(), "does not match requested lifetime") {
+	if err == nil || !strings.Contains(err.Error(), "does not match requested identity_scope") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -801,15 +807,15 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "backend:acme.com",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "backend:acme.com",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -867,15 +873,15 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 						t.Fatal(err)
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"server_url":   server.URL,
-						"team_cert":    encoded,
-						"alias":        "alice",
-						"team_id":      "backend:acme.com",
-						"workspace_id": "ws-1",
-						"did":          didKey,
-						"stable_id":    "",
-						"lifetime":     awid.LifetimeEphemeral,
-						"custody":      tc.custody,
+						"server_url":     server.URL,
+						"team_cert":      encoded,
+						"alias":          "alice",
+						"team_id":        "backend:acme.com",
+						"workspace_id":   "ws-1",
+						"did":            didKey,
+						"stable_id":      "",
+						"identity_scope": awid.IdentityModeLocal,
+						"custody":        tc.custody,
 					})
 				default:
 					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -926,16 +932,16 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
-				"team_cert":    encoded,
-				"alias":        "alice",
-				"team_id":      "backend:acme.com",
-				"workspace_id": "ws-1",
-				"did":          didKey,
-				"stable_id":    "",
-				"lifetime":     awid.LifetimeEphemeral,
-				"custody":      awid.CustodySelf,
-				"api_key":      strings.Repeat("k", maxWorkspaceAPIKeyLength+1),
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "alice",
+				"team_id":        "backend:acme.com",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        strings.Repeat("k", maxWorkspaceAPIKeyLength+1),
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)

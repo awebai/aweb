@@ -41,28 +41,30 @@ type apiKeyInitRequest struct {
 }
 
 type apiKeyBootstrapRequest struct {
-	DID       string `json:"did"`
-	PublicKey string `json:"public_key"`
-	Name      string `json:"name,omitempty"`
-	Alias     string `json:"alias,omitempty"`
-	Custody   string `json:"custody"`
-	RoleName  string `json:"role_name,omitempty"`
-	HumanName string `json:"human_name,omitempty"`
-	AgentType string `json:"agent_type,omitempty"`
-	Lifetime  string `json:"lifetime"`
+	DID           string `json:"did"`
+	PublicKey     string `json:"public_key"`
+	Name          string `json:"name,omitempty"`
+	Alias         string `json:"alias,omitempty"`
+	Custody       string `json:"custody"`
+	RoleName      string `json:"role_name,omitempty"`
+	HumanName     string `json:"human_name,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+	IdentityScope string `json:"identity_scope"`
 }
 
 type apiKeyBootstrapResponse struct {
-	ServerURL   string `json:"server_url"`
-	TeamCert    string `json:"team_cert"`
-	Alias       string `json:"alias"`
-	TeamID      string `json:"team_id"`
-	WorkspaceID string `json:"workspace_id"`
-	DID         string `json:"did"`
-	StableID    string `json:"stable_id"`
-	Lifetime    string `json:"lifetime"`
-	Custody     string `json:"custody"`
-	APIKey      string `json:"api_key"`
+	ServerURL     string `json:"server_url"`
+	TeamCert      string `json:"team_cert"`
+	Alias         string `json:"alias"`
+	TeamID        string `json:"team_id"`
+	WorkspaceID   string `json:"workspace_id"`
+	DID           string `json:"did"`
+	StableID      string `json:"stable_id"`
+	IdentityScope string `json:"identity_scope"`
+	// Lifetime is accepted only for compatibility with older hosted responses.
+	Lifetime string `json:"lifetime"`
+	Custody  string `json:"custody"`
+	APIKey   string `json:"api_key"`
 }
 
 type apiKeyPartialInitState struct {
@@ -163,15 +165,15 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
-		DID:       didKey,
-		PublicKey: base64.StdEncoding.EncodeToString(pub),
-		Name:      name,
-		Alias:     alias,
-		Custody:   awid.CustodySelf,
-		RoleName:  strings.TrimSpace(req.Role),
-		HumanName: strings.TrimSpace(req.HumanName),
-		AgentType: strings.TrimSpace(req.AgentType),
-		Lifetime:  initLifetimeValue(req.Persistent),
+		DID:           didKey,
+		PublicKey:     base64.StdEncoding.EncodeToString(pub),
+		Name:          name,
+		Alias:         alias,
+		Custody:       awid.CustodySelf,
+		RoleName:      strings.TrimSpace(req.Role),
+		HumanName:     strings.TrimSpace(req.HumanName),
+		AgentType:     strings.TrimSpace(req.AgentType),
+		IdentityScope: initIdentityScopeValue(req.Persistent),
 	})
 	if err != nil {
 		return connectOutput{}, err
@@ -213,11 +215,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	})
 }
 
-func initLifetimeValue(persistent bool) string {
+func initIdentityScopeValue(persistent bool) string {
 	if persistent {
-		return awid.LifetimePersistent
+		return awid.IdentityModeGlobal
 	}
-	return awid.LifetimeEphemeral
+	return awid.IdentityModeLocal
 }
 
 func prepareAPIKeyBootstrapIdentity(
@@ -473,20 +475,20 @@ func validateAPIKeyBootstrapResponse(
 	if len(strings.TrimSpace(resp.APIKey)) > maxWorkspaceAPIKeyLength {
 		return false, "", "", fmt.Errorf("workspace init response api_key exceeds %d bytes", maxWorkspaceAPIKeyLength)
 	}
-	lifetime := strings.TrimSpace(resp.Lifetime)
-	switch lifetime {
-	case awid.LifetimePersistent:
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	switch identityScope {
+	case awid.IdentityModeGlobal:
 		persistent = true
-	case awid.LifetimeEphemeral:
+	case awid.IdentityModeLocal:
 		persistent = false
 	default:
-		return false, "", "", fmt.Errorf("workspace init response has unsupported lifetime %q", resp.Lifetime)
+		return false, "", "", fmt.Errorf("workspace init response has unsupported identity_scope %q", firstNonEmpty(resp.IdentityScope, resp.Lifetime))
 	}
 	if persistent != requestedPersistent {
 		return false, "", "", fmt.Errorf(
-			"workspace init response lifetime %q does not match requested lifetime %q",
-			lifetime,
-			initLifetimeValue(requestedPersistent),
+			"workspace init response identity_scope %q does not match requested identity_scope %q",
+			identityScope,
+			initIdentityScopeValue(requestedPersistent),
 		)
 	}
 	stableID = strings.TrimSpace(resp.StableID)
