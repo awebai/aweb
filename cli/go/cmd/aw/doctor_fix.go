@@ -210,7 +210,7 @@ func prohibitedDoctorFixMutation(mutation doctorFixMutation) string {
 	case strings.Contains(normalized, "unclaim") || (strings.Contains(normalized, "presence") && hasDoctorFixTerm(normalized, "cleanup", "clear", "delete")):
 		return "coordination_cleanup"
 	case doctorFixLifecycleMutation(text, normalized):
-		return "persistent_identity_lifecycle"
+		return "global_identity_lifecycle"
 	default:
 		return ""
 	}

@@ -255,7 +255,7 @@ func TestAwDoctorLocalFixWorkspaceURLNormalizeRedactsAndApplies(t *testing.T) {
 
 func TestAwDoctorLocalFixRegistryURLNormalizeOnlyMutatesRegistryURL(t *testing.T) {
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(tmp)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)

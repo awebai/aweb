@@ -42,35 +42,35 @@ public key bytes:
 did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
 ```
 
-### Ephemeral vs persistent
+### Local vs global
 
 Two identity classes exist:
 
-**Ephemeral identities** are disposable and team-internal.  They have only
+**Local identities** are disposable and team-internal.  They have only
 a `did:key`.  They are workspace-bound — when the `.aw/` directory is
 deleted, the identity is effectively gone.  They cannot own public
 addresses.  They are the default when joining a team via invite.
 
-**Persistent identities** are durable and trust-bearing.  They have both a
+**Global identities** are durable and trust-bearing.  They have both a
 `did:key` (current public key, changes on rotation) and a `did:aw` (stable
 identifier, never changes):
 
 ```
 did:key:z6Mk...   ← current public key (rotatable)
-did:aw:abc123...   ← stable identity (permanent)
+did:aw:abc123...   ← stable global identity
 ```
 
-Persistent identities can own one or more **public addresses** (like
+Global identities can own one or more **public addresses** (like
 `acme.com/alice`).  They maintain a signed audit log of all key changes
 at awid, so anyone can verify the chain of trust.
 
 ### Custody modes
 
-Persistent identities have two custody modes:
+Global identities have two custody modes:
 
 - **Self-custodial**: you hold your own Ed25519 private key locally in
   `.aw/signing.key`.  Created from the CLI with
-  `aw init --persistent --name <name>` or `aw id create`.
+  `aw init --global --name <name>` or `aw id create`.
 - **Custodial**: an operator holds the encrypted private key on your
   behalf.  Created from the operator's dashboard (e.g., https://app.aweb.ai) for
   hosted or browser MCP runtimes that don't have filesystem access.
@@ -80,17 +80,34 @@ loss.  See [trust-model.md](https://awid.ai/trust-model.md) for the full recover
 
 ### Creating identities
 
-#### Persistent identities
+#### Global identities
 
-A persistent identity gives you a stable `did:aw`, a public address
-(like `acme.com/alice`), and a signed audit trail at awid.  You need a
-domain you control.
+A global identity gives you a stable `did:aw` and a signed audit
+trail at awid. An address (like `acme.com/alice`) is a second,
+separate claim bound to that identity in a namespace you control.
 
 ```bash
 aw id create --name alice --domain acme.com
 # Generates controller + identity keypairs, guides you through DNS TXT
-# verification, registers the identity at awid.
+# verification, registers the identity at awid (register_did), then
+# binds the address acme.com/alice to the identity.
 ```
+
+What that command does under the hood is two awid operations:
+
+1. **`register_did`** — signed by your new identity key, records
+   `did_aw ↔ did_key` at awid. The envelope carries no address.
+2. **`POST /v1/namespaces/acme.com/addresses`** — signed by your
+   namespace controller key, binds the address `acme.com/alice` to
+   the `did_aw` you just registered. awid rejects this call if step 1
+   hasn't happened.
+
+The split matters in two places: cross-namespace memberships (your
+`did_aw` holds an address in someone else's namespace) and hosted
+bootstrap (`AWEB_API_KEY` flow — the CLI registers the DID locally,
+then the hosted operator creates the managed address). See
+[`trust-model.md`](https://awid.ai/trust-model.md#identity-vs-address-authority)
+for the authority model.
 
 The first `aw id create` for a domain also creates the namespace
 controller key (stored at `~/.config/aw/team-keys/<domain>/`).  The
@@ -105,42 +122,44 @@ aw id team create --namespace acme.com --name main
 # it at awid.
 ```
 
-#### Ephemeral identities
+#### Local identities
 
-Ephemeral identities are disposable team members: no `did:aw`, no public
+Local identities are disposable team members: no `did:aw`, no public
 address, no audit trail.  They are identified only by their `did:key`
-(current public key) and exist for the lifetime of a workspace.
+(current public key) and live only inside their workspace/runtime context.
 
-Creating an ephemeral identity requires someone who holds the team
+Creating a local identity requires someone who holds the team
 controller key.
 
 **Invite:**  Generate a token and accept it to receive a certificate:
 
 ```bash
-aw id team invite --ephemeral --namespace acme.com --team main
-# Outputs a token (valid on this machine only — the invite file and
-# team key must both be present)
+aw id team invite
+# Outputs an invite command. Hosted tokens are redeemed through
+# aweb cloud; local-controller tokens are valid only on this machine
+# because the invite file and team key must both be present.
 
 aw id team accept-invite <token>
-# Generates a keypair, signs an ephemeral team certificate
+# Generates a keypair, signs a local team certificate
 ```
 
 **Direct add:**  If you already know the member's public key:
 
 ```bash
 aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
-# Signs an ephemeral certificate for that key
+# Signs a local certificate for that key
 ```
 
-#### Hosted identities
+#### Hosted teams and hosted identities
 
-A hosted operator (like app.aweb.ai) manages namespaces on your behalf.
-Identity creation happens through the operator's onboarding flow rather
-than through `aw id` directly.  See the
-[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for the hosted
-onboarding paths, including `aw init` (interactive wizard),
-`AWEB_API_KEY`-based bootstrap, and `aw workspace add-worktree` for
-adding ephemeral agents to an existing team.
+A hosted operator (like app.aweb.ai) can manage namespaces and team authority on
+your behalf, but hosted does not always mean custodial. Terminal agents use local
+self-custodial CLI workspaces: `aw init`, `AWEB_API_KEY`-based team bootstrap,
+and `aw workspace add-worktree` create or bind local `.aw/` state and local
+signing keys. Browser/MCP agents use hosted custodial addressed identities
+created through the dashboard or OAuth flow because those clients cannot keep
+local key files. See the [aweb agent guide](https://aweb.ai/docs/agent-guide.md)
+for the hosted onboarding paths.
 
 ---
 
@@ -150,7 +169,7 @@ A **namespace** is a DNS-verified organizational domain that owns addresses
 and teams.  Examples: `acme.com`, `myteam.aweb.ai`.
 
 Namespaces are the top-level organizational boundary.  Every team lives
-under a namespace.  Every persistent address lives under a namespace.
+under a namespace.  Every global address lives under a namespace.
 
 ### Types
 
@@ -176,25 +195,42 @@ Managed namespaces are created by the hosted operator during team setup.
 
 ## Addresses
 
-An **address** is the public handle for a persistent identity:
+An **address** is the public handle for a global identity:
 `acme.com/alice`, `myteam.aweb.ai/support`.
 
-Only persistent identities have addresses.  A persistent identity can have
+Only global identities have addresses.  A global identity can have
 more than one address.
 
-Address assignment is separate from delivery authorization. A persistent
+Addresses are not selected globally by the identity. When a global
+identity joins a team, that team's certificate carries one
+`member_address` for that specific membership. Choosing the active team
+therefore chooses the sender address. For example, the same `did:aw` can
+hold both `acme.com/alice` and `partner.com/alice`; a certificate for
+`backend:acme.com` can carry `acme.com/alice`, while a certificate for
+`ops:partner.com` can carry `partner.com/alice`.
+
+Messaging has three recipient selectors:
+
+- Same team: bare alias, for example `alice`.
+- Same org, different team: `team~alias`, for example `ops~alice`; this is
+  resolved by aweb using the sender's namespace and does not involve awid.
+- Cross-org or public identity: namespace address, for example
+  `acme.com/alice`; this is resolved through awid.
+
+Address assignment is separate from delivery authorization. A global
 identity gets an address at creation time. awid resolves that address to the
-recipient identity and delivery origin; aweb then applies the recipient's
-`inbound_mode` (`open` or `contacts_only`).
+recipient identity, current key, and address-route delivery origin; aweb then
+applies the recipient's `inbound_mode` (`open` or `contacts_only`). Bare
+external `did:aw` first contact fails closed unless a stored participant route
+already exists.
 
 ---
 
 ## Teams
 
-A **team** is a named group within a namespace. Teams are the coordination
-boundary for tasks, roles, locks, instructions, workspace status, and same-team
-alias lookup. Mail and chat are identity-routed; same-team aliases are
-convenient local selectors.
+A **team** is a named group within a namespace.  Teams are the
+coordination boundary — agents in the same team can see each other's
+status, exchange messages, and share tasks.
 
 ### Creating a team
 
@@ -210,8 +246,8 @@ public key at awid.
 The team controller invites agents:
 
 ```bash
-aw id team invite --team backend --namespace acme.com
-# Returns an invite token
+aw id team invite
+# Returns an invite command
 ```
 
 The invited agent accepts:
@@ -248,8 +284,14 @@ Certificates are:
 - Long-lived — they don't expire, they are revoked when membership ends
 
 A certificate contains: team ID, member's `did:key`, member's `did:aw`
-(if persistent), alias, lifetime (persistent or ephemeral), and the team
-controller's signature.
+(for global members), `member_address` (for global members), alias, identity
+class (global or local), and the team controller's signature.
+
+`member_address` is per team membership, not per agent identity. It is the
+address the agent uses when acting as that team member. Services should use
+the address from the active team certificate or local team membership row;
+they should not choose an arbitrary address by listing all addresses for
+the same `did:aw` at awid.
 
 Verification is local crypto: decode the certificate, verify the Ed25519
 signature against the team's public key (cached from awid), check the
@@ -304,10 +346,10 @@ Summary:
 
 Four distinct operations for identity lifecycle:
 
-- **Delete**: ephemeral only.  Releases the alias for reuse.
-- **Archive**: persistent identity cleanup.  Stops active participation,
+- **Delete**: local workspace teardown.  Releases the alias for reuse.
+- **Archive**: global identity cleanup.  Stops active participation,
   keeps message history.  No continuity claim.
-- **Replace**: persistent identity continuity.  Creates a new identity
+- **Replace**: global identity continuity.  Creates a new identity
   and moves the address to it.  The namespace controller authorizes the
   address reassignment.  Used when the owner has lost the key.
 - **Rotate key**: cryptographic continuity signed by the old key.
@@ -389,7 +431,7 @@ Identity-related files in a workspace:
 
 ```
 .aw/signing.key                         # Ed25519 private key
-.aw/identity.yaml                       # Persistent identity metadata
+.aw/identity.yaml                       # Global identity metadata
 .aw/team-certs/<team_id>.pem            # Team membership certificates
 .aw/teams.yaml                          # Team memberships (awid state)
 ```

@@ -194,7 +194,7 @@ func TestAwDoctorAwebOfflineDoesNotContactServer(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--offline", "--json")
 	if err != nil {
@@ -215,7 +215,7 @@ func TestAwDoctorAwebAutoDoesNotContactServer(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--json")
 	if err != nil {
@@ -236,7 +236,7 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 	before := readWorkspaceYAMLForDoctorTest(t, tmp)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--online", "--json")
@@ -288,7 +288,7 @@ func TestAwDoctorAwebVersionHeaderReported(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{VersionHeader: "v9.8.7"})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -326,7 +326,7 @@ func TestAwDoctorAwebURLConfusionHostedBase(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.URL)
+	writeDoctorLocalFixture(t, tmp, server.URL)
 	before := readWorkspaceYAMLForDoctorTest(t, tmp)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
@@ -356,7 +356,7 @@ func TestAwDoctorWorkspaceMissingServerRowFails(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{OmitWorkspace: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -375,7 +375,7 @@ func TestAwDoctorWorkspaceDeletedFails(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{Deleted: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -393,7 +393,7 @@ func TestAwDoctorWorkspaceIdentityMismatchFails(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{AliasMismatch: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -408,7 +408,7 @@ func TestAwDoctorCoordinationClaimsIncoherentWarns(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{ClaimsMismatch: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -423,7 +423,7 @@ func TestAwDoctorTeamMembershipAuthorizedDetectsTeamMismatch(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{RolesTeamID: "backend:other.example.com"})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "team", "--online", "--json")
 	if err != nil {
@@ -444,7 +444,7 @@ func TestAwDoctorAwebUnauthorizedBlocked(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{Unauthorized: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--online", "--json")
 	if err != nil {
@@ -461,7 +461,7 @@ func TestAwDoctorAwebUnavailableUnknown(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{Unavailable: true})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -476,7 +476,7 @@ func TestAwDoctorAwebHTTPErrorIncludesRequestIDOnly(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{WorkspaceError: `{"request_id":"req-123","detail":{"secret":"do-not-include"}}`})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
 	if err != nil {
@@ -497,7 +497,7 @@ func TestAwDoctorMessagingLocalDryRunSignsWithoutNetwork(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "messaging", "--offline", "--json")
 	if err != nil {
@@ -522,7 +522,7 @@ func TestAwDoctorMessagingOnlineReadOnly(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "messaging", "--online", "--json")
 	if err != nil {
@@ -550,7 +550,7 @@ func TestAwDoctorRootOnlineHasNoDuplicateCheckIDs(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--online", "--json")
 	if err != nil {
@@ -585,7 +585,7 @@ func TestAwDoctorAwebNoAPIKeyAuthorizationWithLegacyKey(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath()))
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)

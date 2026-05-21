@@ -48,6 +48,7 @@ type doctorSupportBundleLocalMetadata struct {
 	WorkspaceID            string                                  `json:"workspace_id,omitempty"`
 	Alias                  string                                  `json:"alias,omitempty"`
 	RoleName               string                                  `json:"role_name,omitempty"`
+	IdentityScope          string                                  `json:"identity_scope,omitempty"`
 	Lifetime               string                                  `json:"lifetime,omitempty"`
 	Custody                string                                  `json:"custody,omitempty"`
 	DIDKey                 string                                  `json:"did_key,omitempty"`
@@ -64,6 +65,7 @@ type doctorSupportBundleCertificateMetadata struct {
 	MemberDIDKey  string `json:"member_did_key,omitempty"`
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
+	IdentityScope string `json:"identity_scope,omitempty"`
 	Lifetime      string `json:"lifetime,omitempty"`
 	TeamDIDKey    string `json:"team_did_key,omitempty"`
 }
@@ -124,6 +126,7 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 				if cert, err := awid.LoadTeamCertificate(certPath); err == nil && cert != nil {
 					meta.TeamCertificatePresent = true
 					meta.Lifetime = strings.TrimSpace(cert.Lifetime)
+					meta.IdentityScope = awid.DescribeIdentityClass(meta.Lifetime)
 					meta.DIDKey = strings.TrimSpace(cert.MemberDIDKey)
 					meta.StableID = strings.TrimSpace(cert.MemberDIDAW)
 					meta.Address = strings.TrimSpace(cert.MemberAddress)
@@ -133,6 +136,7 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 						MemberDIDKey:  strings.TrimSpace(cert.MemberDIDKey),
 						MemberDIDAW:   strings.TrimSpace(cert.MemberDIDAW),
 						MemberAddress: strings.TrimSpace(cert.MemberAddress),
+						IdentityScope: awid.DescribeIdentityClass(cert.Lifetime),
 						Lifetime:      strings.TrimSpace(cert.Lifetime),
 						TeamDIDKey:    strings.TrimSpace(cert.TeamDIDKey),
 					}
@@ -144,6 +148,9 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 	if identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil && identity != nil {
 		meta.IdentityYAMLPresent = true
 		meta.Lifetime = firstNonEmpty(strings.TrimSpace(identity.Lifetime), meta.Lifetime)
+		if strings.TrimSpace(meta.Lifetime) != "" {
+			meta.IdentityScope = awid.DescribeIdentityClass(meta.Lifetime)
+		}
 		meta.Custody = strings.TrimSpace(identity.Custody)
 		meta.DIDKey = firstNonEmpty(strings.TrimSpace(identity.DID), meta.DIDKey)
 		meta.StableID = firstNonEmpty(strings.TrimSpace(identity.StableID), meta.StableID)

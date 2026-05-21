@@ -126,7 +126,7 @@ aw id team create --namespace acme.com --name main
 
 Local identities are disposable team members: no `did:aw`, no public
 address, no audit trail.  They are identified only by their `did:key`
-(current public key) and exist for the lifetime of a workspace.
+(current public key) and live only inside their workspace/runtime context.
 
 Creating a local identity requires someone who holds the team
 controller key.

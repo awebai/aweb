@@ -15,33 +15,33 @@ import (
 )
 
 const (
-	doctorCheckWorkspaceExists       = "local.workspace_yaml.exists"
-	doctorCheckWorkspaceParse        = "local.workspace_yaml.parse"
-	doctorCheckWorkspaceAwebURL      = "local.workspace.aweb_url_syntax"
-	doctorCheckTeamsActiveTeam       = "local.teams.active_team"
-	doctorCheckWorkspaceMembership   = "local.workspace.active_membership"
-	doctorCheckWorkspaceWorkspaceID  = "local.workspace.active_membership.workspace_id"
-	doctorCheckWorkspaceCertPath     = "local.workspace.membership_cert_path"
-	doctorCheckCertificateExists     = "local.team_certificate.exists"
-	doctorCheckCertificateParse      = "local.team_certificate.parse"
-	doctorCheckCertificateTeam       = "local.team_certificate.team_matches_workspace"
-	doctorCheckCertificateAlias      = "local.team_certificate.alias_matches_workspace"
-	doctorCheckCertificateLifetime   = "local.team_certificate.lifetime_valid"
-	doctorCheckCertificateTeamDIDKey = "local.team_certificate.team_did_key_valid"
-	doctorCheckCertificateSignature  = "local.team_certificate.signature_valid"
-	doctorCheckSigningKeyExists      = "local.signing_key.exists"
-	doctorCheckSigningKeyParse       = "local.signing_key.parse"
-	doctorCheckSigningKeyMatchesCert = "local.signing_key.matches_certificate"
-	doctorCheckIdentityEphemeral     = "local.identity_yaml.ephemeral_not_required"
-	doctorCheckIdentityPersistent    = "local.identity_yaml.persistent_exists"
-	doctorCheckIdentityParse         = "local.identity_yaml.parse"
-	doctorCheckIdentityLifetime      = "local.identity_yaml.lifetime_matches_certificate"
-	doctorCheckIdentityDID           = "local.identity_yaml.did_matches_certificate"
-	doctorCheckIdentityAddress       = "local.identity_yaml.address_matches_certificate"
-	doctorCheckIdentityStableID      = "local.identity_yaml.stable_id_present"
-	doctorCheckIdentityCustody       = "local.identity_yaml.custody_present"
-	doctorCheckIdentityRegistryURL   = "local.identity_yaml.registry_url_syntax"
-	doctorCheckRegistryCoherence     = "local.registry_url.local_coherence"
+	doctorCheckWorkspaceExists          = "local.workspace_yaml.exists"
+	doctorCheckWorkspaceParse           = "local.workspace_yaml.parse"
+	doctorCheckWorkspaceAwebURL         = "local.workspace.aweb_url_syntax"
+	doctorCheckTeamsActiveTeam          = "local.teams.active_team"
+	doctorCheckWorkspaceMembership      = "local.workspace.active_membership"
+	doctorCheckWorkspaceWorkspaceID     = "local.workspace.active_membership.workspace_id"
+	doctorCheckWorkspaceCertPath        = "local.workspace.membership_cert_path"
+	doctorCheckCertificateExists        = "local.team_certificate.exists"
+	doctorCheckCertificateParse         = "local.team_certificate.parse"
+	doctorCheckCertificateTeam          = "local.team_certificate.team_matches_workspace"
+	doctorCheckCertificateAlias         = "local.team_certificate.alias_matches_workspace"
+	doctorCheckCertificateIdentityScope = "local.team_certificate.identity_scope_valid"
+	doctorCheckCertificateTeamDIDKey    = "local.team_certificate.team_did_key_valid"
+	doctorCheckCertificateSignature     = "local.team_certificate.signature_valid"
+	doctorCheckSigningKeyExists         = "local.signing_key.exists"
+	doctorCheckSigningKeyParse          = "local.signing_key.parse"
+	doctorCheckSigningKeyMatchesCert    = "local.signing_key.matches_certificate"
+	doctorCheckIdentityLocalYAML        = "local.identity_yaml.local_not_required"
+	doctorCheckIdentityGlobalYAML       = "local.identity_yaml.global_exists"
+	doctorCheckIdentityParse            = "local.identity_yaml.parse"
+	doctorCheckIdentityScope            = "local.identity_yaml.identity_scope_matches_certificate"
+	doctorCheckIdentityDID              = "local.identity_yaml.did_matches_certificate"
+	doctorCheckIdentityAddress          = "local.identity_yaml.address_matches_certificate"
+	doctorCheckIdentityStableID         = "local.identity_yaml.stable_id_present"
+	doctorCheckIdentityCustody          = "local.identity_yaml.custody_present"
+	doctorCheckIdentityRegistryURL      = "local.identity_yaml.registry_url_syntax"
+	doctorCheckRegistryCoherence        = "local.registry_url.local_coherence"
 )
 
 type doctorLocalState struct {
@@ -366,15 +366,15 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	lifetime := strings.TrimSpace(cert.Lifetime)
 	switch lifetime {
 	case awid.LifetimeEphemeral, awid.LifetimePersistent:
-		r.add(localCheck(doctorCheckCertificateLifetime, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate lifetime is recognized.", "", map[string]any{"lifetime": lifetime}))
+		r.add(localCheck(doctorCheckCertificateIdentityScope, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate identity scope is recognized.", "", map[string]any{"identity_scope": awid.DescribeIdentityClass(lifetime), "legacy_lifetime": lifetime}))
 	default:
 		r.add(localCheck(
-			doctorCheckCertificateLifetime,
+			doctorCheckCertificateIdentityScope,
 			doctorStatusFail,
 			&doctorTarget{Type: "team", ID: expectedTeam},
-			"Team certificate lifetime is unknown.",
-			"Replace the team certificate with one using a supported lifetime.",
-			map[string]any{"lifetime": lifetime},
+			"Team certificate identity scope is unknown.",
+			"Replace the team certificate with one using a supported identity scope.",
+			map[string]any{"legacy_lifetime": lifetime},
 		))
 	}
 
@@ -417,7 +417,7 @@ func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 			check = localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file could not be inspected.", "Check file permissions for .aw/signing.key.", map[string]any{"error": err.Error()})
 		}
 		if state.cert != nil && strings.TrimSpace(state.cert.Lifetime) == awid.LifetimePersistent {
-			check.Handoff = persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+			check.Handoff = globalIdentityReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 		}
 		r.add(check)
 		r.add(blockedLocalCheck(doctorCheckSigningKeyParse, "Signing key parsing requires the key file to be readable.", doctorCheckSigningKeyExists, localPathTarget(state.signingKeyPath)))
@@ -493,16 +493,16 @@ func (r *doctorRunner) runIdentityFileOnlyChecks(state *doctorLocalState) {
 
 func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 	if state.cert == nil {
-		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
-		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityLocalYAML, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityGlobalYAML, "Identity class expectation requires a parsed team certificate.", doctorCheckCertificateParse, localPathTarget(state.identityPath)))
 		r.addIdentityDependentBlockedChecks(doctorCheckCertificateParse)
 		return
 	}
 	lifetime := strings.TrimSpace(state.cert.Lifetime)
 	if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
-		r.add(blockedLocalCheck(doctorCheckIdentityEphemeral, "Identity class expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
-		r.add(blockedLocalCheck(doctorCheckIdentityPersistent, "Identity class expectation requires a supported certificate lifetime.", doctorCheckCertificateLifetime, localPathTarget(state.identityPath)))
-		r.addIdentityDependentBlockedChecks(doctorCheckCertificateLifetime)
+		r.add(blockedLocalCheck(doctorCheckIdentityLocalYAML, "Identity class expectation requires a supported certificate identity scope.", doctorCheckCertificateIdentityScope, localPathTarget(state.identityPath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityGlobalYAML, "Identity class expectation requires a supported certificate identity scope.", doctorCheckCertificateIdentityScope, localPathTarget(state.identityPath)))
+		r.addIdentityDependentBlockedChecks(doctorCheckCertificateIdentityScope)
 		return
 	}
 
@@ -519,48 +519,48 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 
 	if lifetime == awid.LifetimeEphemeral && !identityExists {
 		r.add(localPathCheck(
-			doctorCheckIdentityEphemeral,
+			doctorCheckIdentityLocalYAML,
 			doctorStatusOK,
 			state.identityPath,
 			"Local workspace does not require identity.yaml.",
 			"",
-			map[string]any{"state": "absent", "lifetime": lifetime},
+			map[string]any{"state": "absent", "identity_scope": awid.IdentityModeLocal, "legacy_lifetime": lifetime},
 		))
 		return
 	}
 	if lifetime == awid.LifetimePersistent && !identityExists {
 		check := localPathCheck(
-			doctorCheckIdentityPersistent,
+			doctorCheckIdentityGlobalYAML,
 			doctorStatusFail,
 			state.identityPath,
 			"Global workspace requires identity.yaml, but it is missing.",
 			"Restore .aw/identity.yaml or reconnect this global identity.",
-			map[string]any{"state": "missing", "lifetime": lifetime},
+			map[string]any{"state": "missing", "identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": lifetime},
 		)
-		check.Handoff = persistentLifecycleReviewHandoff()
+		check.Handoff = globalIdentityLifecycleReviewHandoff()
 		r.add(check)
-		r.add(blockedLocalCheck(doctorCheckIdentityParse, "Identity parsing requires identity.yaml to exist.", doctorCheckIdentityPersistent, localPathTarget(state.identityPath)))
-		r.addIdentityDependentBlockedChecks(doctorCheckIdentityPersistent)
+		r.add(blockedLocalCheck(doctorCheckIdentityParse, "Identity parsing requires identity.yaml to exist.", doctorCheckIdentityGlobalYAML, localPathTarget(state.identityPath)))
+		r.addIdentityDependentBlockedChecks(doctorCheckIdentityGlobalYAML)
 		return
 	}
 
 	if lifetime == awid.LifetimeEphemeral {
 		r.add(localPathCheck(
-			doctorCheckIdentityEphemeral,
+			doctorCheckIdentityLocalYAML,
 			doctorStatusInfo,
 			state.identityPath,
 			"Local workspace has an optional identity.yaml file.",
 			"Keep it only if you understand how identity commands use this reserved path.",
-			map[string]any{"state": "present", "lifetime": lifetime},
+			map[string]any{"state": "present", "identity_scope": awid.IdentityModeLocal, "legacy_lifetime": lifetime},
 		))
 	} else {
 		r.add(localPathCheck(
-			doctorCheckIdentityPersistent,
+			doctorCheckIdentityGlobalYAML,
 			doctorStatusOK,
 			state.identityPath,
 			"Global workspace identity.yaml is present.",
 			"",
-			map[string]any{"state": "present", "lifetime": lifetime},
+			map[string]any{"state": "present", "identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": lifetime},
 		))
 	}
 
@@ -575,7 +575,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			map[string]any{"error": err.Error()},
 		)
 		if lifetime == awid.LifetimePersistent {
-			check.Handoff = persistentLifecycleReviewHandoff()
+			check.Handoff = globalIdentityLifecycleReviewHandoff()
 		}
 		r.add(check)
 		r.addIdentityDependentBlockedChecks(doctorCheckIdentityParse)
@@ -596,15 +596,15 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 	identityLifetime := strings.TrimSpace(identity.Lifetime)
 	if identityLifetime != lifetime {
 		r.add(localPathCheck(
-			doctorCheckIdentityLifetime,
+			doctorCheckIdentityScope,
 			doctorStatusFail,
 			state.identityPath,
-			"Identity lifetime does not match the team certificate lifetime.",
-			"Repair identity.yaml or reconnect this worktree so lifetime metadata agrees.",
-			map[string]any{"identity_lifetime": identityLifetime, "certificate_lifetime": lifetime},
+			"Identity scope does not match the team certificate identity scope.",
+			"Repair identity.yaml or reconnect this worktree so identity scope metadata agrees.",
+			map[string]any{"identity_scope": awid.DescribeIdentityClass(identityLifetime), "certificate_identity_scope": awid.DescribeIdentityClass(lifetime), "identity_legacy_lifetime": identityLifetime, "certificate_legacy_lifetime": lifetime},
 		))
 	} else {
-		r.add(localPathCheck(doctorCheckIdentityLifetime, doctorStatusOK, state.identityPath, "Identity lifetime matches the team certificate lifetime.", "", map[string]any{"lifetime": lifetime}))
+		r.add(localPathCheck(doctorCheckIdentityScope, doctorStatusOK, state.identityPath, "Identity scope matches the team certificate identity scope.", "", map[string]any{"identity_scope": awid.DescribeIdentityClass(lifetime), "legacy_lifetime": lifetime}))
 	}
 
 	identityDID := strings.TrimSpace(identity.DID)
@@ -830,12 +830,12 @@ func (r *doctorRunner) addWorkspaceDependentBlockedChecks(workspacePath, prerequ
 		doctorCheckCertificateParse,
 		doctorCheckCertificateTeam,
 		doctorCheckCertificateAlias,
-		doctorCheckCertificateLifetime,
+		doctorCheckCertificateIdentityScope,
 		doctorCheckCertificateTeamDIDKey,
 		doctorCheckCertificateSignature,
 		doctorCheckSigningKeyMatchesCert,
-		doctorCheckIdentityEphemeral,
-		doctorCheckIdentityPersistent,
+		doctorCheckIdentityLocalYAML,
+		doctorCheckIdentityGlobalYAML,
 	} {
 		r.add(blockedLocalCheck(id, "This check requires a parsed workspace binding.", prerequisite, target))
 	}
@@ -847,7 +847,7 @@ func (r *doctorRunner) addCertificateDependentBlockedChecks(prerequisite string)
 		doctorCheckCertificateParse,
 		doctorCheckCertificateTeam,
 		doctorCheckCertificateAlias,
-		doctorCheckCertificateLifetime,
+		doctorCheckCertificateIdentityScope,
 		doctorCheckCertificateTeamDIDKey,
 		doctorCheckCertificateSignature,
 	} {
@@ -860,7 +860,7 @@ func (r *doctorRunner) addCertificateDependentBlockedChecks(prerequisite string)
 
 func (r *doctorRunner) addIdentityDependentBlockedChecks(prerequisite string) {
 	for _, id := range []string{
-		doctorCheckIdentityLifetime,
+		doctorCheckIdentityScope,
 		doctorCheckIdentityDID,
 		doctorCheckIdentityAddress,
 		doctorCheckIdentityStableID,

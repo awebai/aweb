@@ -12,11 +12,11 @@ func conciseDoctorHandoffLine(h *doctorHandoff) string {
 		return summary
 	}
 	switch h.Action {
-	case "persistent_identity_registry_repair_review":
+	case "global_identity_registry_repair_review":
 		return "Review caller-authorized DID registry repair before considering replacement."
-	case "persistent_lifecycle_review":
+	case "global_identity_lifecycle_review":
 		return "Review global identity lifecycle with an authorized owner; doctor will not apply it automatically."
-	case "persistent_replacement_review":
+	case "global_identity_replacement_review":
 		return "Review replacement only with the required authority; doctor will not replace identities."
 	case "managed_address_repair_review":
 		return "Review address repair with namespace authority; doctor will not change registry state."
@@ -29,9 +29,9 @@ func conciseDoctorHandoffLine(h *doctorHandoff) string {
 	}
 }
 
-func persistentLifecycleReviewHandoff() *doctorHandoff {
+func globalIdentityLifecycleReviewHandoff() *doctorHandoff {
 	return &doctorHandoff{
-		Action:                "persistent_lifecycle_review",
+		Action:                "global_identity_lifecycle_review",
 		RequiredAuthority:     doctorAuthorityTeamAdmin,
 		CallerAuthorityStatus: doctorAuthorityStatusUnknown,
 		ExpectedAction:        "Review global identity lifecycle with an authorized owner; missing local state alone is not enough to archive, replace, delete, or unclaim.",
@@ -40,15 +40,15 @@ func persistentLifecycleReviewHandoff() *doctorHandoff {
 			"global identities outlive workspace paths",
 			"archive or replacement changes identity lifecycle and trust continuity",
 		},
-		DoctorRefusalReason: "high_impact_persistent_lifecycle",
+		DoctorRefusalReason: "high_impact_global_identity_lifecycle",
 		ReplacementGuidance: "Do not replace a global identity solely because local files are missing; inspect registry and authority first.",
 		SupportRunbookRef:   doctorIdentityRecoveryRunbook,
 	}
 }
 
-func persistentIdentityRegistryRepairReviewHandoff(authorityStatus doctorAuthorityStatus, evidence []string) *doctorHandoff {
+func globalIdentityRegistryRepairReviewHandoff(authorityStatus doctorAuthorityStatus, evidence []string) *doctorHandoff {
 	handoff := &doctorHandoff{
-		Action:                  "persistent_identity_registry_repair_review",
+		Action:                  "global_identity_registry_repair_review",
 		RequiredAuthority:       doctorAuthorityCaller,
 		CallerAuthorityStatus:   authorityStatus,
 		CallerAuthorityEvidence: evidence,
@@ -58,7 +58,7 @@ func persistentIdentityRegistryRepairReviewHandoff(authorityStatus doctorAuthori
 			"DID registration changes registry state for the global identity",
 			"doctor will not register or replace the identity automatically",
 		},
-		DoctorRefusalReason: "persistent_identity_registry_repair_required",
+		DoctorRefusalReason: "global_identity_registry_repair_required",
 		ReplacementGuidance: "Caller-authorized DID repair or registration is preferred before replacement when the existing DID key is valid.",
 		SupportRunbookRef:   doctorIdentityRecoveryRunbook,
 	}
@@ -68,9 +68,9 @@ func persistentIdentityRegistryRepairReviewHandoff(authorityStatus doctorAuthori
 	return handoff
 }
 
-func persistentReplacementReviewHandoff(authorityStatus doctorAuthorityStatus, evidence []string) *doctorHandoff {
+func globalIdentityReplacementReviewHandoff(authorityStatus doctorAuthorityStatus, evidence []string) *doctorHandoff {
 	return &doctorHandoff{
-		Action:                  "persistent_replacement_review",
+		Action:                  "global_identity_replacement_review",
 		RequiredAuthority:       doctorAuthorityTeamAdmin,
 		CallerAuthorityStatus:   authorityStatus,
 		CallerAuthorityEvidence: evidence,
@@ -80,7 +80,7 @@ func persistentReplacementReviewHandoff(authorityStatus doctorAuthorityStatus, e
 			"replacement creates a new identity continuity claim",
 			"address continuity requires namespace/controller authority",
 		},
-		DoctorRefusalReason: "high_impact_persistent_replacement",
+		DoctorRefusalReason: "high_impact_global_identity_replacement",
 		ReplacementGuidance: "When the existing DID key is valid, repair DID/address registration before considering replacement.",
 		SupportRunbookRef:   doctorIdentityRecoveryRunbook,
 	}
@@ -95,7 +95,7 @@ func managedAddressRepairReviewHandoff(authorityStatus doctorAuthorityStatus, ev
 		ExpectedAction:          "Review address repair with namespace authority; prefer address repair when the existing DID key is valid.",
 		DashboardAction:         "Use a hosted managed-address repair action only when the namespace is cloud-managed and the caller has dashboard authority.",
 		Consequences: []string{
-			"address registration or reassignment changes public reachability",
+			"address registration or reassignment changes public address routing",
 			"doctor will not use public namespace discovery as ownership proof",
 		},
 		DoctorRefusalReason: "high_impact_address_repair",

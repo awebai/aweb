@@ -247,7 +247,7 @@ func (r *doctorRunner) addWorkspaceReadOnlyInvariant() {
 
 func (r *doctorRunner) addOnlineServerProbeChecks(state *doctorAwebState) bool {
 	if strings.TrimSpace(state.baseURL) == "" || state.urlErr != nil {
-		r.add(awebCheck(doctorCheckServerReachable, doctorStatusBlocked, nil, "Aweb reachability requires a valid configured aweb_url.", "Resolve server.aweb_url.configured first.", map[string]any{"prerequisite": doctorCheckServerAwebURLConfigured}))
+		r.add(awebCheck(doctorCheckServerReachable, doctorStatusBlocked, nil, "Aweb API check requires a valid configured aweb_url.", "Resolve server.aweb_url.configured first.", map[string]any{"prerequisite": doctorCheckServerAwebURLConfigured}))
 		r.add(awebCheck(doctorCheckServerVersion, doctorStatusBlocked, nil, "Version header check requires a reachable aweb server.", "Resolve server.aweb_url.reachable first.", map[string]any{"prerequisite": doctorCheckServerReachable}))
 		return false
 	}

@@ -72,7 +72,7 @@ func requireDoctorCheckStatus(t *testing.T, out doctorOutput, id string, status 
 	return check
 }
 
-func writeDoctorEphemeralFixture(t *testing.T, workingDir, awebURL string) {
+func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
 	t.Helper()
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -94,7 +94,7 @@ func writeDoctorEphemeralFixture(t *testing.T, workingDir, awebURL string) {
 	}
 }
 
-func writeDoctorPersistentFixture(t *testing.T, workingDir, awebURL string) ed25519.PrivateKey {
+func writeDoctorGlobalFixture(t *testing.T, workingDir, awebURL string) ed25519.PrivateKey {
 	t.Helper()
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -278,7 +278,7 @@ func TestAwDoctorSupportBundleJSONPrintsRedactedBundle(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(tmp)
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
@@ -340,6 +340,9 @@ func TestAwDoctorSupportBundleJSONPrintsRedactedBundle(t *testing.T) {
 	if got.SupportBundle.LocalMetadata.Certificate.MemberDIDKey == "" {
 		t.Fatalf("certificate member did:key missing")
 	}
+	if got.SupportBundle.LocalMetadata.IdentityScope != awid.IdentityModeGlobal || got.SupportBundle.LocalMetadata.Certificate.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("support bundle identity_scope mismatch: local=%q cert=%q", got.SupportBundle.LocalMetadata.IdentityScope, got.SupportBundle.LocalMetadata.Certificate.IdentityScope)
+	}
 	if !strings.Contains(text, `"support_bundle"`) || !strings.Contains(text, "https://app.example.com/api") || !strings.Contains(text, "https://registry.example.com/path") {
 		t.Fatalf("support bundle output missing expected sanitized metadata:\n%s", text)
 	}
@@ -377,7 +380,7 @@ func TestAwDoctorSupportBundleFinalScanRejectsRawTeamCertificate(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
 	rawCert, err := os.ReadFile(certPath)
 	if err != nil {
@@ -457,7 +460,7 @@ func TestAwDoctorSupportBundleOfflineDoesNotContactNetwork(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.URL)
+	writeDoctorLocalFixture(t, tmp, server.URL)
 	outputPath := filepath.Join(tmp, "doctor.json")
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "support-bundle", "--offline", "--output", outputPath)
@@ -693,10 +696,10 @@ func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
 		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
 		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
 		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
-		{name: "global lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
-		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "persistent_identity_lifecycle"},
-		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "persistent_identity_lifecycle"},
-		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "persistent_identity_lifecycle"},
+		{name: "global lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete global identity lifecycle"}}}, want: "global_identity_lifecycle"},
+		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "global_identity_lifecycle"},
+		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "global_identity_lifecycle"},
+		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "global_identity_lifecycle"},
 		{name: "private key", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", Path: ".aw/signing.key"}}}, want: "private_key_material"},
 		{name: "signing key underscore", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "rotate signing_key"}}}, want: "private_key_material"},
 		{name: "private key hyphen", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write private-key material"}}}, want: "private_key_material"},
@@ -791,7 +794,7 @@ func TestAwDoctorLocalChecksValidLocalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorLocalFixture(t, tmp, "https://app.example.com/api")
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
 	if err != nil {
@@ -801,8 +804,8 @@ func TestAwDoctorLocalChecksValidLocalWorkspace(t *testing.T) {
 	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceExists, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckCertificateSignature, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckSigningKeyMatchesCert, doctorStatusOK)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusOK)
-	if _, ok := doctorCheckByID(got, doctorCheckIdentityPersistent); ok {
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalYAML, doctorStatusOK)
+	if _, ok := doctorCheckByID(got, doctorCheckIdentityGlobalYAML); ok {
 		t.Fatalf("local workspace unexpectedly required global identity: %#v", got.Checks)
 	}
 }
@@ -811,7 +814,7 @@ func TestAwDoctorLocalChecksValidGlobalWorkspace(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
 	if err != nil {
@@ -821,7 +824,7 @@ func TestAwDoctorLocalChecksValidGlobalWorkspace(t *testing.T) {
 	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceAwebURL, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceWorkspaceID, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckCertificateSignature, doctorStatusOK)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityGlobalYAML, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityDID, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityAddress, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityStableID, doctorStatusOK)
@@ -951,7 +954,7 @@ func TestAwDoctorLocalChecksCorruptSigningKey(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	if err := os.WriteFile(awconfig.WorktreeSigningKeyPath(tmp), []byte("not a pem key\n"), 0o600); err != nil {
 		t.Fatalf("write corrupt signing key: %v", err)
 	}
@@ -969,7 +972,7 @@ func TestAwDoctorLocalChecksMissingCertificate(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
 	if err := os.Remove(certPath); err != nil {
 		t.Fatalf("remove certificate: %v", err)
@@ -982,14 +985,14 @@ func TestAwDoctorLocalChecksMissingCertificate(t *testing.T) {
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckCertificateExists, doctorStatusFail)
 	requireDoctorCheckStatus(t, got, doctorCheckCertificateParse, doctorStatusBlocked)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusBlocked)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityGlobalYAML, doctorStatusBlocked)
 }
 
 func TestAwDoctorLocalChecksSigningKeyCertificateDIDMismatch(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	wrongPub, wrongPriv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatalf("generate wrong key: %v", err)
@@ -1013,7 +1016,7 @@ func TestAwDoctorLocalChecksGlobalMissingIdentity(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	if err := os.Remove(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil {
 		t.Fatalf("remove identity: %v", err)
 	}
@@ -1023,7 +1026,7 @@ func TestAwDoctorLocalChecksGlobalMissingIdentity(t *testing.T) {
 		t.Fatalf("doctor should report missing global identity as checks: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusFail)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityGlobalYAML, doctorStatusFail)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityParse, doctorStatusBlocked)
 }
 
@@ -1031,7 +1034,7 @@ func TestAwDoctorLocalChecksCorruptLocalIdentityFails(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorLocalFixture(t, tmp, "https://app.example.com/api")
 	if err := os.WriteFile(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath()), []byte("did: [\n"), 0o600); err != nil {
 		t.Fatalf("write corrupt identity: %v", err)
 	}
@@ -1041,7 +1044,7 @@ func TestAwDoctorLocalChecksCorruptLocalIdentityFails(t *testing.T) {
 		t.Fatalf("doctor should report corrupt local identity as checks: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusInfo)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalYAML, doctorStatusInfo)
 	requireDoctorCheckStatus(t, got, doctorCheckIdentityParse, doctorStatusFail)
 }
 
@@ -1056,7 +1059,7 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, server.URL)
+	writeDoctorGlobalFixture(t, tmp, server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
 	if err != nil {
@@ -1071,7 +1074,7 @@ func TestAwDoctorLocalOutputDoesNotLeakSecrets(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 
 	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(tmp)
 	if err != nil {

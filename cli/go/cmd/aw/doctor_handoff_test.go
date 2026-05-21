@@ -30,20 +30,20 @@ func TestAwDoctorHandoffJSONContractCategories(t *testing.T) {
 	}{
 		{
 			name:   "global lifecycle review",
-			input:  persistentLifecycleReviewHandoff(),
-			action: "persistent_lifecycle_review",
+			input:  globalIdentityLifecycleReviewHandoff(),
+			action: "global_identity_lifecycle_review",
 			auth:   doctorAuthorityTeamAdmin,
 		},
 		{
 			name:   "global replacement review",
-			input:  persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil),
-			action: "persistent_replacement_review",
+			input:  globalIdentityReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil),
+			action: "global_identity_replacement_review",
 			auth:   doctorAuthorityTeamAdmin,
 		},
 		{
 			name:   "global identity registry repair review",
-			input:  persistentIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}),
-			action: "persistent_identity_registry_repair_review",
+			input:  globalIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}),
+			action: "global_identity_registry_repair_review",
 			auth:   doctorAuthorityCaller,
 		},
 		{
@@ -96,10 +96,10 @@ func TestAwDoctorHandoffPresentAuthorityMustMatchRequiredAuthority(t *testing.T)
 	t.Parallel()
 
 	handoffs := []*doctorHandoff{
-		persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil),
+		globalIdentityReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil),
 		managedAddressRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil),
 		namespaceControllerRecoveryReviewHandoff(),
-		persistentIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}),
+		globalIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}),
 	}
 	for _, handoff := range handoffs {
 		if handoff.RequiredAuthority != doctorAuthorityCaller && handoff.CallerAuthorityStatus == doctorAuthorityStatusPresent {
@@ -114,7 +114,7 @@ func TestAwDoctorHandoffPresentAuthorityMustMatchRequiredAuthority(t *testing.T)
 func TestAwDoctorHandoffCallerRepairCommandRequiresPresentAuthority(t *testing.T) {
 	t.Parallel()
 
-	notDetected := persistentIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+	notDetected := globalIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 	if notDetected.ExplicitCommand != "" {
 		t.Fatalf("not_detected caller authority exposed command: %#v", notDetected)
 	}
@@ -122,7 +122,7 @@ func TestAwDoctorHandoffCallerRepairCommandRequiresPresentAuthority(t *testing.T
 		t.Fatalf("not_detected caller authority should keep diagnostic dry-run command: %#v", notDetected)
 	}
 
-	present := persistentIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"})
+	present := globalIdentityRegistryRepairReviewHandoff(doctorAuthorityStatusPresent, []string{"local signing key matches identity did"})
 	if present.ExplicitCommand != "aw id register" {
 		t.Fatalf("present caller authority command=%q", present.ExplicitCommand)
 	}
@@ -132,7 +132,7 @@ func TestAwDoctorHandoffMissingGlobalStateNeedsExternalReview(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://user:pass@app.example.com/api?token=secret-query#secret-fragment")
+	writeDoctorGlobalFixture(t, tmp, "https://user:pass@app.example.com/api?token=secret-query#secret-fragment")
 	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(tmp)
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
@@ -150,8 +150,8 @@ func TestAwDoctorHandoffMissingGlobalStateNeedsExternalReview(t *testing.T) {
 		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
-	handoff := requireDoctorHandoff(t, got, doctorCheckIdentityPersistent)
-	if handoff.Action != "persistent_lifecycle_review" {
+	handoff := requireDoctorHandoff(t, got, doctorCheckIdentityGlobalYAML)
+	if handoff.Action != "global_identity_lifecycle_review" {
 		t.Fatalf("action=%q", handoff.Action)
 	}
 	if !strings.Contains(handoff.ExpectedAction, "missing local state alone is not enough") {
@@ -190,7 +190,7 @@ func TestAwDoctorHandoffDIDNotFoundUsesCallerRepairAuthority(t *testing.T) {
 	if check.Handoff == nil {
 		t.Fatalf("did not found missing handoff: %#v", check)
 	}
-	if check.Handoff.Action != "persistent_identity_registry_repair_review" {
+	if check.Handoff.Action != "global_identity_registry_repair_review" {
 		t.Fatalf("action=%q", check.Handoff.Action)
 	}
 	if check.Handoff.RequiredAuthority != doctorAuthorityCaller || check.Handoff.CallerAuthorityStatus != doctorAuthorityStatusPresent {
@@ -205,7 +205,7 @@ func TestAwDoctorHandoffHumanDefaultAndVerboseOutput(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	if err := os.Remove(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil {
 		t.Fatalf("remove identity: %v", err)
 	}
@@ -238,14 +238,14 @@ func TestAwDoctorHandoffOKChecksOmitHandoff(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
 	if err != nil {
 		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
 	for _, id := range []string{
-		doctorCheckIdentityPersistent,
+		doctorCheckIdentityGlobalYAML,
 		doctorCheckSigningKeyMatchesCert,
 		doctorCheckIdentityDID,
 	} {

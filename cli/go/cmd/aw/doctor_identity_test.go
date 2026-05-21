@@ -30,7 +30,7 @@ type doctorIdentityFixture struct {
 func writeDoctorIdentityFixture(t *testing.T, registryURL string) doctorIdentityFixture {
 	t.Helper()
 	bin, tmp := buildDoctorBinary(t)
-	priv := writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	priv := writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath()))
 	if err != nil {
 		t.Fatalf("load identity: %v", err)
@@ -258,14 +258,14 @@ func TestAwDoctorIdentityLocalSkipsPublicRegistry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorEphemeralFixture(t, tmp, server.URL)
+	writeDoctorLocalFixture(t, tmp, server.URL)
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "identity", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor identity online failed: %v\n%s", err, string(out))
 	}
 	got := decodeDoctorOutput(t, out)
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalEphemeralAWID, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalRegistry, doctorStatusOK)
 	if hits.Load() != 0 {
 		t.Fatalf("local identity contacted awid %d times", hits.Load())
 	}
@@ -298,10 +298,10 @@ func TestAwDoctorIdentityGlobalMissingIdentityYAMLFails(t *testing.T) {
 	}
 	got := decodeDoctorOutput(t, out)
 	check := requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalContext, doctorStatusFail)
-	if check.Detail["expected_lifetime"] != awid.LifetimePersistent {
-		t.Fatalf("expected_lifetime=%v", check.Detail["expected_lifetime"])
+	if check.Detail["expected_identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("expected_identity_scope=%v", check.Detail["expected_identity_scope"])
 	}
-	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalLifetime, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityLocalScope, doctorStatusOK)
 
 	out, err = runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
 	if err != nil {

@@ -88,20 +88,26 @@ The authority over team membership.  Issues and revokes team certificates.
 The team controller does NOT control addresses.  Address operations are
 namespace controller authority.
 
+The team controller does select which already-registered address is bound
+to a team membership certificate. That `member_address` is not a global
+property of the identity; it is a claim about how this member appears when
+acting in this team. awid validates that the selected address resolves to
+the certificate's `member_did_aw`.
+
 ### 3. Identity Signing Key
 
 The agent's Ed25519 key.  Used for message signing, coordination auth, and
 DID operations.
 
-| Aspect                   | Detail                                                                                                                                                                                                     |
-|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Algorithm**            | Ed25519                                                                                                                                                                                                    |
-| **Private key location** | Self-custodial: `.aw/signing.key` in the workspace directory.  Custodial: operator's encrypted storage                                                                                                     |
-| **Public key location**  | awid `did_aw_mappings.current_did_key` (for persistent identities).  Also embedded in the team certificate as `member_did_key`                                                                             |
-| **Authorizes**           | Message signing, DID registration, DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert)                                     |
-| **Created by**           | Self-custodial: `aw init` (ephemeral) or `aw init --persistent --name <name>` (persistent).  Custodial: the operator's dashboard                                                                           |
-| **Rotation**             | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side                                                                                           |
-| **Recovery if lost**     | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
+| Aspect | Detail |
+|--------|--------|
+| **Algorithm** | Ed25519 |
+| **Private key location** | Self-custodial: `.aw/signing.key` in the workspace directory.  Custodial: operator's encrypted storage |
+| **Public key location** | awid `did_aw_mappings.current_did_key` (for global identities).  Also embedded in the team certificate as `member_did_key` |
+| **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
+| **Created by** | Self-custodial: `aw init` for a local workspace or `aw init --global --name <name>` for a global identity.  Custodial: the operator's dashboard |
+| **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side |
+| **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
 
 #### Custody modes
 
@@ -118,6 +124,33 @@ The identity signing key has two custody modes:
 The key type is the same — Ed25519, same operations, same authority.
 Custody determines who stores the private key and who can perform
 recovery.
+
+#### Identity vs address authority
+
+The identity signing key authorizes the identity-side operations
+(`register_did`, `rotate_key`) and nothing else. It does not authorize
+address creation. An address under `domain/name` is created by the
+namespace controller of `domain` — either the BYOD controller of
+`domain`, or the hosted operator for managed namespaces.
+
+This split is load-bearing. It means a `did_aw` can exist without
+any address (local-to-global upgrades, cross-namespace
+memberships), and a managed address can be assigned to a
+self-custodial `did_aw` without the hosted operator ever touching
+the identity key. The awid-side invariant — `did_aw` must be
+registered before any address can be bound to it — enforces the
+ordering; see [`awid-sot.md`](awid-sot.md#identity-operations).
+
+A single `did_aw` may hold multiple addresses. Address choice is therefore
+not an identity-auth decision. For team-scoped work, the active team
+certificate selects the sender address via `member_address`; in OSS aweb
+this is stored on the team-scoped `agents` row for that membership.
+Identity-auth verification proves the key binding only and must not infer
+a canonical address by listing all addresses for the `did_aw`.
+
+For mail/chat routing, private address reads, recipient binding, and the
+boundary between awid authority and aweb local routing state, see
+[`identity-messaging-contract.md`](identity-messaging-contract.md).
 
 ---
 
@@ -157,7 +190,7 @@ Each key type is recoverable by the authority one level above it:
 
 ## Identity Key Loss
 
-### Custodial persistent identity
+### Custodial global identity
 
 The operator's replace operation handles this:
 
@@ -176,7 +209,7 @@ a key rotation (which would be signed by the old identity key).
 The app.aweb.ai dashboard provides this operation for custodial identities
 it manages.
 
-### Self-custodial persistent identity (CLI-created)
+### Self-custodial global identity (CLI-created)
 
 **No recovery path exists today.**
 
@@ -201,9 +234,9 @@ the team controller issues a new certificate for the new `did:key` (step
 force the issue by rotating the team key — but the cooperative path is the
 expected one.
 
-### Ephemeral identity
+### Local identity
 
-Ephemeral identities have no recovery story by design.  If the signing key
+Local identities have no recovery story by design.  If the signing key
 is lost, delete the workspace and create a new one.  The alias is released
 for reuse.
 
