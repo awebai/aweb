@@ -26,12 +26,16 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
-Global recipients expose a two-state delivery-time `inbound_mode`:
+Global recipients expose an explicit delivery-time `inbound_mode`:
 
 - `open`: accept valid senders after address route and identity binding
   validation.
+- `contacts_or_teammates`: after the same route and identity validation, accept
+  either an exact active identity contact for the verified sender address or a
+  sender with a valid team certificate for the recipient's team.
 - `contacts_only`: after the same route and identity validation, accept only an
-  exact active identity contact for the verified sender address.
+  exact active identity contact for the verified sender address; same-team
+  non-contacts are rejected.
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.

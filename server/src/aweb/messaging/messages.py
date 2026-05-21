@@ -87,7 +87,10 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     return None if not row else dict(row)
 
 
-INBOUND_MODES = {"open", "contacts_only"}
+INBOUND_MODE_OPEN = "open"
+INBOUND_MODE_CONTACTS_OR_TEAMMATES = "contacts_or_teammates"
+INBOUND_MODE_CONTACTS_ONLY = "contacts_only"
+INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_CONTACTS_OR_TEAMMATES, INBOUND_MODE_CONTACTS_ONLY}
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
@@ -130,13 +133,14 @@ async def authorize_message_delivery(
     sender_did: str,
     sender_address: str | None,
     sender_team_id: str | None = None,
+    sender_verified_team_id: str | None = None,
     stored_route_continuation: bool = False,
 ) -> None:
     del sender_did  # sender identity binding is verified by the caller/signature path.
 
     if _is_global_recipient(recipient_agent):
         mode = _effective_inbound_mode(recipient_agent)
-        if mode == "open":
+        if mode == INBOUND_MODE_OPEN:
             return
         if await _recipient_has_exact_sender_contact(
             db,
@@ -144,6 +148,12 @@ async def authorize_message_delivery(
             sender_address=sender_address,
         ):
             return
+        recipient_team_id = str(recipient_agent.get("team_id") or "").strip()
+        verified_team_id = str(sender_verified_team_id or "").strip()
+        if mode == INBOUND_MODE_CONTACTS_OR_TEAMMATES and verified_team_id and verified_team_id == recipient_team_id:
+            return
+        if mode == INBOUND_MODE_CONTACTS_OR_TEAMMATES:
+            raise ForbiddenError("Recipient only accepts messages from exact active contacts or verified teammates")
         raise ForbiddenError("Recipient only accepts messages from exact active contacts")
 
     if stored_route_continuation:
@@ -180,6 +190,7 @@ async def deliver_message(
     priority: MessagePriority,
     sender_address: str | None = None,
     team_id: str | None = None,
+    sender_verified_team_id: str | None = None,
     from_agent_id: str | None = None,
     to_agent_id: str | None = None,
     signature: str | None = None,
@@ -208,6 +219,7 @@ async def deliver_message(
             sender_did=sender_did,
             sender_address=sender_address,
             sender_team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
         )
 
     if created_at is None:

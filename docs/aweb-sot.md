@@ -230,7 +230,7 @@ An **address** is the stable handle for a global identity:
 - Public trust semantics attach to the global address, not to local
   aliases
 - Address assignment is separate from delivery authorization; aweb delivery is
-  controlled by `inbound_mode=open|contacts_only`
+  controlled by `inbound_mode=open|contacts_or_teammates|contacts_only`
 
 ### Lifecycle: Delete vs Archive vs Replace
 
@@ -460,7 +460,7 @@ CREATE TABLE agents (
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',
-    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'contacts_only')),
+    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'contacts_or_teammates', 'contacts_only')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -762,9 +762,10 @@ shared team membership.
 
 2. **Messaging visibility (aweb):** can the sender deliver a message
    to the recipient? Gated by the recipient's `inbound_mode` field.
-   `open` accepts valid senders after identity/route binding; `contacts_only`
-   additionally requires an exact active identity contact for the verified
-   sender address.
+   `open` accepts valid senders after identity/route binding;
+   `contacts_or_teammates` accepts exact contacts or verified same-team
+   certificate senders; `contacts_only` accepts only an exact active identity
+   contact for the verified sender address.
 
 **Contacts** are stored per-identity in aweb. Contacts management:
 `POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may

@@ -90,6 +90,16 @@ async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(awe
     )
     assert inbound_mode is None
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_or_teammates' WHERE agent_id = $1",
+        agent_id,
+    )
+    inbound_mode = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
+        agent_id,
+    )
+    assert inbound_mode == "contacts_or_teammates"
+
     with pytest.raises(QueryError) as invalid_mode:
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.agents}} SET inbound_mode = 'team' WHERE agent_id = $1",
@@ -267,6 +277,198 @@ async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(aweb_
     )
     assert row["from_agent_id"] is None
     assert row["to_agent_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_contacts_or_teammates_allows_contact_sender(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
+    bob_did_aw = "did:aw:bob-contact-mode"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:otherco.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="otherco.com/bob",
+        inbound_mode="contacts_or_teammates",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+        VALUES ($1, 'acme.com/alice', 'Alice')
+        """,
+        bob_did_aw,
+    )
+
+    msg_id, _ = await deliver_message(
+        db_shim,
+        from_did="did:aw:alice-contact-mode",
+        to_did=bob_did_aw,
+        from_alias="alice",
+        to_alias="bob",
+        sender_address="acme.com/alice",
+        subject="Hello",
+        body="Hi Bob!",
+        priority="normal",
+    )
+    assert msg_id is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_contacts_or_teammates_allows_verified_same_team_non_contact(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    bob_did_aw = "did:aw:bob-teammate-mode"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        inbound_mode="contacts_or_teammates",
+    )
+
+    msg_id, _ = await deliver_message(
+        db_shim,
+        from_did="did:aw:alice-teammate-mode",
+        to_did=bob_did_aw,
+        from_alias="alice",
+        to_alias="bob",
+        sender_address="acme.com/alice",
+        sender_verified_team_id="backend:acme.com",
+        subject="Hello",
+        body="Hi Bob!",
+        priority="normal",
+    )
+    assert msg_id is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_contacts_or_teammates_rejects_unverified_same_team_claim(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    bob_did_aw = "did:aw:bob-unverified-team"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        inbound_mode="contacts_or_teammates",
+    )
+
+    with pytest.raises(ForbiddenError, match="verified teammates"):
+        await deliver_message(
+            db_shim,
+            from_did="did:aw:alice-unverified-team",
+            to_did=bob_did_aw,
+            from_alias="alice",
+            to_alias="bob",
+            sender_address="acme.com/alice",
+            team_id="backend:acme.com",
+            subject="Hello",
+            body="Hi Bob!",
+            priority="normal",
+        )
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_contacts_or_teammates_rejects_neither_contact_nor_teammate(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
+    bob_did_aw = "did:aw:bob-neither-mode"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:otherco.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="otherco.com/bob",
+        inbound_mode="contacts_or_teammates",
+    )
+
+    with pytest.raises(ForbiddenError, match="verified teammates"):
+        await deliver_message(
+            db_shim,
+            from_did="did:aw:alice-neither-mode",
+            to_did=bob_did_aw,
+            from_alias="alice",
+            to_alias="bob",
+            sender_address="acme.com/alice",
+            sender_verified_team_id="backend:acme.com",
+            subject="Hello",
+            body="Hi Bob!",
+            priority="normal",
+        )
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_contacts_only_rejects_verified_same_team_non_contact(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    bob_did_aw = "did:aw:bob-strict-contacts"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        inbound_mode="contacts_only",
+    )
+
+    with pytest.raises(ForbiddenError, match="exact active contacts"):
+        await deliver_message(
+            db_shim,
+            from_did="did:aw:alice-strict-contacts",
+            to_did=bob_did_aw,
+            from_alias="alice",
+            to_alias="bob",
+            sender_address="acme.com/alice",
+            sender_verified_team_id="backend:acme.com",
+            subject="Hello",
+            body="Hi Bob!",
+            priority="normal",
+        )
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_local_recipient_same_team_behavior_unchanged(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "default:local")
+    alice_did_key = _make_did_key()
+    bob_did_key = _make_did_key()
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES ('default:local', $1, NULL, NULL, 'bob', 'local', 'developer', 'open')
+        RETURNING agent_id
+        """,
+        bob_did_key,
+    )
+
+    msg_id, _ = await deliver_message(
+        db_shim,
+        from_did=alice_did_key,
+        to_did=bob_did_key,
+        from_alias="alice",
+        to_alias="bob",
+        sender_address=None,
+        team_id="default:local",
+        subject="Local hello",
+        body="Hi Bob!",
+        priority="normal",
+    )
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT to_agent_id FROM {{tables.messages}} WHERE message_id = $1",
+        msg_id,
+    )
+    assert str(stored["to_agent_id"]) == str(row["agent_id"])
 
 
 @pytest.mark.asyncio

@@ -1418,6 +1418,7 @@ async def send_message(
                 sender_did=sender_did,
                 sender_address=sender_address,
                 sender_team_id=auth.team_id,
+                sender_verified_team_id=auth.verified_team_id,
             )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.

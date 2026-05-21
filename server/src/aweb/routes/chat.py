@@ -813,6 +813,7 @@ async def _resolve_chat_targets(
                 sender_did=actor_did,
                 sender_address=sender_address,
                 sender_team_id=auth.team_id,
+                sender_verified_team_id=auth.verified_team_id,
             )
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

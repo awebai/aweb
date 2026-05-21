@@ -33,6 +33,7 @@ class MessagingAuth:
     agent_id: str | None = None
     identity_scope: str | None = None
     certificate_id: str | None = None
+    verified_team_id: str | None = None
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -164,6 +165,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             agent_id=team_identity.agent_id,
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
+            verified_team_id=team_identity.team_id,
         )
 
     identity = await resolve_identity_auth(request)

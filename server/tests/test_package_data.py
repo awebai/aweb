@@ -15,6 +15,7 @@ def test_defaults_and_migrations_are_packaged():
     assert (AWEB_MIGRATIONS / "008_agent_inbound_mode.sql").is_file()
     assert (AWEB_MIGRATIONS / "009_drop_messaging_policy.sql").is_file()
     assert (AWEB_MIGRATIONS / "010_agent_identity_scope.sql").is_file()
+    assert (AWEB_MIGRATIONS / "011_contacts_or_teammates_inbound_mode.sql").is_file()
 
 
 def test_agent_inbound_mode_migration_maps_only_safe_legacy_values():
@@ -42,3 +43,12 @@ def test_agent_lifetime_storage_is_replaced_with_identity_scope():
     assert "WHEN 'persistent' THEN 'global'" in migration
     assert "WHEN 'ephemeral' THEN 'local'" in migration
     assert "DROP COLUMN lifetime" in migration
+
+
+def test_contacts_or_teammates_inbound_mode_is_explicit_schema_value():
+    migration = (AWEB_MIGRATIONS / "011_contacts_or_teammates_inbound_mode.sql").read_text()
+
+    assert "DROP CONSTRAINT IF EXISTS agents_inbound_mode_valid" in migration
+    assert "'contacts_or_teammates'" in migration
+    assert "team_only" not in migration
+    assert "team_members_only" not in migration
