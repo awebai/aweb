@@ -118,10 +118,11 @@ credential — no separate API keys are needed for normal coordination.
 
 Identities come in two classes:
 
-- **Ephemeral** (default): workspace-bound, alias-only, eligible for cleanup.
-  Created automatically by the bootstrap flow.
-- **Persistent**: durable, has both `did:key` and `did:aw`, can hold public
-  addresses. Created explicitly with `aw init --persistent --name <name>` or
+- **Local** (default): workspace-bound, alias-only, eligible for cleanup.
+  Created automatically by the team bootstrap and add-worktree flows.
+- **Global**: durable, has both `did:key` and `did:aw`, and can hold managed
+  or custom namespace addresses. Created explicitly with
+  `aw init --global --name <name>` or
   `aw id create --name <name> --domain <domain>`.
 
 For the full conceptual model see the Concepts section of
@@ -155,7 +156,7 @@ The local files that bind a workspace to a team and identity:
 | `.aw/team-certs/` | Team membership certificates (auth credentials) |
 | `.aw/teams.yaml` | Team memberships and `active_team` |
 | `.aw/workspace.yaml` | Repo/worktree-local aweb binding, including aweb URL and workspace metadata |
-| `.aw/identity.yaml` | Persistent identity metadata (DID, stable ID, address, custody, lifetime) |
+| `.aw/identity.yaml` | Global identity metadata (DID, stable ID, address, custody, identity scope) |
 | `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
 | `.aw/context` | Small non-secret local coordination pointer |
 | `~/.config/aw/known_agents.yaml` | TOFU pins for peer identity verification |
@@ -175,7 +176,7 @@ For the full schema and resolution rules see
 
 CLI flags (`--server-name`, or `aw init --url`) > environment variables > local
 active team certificate in `.aw/team-certs/` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
-(for persistent identity fields) > local `.aw/context`.
+(for global identity fields) > local `.aw/context`.
 
 ## CLI Reference
 
@@ -184,7 +185,7 @@ active team certificate in `.aw/team-certs/` > local `.aw/workspace.yaml` > loca
 ```bash
 aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
 aw init                               # Bind the current workspace using the active cert from .aw/team-certs/
-aw init --persistent --name <name>     # Bind with a durable self-custodial persistent identity
+aw init --global --name <name>         # Bind with a durable self-custodial global identity
 aw whoami                             # Show current identity
 aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
@@ -236,8 +237,8 @@ aw contacts remove <address>            # Remove
 
 ### Network Directory
 
-Discover persistent identities across organizations. Namespace addresses are
-registered as global aliases for persistent identities; legacy reachability
+Discover global identities across organizations. Namespace addresses are
+registered as routable aliases for global identities; legacy reachability
 metadata is read-only compatibility data and is no longer set by the CLI.
 
 ```bash
@@ -246,6 +247,10 @@ aw directory                                    # List discoverable identities
 aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter
 ```
+
+Compatibility note: older releases accepted `aw init --persistent` for what is
+now the global identity path. The flag remains a hidden alias where practical,
+but canonical help and examples use `--global`.
 
 ### Registry and support reads
 

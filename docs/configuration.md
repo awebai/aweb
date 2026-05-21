@@ -85,7 +85,8 @@ Multi-team commands:
 - registry-specific URL fields
 - hosted-bootstrap URL fields
 - key material
-- identity continuity fields such as `did`, `stable_id`, `custody`, or `lifetime`
+- identity continuity fields such as `did`, `stable_id`, `custody`, or
+  canonical `identity_scope`
 
 If your file still uses removed legacy bootstrap/auth fields,
 reinitialize the worktree with `aw init`.
@@ -104,7 +105,7 @@ Typical fields include:
 - `stable_id`
 - `address`
 - `custody`
-- `lifetime`
+- `identity_scope`
 - `registry_url`
 - `registry_status`
 
@@ -113,6 +114,11 @@ default hosted value is `https://api.awid.ai`.
 
 This file is the awid side of the split. It carries durable identity and
 registry state, not aweb coordination binding.
+
+Compatibility note: older `.aw/identity.yaml` files may still store the
+identity class in a `lifetime` field with `persistent`/`ephemeral` values. New
+docs and normal output use `identity_scope=global|local`; the old field is a
+compatibility input until the aapj cleanup removes or fully quarantines it.
 
 ## Local Signing Key: `.aw/signing.key`
 

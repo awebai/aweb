@@ -192,8 +192,8 @@ project_awid_member_into_team(
     did_key,
     team_id,
     alias,
-    lifetime,
-    access_mode,
+    identity_scope,
+    inbound_mode,
     human_name,
     did_aw,
     address,
@@ -204,7 +204,8 @@ project_awid_member_into_team(
 
 For hosted Add existing identity, audit records include target team, actor
 user/principal, `did_key`, optional `did_aw`, optional address, alias,
-lifetime, certificate id, and whether runtime state/API key creation occurred.
+identity scope, certificate id, and whether runtime state/API key creation
+occurred.
 The operation is idempotent for the same active `did_key` + alias in the target
 team. The same `did_key` with a different alias is a conflict. An alias already
 held by a different active `did_key` in the target team is a conflict. Retired
@@ -327,7 +328,7 @@ remains the canonical credential.
    over canonical JSON of `{did_aw, timestamp, body_sha256}`. No team
    certificate is required for that path.
 5. Team-certificate routes extract `team` (the coordination `team_id`),
-   `alias`, and `lifetime` from the certificate. Identity-scoped
+   `alias`, and identity scope from the certificate. Identity-scoped
    messaging routes instead bind the caller to the authenticated
    global identity (`did:aw`) carried in the signed payload.
 
@@ -454,8 +455,8 @@ CREATE TABLE agents (
     did_aw          TEXT,
     address         TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'ephemeral'
-                    CHECK (lifetime IN ('persistent', 'ephemeral')),
+    identity_scope  TEXT NOT NULL DEFAULT 'local'
+                    CHECK (identity_scope IN ('global', 'local')),
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',

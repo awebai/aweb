@@ -422,7 +422,7 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_did_aw": "did:aw:...",
                "member_address": "acme.com/alice",
                "alias": "alice",
-               "lifetime": "persistent" }
+               "identity_scope": "global" }
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, hosted deployment for
        managed). awid records the issuance but does not sign.
@@ -444,7 +444,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "member_did_aw": "did:aw:...",
                    "member_address": "acme.com/alice",
                    "alias": "alice",
-                   "lifetime": "persistent",
+                   "identity_scope": "global",
                    "issued_at": "...",
                    "revoked_at": null }] }
        With active_only=true: only rows where revoked_at IS NULL.
@@ -459,7 +459,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
                    "member_did_aw": "did:aw:...",
                    "member_address": "acme.com/alice",
                    "alias": "alice",
-                   "lifetime": "persistent",
+                   "identity_scope": "global",
                    "issued_at": "..." }
        This is the canonical `(team_id, alias)` lookup layer.
 
@@ -509,7 +509,7 @@ by listing all addresses for a `did:aw`.
   "member_did_aw": "did:aw:...(agent's stable ID, empty for local)",
   "member_address": "acme.com/alice (empty for local)",
   "alias": "alice",
-  "lifetime": "persistent",
+  "identity_scope": "global",
   "issued_at": "2026-04-06T...",
   "signature": "base64...(Ed25519 by team private key)"
 }
@@ -602,7 +602,7 @@ Fetch responses are JSON envelopes, not raw files:
   "member_did_aw": "did:aw:...",
   "member_address": "acme.com/alice",
   "alias": "alice",
-  "lifetime": "persistent",
+  "identity_scope": "global",
   "issued_at": "2026-04-06T...",
   "revoked_at": null,
   "certificate": "<base64-encoded certificate JSON>"
@@ -612,6 +612,13 @@ Fetch responses are JSON envelopes, not raw files:
 The `certificate` field is base64 of the exact UTF-8 team certificate JSON
 document that the CLI stores and sends as `X-AWID-Team-Certificate`; it is not
 PEM and is not an inline JSON object.
+
+Compatibility note: current deployed certificate blobs and database rows may
+still expose a legacy `lifetime` field with `persistent`/`ephemeral` values.
+That wire/storage cleanup is tracked separately by `aweb-aapj.12`. The
+canonical contract for new docs, examples, and product language is
+`identity_scope=global|local`; services that accept the old field must normalize
+it at the boundary and must not teach it as product authority.
 
 `aw id team fetch-cert` is refuse-overwrite by default. If a local
 certificate already exists for the target team with a different
@@ -786,8 +793,8 @@ CREATE TABLE team_certificates (
     member_did_aw   TEXT,
     member_address  TEXT, -- address selected for this team membership
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'persistent'
-                    CHECK (lifetime IN ('persistent', 'ephemeral')),
+    identity_scope  TEXT NOT NULL DEFAULT 'global'
+                    CHECK (identity_scope IN ('global', 'local')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
