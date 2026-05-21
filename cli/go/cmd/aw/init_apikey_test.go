@@ -315,8 +315,8 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	if result.StableID == "" {
 		t.Fatal("stable_id should be included in connect output")
 	}
-	if result.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("lifetime=%q", result.Lifetime)
+	if result.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", result.IdentityScope)
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {

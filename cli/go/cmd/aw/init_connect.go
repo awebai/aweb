@@ -31,9 +31,6 @@ type connectOutput struct {
 	StableID      string `json:"stable_id,omitempty"`
 	Address       string `json:"address,omitempty"`
 	IdentityScope string `json:"identity_scope,omitempty"`
-	// Lifetime is retained as internal/local-state compatibility only; normal
-	// user-facing JSON output emits identity_scope instead.
-	Lifetime string `json:"-"`
 }
 
 // connectResponse is the server response from POST /v1/connect.
@@ -180,7 +177,6 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		StableID:      strings.TrimSpace(cert.MemberDIDAW),
 		Address:       strings.TrimSpace(cert.MemberAddress),
 		IdentityScope: identityScope,
-		Lifetime:      awid.LegacyLifetimeForIdentityScope(identityScope),
 	}, nil
 }
 
