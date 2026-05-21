@@ -17,7 +17,10 @@ The intended authority split is:
 - `aweb` owns coordination state: mail, chat, conversations, tasks, roles, and
   workspace behavior.
 - Address resolution controls first contact routing; delivery authorization is
-  the recipient's aweb `inbound_mode`.
+  the recipient's aweb `inbound_mode` (`open`, `contacts_or_teammates`, or
+  `contacts_only`). Team certificates do not create routes or resolver
+  visibility, but a verified certificate for the recipient's team is a delivery
+  authorization input for `contacts_or_teammates`.
 - Once a conversation exists, replies are authorized by stored conversation
   participation and route state, not by re-running address discovery.
 - A global identity can belong to multiple teams without becoming a new
@@ -40,25 +43,33 @@ The release gate must cover these cases for both mail and chat where applicable:
 3. Same-team alias-first, then full-address continuation.
 4. Cross-team same namespace with explicit team selector.
 5. Cross-namespace address first contact with `inbound_mode=open`.
-6. Cross-namespace address first contact with `inbound_mode=contacts_only` and
+6. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
+   and an exact active identity contact.
+7. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
+   and a verified same-team certificate for the recipient team.
+8. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
+   from a sender that is neither an exact contact nor verified teammate fails closed.
+9. Cross-namespace address first contact with `inbound_mode=contacts_only` and
    an exact active identity contact.
-7. Cross-namespace address first contact without a valid route or required
-   exact contact fails closed.
-8. Reply by existing participant route after first contact, without re-running
+10. Cross-namespace address first contact with `inbound_mode=contacts_only` and
+   only a verified same-team non-contact fails closed.
+11. Cross-namespace address first contact without a valid route or required
+   exact contact / teammate proof fails closed.
+12. Reply by existing participant route after first contact, without re-running
    address discovery.
-9. Bare external `did:aw` first contact fails closed; stored-route continuation works.
-10. Key rotation preserves conversation continuity.
-11. Local identity: team-local alias only.
-12. Global identity in multiple teams: active team selects sender context.
-13. Existing identity added to another hosted or BYOIDT team without cloning the
+13. Bare external `did:aw` first contact fails closed; stored-route continuation works.
+14. Key rotation preserves conversation continuity.
+15. Local identity: team-local alias only.
+16. Global identity in multiple teams: active team selects sender context.
+17. Existing identity added to another hosted or BYOIDT team without cloning the
     identity.
-14. Duplicate aliases across teams require explicit address or team context.
-15. Hosted custodial identity follows the same messaging contract.
-16. Local pin fallback is only for already-known peers, not address authority.
-17. Mismatched recipient bindings fail closed.
-18. Duplicate active one-to-one conversations are rejected or cleaned up.
-19. Closed or expired conversations cannot be continued.
-20. Conversation listing shows conversations where the actor is a participant.
+18. Duplicate aliases across teams require explicit address or team context.
+19. Hosted custodial identity follows the same messaging contract.
+20. Local pin fallback is only for already-known peers, not address authority.
+21. Mismatched recipient bindings fail closed.
+22. Duplicate active one-to-one conversations are rejected or cleaned up.
+23. Closed or expired conversations cannot be continued.
+24. Conversation listing shows conversations where the actor is a participant.
 
 ## Current Documentation Anchors
 

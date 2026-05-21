@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -44,6 +45,45 @@ def _signed_identity_headers(agent_sk, agent_did_key, did_aw: str, body_bytes=b"
         "Authorization": f"DIDKey {agent_did_key} {sig}",
         IDENTITY_DID_AW_HEADER: did_aw,
         "X-AWEB-Timestamp": timestamp,
+    }
+
+
+def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
+    cert = {
+        "version": 1,
+        "certificate_id": kwargs.get("certificate_id", "cert-001"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
+        "team_did_key": team_did_key,
+        "member_did_key": member_did_key,
+        "member_did_aw": kwargs.get("member_did_aw", ""),
+        "member_address": kwargs.get("member_address", ""),
+        "alias": kwargs.get("alias", "alice"),
+        "identity_scope": kwargs.get("identity_scope", "global"),
+        "issued_at": kwargs.get("issued_at", datetime.now(timezone.utc).isoformat()),
+    }
+    payload = canonical_json_bytes(cert)
+    cert["signature"] = sign_message(team_sk, payload)
+    return cert
+
+
+def _encode_certificate(cert):
+    return base64.b64encode(json.dumps(cert).encode()).decode()
+
+
+def _signed_team_headers(agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = canonical_json_bytes(
+        {
+            "body_sha256": hashlib.sha256(body_bytes).hexdigest(),
+            "team_id": team_id,
+            "timestamp": timestamp,
+        }
+    )
+    sig = sign_message(agent_sk, payload)
+    return {
+        "Authorization": f"DIDKey {agent_did_key} {sig}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWID-Team-Certificate": cert_header,
     }
 
 
@@ -2261,6 +2301,113 @@ async def test_create_chat_session_global_recipient_allows_explicit_inbound_mode
         """
     )
     assert contact_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_contacts_or_teammates_accepts_verified_same_team_certificate(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
+        """,
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_or_teammates')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        alice_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        member_did_aw="did:aw:alice",
+        member_address="acme.com/alice",
+    )
+    cert_header = _encode_certificate(cert)
+    registry = AsyncMock()
+    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_aliases": ["bob"], "message": "hello teammate"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    response = resp.json()
+    assert {participant["alias"] for participant in response["participants"]} == {"alice", "bob"}
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_contact(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
+        """,
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        alice_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        member_did_aw="did:aw:alice",
+        member_address="acme.com/alice",
+    )
+    cert_header = _encode_certificate(cert)
+    registry = AsyncMock()
+    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_aliases": ["bob"], "message": "blocked teammate"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 403, resp.text
+    assert "exact active contacts" in resp.text
 
 
 @pytest.mark.asyncio

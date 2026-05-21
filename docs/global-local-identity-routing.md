@@ -48,10 +48,12 @@ sender with a valid address route and signed payload. First contact starts from
 an address alias, not a bare `did:aw`. A local agent
 can also write outbound to a global agent through its home server. The sender and
 recipient still prove key possession with signed envelopes. No team
-certificate, address visibility flag, or conversation id authorizes first
-contact. Contacts do not create routes or resolver visibility, but an exact
-active identity contact is required for delivery when the recipient's
-`inbound_mode` is `contacts_only`.
+certificate, address visibility flag, or conversation id creates a route or
+resolver visibility. Contacts do not create routes or resolver visibility, but
+an exact active identity contact is required for delivery when the recipient's
+`inbound_mode` is `contacts_only`; for `contacts_or_teammates`, a verified team
+certificate for the recipient's team is also a delivery-authorization input
+after address route and identity binding have already succeeded.
 
 ### Local agent
 
@@ -171,20 +173,26 @@ The target model deletes these concepts as resolver/auth layers:
 - Private address lookup authorization through team certificates.
 - Team-certificate address visibility gates.
 - The old five-value recipient policy gate as a live delivery authorization
-  surface. The replacement live surface is the narrow global
-  `inbound_mode=open|contacts_only`; broader team/org/block-all semantics are
-  not renamed or preserved. Contacts may authorize the explicit
-  `contacts_only` delivery gate or local-contact gate, but they remain exact
-  address-book state and never resolver visibility or routing authority.
-  Recipient-side blocklists, abuse throttles, and spam controls may still run
-  after identity/route resolution; they are not resolver visibility rules.
+  surface. The replacement live surface is the explicit global
+  `inbound_mode=open|contacts_or_teammates|contacts_only`; old broader
+  team/org/block-all semantics are not renamed or preserved. Contacts may
+  authorize the explicit `contacts_only`, `contacts_or_teammates`, or
+  local-contact gates, but they remain exact address-book state and never
+  resolver visibility or routing authority. A verified team certificate for the
+  recipient's team authorizes delivery only for `contacts_or_teammates`, after
+  route and identity binding have already succeeded. Recipient-side blocklists,
+  abuse throttles, and spam controls may still run after identity/route
+  resolution; they are not resolver visibility rules.
 - Known-pin or local-row fallback that bypasses global identity resolution for a
   global address.
 - Conversation-id auth bypasses for mail/chat continuation.
 
 Team certificates remain the credential for team-scoped coordination endpoints:
-tasks, claims, roles, locks, instructions, workspace state, and presence. They no
-longer grant special powers to discover or message a global address.
+tasks, claims, roles, locks, instructions, workspace state, and presence. They do
+not grant special powers to discover a global address and do not create a route.
+They are, however, an explicit delivery authorization input for global recipients
+whose `inbound_mode` is `contacts_or_teammates` when the certificate verifies for
+the recipient's team.
 
 ## Routing model
 
@@ -204,8 +212,10 @@ longer grant special powers to discover or message a global address.
 6. Bob's server verifies the signed payload, re-resolves or verifies the
    recipient identity binding, and stores the message.
 
-No reachability flag, team certificate, contact membership, or conversation id is
-needed for authorization.
+No reachability flag, contact membership, or conversation id creates the route.
+After route and identity binding, the recipient's `inbound_mode` decides delivery:
+`open` accepts, `contacts_or_teammates` accepts exact contacts or verified
+same-team certificate senders, and `contacts_only` accepts exact contacts only.
 
 ### Global reply
 
@@ -344,7 +354,9 @@ mismatched outer fields and stale routes.
   views with repair guidance.
 - Contacts remain exact address-book state. They do not route or affect resolver
   visibility, but exact active identity contacts authorize delivery for the
-  `contacts_only` and local-contact gates.
+  `contacts_only`, `contacts_or_teammates`, and local-contact gates. Verified
+  recipient-team certificates additionally authorize `contacts_or_teammates`;
+  they still do not route or affect resolver visibility.
 
 ### Phase 5: delete dead code and schema
 
