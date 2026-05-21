@@ -10,11 +10,12 @@ from datetime import datetime, timezone
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pgdbm.errors import QueryError
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from awid_service.deps import get_db
+from awid.contract import normalize_identity_scope
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
@@ -160,6 +161,16 @@ def _parse_certificate_blob(value: str | None) -> dict | None:
     return cert
 
 
+def _certificate_scope_from_payload(cert: dict) -> str:
+    """Return canonical identity_scope from current or legacy certificate JSON."""
+    if cert.get("identity_scope") is None and cert.get("lifetime") is None:
+        raise HTTPException(status_code=422, detail="certificate identity_scope is required")
+    try:
+        return normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _verify_certificate_blob(
     certificate: str | None,
     *,
@@ -178,7 +189,6 @@ def _verify_certificate_blob(
         "team_did_key": team_did_key,
         "member_did_key": body.member_did_key,
         "alias": body.alias,
-        "lifetime": body.lifetime,
     }
     if body.member_did_aw:
         expected["member_did_aw"] = body.member_did_aw
@@ -188,6 +198,9 @@ def _verify_certificate_blob(
     for key, expected_value in expected.items():
         if cert.get(key) != expected_value:
             raise HTTPException(status_code=422, detail=f"certificate {key} does not match registration")
+
+    if _certificate_scope_from_payload(cert) != body.identity_scope:
+        raise HTTPException(status_code=422, detail="certificate identity_scope does not match registration")
 
     for key in ("member_did_aw", "member_address"):
         if not expected.get(key) and cert.get(key):
@@ -311,20 +324,35 @@ class CertificateRegisterRequest(BaseModel):
     member_did_aw: str | None = Field(default=None, max_length=256)
     member_address: str | None = Field(default=None, max_length=256)
     alias: str = Field(..., min_length=1, max_length=128)
-    lifetime: str = Field(default="persistent", max_length=32)
+    identity_scope: str = Field(default="global", max_length=32)
     certificate: str | None = Field(default=None, max_length=16384)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_lifetime(cls, data):
+        if not isinstance(data, dict):
+            return data
+        values = dict(data)
+        lifetime = values.pop("lifetime", None)
+        if lifetime is not None:
+            legacy_scope = normalize_identity_scope(str(lifetime))
+            if (
+                values.get("identity_scope") is not None
+                and normalize_identity_scope(str(values["identity_scope"])) != legacy_scope
+            ):
+                raise ValueError("lifetime does not match identity_scope")
+            values.setdefault("identity_scope", legacy_scope)
+        return values
 
     @field_validator("member_did_key")
     @classmethod
     def validate_member_did_key(cls, value: str) -> str:
         return _validate_did_key(value)
 
-    @field_validator("lifetime")
+    @field_validator("identity_scope")
     @classmethod
-    def validate_lifetime(cls, value: str) -> str:
-        if value not in ("persistent", "ephemeral"):
-            raise ValueError("must be 'persistent' or 'ephemeral'")
-        return value
+    def validate_identity_scope(cls, value: str) -> str:
+        return normalize_identity_scope(value)
 
 
 class CertificateRegisterResponse(BaseModel):
@@ -339,7 +367,7 @@ class CertificateResponse(BaseModel):
     member_did_aw: str | None = None
     member_address: str | None = None
     alias: str
-    lifetime: str
+    identity_scope: str
     issued_at: str
     revoked_at: str | None = None
 
@@ -361,7 +389,7 @@ class TeamMemberReferenceResponse(BaseModel):
     member_did_aw: str | None = None
     member_address: str | None = None
     alias: str
-    lifetime: str
+    identity_scope: str
     issued_at: str
 
 
@@ -669,7 +697,7 @@ async def register_certificate(
             """
             INSERT INTO {{tables.team_certificates}}
                 (team_uuid, certificate_id, member_did_key, member_did_aw,
-                 member_address, alias, lifetime, certificate)
+                 member_address, alias, identity_scope, certificate)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
             team_row["team_uuid"],
@@ -678,7 +706,7 @@ async def register_certificate(
             body.member_did_aw,
             body.member_address,
             body.alias,
-            body.lifetime,
+            body.identity_scope,
             body.certificate,
         )
     except QueryError as exc:
@@ -787,7 +815,7 @@ async def list_certificates(
     params.append(validated_limit + 1)
     query = (
         "SELECT tc.id, tc.certificate_id, tc.member_did_key, tc.member_did_aw, tc.member_address,"
-        " tc.alias, tc.lifetime, tc.issued_at, tc.revoked_at, t.domain, t.name"
+        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, t.domain, t.name"
         " FROM {{tables.team_certificates}} tc"
         " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
         " WHERE " + " AND ".join(where_clauses)
@@ -827,7 +855,7 @@ async def get_team_member(
     row = await db.fetch_one(
         """
         SELECT tc.certificate_id, tc.member_did_key, tc.member_did_aw,
-               tc.member_address, tc.alias, tc.lifetime, tc.issued_at,
+               tc.member_address, tc.alias, tc.identity_scope, tc.issued_at,
                t.domain, t.name
         FROM {{tables.team_certificates}} tc
         JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
@@ -852,7 +880,7 @@ async def get_team_member(
         member_did_aw=row["member_did_aw"],
         member_address=row["member_address"],
         alias=row["alias"],
-        lifetime=row["lifetime"],
+        identity_scope=row["identity_scope"],
         issued_at=row["issued_at"].isoformat(),
     )
 
@@ -876,7 +904,7 @@ async def fetch_certificate(
     row = await db.fetch_one(
         """
         SELECT tc.certificate_id, tc.member_did_key, tc.member_did_aw,
-               tc.member_address, tc.alias, tc.lifetime, tc.issued_at,
+               tc.member_address, tc.alias, tc.identity_scope, tc.issued_at,
                tc.revoked_at, tc.certificate, t.domain, t.name, t.team_did_key
         FROM {{tables.team_certificates}} tc
         JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
@@ -1031,7 +1059,7 @@ def _cert_response(row) -> CertificateResponse:
         member_did_aw=row["member_did_aw"],
         member_address=row["member_address"],
         alias=row["alias"],
-        lifetime=row["lifetime"],
+        identity_scope=row["identity_scope"],
         issued_at=row["issued_at"].isoformat(),
         revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
     )

@@ -81,7 +81,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
         """
         INSERT INTO {{tables.team_certificates}}
             (team_uuid, certificate_id, member_did_key, member_did_aw,
-             member_address, alias, lifetime)
+             member_address, alias, identity_scope)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
         team_uuid,
@@ -90,7 +90,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
         "did:aw:abc123",
         "example.com/alice",
         "alice",
-        "persistent",
+        "global",
     )
 
     row = await db.fetch_one(
@@ -100,7 +100,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
     assert row is not None
     assert row["member_did_key"] == member_did_key
     assert row["alias"] == "alice"
-    assert row["lifetime"] == "persistent"
+    assert row["identity_scope"] == "global"
     assert row["issued_at"] is not None
     assert row["revoked_at"] is None
 
@@ -120,7 +120,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_team_certificates_lifetime_check_constraint(awid_db_infra):
+async def test_team_certificates_identity_scope_check_constraint(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
@@ -142,14 +142,14 @@ async def test_team_certificates_lifetime_check_constraint(awid_db_infra):
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
-                (team_uuid, certificate_id, member_did_key, alias, lifetime)
+                (team_uuid, certificate_id, member_did_key, alias, identity_scope)
             VALUES ($1, $2, $3, $4, $5)
             """,
             team_uuid,
             str(uuid4()),
             "did:key:z6MkTest",
             "bad",
-            "invalid_lifetime",
+            "invalid_scope",
         )
 
 

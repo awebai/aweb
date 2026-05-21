@@ -125,7 +125,7 @@ async def test_full_team_lifecycle(client, controller_identity):
             "member_did_aw": alice_did_aw,
             "member_address": f"{domain}/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -146,7 +146,7 @@ async def test_full_team_lifecycle(client, controller_identity):
             "certificate_id": bob_cert_id,
             "member_did_key": bob_did_key,
             "alias": "bob",
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
         },
         headers=headers,
     )
@@ -167,11 +167,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     assert alice_cert["member_did_key"] == alice_did_key
     assert alice_cert["member_did_aw"] == alice_did_aw
     assert alice_cert["member_address"] == f"{domain}/alice"
-    assert alice_cert["lifetime"] == "persistent"
+    assert alice_cert["identity_scope"] == "global"
     assert alice_cert["revoked_at"] is None
 
     bob_cert = next(c for c in certs if c["alias"] == "bob")
-    assert bob_cert["lifetime"] == "ephemeral"
+    assert bob_cert["identity_scope"] == "local"
     assert bob_cert["member_did_aw"] is None
 
     # Record timestamp before revocation for incremental sync test

@@ -22,6 +22,24 @@ func NormalizeLifetime(lifetime string) string {
 	}
 }
 
+func NormalizeIdentityScope(scope string) string {
+	switch strings.TrimSpace(strings.ToLower(scope)) {
+	case "", LifetimeEphemeral, IdentityModeLocal:
+		return IdentityModeLocal
+	case LifetimePersistent, IdentityModeGlobal:
+		return IdentityModeGlobal
+	default:
+		return strings.TrimSpace(strings.ToLower(scope))
+	}
+}
+
+func LegacyLifetimeForIdentityScope(scope string) string {
+	if NormalizeIdentityScope(scope) == IdentityModeGlobal {
+		return LifetimePersistent
+	}
+	return LifetimeEphemeral
+}
+
 func IdentityClassFromLifetime(lifetime string) IdentityClass {
 	switch NormalizeLifetime(lifetime) {
 	case LifetimePersistent:

@@ -162,7 +162,7 @@ async def test_register_certificate(client, controller_identity):
             "member_did_aw": member_did_aw,
             "member_address": "cert.com/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -170,6 +170,38 @@ async def test_register_certificate(client, controller_identity):
     body = resp.json()
     assert body["registered"] is True
     assert body["certificate_id"] == cert_id
+
+
+@pytest.mark.asyncio
+async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_identity_scope(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacy-lifetime.cert.com", "backend")
+
+    _, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    cert_id = str(uuid4())
+    headers = _sign(
+        team_key, team_did,
+        domain="legacy-lifetime.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = await client.get("/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates")
+    assert resp.status_code == 200, resp.text
+    cert = resp.json()["certificates"][0]
+    assert cert["identity_scope"] == "global"
+    assert "lifetime" not in cert
 
 
 @pytest.mark.asyncio
@@ -207,7 +239,7 @@ async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, 
             "member_did_aw": member_did_aw,
             "member_address": "blob.cert.com/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
             "certificate": certificate,
         },
         headers=headers,
@@ -258,7 +290,7 @@ async def test_fetch_certificate_rejects_other_did(client, controller_identity):
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
             "certificate": certificate,
         },
         headers=headers,
@@ -307,7 +339,7 @@ async def test_fetch_certificate_rejects_revoked_certificate(client, controller_
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
             "certificate": certificate,
         },
         headers=headers,
@@ -358,7 +390,7 @@ async def test_fetch_certificate_metadata_only_record_has_explicit_error(client,
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
         },
         headers=headers,
     )
@@ -399,7 +431,7 @@ async def test_register_certificate_rejects_member_address_for_different_did_aw(
             "member_did_aw": other_did_aw,
             "member_address": "mismatch.cert.com/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -429,7 +461,7 @@ async def test_register_certificate_rejects_member_address_without_did_aw(client
             "member_did_key": member_did_key,
             "member_address": "missingdid.cert.com/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -457,7 +489,7 @@ async def test_register_certificate_ephemeral(client, controller_identity):
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "bot1",
-            "lifetime": "ephemeral",
+            "identity_scope": "local",
         },
         headers=headers,
     )

@@ -87,11 +87,11 @@ type teamSwitchOutput struct {
 }
 
 type teamListItem struct {
-	TeamID   string `json:"team_id"`
-	Alias    string `json:"alias"`
-	Lifetime string `json:"lifetime,omitempty"`
-	IssuedAt string `json:"issued_at,omitempty"`
-	Active   bool   `json:"active"`
+	TeamID        string `json:"team_id"`
+	Alias         string `json:"alias"`
+	IdentityScope string `json:"identity_scope,omitempty"`
+	IssuedAt      string `json:"issued_at,omitempty"`
+	Active        bool   `json:"active"`
 }
 
 type teamListOutput struct {
@@ -112,7 +112,7 @@ type certShowOutput struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	TeamDIDKey    string `json:"team_did_key"`
-	Lifetime      string `json:"lifetime"`
+	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
 	CertificateID string `json:"certificate_id"`
 }
@@ -643,7 +643,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 			Active: strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
 		}
 		if cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, membership.TeamID); err == nil && cert != nil {
-			item.Lifetime = strings.TrimSpace(cert.Lifetime)
+			item.IdentityScope = awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
 			item.IssuedAt = strings.TrimSpace(cert.IssuedAt)
 		}
 		items = append(items, item)
@@ -970,8 +970,8 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 	if strings.TrimSpace(cert.Alias) != strings.TrimSpace(requestedAlias) {
 		return nil, "", fmt.Errorf("hosted team invite certificate alias %q does not match requested alias %q", cert.Alias, requestedAlias)
 	}
-	if strings.TrimSpace(cert.Lifetime) != awid.LifetimeEphemeral {
-		return nil, "", fmt.Errorf("hosted team invite certificate lifetime %q does not match %q", cert.Lifetime, awid.LifetimeEphemeral)
+	if awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)) != awid.IdentityModeLocal {
+		return nil, "", fmt.Errorf("hosted team invite certificate identity_scope %q does not match %q", awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)), awid.IdentityModeLocal)
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
 		return nil, "", fmt.Errorf("hosted local team invite certificate unexpectedly contains global identity fields")
@@ -1478,7 +1478,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		MemberDIDAW:   cert.MemberDIDAW,
 		MemberAddress: cert.MemberAddress,
 		TeamDIDKey:    cert.TeamDIDKey,
-		Lifetime:      cert.Lifetime,
+		IdentityScope: awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)),
 		IssuedAt:      cert.IssuedAt,
 		CertificateID: cert.CertificateID,
 	}, formatCertShow)

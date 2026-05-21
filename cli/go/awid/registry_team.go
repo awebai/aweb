@@ -27,7 +27,7 @@ type RegistryCertificate struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
-	Lifetime      string `json:"lifetime"`
+	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
 }
@@ -39,7 +39,7 @@ type registryCertificateFetchResponse struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
-	Lifetime      string `json:"lifetime"`
+	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
 	Certificate   string `json:"certificate"`
@@ -53,7 +53,7 @@ type TeamMemberReference struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
-	Lifetime      string `json:"lifetime"`
+	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
 }
 
@@ -74,7 +74,7 @@ type certificateRegisterRequest struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
-	Lifetime      string `json:"lifetime"`
+	IdentityScope string `json:"identity_scope"`
 	Certificate   string `json:"certificate,omitempty"`
 }
 
@@ -273,7 +273,7 @@ func (c *RegistryClient) RegisterCertificate(
 			MemberDIDAW:   cert.MemberDIDAW,
 			MemberAddress: cert.MemberAddress,
 			Alias:         cert.Alias,
-			Lifetime:      cert.Lifetime,
+			IdentityScope: NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)),
 			Certificate:   encodedCert,
 		},
 		nil,

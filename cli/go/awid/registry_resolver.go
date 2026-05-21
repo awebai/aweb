@@ -42,6 +42,7 @@ type registryTeamMemberResponse struct {
 	MemberDIDAW   string `json:"member_did_aw"`
 	MemberAddress string `json:"member_address"`
 	Alias         string `json:"alias"`
+	IdentityScope string `json:"identity_scope"`
 	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
 }
@@ -170,7 +171,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 				RegistryURL:    member.authority.RegistryURL,
 				DeliveryOrigin: deliveryOrigin,
 				Custody:        CustodySelf,
-				Lifetime:       member.response.Lifetime,
+				Lifetime:       LegacyLifetimeForIdentityScope(firstNonEmpty(member.response.IdentityScope, member.response.Lifetime)),
 				ResolvedAt:     r.now().UTC(),
 				ResolvedVia:    "registry",
 			}, nil
@@ -186,7 +187,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 			PublicKey:   ed25519.PublicKey(pub),
 			RegistryURL: member.authority.RegistryURL,
 			Custody:     CustodySelf,
-			Lifetime:    member.response.Lifetime,
+			Lifetime:    LegacyLifetimeForIdentityScope(firstNonEmpty(member.response.IdentityScope, member.response.Lifetime)),
 			ResolvedAt:  r.now().UTC(),
 			ResolvedVia: "registry",
 		}, nil

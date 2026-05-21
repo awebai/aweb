@@ -285,7 +285,7 @@ async def test_get_team_member_by_alias(client, controller_identity):
             "member_did_aw": member_did_aw,
             "member_address": "members.com/alice",
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -299,6 +299,8 @@ async def test_get_team_member_by_alias(client, controller_identity):
     assert body["member_did_aw"] == member_did_aw
     assert body["member_address"] == "members.com/alice"
     assert body["alias"] == "alice"
+    assert body["identity_scope"] == "global"
+    assert "lifetime" not in body
 
 
 @pytest.mark.asyncio
@@ -331,7 +333,7 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "certificate_id": "cert-1",
             "member_did_key": did_from_public_key(member1_pub),
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
@@ -352,7 +354,7 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "certificate_id": "cert-2",
             "member_did_key": did_from_public_key(member2_pub),
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )

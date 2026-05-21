@@ -18,6 +18,7 @@ from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from awid.contract import normalize_identity_scope
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.log import (
     canonical_server_origin,
@@ -135,9 +136,14 @@ class TeamCertificate:
     member_did_aw: str | None
     member_address: str | None
     alias: str
-    lifetime: str
+    identity_scope: str
     issued_at: str
     revoked_at: str | None = None
+
+    @property
+    def lifetime(self) -> str:
+        """Deprecated compatibility alias for older callers."""
+        return "persistent" if normalize_identity_scope(self.identity_scope) == "global" else "ephemeral"
 
 
 class RegistryError(Exception):
@@ -699,17 +705,20 @@ class RegistryClient:
         member_did_aw: str | None,
         member_address: str | None,
         alias: str,
-        lifetime: str,
+        identity_scope: str | None = None,
         certificate: str | None = None,
+        lifetime: str | None = None,
     ) -> None:
         registry_url = await self._registry_url_for_domain(domain)
+        scope_input = identity_scope if identity_scope is not None else lifetime
+        scope = normalize_identity_scope(scope_input or "global")
         payload: dict[str, Any] = {
             "certificate_id": certificate_id,
             "member_did_key": member_did_key,
             "member_did_aw": member_did_aw,
             "member_address": member_address,
             "alias": alias,
-            "lifetime": lifetime,
+            "identity_scope": scope,
         }
         if certificate is not None:
             payload["certificate"] = certificate
@@ -1118,8 +1127,9 @@ class CachedRegistryClient(RegistryClient):
         member_did_aw: str | None,
         member_address: str | None,
         alias: str,
-        lifetime: str,
+        identity_scope: str | None = None,
         certificate: str | None = None,
+        lifetime: str | None = None,
     ) -> None:
         await self._invalidate_keys(
             self._team_certificates_cache_key(domain, name, active_only=True),
@@ -1134,8 +1144,9 @@ class CachedRegistryClient(RegistryClient):
             member_did_aw=member_did_aw,
             member_address=member_address,
             alias=alias,
-            lifetime=lifetime,
+            identity_scope=identity_scope,
             certificate=certificate,
+            lifetime=lifetime,
         )
         await self._invalidate_keys(
             self._team_certificates_cache_key(domain, name, active_only=True),
@@ -1693,7 +1704,7 @@ def _team_certificate_from_json(data: dict[str, Any]) -> TeamCertificate:
         member_did_aw=data.get("member_did_aw"),
         member_address=data.get("member_address"),
         alias=data["alias"],
-        lifetime=data["lifetime"],
+        identity_scope=normalize_identity_scope(data.get("identity_scope") or data.get("lifetime")),
         issued_at=data["issued_at"],
         revoked_at=data.get("revoked_at"),
     )

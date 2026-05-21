@@ -39,8 +39,11 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 	if cert.Alias != "alice" {
 		t.Fatalf("alias=%q", cert.Alias)
 	}
+	if cert.IdentityScope != IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", cert.IdentityScope)
+	}
 	if cert.Lifetime != LifetimePersistent {
-		t.Fatalf("lifetime=%q", cert.Lifetime)
+		t.Fatalf("legacy lifetime=%q", cert.Lifetime)
 	}
 	if cert.TeamDIDKey != teamDIDKey {
 		t.Fatalf("team_did_key=%q", cert.TeamDIDKey)
@@ -265,6 +268,12 @@ func TestTeamCertificateJSON(t *testing.T) {
 	if decoded.CertificateID != cert.CertificateID {
 		t.Fatalf("certificate_id mismatch after JSON round-trip")
 	}
+	if decoded.IdentityScope != IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", decoded.IdentityScope)
+	}
+	if strings.Contains(string(data), "lifetime") {
+		t.Fatalf("new certificate JSON must not emit lifetime: %s", string(data))
+	}
 
 	// Verify the key signature_payload is present when verifying
 	teamPub := teamPriv.Public().(ed25519.PublicKey)
@@ -282,8 +291,9 @@ func TestCanonicalCertificatePayloadSortsKeys(t *testing.T) {
 		"did:aw:test",
 		"acme.com/alice",
 		"alice",
-		LifetimePersistent,
+		IdentityModeGlobal,
 		"2026-04-09T00:00:00Z",
+		false,
 	)
 
 	if strings.Index(payload, `"team_did_key"`) > strings.Index(payload, `"team_id"`) {

@@ -23,19 +23,24 @@ type TeamCertificate struct {
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
-	Lifetime      string `json:"lifetime"`
-	IssuedAt      string `json:"issued_at"`
-	Signature     string `json:"signature"`
+	IdentityScope string `json:"identity_scope"`
+	// Lifetime is a deprecated local compatibility alias. It is accepted when
+	// loading old certificates but is not emitted by new certificate JSON.
+	Lifetime  string `json:"-"`
+	IssuedAt  string `json:"issued_at"`
+	Signature string `json:"signature"`
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
 type TeamCertificateFields struct {
 	Team          string // team identifier (e.g. "backend:acme.com")
 	MemberDIDKey  string
-	MemberDIDAW   string // optional; from identity.yaml, empty for ephemeral
-	MemberAddress string // optional; from identity.yaml, empty for ephemeral
+	MemberDIDAW   string // optional; from identity.yaml, empty for local
+	MemberAddress string // optional; from identity.yaml, empty for local
 	Alias         string
-	Lifetime      string
+	IdentityScope string
+	// Lifetime is a deprecated compatibility input; use IdentityScope.
+	Lifetime string
 }
 
 // SignTeamCertificate creates and signs a team membership certificate
@@ -53,9 +58,16 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	if strings.TrimSpace(fields.Alias) == "" {
 		return nil, fmt.Errorf("alias is required")
 	}
-	if strings.TrimSpace(fields.Lifetime) == "" {
-		return nil, fmt.Errorf("lifetime is required")
+
+	rawScope := firstNonEmpty(fields.IdentityScope, fields.Lifetime)
+	if strings.TrimSpace(rawScope) == "" {
+		return nil, fmt.Errorf("identity_scope is required")
 	}
+	identityScope := NormalizeIdentityScope(rawScope)
+	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
+		return nil, fmt.Errorf("identity_scope must be %q or %q", IdentityModeGlobal, IdentityModeLocal)
+	}
+	legacyLifetime := LegacyLifetimeForIdentityScope(identityScope)
 
 	certID, err := GenerateUUID4()
 	if err != nil {
@@ -67,7 +79,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	memberDIDAW := strings.TrimSpace(fields.MemberDIDAW)
 	memberAddress := strings.TrimSpace(fields.MemberAddress)
 
-	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, fields.Lifetime, issuedAt)
+	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, identityScope, issuedAt, false)
 	sig := ed25519.Sign(teamKey, []byte(payload))
 
 	return &TeamCertificate{
@@ -79,7 +91,8 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
 		Alias:         fields.Alias,
-		Lifetime:      fields.Lifetime,
+		IdentityScope: identityScope,
+		Lifetime:      legacyLifetime,
 		IssuedAt:      issuedAt,
 		Signature:     base64.RawStdEncoding.EncodeToString(sig),
 	}, nil
@@ -100,6 +113,13 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 		return fmt.Errorf("decode certificate signature: %w", err)
 	}
 
+	identityScope := NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
+		return fmt.Errorf("certificate identity_scope is invalid")
+	}
+	cert.IdentityScope = identityScope
+	cert.Lifetime = LegacyLifetimeForIdentityScope(identityScope)
+
 	payload := canonicalCertificatePayload(
 		cert.CertificateID,
 		cert.Team,
@@ -108,12 +128,27 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 		cert.MemberDIDAW,
 		cert.MemberAddress,
 		cert.Alias,
-		cert.Lifetime,
+		identityScope,
 		cert.IssuedAt,
+		false,
 	)
 
 	if !ed25519.Verify(teamPub, []byte(payload), sig) {
-		return fmt.Errorf("certificate signature verification failed")
+		legacyPayload := canonicalCertificatePayload(
+			cert.CertificateID,
+			cert.Team,
+			cert.TeamDIDKey,
+			cert.MemberDIDKey,
+			cert.MemberDIDAW,
+			cert.MemberAddress,
+			cert.Alias,
+			cert.Lifetime,
+			cert.IssuedAt,
+			true,
+		)
+		if !ed25519.Verify(teamPub, []byte(legacyPayload), sig) {
+			return fmt.Errorf("certificate signature verification failed")
+		}
 	}
 	return nil
 }
@@ -165,21 +200,92 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 	return &cert, nil
 }
 
+func (c TeamCertificate) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Version       int    `json:"version"`
+		CertificateID string `json:"certificate_id"`
+		Team          string `json:"team_id"`
+		TeamDIDKey    string `json:"team_did_key"`
+		MemberDIDKey  string `json:"member_did_key"`
+		MemberDIDAW   string `json:"member_did_aw,omitempty"`
+		MemberAddress string `json:"member_address,omitempty"`
+		Alias         string `json:"alias"`
+		IdentityScope string `json:"identity_scope"`
+		IssuedAt      string `json:"issued_at"`
+		Signature     string `json:"signature"`
+	}
+	identityScope := NormalizeIdentityScope(firstNonEmpty(c.IdentityScope, c.Lifetime))
+	return json.Marshal(wire{
+		Version:       c.Version,
+		CertificateID: c.CertificateID,
+		Team:          c.Team,
+		TeamDIDKey:    c.TeamDIDKey,
+		MemberDIDKey:  c.MemberDIDKey,
+		MemberDIDAW:   c.MemberDIDAW,
+		MemberAddress: c.MemberAddress,
+		Alias:         c.Alias,
+		IdentityScope: identityScope,
+		IssuedAt:      c.IssuedAt,
+		Signature:     c.Signature,
+	})
+}
+
+func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		Version       int    `json:"version"`
+		CertificateID string `json:"certificate_id"`
+		Team          string `json:"team_id"`
+		TeamDIDKey    string `json:"team_did_key"`
+		MemberDIDKey  string `json:"member_did_key"`
+		MemberDIDAW   string `json:"member_did_aw,omitempty"`
+		MemberAddress string `json:"member_address,omitempty"`
+		Alias         string `json:"alias"`
+		IdentityScope string `json:"identity_scope"`
+		Lifetime      string `json:"lifetime"`
+		IssuedAt      string `json:"issued_at"`
+		Signature     string `json:"signature"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	identityScope := NormalizeIdentityScope(firstNonEmpty(w.IdentityScope, w.Lifetime))
+	*c = TeamCertificate{
+		Version:       w.Version,
+		CertificateID: w.CertificateID,
+		Team:          w.Team,
+		TeamDIDKey:    w.TeamDIDKey,
+		MemberDIDKey:  w.MemberDIDKey,
+		MemberDIDAW:   w.MemberDIDAW,
+		MemberAddress: w.MemberAddress,
+		Alias:         w.Alias,
+		IdentityScope: identityScope,
+		Lifetime:      LegacyLifetimeForIdentityScope(identityScope),
+		IssuedAt:      w.IssuedAt,
+		Signature:     w.Signature,
+	}
+	return nil
+}
+
 // canonicalCertificatePayload builds the canonical JSON for certificate signing.
 // The payload must match exactly what the verifier reconstructs: the certificate
 // JSON (minus signature) serialized with sorted keys, no whitespace, and native
 // types (version as int, omitted empty optional fields).
-func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, lifetime, issuedAt string) string {
+func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, scopeOrLifetime, issuedAt string, legacyLifetime bool) string {
 	type entry struct {
 		key string
 		val string // serialized JSON value (already quoted for strings)
 	}
 
+	scopeKey := "identity_scope"
+	if legacyLifetime {
+		scopeKey = "lifetime"
+	}
 	entries := []entry{
 		{"alias", jsonString(alias)},
 		{"certificate_id", jsonString(certID)},
 		{"issued_at", jsonString(issuedAt)},
-		{"lifetime", jsonString(lifetime)},
+		{scopeKey, jsonString(scopeOrLifetime)},
 	}
 	if memberAddress != "" {
 		entries = append(entries, entry{"member_address", jsonString(memberAddress)})
@@ -219,4 +325,13 @@ func jsonString(s string) string {
 	writeEscapedString(&b, s)
 	b.WriteByte('"')
 	return b.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

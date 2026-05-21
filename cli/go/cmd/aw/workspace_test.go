@@ -1079,8 +1079,8 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	if registeredCert["alias"] != "charlie" {
 		t.Fatalf("registered alias=%v", registeredCert["alias"])
 	}
-	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("registered lifetime=%v", registeredCert["lifetime"])
+	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("registered lifetime=%v", registeredCert["identity_scope"])
 	}
 	if _, ok := registeredCert["member_did_aw"]; ok {
 		t.Fatalf("local CLI add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])

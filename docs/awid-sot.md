@@ -423,6 +423,9 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_address": "acme.com/alice",
                "alias": "alice",
                "identity_scope": "global" }
+       Compatibility: stale clients may send "lifetime" (persistent->global,
+       ephemeral->local); awid normalizes it before storage and never emits it
+       in normal certificate responses.
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, hosted deployment for
        managed). awid records the issuance but does not sign.

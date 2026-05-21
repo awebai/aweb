@@ -603,8 +603,8 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 	if gotNamespacePayload == nil {
 		t.Fatal("expected namespace registration")
 	}
-	if gotCertPayload["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("cert lifetime=%v", gotCertPayload["lifetime"])
+	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("cert lifetime=%v", gotCertPayload["identity_scope"])
 	}
 	if _, ok := gotCertPayload["member_did_aw"]; ok {
 		t.Fatalf("local certificate registration should omit member_did_aw: %v", gotCertPayload["member_did_aw"])

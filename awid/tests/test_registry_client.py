@@ -51,7 +51,7 @@ async def test_registry_client_register_team_certificate_uses_public_method_cont
             member_did_aw="did:aw:member",
             member_address="example.com/alice",
             alias="alice",
-            lifetime="persistent",
+            identity_scope="global",
             certificate="signed-cert-json",
         )
     finally:
@@ -67,7 +67,7 @@ async def test_registry_client_register_team_certificate_uses_public_method_cont
         "member_did_aw": "did:aw:member",
         "member_address": "example.com/alice",
         "alias": "alice",
-        "lifetime": "persistent",
+        "identity_scope": "global",
         "certificate": "signed-cert-json",
     }
 

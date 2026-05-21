@@ -376,8 +376,8 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	if gotCertPayload["alias"] != "alice" {
 		t.Fatalf("cert payload alias=%v", gotCertPayload["alias"])
 	}
-	if gotCertPayload["lifetime"] != awid.LifetimePersistent {
-		t.Fatalf("cert payload lifetime=%v", gotCertPayload["lifetime"])
+	if gotCertPayload["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("cert payload lifetime=%v", gotCertPayload["identity_scope"])
 	}
 
 	teamKeyPath, err := awconfig.TeamKeyPath("acme.com", "default")
@@ -673,8 +673,8 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
 		t.Fatalf("local cert should not include global identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
 	}
-	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("registry lifetime=%v", registeredCert["lifetime"])
+	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("registry lifetime=%v", registeredCert["identity_scope"])
 	}
 	teamState, err := awconfig.LoadTeamState(acceptDir)
 	if err != nil {
@@ -1411,8 +1411,8 @@ func TestTeamAddMemberFlow(t *testing.T) {
 	if registeredCert["member_address"] != "acme.com/alice" {
 		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
 	}
-	if registeredCert["lifetime"] != awid.LifetimePersistent {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	if registeredCert["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
 	}
 	encodedCert, ok := registeredCert["certificate"].(string)
 	if !ok || strings.TrimSpace(encodedCert) == "" {
@@ -1798,8 +1798,8 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 	if registeredCert["alias"] != "laptop" {
 		t.Fatalf("registry cert alias=%v", registeredCert["alias"])
 	}
-	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
 	}
 	if _, ok := registeredCert["member_did_aw"]; ok {
 		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
@@ -1891,8 +1891,8 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 	if registeredCert["member_address"] != "acme.com/alice" {
 		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
 	}
-	if registeredCert["lifetime"] != awid.LifetimePersistent {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	if registeredCert["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
 	}
 }
 

@@ -398,7 +398,7 @@ func TestFetchTeamCertificate(t *testing.T) {
 			"certificate_id": cert.CertificateID,
 			"member_did_key": cert.MemberDIDKey,
 			"alias":          "alice",
-			"lifetime":       "persistent",
+			"identity_scope": "global",
 			"issued_at":      cert.IssuedAt,
 			"certificate":    encoded,
 		})
@@ -441,7 +441,7 @@ func TestListCertificates(t *testing.T) {
 					"team_id":        "backend:acme.com",
 					"member_did_key": "did:key:z6MkAlice",
 					"alias":          "alice",
-					"lifetime":       "persistent",
+					"identity_scope": "global",
 					"issued_at":      "2026-04-06T00:00:00Z",
 				},
 			},
@@ -482,7 +482,7 @@ func TestResolveTeamMember(t *testing.T) {
 			"member_did_aw":  "did:aw:alice",
 			"member_address": "acme.com/alice",
 			"alias":          "alice",
-			"lifetime":       "persistent",
+			"identity_scope": "global",
 			"issued_at":      "2026-04-06T00:00:00Z",
 		})
 	}))

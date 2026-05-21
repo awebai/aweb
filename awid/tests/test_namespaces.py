@@ -369,7 +369,7 @@ async def _register_persistent_certificate_for_address(
             "member_did_aw": member_did_aw,
             "member_address": member_address,
             "alias": "alice",
-            "lifetime": "persistent",
+            "identity_scope": "global",
         },
         headers=headers,
     )
