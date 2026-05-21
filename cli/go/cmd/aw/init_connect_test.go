@@ -127,6 +127,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if _, ok := got["server_url"]; ok {
 		t.Fatalf("unexpected legacy server_url in output: %v", got["server_url"])
 	}
+	if _, ok := got["lifetime"]; ok {
+		t.Fatalf("unexpected legacy lifetime in output: %v", got["lifetime"])
+	}
+	if got["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%v", got["identity_scope"])
+	}
 
 	// Verify DIDKey auth was used
 	if !strings.HasPrefix(gotAuthHeader, "DIDKey ") {
@@ -369,6 +375,16 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	}
 	if ws.RepoID != "repo-uuid-1" {
 		t.Fatalf("repo_id=%q", ws.RepoID)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if _, ok := got["lifetime"]; ok {
+		t.Fatalf("unexpected legacy lifetime in output: %v", got["lifetime"])
+	}
+	if got["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("identity_scope=%v", got["identity_scope"])
 	}
 	teamState, err := awconfig.LoadTeamState(tmp)
 	if err != nil {
