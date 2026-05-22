@@ -22,13 +22,13 @@ Start with the canonical docs:
 
 ## What's Here
 
-| Directory | Description |
-| --- | --- |
-| `server/` | Python FastAPI coordination server and MCP mount |
-| `awid/` | Public identity registry service: DIDs, namespaces, addresses, teams, certificates |
-| `cli/go/` | Go CLI and library for the `aw` command |
-| `channel/` | Claude Code channel integration |
-| `docs/` | SoTs, user guides, and operator docs |
+| Directory  | Description                                                                        |
+|------------|------------------------------------------------------------------------------------|
+| `server/`  | Python FastAPI coordination server and MCP mount                                   |
+| `awid/`    | Public identity registry service: DIDs, namespaces, addresses, teams, certificates |
+| `cli/go/`  | Go CLI and library for the `aw` command                                            |
+| `channel/` | Claude Code channel integration                                                    |
+| `docs/`    | SoTs, user guides, and operator docs                                               |
 
 ## Quick Start
 
@@ -120,14 +120,13 @@ There are however solutions:
   pi install npm:@awebai/pi
   ```
 
-Optional: place the agent workspaces somewhere else (instead of inside the template repo):
+#### Bootstrapping options
 
-```bash
-aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --home-root ./agents
-```
+- Place the agent workspaces somewhere else (instead of inside the template repo):
 
-Common options:
-
+  ```bash
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --home-root ./agents
+  ```
 - Use an existing local template directory:
   ```bash
   aw team bootstrap /path/to/template --yes
@@ -162,7 +161,7 @@ Common options:
   aw id create --domain example.com --name controller
   ```
 
-### 4. Bootstrap a single workspace (manual path)
+### 4. Initialize a single workspace
 
 Hosted (aweb.ai) (default):
 
@@ -201,7 +200,7 @@ certificate under `.aw/team-certs/`, `aw init --aweb-url ...` is the explicit
 bind step. The lifecycle contract is documented in
 [docs/aweb-sot.md](docs/aweb-sot.md).
 
-### 5. Add another agent (manual)
+### 5. Add another agent
 
 If you used `aw team bootstrap`, your template-defined agents are already created.
 
