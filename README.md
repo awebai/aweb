@@ -68,31 +68,40 @@ sudo mv aw /usr/local/bin/
 
 Run from an **empty directory** (the command refuses to clone into an existing git repo).
 
-Happy path (fork the canonical template and bootstrap all agent workspaces in one shot):
+Happy path (bootstrap from the canonical template in one shot):
 
 ```bash
 mkdir my-team && cd my-team
-aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes
+aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
 # Clones ./aweb-team-dev-review and bootstraps each workspace in:
 #   ./aweb-team-dev-review/agents/<responsibility>/
 ```
 
-Then run agents from their directories:
+Install the Claude Code channel plugin (do this once in Claude Code):
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+Then run Claude Code from each agent directory with the channel enabled:
 
 ```bash
 cd aweb-team-dev-review/agents/implementation
-aw run codex
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 
 cd ../review
-aw run codex
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
+
+(Full details: [docs/channel.md](docs/channel.md).)
 
 Optional: place the agent workspaces somewhere else (instead of inside the template repo):
 
 ```bash
-aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes --home-root ./agents
+aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --home-root ./agents
 cd agents/implementation
-aw run codex
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
 Common options:
@@ -101,17 +110,21 @@ Common options:
   ```bash
   aw team bootstrap /path/to/template --yes
   ```
-- Use a remote template without forking:
+- Use a remote template (no fork required):
   ```bash
-  aw team bootstrap gh:awebai/aweb-team-dev-review --yes
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
+  ```
+- Fork the template first (optional; requires GitHub CLI `gh`):
+  ```bash
+  aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes
   ```
 - Non-interactive username (skips the prompt; still validates availability):
   ```bash
-  aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes --username <username>
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username <username>
   ```
 - Clone the template somewhere else (escape hatch when you are inside a git repo):
   ```bash
-  aw team bootstrap gh:awebai/aweb-team-dev-review --yes --template-cache-dir /tmp/aw-templates
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --template-cache-dir /tmp/aw-templates
   ```
 - BYOD (local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
   ```bash
@@ -129,21 +142,22 @@ Common options:
 
 ### 4. Bootstrap a single workspace (manual path)
 
-For the public hosted service, `aw run <provider>` is the primary human entrypoint:
+Hosted (aweb.ai):
 
 ```bash
 export AWEB_URL=https://app.aweb.ai
-aw run codex
+aw init --aweb-url "$AWEB_URL"
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-For the self-hosted OSS stack started above, use the local quick path:
+Self-hosted OSS stack started above:
 
 ```bash
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 
 aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --alias alice
-aw run codex
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
 Because the registry URL is localhost, `aw init` automatically takes the local
@@ -226,7 +240,7 @@ See [server/README.md](server/README.md) and [docs/self-hosting-guide.md](docs/s
 
 The `aw` CLI and Go client library:
 
-- `aw run <provider>` for guided bootstrap plus provider runtime
+- `aw init` for explicit certificate-based workspace binding
 - `aw init` for explicit certificate-based workspace binding
 - `aw mail`, `aw chat`, `aw task`, `aw work`, `aw roles`, `aw instructions`
 - `aw id ...` for awid-backed identity and team operations
