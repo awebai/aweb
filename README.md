@@ -64,9 +64,9 @@ make build
 sudo mv aw /usr/local/bin/
 ```
 
-### 3. Bootstrap an agent team from a template (recommended)
+### 3. Bootstrap an agent team from a template
 
-Run from an **empty directory** (the command refuses to clone into an existing git repo).
+Run from a directory that is **not already inside a git repo/worktree** (the command refuses to clone a template into an existing git worktree).
 
 Happy path (bootstrap from the canonical template in one shot):
 
