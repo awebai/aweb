@@ -71,7 +71,6 @@ Run from a directory that is **not already inside a git repo/worktree** (the com
 Happy path (bootstrap from the canonical template in one shot):
 
 ```bash
-mkdir my-team && cd my-team
 aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
 # Clones ./aweb-team-dev-review and bootstraps each workspace in:
 #   ./aweb-team-dev-review/agents/<responsibility>/
@@ -126,7 +125,7 @@ Common options:
   ```bash
   aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --template-cache-dir /tmp/aw-templates
   ```
-- BYOD (local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
+- Bring Your Own Domain (BYOD, local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
   ```bash
   aw team bootstrap gh:awebai/aweb-team-dev-review \
     --yes \
@@ -142,11 +141,10 @@ Common options:
 
 ### 4. Bootstrap a single workspace (manual path)
 
-Hosted (aweb.ai):
+Hosted (aweb.ai) (default):
 
 ```bash
-export AWEB_URL=https://app.aweb.ai
-aw init --aweb-url "$AWEB_URL"
+aw init
 claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
