@@ -76,23 +76,11 @@ aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
 #   ./aweb-team-dev-review/agents/<responsibility>/
 ```
 
-Then start your agents (choose one runtime):
-
-Claude Code:
+Then start your agents:
 
 ```bash
 cd aweb-team-dev-review/agents/implementation
 claude
-
-cd ../review
-claude
-```
-
-Codex:
-
-```bash
-cd aweb-team-dev-review/agents/implementation
-codex
 
 cd ../review
 codex
@@ -100,26 +88,29 @@ codex
 
 #### Real-time awakenings for mail/chat (recommended)
 
-By default, agents do not automatically wake up when they receive aweb mail/chat. Without a wake-up path, you must manually check:
+By default, agents do not automatically wake up when they receive aweb mail/chat.
+
+Without a wake-up path, you must ask them to check for incoming messages:
 
 ```bash
 aw mail inbox
 aw chat pending
 ```
 
-Pick one:
+There are however solutions:
 
-- **Claude Code**: install the channel plugin, then start Claude Code with it enabled:
+- **Claude Code**: install the channel plugin from inside `claude`:
   ```
   /plugin marketplace add awebai/claude-plugins
   /plugin install aweb-channel@awebai-marketplace
   ```
+  then exit and start again with it enabled:
   ```bash
   claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
   ```
   (More: [docs/channel.md](docs/channel.md).)
 
-- **Codex**: start Codex through aweb so it can wake on incoming coordination:
+- **Codex**: start Codex through `aw` so it can wake on incoming coordination:
   ```bash
   aw run codex
   ```
