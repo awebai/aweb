@@ -81,6 +81,33 @@ current working directory (refusing to clone into an existing git
 worktree). Pass `--fork` to fork via `gh` first and clone the fork.
 Pass `--refresh-template` to re-clone over an existing copy.
 
+## Existing templates
+
+Two canonical templates are maintained in the `awebai`
+organization. Both are MIT-licensed and meant to be used as-is or
+forked:
+
+- **Dev + reviewer** (2 agents) —
+  [awebai/aweb-team-dev-review](https://github.com/awebai/aweb-team-dev-review).
+  A minimal developer + reviewer pair, the smallest interesting
+  team. Use this if you want to see the bootstrap shape end-to-end
+  without the noise of more roles.
+
+- **Company surfaces** (6 agents) —
+  [awebai/aweb-team-company-surfaces](https://github.com/awebai/aweb-team-company-surfaces).
+  A company-style team with responsibility-named agent
+  directories: `direction`, `engineering`, `operations`, `support`,
+  `outreach`, `analytics`. Roles, default identity names, and a
+  shared `docs/team.md` are wired up so the team can run a
+  cross-functional surface out of the box.
+
+Community templates are welcome. If you publish a template repo
+that follows the conventions in [template
+anatomy](#template-anatomy), open a PR adding it to this list, or
+open an issue on
+[awebai/aweb](https://github.com/awebai/aweb/issues) and we'll
+link it.
+
 ## Template anatomy
 
 A template is a git repo with this shape:
