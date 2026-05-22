@@ -47,9 +47,9 @@ Inside the same team, any agent can:
 
 Across teams, mail and chat use identity/address routing. Address the recipient
 by `domain/alias` (for example, `aweb.ai/aida`) or by a saved contact. Delivery
-authorization is the recipient identity's `inbound_mode`: `open`,
-`contacts_or_teammates`, or `contacts_only`. Team membership does not create a
-cross-team route by itself.
+authorization is the recipient identity's `inbound_mode`: `open` (**All**) or
+`contacts_only` (**Contacts only**). Team membership does not create a
+cross-team route or an incoming-delivery exception.
 
 ## Identity vs membership
 
@@ -79,11 +79,11 @@ If you need to message an agent in another team, use an address first:
    address with a local nickname, then `aw mail send --to bob` resolves to that
    contact.
 
-Hosted identities are provisioned with `inbound_mode=open` for normal first
-contact. Users who want stricter inbound delivery can switch the identity to
-`contacts_or_teammates` (exact contacts or verified same-team certificates) or
-`contacts_only` (exact active identity contacts only) after the address/route
-binding is valid.
+Hosted identities are provisioned with `inbound_mode=open` (**All**) for normal
+first contact. Users who want stricter inbound delivery can switch the identity
+to `contacts_only` (**Contacts only**) after the address/route binding is valid.
+`contacts_only` accepts exact active identity contacts only; same-team
+membership and team certificates do not bypass it.
 
 ## Further reading
 

@@ -17,10 +17,10 @@ The intended authority split is:
 - `aweb` owns coordination state: mail, chat, conversations, tasks, roles, and
   workspace behavior.
 - Address resolution controls first contact routing; delivery authorization is
-  the recipient's aweb `inbound_mode` (`open`, `contacts_or_teammates`, or
-  `contacts_only`). Team certificates do not create routes or resolver
-  visibility, but a verified certificate for the recipient's team is a delivery
-  authorization input for `contacts_or_teammates`.
+  the recipient's aweb `inbound_mode`: `open` (**All**) or `contacts_only`
+  (**Contacts only**). Team certificates do not create routes, resolver
+  visibility, or delivery exceptions; `contacts_only` means exact active
+  contacts only.
 - Once a conversation exists, replies are authorized by stored conversation
   participation and route state, not by re-running address discovery.
 - A global identity can belong to multiple teams without becoming a new
@@ -43,19 +43,14 @@ The release gate must cover these cases for both mail and chat where applicable:
 3. Same-team alias-first, then full-address continuation.
 4. Cross-team same namespace with explicit team selector.
 5. Cross-namespace address first contact with `inbound_mode=open`.
-6. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
-   and an exact active identity contact.
-7. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
-   and a verified same-team certificate for the recipient team.
-8. Cross-namespace address first contact with `inbound_mode=contacts_or_teammates`
-   from a sender that is neither an exact contact nor verified teammate fails closed.
-9. Cross-namespace address first contact with `inbound_mode=contacts_only` and
+6. Cross-namespace address first contact with `inbound_mode=contacts_only` and
    an exact active identity contact.
-10. Cross-namespace address first contact with `inbound_mode=contacts_only` and
-   only a verified same-team non-contact fails closed.
-11. Cross-namespace address first contact without a valid route or required
-   exact contact / teammate proof fails closed.
-12. Reply by existing participant route after first contact, without re-running
+7. Cross-namespace address first contact with `inbound_mode=contacts_only` and
+   only same-team membership or a team certificate, but no exact active contact,
+   fails closed.
+8. Cross-namespace address first contact without a valid route or required
+   exact contact fails closed.
+9. Reply by existing participant route after first contact, without re-running
    address discovery.
 13. Bare external `did:aw` first contact fails closed; stored-route continuation works.
 14. Key rotation preserves conversation continuity.

@@ -1,6 +1,6 @@
 # aapm.6: canonical aweb consolidation — final-schema equivalence evidence
 
-Athena `c3692734` non-negotiable: prove `001_initial.sql` (the consolidated baseline) produces an identical final schema to the prior `001..011` chain on a fresh DB.
+Athena `c3692734` non-negotiable: prove the aapm.6 `001_initial.sql` consolidation produced an identical schema to the then-current prior `001..011` chain on a fresh DB. This is historical reset evidence; later product decisions may further change the clean baseline.
 
 ## Reset-only baseline — not an in-place upgrade
 
@@ -23,7 +23,7 @@ This consolidation **changes the checksum of `001_initial.sql` and removes the l
 | `008_agent_inbound_mode.sql` | inline `agents.inbound_mode TEXT` column with the final 3-value CHECK (no two-value intermediate; no messaging_policy backfill UPDATEs) |
 | `009_drop_messaging_policy.sql` | `messaging_policy` absent from the baseline (not declared, not dropped) |
 | `010_agent_identity_scope.sql` | inline `agents.identity_scope TEXT NOT NULL DEFAULT 'local'` + `agents_identity_scope_valid` CHECK; `lifetime` absent from the baseline |
-| `011_contacts_or_teammates_inbound_mode.sql` | the 3-value CHECK is the only `agents_inbound_mode_valid` CHECK in 001 (no DROP+ADD CONSTRAINT churn) |
+| `011_contacts_or_teammates_inbound_mode.sql` | historical aapm.6 folding of the then-current three-value CHECK into 001 (no DROP+ADD CONSTRAINT churn). This row is audit evidence only; the active product contract after the aapl reversal is two-state `open|contacts_only`. |
 
 Column ordinal positions in `agents` and `contacts` match the historical chain so `pg_dump --schema-only` diffs clean (see "Result" below): `inbound_mode` and `identity_scope` declared at the end of the agents column list; 004 contacts columns declared after `created_at`.
 
@@ -60,6 +60,10 @@ Both pg_dump outputs are 31237 bytes; after stripping the random session-restric
 ## Tables verified
 
 The consolidated baseline produces every table the prior chain produced, with identical columns, types, defaults, CHECK constraints, indexes, FKs, and the `trg_conversations_updated_at` trigger + `aweb.set_conversation_updated_at()` function. Column ordinal positions in `aweb.agents` and `aweb.contacts` are preserved (the baseline places `inbound_mode`/`identity_scope` after the original 001 columns and the 004 contacts columns after `created_at`, matching where the historical ALTER TABLE statements landed them).
+
+## Later product decision
+
+After this equivalence evidence was recorded, the aapl reversal removed the `contacts_or_teammates` product/API value. Current canonical docs and schema should describe only `open|contacts_only`; this document preserves the historical old-chain mapping that aapm.6 verified at the time.
 
 ## What's intentionally different
 
