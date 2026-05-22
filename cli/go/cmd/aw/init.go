@@ -269,6 +269,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 			Persistent:         initPersistent,
+			InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 			DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
 			AskPostCreateSetup: askPostCreateSetup,
@@ -527,15 +528,28 @@ func resolveAliasValue(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
 }
 
-// validateInitInboundMode enforces the aapl.4 two-state contract on
-// the --inbound-mode flag. The user-facing flag values use the
+// validateInitInboundMode enforces the aapl.7 contract on the
+// --inbound-mode flag. The user-facing flag values use the
 // hyphen-spelling CLI convention (open, contacts-only); the
 // underscored canonical form (contacts_only) is the wire-level value
-// translated below before the API call. The flag is only meaningful
-// for a global identity. The withdrawn third value
-// "contacts_or_teammates" (or the hyphen variant) must fail at parse
-// time so users copying a stale dashboard command see a clear error
-// instead of a confusing API rejection.
+// translated by canonicalInitInboundModeForWire before the API call.
+//
+// Per Juan c2d25276: --inbound-mode is a real top-level flag of
+// `aw init --global` and every supported global creation path
+// (API-key bootstrap, guided hosted onboarding, BYOD) must forward
+// the value into the create call. This validator only enforces the
+// flag-shape contract; threading through the paths is the runner's
+// responsibility.
+//
+// Two guards:
+//
+//  1. The flag is only meaningful for a global identity (--global);
+//     local workspaces have no inbound delivery mode.
+//  2. Only the two-value set {open, contacts-only} is accepted. The
+//     withdrawn third value "contacts_or_teammates" (or the
+//     hyphenated variant) must fail at parse time so users copying a
+//     stale dashboard command see a clear error instead of a
+//     confusing API rejection.
 func validateInitInboundMode() error {
 	value := strings.TrimSpace(initInboundMode)
 	if value == "" {
@@ -543,6 +557,17 @@ func validateInitInboundMode() error {
 	}
 	if !initPersistent {
 		return fmt.Errorf("--inbound-mode is only valid with --global; local workspaces do not have an inbound delivery mode")
+	}
+	if initBYOD {
+		// BYOD creates the team certificate locally; there is no
+		// hosted creation endpoint at this stage to carry the
+		// inbound_mode value. Fail fast instead of silently
+		// dropping the user's choice (Juan c2d25276: "fail only
+		// where the path genuinely cannot create/configure a
+		// global identity"). The user can set the mode after the
+		// BYOD identity is up via `aw id inbound-mode` or the
+		// dashboard.
+		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode via `aw id inbound-mode` or the dashboard")
 	}
 	switch value {
 	case "open":

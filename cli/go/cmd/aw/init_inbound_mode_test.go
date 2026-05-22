@@ -27,11 +27,15 @@ import (
 // Juan's CLI convention; the wire/API value stays underscored
 // (contacts_only).
 
+// resetInboundModeFlags resets package-level CLI state between tests.
+func resetInboundModeFlags() {
+	initInboundMode = ""
+	initPersistent = false
+	initBYOD = false
+}
+
 func TestValidateInitInboundModeAcceptsContactsOnlyWithGlobal(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts-only"
 	initPersistent = true
 	if err := validateInitInboundMode(); err != nil {
@@ -46,10 +50,7 @@ func TestValidateInitInboundModeAcceptsContactsOnlyWithGlobal(t *testing.T) {
 }
 
 func TestValidateInitInboundModeAcceptsOpenWithGlobal(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "open"
 	initPersistent = true
 	if err := validateInitInboundMode(); err != nil {
@@ -61,10 +62,7 @@ func TestValidateInitInboundModeAcceptsOpenWithGlobal(t *testing.T) {
 }
 
 func TestValidateInitInboundModeOmittedYieldsEmptyWireValue(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = ""
 	initPersistent = true
 	if err := validateInitInboundMode(); err != nil {
@@ -76,10 +74,7 @@ func TestValidateInitInboundModeOmittedYieldsEmptyWireValue(t *testing.T) {
 }
 
 func TestValidateInitInboundModeRejectsContactsOnlyOnLocal(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts-only"
 	initPersistent = false
 	err := validateInitInboundMode()
@@ -92,10 +87,7 @@ func TestValidateInitInboundModeRejectsContactsOnlyOnLocal(t *testing.T) {
 }
 
 func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesUnderscore(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts_or_teammates"
 	initPersistent = true
 	err := validateInitInboundMode()
@@ -111,10 +103,7 @@ func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesUnderscore(t 
 }
 
 func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesHyphen(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts-or-teammates"
 	initPersistent = true
 	if err := validateInitInboundMode(); err == nil {
@@ -123,14 +112,179 @@ func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesHyphen(t *tes
 }
 
 func TestValidateInitInboundModeRejectsUnknownValue(t *testing.T) {
-	t.Cleanup(func() {
-		initInboundMode = ""
-		initPersistent = false
-	})
+	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "team-only"
 	initPersistent = true
 	if err := validateInitInboundMode(); err == nil {
 		t.Fatal("expected unknown value to be rejected")
+	}
+}
+
+// BYOD path currently has no server-side creation endpoint to carry
+// the value. Fail-fast instead of silently dropping the choice
+// (Juan c2d25276 + Grace 68bcc81c).
+func TestValidateInitInboundModeRejectsBYODGlobal(t *testing.T) {
+	t.Cleanup(resetInboundModeFlags)
+	initInboundMode = "contacts-only"
+	initPersistent = true
+	initBYOD = true
+	err := validateInitInboundMode()
+	if err == nil {
+		t.Fatal("expected --byod + --inbound-mode to fail at parse time")
+	}
+	if !strings.Contains(err.Error(), "--byod") {
+		t.Fatalf("error should mention --byod path; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "aw id inbound-mode") && !strings.Contains(err.Error(), "dashboard") {
+		t.Fatalf("error should suggest a follow-up path; got %v", err)
+	}
+}
+
+// provisionHostedIdentity payload coverage: confirm the
+// /api/v1/onboarding/cli-signup body carries the canonical
+// underscored inbound_mode when the wizard passes a value, and the
+// field is omitted when the value is unset. Mirrors the contract for
+// the guided hosted-onboarding global creation path.
+
+func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	_ = teamDIDKey
+	var signupBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          didAW,
+				"current_did_key": "did:key:placeholder",
+				"created_at":      "2026-05-22T00:00:00Z",
+				"updated_at":      "2026-05-22T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := signupBody["did_key"].(string)
+			didAW, _ := signupBody["did_aw"].(string)
+			cert, certErr := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:alice.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: "alice.aweb.ai/laptop",
+				Alias:         "laptop",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if certErr != nil {
+				t.Fatal(certErr)
+			}
+			encoded, encErr := awid.EncodeTeamCertificateHeader(cert)
+			if encErr != nil {
+				t.Fatal(encErr)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         "alice",
+				"org_id":           "org-1",
+				"namespace_domain": "alice.aweb.ai",
+				"team_id":          "default:alice.aweb.ai",
+				"api_key":          "aw_sk_hosted_workspace",
+				"certificate":      encoded,
+				"did_aw":           didAW,
+				"member_address":   "alice.aweb.ai/laptop",
+				"alias":            "laptop",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, "contacts_only")
+	if err != nil {
+		t.Fatalf("provisionHostedIdentity: %v", err)
+	}
+	wire, ok := signupBody["inbound_mode"].(string)
+	if !ok {
+		t.Fatalf("cli-signup body should carry inbound_mode; got %v", signupBody["inbound_mode"])
+	}
+	if wire != "contacts_only" {
+		t.Fatalf("inbound_mode=%q want contacts_only", wire)
+	}
+}
+
+func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = awid.ComputeDIDKey(teamPub)
+	var signupBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          didAW,
+				"current_did_key": "did:key:placeholder",
+				"created_at":      "2026-05-22T00:00:00Z",
+				"updated_at":      "2026-05-22T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := signupBody["did_key"].(string)
+			didAW, _ := signupBody["did_aw"].(string)
+			cert, certErr := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:bob.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: "bob.aweb.ai/laptop",
+				Alias:         "laptop",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if certErr != nil {
+				t.Fatal(certErr)
+			}
+			encoded, encErr := awid.EncodeTeamCertificateHeader(cert)
+			if encErr != nil {
+				t.Fatal(encErr)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-2",
+				"username":         "bob",
+				"org_id":           "org-2",
+				"namespace_domain": "bob.aweb.ai",
+				"team_id":          "default:bob.aweb.ai",
+				"api_key":          "aw_sk_hosted_workspace",
+				"certificate":      encoded,
+				"did_aw":           didAW,
+				"member_address":   "bob.aweb.ai/laptop",
+				"alias":            "laptop",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	// Pass "" for inboundMode → field must be omitted from the wire body.
+	_, err = provisionHostedIdentity(server.URL, server.URL, "bob", "laptop", true, "")
+	if err != nil {
+		t.Fatalf("provisionHostedIdentity: %v", err)
+	}
+	if v, ok := signupBody["inbound_mode"]; ok {
+		t.Fatalf("cli-signup body should omit inbound_mode when unset; got %v", v)
 	}
 }
 
