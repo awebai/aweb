@@ -530,66 +530,59 @@ func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string,
 		return err
 	}
 
-	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
-	urls, err := resolveOnboardingServiceURLs(awebURL)
-	if err != nil {
-		return err
-	}
-	if err := ensureHostedOnboardingAvailable(urls.OnboardingURL); err != nil {
-		return err
-	}
-
+	// 1) Create/connect the first agent workspace using the same codepath as `aw init`.
+	// We deliberately do not reimplement hosted onboarding here.
 	username := strings.TrimSpace(teamBootstrapUsername)
-	if username == "" {
-		if !isTTY() {
-			return usageError("--username is required when not running in a TTY")
-		}
-		username, err = promptAvailableHostedUsername(cmd.InOrStdin(), cmd.ErrOrStderr(), urls.OnboardingURL)
-		if err != nil {
-			return err
-		}
-	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		resp, err := awid.CheckUsername(ctx, urls.OnboardingURL, username)
-		cancel()
-		if err != nil {
-			return err
-		}
-		if resp == nil || !resp.Available {
-			reason := "unavailable"
-			if resp != nil && strings.TrimSpace(resp.Reason) != "" {
-				reason = strings.TrimSpace(resp.Reason)
-			}
-			return usageError("username %q is not available (%s)", username, reason)
-		}
+	if username == "" && !isTTY() {
+		return usageError("--username is required when not running in a TTY")
+	}
+	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
+		return err
 	}
 
 	primaryAlias := strings.TrimSpace(primary.Alias)
 	if primaryAlias == "" {
 		primaryAlias = sanitizeSlug(primary.Name)
 	}
-	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
-		return err
-	}
-	// Team bootstrap creates the team-primary identity as a local
-	// workspace (persistent=false); --inbound-mode applies only to
-	// global identities so we pass "" here unconditionally.
-	provisioned, err := provisionHostedIdentity(urls.OnboardingURL, urls.RegistryURL, username, primaryAlias, false, "")
+
+	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
+	registryURL := strings.TrimSpace(teamBootstrapRegistryURL)
+	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
+		WorkingDir:         primary.HomeDir,
+		PromptIn:           cmd.InOrStdin(),
+		PromptOut:          cmd.ErrOrStderr(),
+		BaseURL:            awebURL,
+		RegistryURL:        registryURL,
+		Username:           username,
+		Alias:              primaryAlias,
+		Role:               primary.RoleName,
+		Persistent:         false,
+		InjectAgentDocs:    false,
+		DoNotTouchAgentsMD: true,
+		AskPostCreateSetup: false,
+		NonInteractive:     !isTTY() || teamBootstrapYes,
+	})
 	if err != nil {
 		return err
 	}
-	if err := persistLocalSigningKeyAndCertificate(primary.HomeDir, provisioned.SigningKey, provisioned.Certificate); err != nil {
-		return err
-	}
-	if _, err := initCertificateConnectWithOptions(primary.HomeDir, urls.AwebURL, certificateConnectOptions{Role: primary.RoleName, APIKey: provisioned.APIKey}); err != nil {
-		return err
-	}
+	_ = result
 
-	certClient, err := awid.NewWithCertificate(urls.AwebURL, provisioned.SigningKey, provisioned.Certificate)
+	// Resolve the active team + server URLs from the initialized primary workspace.
+	sel, err := resolveSelectionForDir(primary.HomeDir)
+	if err != nil {
+		return err
+	}
+	teamID := strings.TrimSpace(sel.TeamID)
+	if teamID == "" {
+		return fmt.Errorf("bootstrap: primary workspace is missing team_id")
+	}
+	serviceURLs, err := resolveOnboardingServiceURLs(strings.TrimSpace(sel.BaseURL))
 	if err != nil {
 		return err
 	}
 
+	// 2) For each additional agent: create an invite (same codepath as `aw id team invite`),
+	// accept it (same codepath as `aw id team accept-invite`), then connect (same codepath as `aw init`).
 	for _, agent := range plans {
 		if agent.HomeDir == primary.HomeDir {
 			continue
@@ -602,27 +595,20 @@ func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string,
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		invite, err := certClient.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{AccessMode: "open", MaxUses: 1, AliasHint: alias})
-		cancel()
+		_, token, err := createHostedTeamInviteToken(primary.HomeDir, teamID, true)
 		if err != nil {
 			return err
 		}
-		accepted, err := acceptHostedTeamInviteWithDetails(agent.HomeDir, strings.TrimSpace(invite.Token), alias, "")
+		accepted, err := acceptTeamInviteWithDetails(agent.HomeDir, token, alias, "")
 		if err != nil {
 			return err
 		}
-		if _, err := initCertificateConnectWithOptions(agent.HomeDir, urls.AwebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
+		if _, err := initCertificateConnectWithOptions(agent.HomeDir, serviceURLs.AwebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
 			return err
 		}
-
-		// Basic sanity: accepted cert alias should match.
-		if accepted != nil && accepted.Certificate != nil {
-			if strings.TrimSpace(accepted.Certificate.Alias) != strings.TrimSpace(alias) {
-				return fmt.Errorf("accepted hosted invite alias %q does not match requested %q", accepted.Certificate.Alias, alias)
-			}
-		}
+		_ = accepted
 	}
+
 	return nil
 }
 
