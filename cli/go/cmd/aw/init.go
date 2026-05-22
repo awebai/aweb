@@ -53,6 +53,7 @@ var (
 	initPrintExports       bool
 	initRole               string
 	initPersistent         bool
+	initInboundMode        string
 )
 
 var (
@@ -94,6 +95,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initPersistent, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
 	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Compatibility alias for --global")
 	_ = initCmd.Flags().MarkHidden("persistent")
+	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|contacts-only). Only valid with --global.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -109,6 +111,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	if initInjectDocs && initDoNotTouchAgentsMD {
 		return fmt.Errorf("--inject-docs and --do-not-touch-agents-md are mutually exclusive")
+	}
+	if err := validateInitInboundMode(); err != nil {
+		return err
 	}
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
@@ -151,6 +156,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Persistent:  initPersistent,
+			InboundMode: canonicalInitInboundModeForWire(initInboundMode),
 		})
 		if err != nil {
 			return err
@@ -519,6 +525,50 @@ func resolveAliasValue(explicit string) string {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
+}
+
+// validateInitInboundMode enforces the aapl.4 two-state contract on
+// the --inbound-mode flag. The user-facing flag values use the
+// hyphen-spelling CLI convention (open, contacts-only); the
+// underscored canonical form (contacts_only) is the wire-level value
+// translated below before the API call. The flag is only meaningful
+// for a global identity. The withdrawn third value
+// "contacts_or_teammates" (or the hyphen variant) must fail at parse
+// time so users copying a stale dashboard command see a clear error
+// instead of a confusing API rejection.
+func validateInitInboundMode() error {
+	value := strings.TrimSpace(initInboundMode)
+	if value == "" {
+		return nil
+	}
+	if !initPersistent {
+		return fmt.Errorf("--inbound-mode is only valid with --global; local workspaces do not have an inbound delivery mode")
+	}
+	switch value {
+	case "open":
+		initInboundMode = "open"
+		return nil
+	case "contacts-only":
+		initInboundMode = "contacts-only"
+		return nil
+	}
+	return fmt.Errorf("--inbound-mode must be one of {open, contacts-only}; got %q", value)
+}
+
+// canonicalInitInboundModeForWire translates the user-facing
+// flag value into the canonical wire form expected by the API:
+// "contacts-only" → "contacts_only". Returns "" when no value was set.
+func canonicalInitInboundModeForWire(flag string) string {
+	switch strings.TrimSpace(flag) {
+	case "":
+		return ""
+	case "open":
+		return "open"
+	case "contacts-only":
+		return "contacts_only"
+	}
+	// Should be unreachable after validateInitInboundMode; defensive only.
+	return strings.TrimSpace(flag)
 }
 
 func resolveRequestedRole(explicit string) string {

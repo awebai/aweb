@@ -38,6 +38,11 @@ type apiKeyInitRequest struct {
 	HumanName   string
 	AgentType   string
 	Persistent  bool
+	// InboundMode is "open" or "contacts_only" when --inbound-mode is
+	// set on a global init, "" otherwise. The runner forwards it to
+	// /api/v1/workspaces/init only when non-empty; the server defaults
+	// to "open" when the field is absent.
+	InboundMode string
 }
 
 type apiKeyBootstrapRequest struct {
@@ -50,6 +55,7 @@ type apiKeyBootstrapRequest struct {
 	HumanName     string `json:"human_name,omitempty"`
 	AgentType     string `json:"agent_type,omitempty"`
 	IdentityScope string `json:"identity_scope"`
+	InboundMode   string `json:"inbound_mode,omitempty"`
 }
 
 type apiKeyBootstrapResponse struct {
@@ -174,6 +180,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		HumanName:     strings.TrimSpace(req.HumanName),
 		AgentType:     strings.TrimSpace(req.AgentType),
 		IdentityScope: initIdentityScopeValue(req.Persistent),
+		InboundMode:   strings.TrimSpace(req.InboundMode),
 	})
 	if err != nil {
 		return connectOutput{}, err
