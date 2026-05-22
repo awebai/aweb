@@ -74,6 +74,19 @@ func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 	}
 }
 
+func TestTeamBootstrapCloneURLParsing(t *testing.T) {
+	cloneURL, slug, err := resolveTeamBootstrapCloneURL("gh:awebai/aweb-team-dev-review")
+	if err != nil {
+		t.Fatalf("resolveTeamBootstrapCloneURL: %v", err)
+	}
+	if cloneURL != "https://github.com/awebai/aweb-team-dev-review.git" {
+		t.Fatalf("cloneURL=%q", cloneURL)
+	}
+	if slug != "awebai-aweb-team-dev-review" {
+		t.Fatalf("slug=%q", slug)
+	}
+}
+
 func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	plan := teamBootstrapAgentPlan{

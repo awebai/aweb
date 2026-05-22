@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,6 +47,8 @@ unless --yes is used.`,
 var (
 	teamBootstrapHomeRoot         string
 	teamBootstrapWorkRepo         string
+	teamBootstrapTemplateCacheDir string
+	teamBootstrapRefreshTemplate  bool
 	teamBootstrapDryRun           bool
 	teamBootstrapYes              bool
 	teamBootstrapSkipRoles        bool
@@ -82,7 +87,11 @@ type teamBootstrapAgentPlan struct {
 }
 
 type teamBootstrapOutput struct {
-	TemplateDir           string                   `json:"template_dir"`
+	TemplateRef       string `json:"template_ref,omitempty"`
+	TemplateDir       string `json:"template_dir"`
+	TemplateCloned    bool   `json:"template_cloned"`
+	TemplateRefreshed bool   `json:"template_refreshed"`
+
 	TeamName              string                   `json:"team_name,omitempty"`
 	DryRun                bool                     `json:"dry_run"`
 	RolesInstalled        bool                     `json:"roles_installed"`
@@ -96,6 +105,8 @@ type teamBootstrapOutput struct {
 func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent home/workspace dirs are created (default: ./.aw/team-agents/<template-name>)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Optional repository to symlink into each agent home as work")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (default: OS cache dir under aw/team-templates)")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Refresh an existing cloned template with git fetch before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Accept default agent names without prompting")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
@@ -108,21 +119,21 @@ func init() {
 }
 
 func runTeamBootstrap(cmd *cobra.Command, args []string) error {
-	templateDir, err := filepath.Abs(args[0])
+	resolved, err := resolveTeamBootstrapTemplate(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	spec, err := loadTeamBootstrapSpec(templateDir)
+	spec, err := loadTeamBootstrapSpec(resolved.TemplateDir)
 	if err != nil {
 		return err
 	}
-	if err := validateTeamBootstrapSpec(templateDir, spec); err != nil {
+	if err := validateTeamBootstrapSpec(resolved.TemplateDir, spec); err != nil {
 		return err
 	}
 
 	homeRoot := strings.TrimSpace(teamBootstrapHomeRoot)
 	if homeRoot == "" {
-		homeRoot = filepath.Join(".", ".aw", "team-agents", filepath.Base(templateDir))
+		homeRoot = filepath.Join(".", ".aw", "team-agents", filepath.Base(resolved.TemplateDir))
 	}
 	homeRoot, err = filepath.Abs(homeRoot)
 	if err != nil {
@@ -137,18 +148,21 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	plans, err := buildTeamBootstrapPlans(cmd.InOrStdin(), cmd.ErrOrStderr(), templateDir, homeRoot, spec, teamBootstrapYes)
+	plans, err := buildTeamBootstrapPlans(cmd.InOrStdin(), cmd.ErrOrStderr(), resolved.TemplateDir, homeRoot, spec, teamBootstrapYes)
 	if err != nil {
 		return err
 	}
 
 	out := teamBootstrapOutput{
-		TemplateDir: templateDir,
-		TeamName:    spec.Name,
-		DryRun:      teamBootstrapDryRun,
-		HomeRoot:    homeRoot,
-		WorkRepo:    workRepo,
-		Agents:      plans,
+		TemplateRef:       templateRefForOutput(args[0]),
+		TemplateDir:       resolved.TemplateDir,
+		TemplateCloned:    resolved.Cloned,
+		TemplateRefreshed: resolved.Refreshed,
+		TeamName:          spec.Name,
+		DryRun:            teamBootstrapDryRun,
+		HomeRoot:          homeRoot,
+		WorkRepo:          workRepo,
+		Agents:            plans,
 	}
 
 	if teamBootstrapDryRun {
@@ -158,13 +172,13 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	if !teamBootstrapSkipRoles {
-		if err := installTeamBootstrapRoles(spec, templateDir); err != nil {
+		if err := installTeamBootstrapRoles(spec, resolved.TemplateDir); err != nil {
 			return err
 		}
 		out.RolesInstalled = true
 	}
 	if !teamBootstrapSkipInstructions {
-		installed, err := installTeamBootstrapInstructions(spec, templateDir)
+		installed, err := installTeamBootstrapInstructions(spec, resolved.TemplateDir)
 		if err != nil {
 			return err
 		}
@@ -172,7 +186,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, plan := range plans {
-		if err := materializeTeamBootstrapAgent(templateDir, plan, workRepo); err != nil {
+		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, workRepo); err != nil {
 			return err
 		}
 	}
@@ -191,6 +205,132 @@ func loadTeamBootstrapSpec(templateDir string) (*teamBootstrapSpec, error) {
 		return nil, fmt.Errorf("parse team.yaml: %w", err)
 	}
 	return &spec, nil
+}
+
+type resolvedTeamBootstrapTemplate struct {
+	TemplateDir string
+	Cloned      bool
+	Refreshed   bool
+}
+
+func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*resolvedTeamBootstrapTemplate, error) {
+	templateRef = strings.TrimSpace(templateRef)
+	if templateRef == "" {
+		return nil, usageError("missing template directory")
+	}
+
+	if info, err := os.Stat(templateRef); err == nil && info.IsDir() {
+		abs, aerr := filepath.Abs(templateRef)
+		if aerr != nil {
+			return nil, aerr
+		}
+		return &resolvedTeamBootstrapTemplate{TemplateDir: abs}, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	cloneURL, slug, err := resolveTeamBootstrapCloneURL(templateRef)
+	if err != nil {
+		return nil, err
+	}
+	cacheDir, err := resolveTeamBootstrapTemplateCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	destDir := filepath.Join(cacheDir, slug)
+	if teamBootstrapRefreshTemplate {
+		if _, err := os.Stat(destDir); err == nil {
+			if err := os.RemoveAll(destDir); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if _, err := os.Stat(destDir); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
+			return nil, err
+		}
+		if err := runGitClone(cmd, cloneURL, destDir); err != nil {
+			return nil, err
+		}
+		return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate}, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: false, Refreshed: false}, nil
+}
+
+func resolveTeamBootstrapTemplateCacheDir() (string, error) {
+	if strings.TrimSpace(teamBootstrapTemplateCacheDir) != "" {
+		return filepath.Abs(strings.TrimSpace(teamBootstrapTemplateCacheDir))
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "aw", "team-templates"), nil
+}
+
+func resolveTeamBootstrapCloneURL(ref string) (string, string, error) {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "gh:") {
+		repo := strings.TrimPrefix(ref, "gh:")
+		repo = strings.Trim(repo, "/")
+		parts := strings.Split(repo, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("invalid gh: template ref %q (expected gh:OWNER/REPO)", ref)
+		}
+		slug := sanitizeSlug(parts[0] + "-" + parts[1])
+		return "https://github.com/" + parts[0] + "/" + parts[1] + ".git", slug, nil
+	}
+
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		u, err := url.Parse(ref)
+		if err != nil {
+			return "", "", err
+		}
+		path := strings.Trim(u.Path, "/")
+		path = strings.TrimSuffix(path, ".git")
+		parts := strings.Split(path, "/")
+		slug := sanitizeSlug(parts[len(parts)-1])
+		if len(parts) >= 2 {
+			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
+		}
+		return ref, slug, nil
+	}
+
+	if strings.HasPrefix(ref, "git@") {
+		// git@github.com:OWNER/REPO(.git)
+		after := ref
+		if idx := strings.Index(after, ":"); idx >= 0 {
+			after = after[idx+1:]
+		}
+		after = strings.Trim(after, "/")
+		after = strings.TrimSuffix(after, ".git")
+		parts := strings.Split(after, "/")
+		if len(parts) == 0 {
+			return "", "", fmt.Errorf("invalid git template ref %q", ref)
+		}
+		slug := sanitizeSlug(parts[len(parts)-1])
+		if len(parts) >= 2 {
+			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
+		}
+		return ref, slug, nil
+	}
+
+	return "", "", fmt.Errorf("template ref %q is not a directory and is not a supported git URL (use a local dir, gh:OWNER/REPO, https://..., or git@...)", ref)
+}
+
+func runGitClone(cmd *cobra.Command, cloneURL string, destDir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	git := exec.CommandContext(ctx, "git", "clone", "--depth", "1", cloneURL, destDir)
+	git.Stdout = cmd.OutOrStdout()
+	git.Stderr = cmd.ErrOrStderr()
+	return git.Run()
+}
+
+func templateRefForOutput(raw string) string {
+	return strings.TrimSpace(raw)
 }
 
 func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) error {
@@ -414,7 +554,19 @@ func formatTeamBootstrapOutput(v any) string {
 	} else {
 		b.WriteString("Team bootstrap complete\n")
 	}
+	if strings.TrimSpace(out.TemplateRef) != "" {
+		b.WriteString(fmt.Sprintf("Template ref: %s\n", out.TemplateRef))
+	}
 	b.WriteString(fmt.Sprintf("Template: %s\n", out.TemplateDir))
+	if out.TemplateCloned {
+		if out.TemplateRefreshed {
+			b.WriteString("Template: cloned (refreshed)\n")
+		} else {
+			b.WriteString("Template: cloned\n")
+		}
+	} else if out.TemplateRefreshed {
+		b.WriteString("Template: refreshed\n")
+	}
 	if out.TeamName != "" {
 		b.WriteString(fmt.Sprintf("Team template: %s\n", out.TeamName))
 	}
