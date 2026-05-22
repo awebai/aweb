@@ -135,8 +135,8 @@ func TestValidateInitInboundModeRejectsBYODGlobal(t *testing.T) {
 	if !strings.Contains(err.Error(), "--byod") {
 		t.Fatalf("error should mention --byod path; got %v", err)
 	}
-	if !strings.Contains(err.Error(), "aw id inbound-mode") && !strings.Contains(err.Error(), "dashboard") {
-		t.Fatalf("error should suggest a follow-up path; got %v", err)
+	if !strings.Contains(err.Error(), "dashboard") && !strings.Contains(err.Error(), "PATCH") {
+		t.Fatalf("error should suggest a real follow-up path; got %v", err)
 	}
 }
 
