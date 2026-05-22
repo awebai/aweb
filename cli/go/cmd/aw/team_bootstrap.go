@@ -53,6 +53,7 @@ var (
 	teamBootstrapTemplateCacheDir string
 	teamBootstrapRefreshTemplate  bool
 	teamBootstrapForkTemplate     bool
+	teamBootstrapUsername         string
 	teamBootstrapNamespace        string
 	teamBootstrapTeamName         string
 	teamBootstrapTeamDisplayName  string
@@ -117,10 +118,11 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOD team namespace domain to create/use (required for one-step team + identity bootstrap)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOD team name/slug to create/use (required for one-step team + identity bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOD team namespace domain to create/use (required for one-step BYOD team bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOD team name/slug to create/use (required for one-step BYOD team bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOD team")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override for BYOD team create/invites")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Accept default agent names without prompting")
@@ -207,7 +209,12 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	if strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != "" {
-		if err := bootstrapTeamAndInitAgentDirs(cmd, plans); err != nil {
+		if err := bootstrapBYODTeamAndInitAgentDirs(cmd, plans); err != nil {
+			return err
+		}
+		out.NextCommands = nil
+	} else if isTTY() || strings.TrimSpace(teamBootstrapUsername) != "" {
+		if err := bootstrapHostedTeamAndInitAgentDirs(cmd, resolved.TemplateDir, plans); err != nil {
 			return err
 		}
 		out.NextCommands = nil
@@ -417,7 +424,7 @@ func templateRefForOutput(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-func bootstrapTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrapAgentPlan) error {
+func bootstrapBYODTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrapAgentPlan) error {
 	namespace := awconfig.NormalizeDomain(strings.TrimSpace(teamBootstrapNamespace))
 	teamName := strings.ToLower(strings.TrimSpace(teamBootstrapTeamName))
 	if namespace == "" {
@@ -502,6 +509,113 @@ func bootstrapTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrapAgen
 		}
 		if _, err := initCertificateConnectWithOptions(agent.HomeDir, awebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string, plans []teamBootstrapAgentPlan) error {
+	_ = templateDir // reserved for future template-driven hosted defaults.
+
+	if len(plans) == 0 {
+		return fmt.Errorf("no agents defined")
+	}
+	primary := plans[0]
+	for _, candidate := range plans {
+		if candidate.Responsibility == "implementation" {
+			primary = candidate
+			break
+		}
+	}
+
+	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
+	urls, err := resolveOnboardingServiceURLs(awebURL)
+	if err != nil {
+		return err
+	}
+	if err := ensureHostedOnboardingAvailable(urls.OnboardingURL); err != nil {
+		return err
+	}
+
+	username := strings.TrimSpace(teamBootstrapUsername)
+	if username == "" {
+		if !isTTY() {
+			return usageError("--username is required when not running in a TTY")
+		}
+		username, err = promptAvailableHostedUsername(cmd.InOrStdin(), cmd.ErrOrStderr(), urls.OnboardingURL)
+		if err != nil {
+			return err
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		resp, err := awid.CheckUsername(ctx, urls.OnboardingURL, username)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if resp == nil || !resp.Available {
+			reason := "unavailable"
+			if resp != nil && strings.TrimSpace(resp.Reason) != "" {
+				reason = strings.TrimSpace(resp.Reason)
+			}
+			return usageError("username %q is not available (%s)", username, reason)
+		}
+	}
+
+	primaryAlias := strings.TrimSpace(primary.Alias)
+	if primaryAlias == "" {
+		primaryAlias = sanitizeSlug(primary.Name)
+	}
+	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
+		return err
+	}
+	provisioned, err := provisionHostedIdentity(urls.OnboardingURL, urls.RegistryURL, username, primaryAlias, false)
+	if err != nil {
+		return err
+	}
+	if err := persistLocalSigningKeyAndCertificate(primary.HomeDir, provisioned.SigningKey, provisioned.Certificate); err != nil {
+		return err
+	}
+	if _, err := initCertificateConnectWithOptions(primary.HomeDir, urls.AwebURL, certificateConnectOptions{Role: primary.RoleName, APIKey: provisioned.APIKey}); err != nil {
+		return err
+	}
+
+	certClient, err := awid.NewWithCertificate(urls.AwebURL, provisioned.SigningKey, provisioned.Certificate)
+	if err != nil {
+		return err
+	}
+
+	for _, agent := range plans {
+		if agent.HomeDir == primary.HomeDir {
+			continue
+		}
+		alias := strings.TrimSpace(agent.Alias)
+		if alias == "" {
+			alias = sanitizeSlug(agent.Name)
+		}
+		if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		invite, err := certClient.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{AccessMode: "open", MaxUses: 1, AliasHint: alias})
+		cancel()
+		if err != nil {
+			return err
+		}
+		accepted, err := acceptHostedTeamInviteWithDetails(agent.HomeDir, strings.TrimSpace(invite.Token), alias, "")
+		if err != nil {
+			return err
+		}
+		if _, err := initCertificateConnectWithOptions(agent.HomeDir, urls.AwebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
+			return err
+		}
+
+		// Basic sanity: accepted cert alias should match.
+		if accepted != nil && accepted.Certificate != nil {
+			if strings.TrimSpace(accepted.Certificate.Alias) != strings.TrimSpace(alias) {
+				return fmt.Errorf("accepted hosted invite alias %q does not match requested %q", accepted.Certificate.Alias, alias)
+			}
 		}
 	}
 	return nil
