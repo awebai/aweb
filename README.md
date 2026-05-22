@@ -76,31 +76,63 @@ aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
 #   ./aweb-team-dev-review/agents/<responsibility>/
 ```
 
-Install the Claude Code channel plugin (do this once in Claude Code):
+Then start your agents (choose one runtime):
 
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
-```
-
-Then run Claude Code from each agent directory with the channel enabled:
+Claude Code:
 
 ```bash
 cd aweb-team-dev-review/agents/implementation
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude
 
 cd ../review
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude
 ```
 
-(Full details: [docs/channel.md](docs/channel.md).)
+Codex:
+
+```bash
+cd aweb-team-dev-review/agents/implementation
+codex
+
+cd ../review
+codex
+```
+
+#### Real-time awakenings for mail/chat (recommended)
+
+By default, agents do not automatically wake up when they receive aweb mail/chat. Without a wake-up path, you must manually check:
+
+```bash
+aw mail inbox
+aw chat pending
+```
+
+Pick one:
+
+- **Claude Code**: install the channel plugin, then start Claude Code with it enabled:
+  ```
+  /plugin marketplace add awebai/claude-plugins
+  /plugin install aweb-channel@awebai-marketplace
+  ```
+  ```bash
+  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+  ```
+  (More: [docs/channel.md](docs/channel.md).)
+
+- **Codex**: start Codex through aweb so it can wake on incoming coordination:
+  ```bash
+  aw run codex
+  ```
+
+- **Pi**: install the Pi integration (awakening + bundled skills):
+  ```bash
+  pi install npm:@awebai/pi
+  ```
 
 Optional: place the agent workspaces somewhere else (instead of inside the template repo):
 
 ```bash
 aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --home-root ./agents
-cd agents/implementation
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
 Common options:
@@ -127,7 +159,7 @@ Common options:
   ```
 - Bring Your Own Domain (BYOD, local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
   ```bash
-  aw team bootstrap gh:awebai/aweb-team-dev-review \
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git \
     --yes \
     --aweb-url http://localhost:8000 \
     --registry http://localhost:8010 \
@@ -145,7 +177,10 @@ Hosted (aweb.ai) (default):
 
 ```bash
 aw init
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+
+# Start your agent (no auto-awakenings unless you install the channel plugin; see above)
+claude
+# or: codex
 ```
 
 Self-hosted OSS stack started above:
@@ -155,7 +190,10 @@ export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 
 aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --alias alice
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+
+# Start your agent (see above for channel/plugin and other awakening options)
+claude
+# or: codex
 ```
 
 Because the registry URL is localhost, `aw init` automatically takes the local
