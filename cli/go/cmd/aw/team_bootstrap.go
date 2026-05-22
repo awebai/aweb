@@ -49,6 +49,7 @@ var (
 	teamBootstrapWorkRepo         string
 	teamBootstrapTemplateCacheDir string
 	teamBootstrapRefreshTemplate  bool
+	teamBootstrapForkTemplate     bool
 	teamBootstrapDryRun           bool
 	teamBootstrapYes              bool
 	teamBootstrapSkipRoles        bool
@@ -105,8 +106,9 @@ type teamBootstrapOutput struct {
 func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent home/workspace dirs are created (default: ./.aw/team-agents/<template-name>)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Optional repository to symlink into each agent home as work")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (default: OS cache dir under aw/team-templates)")
-	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Refresh an existing cloned template with git fetch before using it")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Accept default agent names without prompting")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
@@ -229,15 +231,14 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 		return nil, err
 	}
 
-	cloneURL, slug, err := resolveTeamBootstrapCloneURL(templateRef)
+	cloneURL, slug, repoFullName, err := resolveTeamBootstrapCloneURL(templateRef)
 	if err != nil {
 		return nil, err
 	}
-	cacheDir, err := resolveTeamBootstrapTemplateCacheDir()
+	destDir, err := resolveTeamBootstrapTemplateDestDir(cmd, slug)
 	if err != nil {
 		return nil, err
 	}
-	destDir := filepath.Join(cacheDir, slug)
 	if teamBootstrapRefreshTemplate {
 		if _, err := os.Stat(destDir); err == nil {
 			if err := os.RemoveAll(destDir); err != nil {
@@ -246,6 +247,15 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 		}
 	}
 	if _, err := os.Stat(destDir); errors.Is(err, os.ErrNotExist) {
+		if teamBootstrapForkTemplate {
+			if repoFullName == "" {
+				return nil, fmt.Errorf("--fork requires a gh:OWNER/REPO template ref")
+			}
+			if err := runGHRepoForkClone(cmd, repoFullName, destDir); err != nil {
+				return nil, err
+			}
+			return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate}, nil
+		}
 		if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
 			return nil, err
 		}
@@ -259,34 +269,68 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 	return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: false, Refreshed: false}, nil
 }
 
-func resolveTeamBootstrapTemplateCacheDir() (string, error) {
-	if strings.TrimSpace(teamBootstrapTemplateCacheDir) != "" {
-		return filepath.Abs(strings.TrimSpace(teamBootstrapTemplateCacheDir))
+func resolveTeamBootstrapTemplateDestDir(cmd *cobra.Command, slug string) (string, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return "", fmt.Errorf("internal error: empty template slug")
 	}
-	base, err := os.UserCacheDir()
+	// Advanced override: clone into a dedicated cache directory.
+	if strings.TrimSpace(teamBootstrapTemplateCacheDir) != "" {
+		base, err := filepath.Abs(strings.TrimSpace(teamBootstrapTemplateCacheDir))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(base, slug), nil
+	}
+
+	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "aw", "team-templates"), nil
+	inside, err := isInsideGitWorktree(wd)
+	if err != nil {
+		return "", err
+	}
+	if inside {
+		return "", fmt.Errorf(
+			"refusing to clone a template into an existing git worktree (%s). "+
+				"Run from an empty directory, or pass --template-cache-dir to clone elsewhere.",
+			wd,
+		)
+	}
+	return filepath.Join(wd, slug), nil
 }
 
-func resolveTeamBootstrapCloneURL(ref string) (string, string, error) {
+func isInsideGitWorktree(dir string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--is-inside-work-tree")
+	out, err := cmd.Output()
+	if err != nil {
+		// If git isn't installed or dir isn't a repo, treat as not inside.
+		return false, nil
+	}
+	return strings.TrimSpace(string(out)) == "true", nil
+}
+
+func resolveTeamBootstrapCloneURL(ref string) (string, string, string, error) {
 	ref = strings.TrimSpace(ref)
 	if strings.HasPrefix(ref, "gh:") {
 		repo := strings.TrimPrefix(ref, "gh:")
 		repo = strings.Trim(repo, "/")
 		parts := strings.Split(repo, "/")
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return "", "", fmt.Errorf("invalid gh: template ref %q (expected gh:OWNER/REPO)", ref)
+			return "", "", "", fmt.Errorf("invalid gh: template ref %q (expected gh:OWNER/REPO)", ref)
 		}
 		slug := sanitizeSlug(parts[0] + "-" + parts[1])
-		return "https://github.com/" + parts[0] + "/" + parts[1] + ".git", slug, nil
+		full := parts[0] + "/" + parts[1]
+		return "https://github.com/" + full + ".git", slug, full, nil
 	}
 
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		u, err := url.Parse(ref)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		path := strings.Trim(u.Path, "/")
 		path = strings.TrimSuffix(path, ".git")
@@ -295,7 +339,7 @@ func resolveTeamBootstrapCloneURL(ref string) (string, string, error) {
 		if len(parts) >= 2 {
 			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
 		}
-		return ref, slug, nil
+		return ref, slug, "", nil
 	}
 
 	if strings.HasPrefix(ref, "git@") {
@@ -308,16 +352,16 @@ func resolveTeamBootstrapCloneURL(ref string) (string, string, error) {
 		after = strings.TrimSuffix(after, ".git")
 		parts := strings.Split(after, "/")
 		if len(parts) == 0 {
-			return "", "", fmt.Errorf("invalid git template ref %q", ref)
+			return "", "", "", fmt.Errorf("invalid git template ref %q", ref)
 		}
 		slug := sanitizeSlug(parts[len(parts)-1])
 		if len(parts) >= 2 {
 			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
 		}
-		return ref, slug, nil
+		return ref, slug, "", nil
 	}
 
-	return "", "", fmt.Errorf("template ref %q is not a directory and is not a supported git URL (use a local dir, gh:OWNER/REPO, https://..., or git@...)", ref)
+	return "", "", "", fmt.Errorf("template ref %q is not a directory and is not a supported git URL (use a local dir, gh:OWNER/REPO, https://..., or git@...)", ref)
 }
 
 func runGitClone(cmd *cobra.Command, cloneURL string, destDir string) error {
@@ -327,6 +371,25 @@ func runGitClone(cmd *cobra.Command, cloneURL string, destDir string) error {
 	git.Stdout = cmd.OutOrStdout()
 	git.Stderr = cmd.ErrOrStderr()
 	return git.Run()
+}
+
+func runGHRepoForkClone(cmd *cobra.Command, repoFullName string, destDir string) error {
+	if strings.TrimSpace(repoFullName) == "" {
+		return fmt.Errorf("internal error: missing fork repo name")
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		return fmt.Errorf(
+			"--fork requires the GitHub CLI (gh). Install it from https://cli.github.com/ and run `gh auth login`. (%v)",
+			err,
+		)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	args := []string{"repo", "fork", repoFullName, "--clone", "--default-branch-only", "--", "--depth", "1", destDir}
+	fork := exec.CommandContext(ctx, "gh", args...)
+	fork.Stdout = cmd.OutOrStdout()
+	fork.Stderr = cmd.ErrOrStderr()
+	return fork.Run()
 }
 
 func templateRefForOutput(raw string) string {

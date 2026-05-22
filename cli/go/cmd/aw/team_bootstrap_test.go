@@ -75,7 +75,7 @@ func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 }
 
 func TestTeamBootstrapCloneURLParsing(t *testing.T) {
-	cloneURL, slug, err := resolveTeamBootstrapCloneURL("gh:awebai/aweb-team-dev-review")
+	cloneURL, slug, full, err := resolveTeamBootstrapCloneURL("gh:awebai/aweb-team-dev-review")
 	if err != nil {
 		t.Fatalf("resolveTeamBootstrapCloneURL: %v", err)
 	}
@@ -84,6 +84,9 @@ func TestTeamBootstrapCloneURLParsing(t *testing.T) {
 	}
 	if slug != "awebai-aweb-team-dev-review" {
 		t.Fatalf("slug=%q", slug)
+	}
+	if full != "awebai/aweb-team-dev-review" {
+		t.Fatalf("full=%q", full)
 	}
 }
 
