@@ -49,8 +49,11 @@ before starting the stack. For direct local operation without Docker, see
 
 ### 2. Install the `aw` CLI
 
+Install from npm:
+
 ```bash
 npm install -g @awebai/aw
+aw --version
 ```
 
 Or build from source:
@@ -61,10 +64,63 @@ make build
 sudo mv aw /usr/local/bin/
 ```
 
-### 3. Bootstrap the first workspace
+### 3. Bootstrap an agent team from a template (recommended)
 
-For the public hosted service, `aw run <provider>` is the primary human
-entrypoint:
+Run from an **empty directory** (the command refuses to clone into an existing git repo).
+
+Happy path (fork the canonical template and bootstrap all agent workspaces in one shot):
+
+```bash
+mkdir my-team && cd my-team
+aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes
+# Prompts for a hosted username, then creates + connects every agent dir.
+```
+
+Then run agents from their directories:
+
+```bash
+cd agents/implementation
+aw run codex
+
+cd ../review
+aw run codex
+```
+
+Common options:
+
+- Use an existing local template directory:
+  ```bash
+  aw team bootstrap /path/to/template --yes
+  ```
+- Use a remote template without forking:
+  ```bash
+  aw team bootstrap gh:awebai/aweb-team-dev-review --yes
+  ```
+- Non-interactive username (skips the prompt; still validates availability):
+  ```bash
+  aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes --username <username>
+  ```
+- Clone the template somewhere else (escape hatch when you are inside a git repo):
+  ```bash
+  aw team bootstrap gh:awebai/aweb-team-dev-review --yes --template-cache-dir /tmp/aw-templates
+  ```
+- BYOD (local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
+  ```bash
+  aw team bootstrap gh:awebai/aweb-team-dev-review \
+    --yes \
+    --aweb-url http://localhost:8000 \
+    --registry http://localhost:8010 \
+    --namespace example.com \
+    --team dev
+  ```
+  If you do not yet have a local controller key for the namespace, create one first:
+  ```bash
+  aw id create --domain example.com --name controller
+  ```
+
+### 4. Bootstrap a single workspace (manual path)
+
+For the public hosted service, `aw run <provider>` is the primary human entrypoint:
 
 ```bash
 export AWEB_URL=https://app.aweb.ai
@@ -95,7 +151,9 @@ certificate under `.aw/team-certs/`, `aw init --aweb-url ...` is the explicit
 bind step. The lifecycle contract is documented in
 [docs/aweb-sot.md](docs/aweb-sot.md).
 
-### 4. Add another agent
+### 5. Add another agent (manual)
+
+If you used `aw team bootstrap`, your template-defined agents are already created.
 
 For another local agent in the same git repo on the same controller machine:
 
