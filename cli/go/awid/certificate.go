@@ -29,6 +29,8 @@ type TeamCertificate struct {
 	Lifetime  string `json:"-"`
 	IssuedAt  string `json:"issued_at"`
 	Signature string `json:"signature"`
+
+	scopeWireKey string
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -201,7 +203,7 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 }
 
 func (c TeamCertificate) MarshalJSON() ([]byte, error) {
-	type wire struct {
+	type canonicalWire struct {
 		Version       int    `json:"version"`
 		CertificateID string `json:"certificate_id"`
 		Team          string `json:"team_id"`
@@ -215,7 +217,35 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 		Signature     string `json:"signature"`
 	}
 	identityScope := NormalizeIdentityScope(firstNonEmpty(c.IdentityScope, c.Lifetime))
-	return json.Marshal(wire{
+	if c.scopeWireKey == "lifetime" {
+		type legacyWire struct {
+			Version       int    `json:"version"`
+			CertificateID string `json:"certificate_id"`
+			Team          string `json:"team_id"`
+			TeamDIDKey    string `json:"team_did_key"`
+			MemberDIDKey  string `json:"member_did_key"`
+			MemberDIDAW   string `json:"member_did_aw,omitempty"`
+			MemberAddress string `json:"member_address,omitempty"`
+			Alias         string `json:"alias"`
+			Lifetime      string `json:"lifetime"`
+			IssuedAt      string `json:"issued_at"`
+			Signature     string `json:"signature"`
+		}
+		return json.Marshal(legacyWire{
+			Version:       c.Version,
+			CertificateID: c.CertificateID,
+			Team:          c.Team,
+			TeamDIDKey:    c.TeamDIDKey,
+			MemberDIDKey:  c.MemberDIDKey,
+			MemberDIDAW:   c.MemberDIDAW,
+			MemberAddress: c.MemberAddress,
+			Alias:         c.Alias,
+			Lifetime:      LegacyLifetimeForIdentityScope(identityScope),
+			IssuedAt:      c.IssuedAt,
+			Signature:     c.Signature,
+		})
+	}
+	return json.Marshal(canonicalWire{
 		Version:       c.Version,
 		CertificateID: c.CertificateID,
 		Team:          c.Team,
@@ -250,6 +280,10 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	identityScope := NormalizeIdentityScope(firstNonEmpty(w.IdentityScope, w.Lifetime))
+	scopeWireKey := "identity_scope"
+	if strings.TrimSpace(w.IdentityScope) == "" && strings.TrimSpace(w.Lifetime) != "" {
+		scopeWireKey = "lifetime"
+	}
 	*c = TeamCertificate{
 		Version:       w.Version,
 		CertificateID: w.CertificateID,
@@ -263,6 +297,7 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		Lifetime:      LegacyLifetimeForIdentityScope(identityScope),
 		IssuedAt:      w.IssuedAt,
 		Signature:     w.Signature,
+		scopeWireKey:  scopeWireKey,
 	}
 	return nil
 }
