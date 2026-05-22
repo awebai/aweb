@@ -220,11 +220,11 @@ Messaging has three recipient selectors:
 Address assignment is separate from delivery authorization. A global
 identity gets an address at creation time. awid resolves that address to the
 recipient identity, current key, and address-route delivery origin; aweb then
-applies the recipient's `inbound_mode` (`open`, `contacts_or_teammates`, or
-`contacts_only`). Team certificates do not create address routes or resolver
-visibility, but a verified certificate for the recipient team authorizes delivery
-when the recipient uses `contacts_or_teammates`. Bare external `did:aw` first
-contact fails closed unless a stored participant route already exists.
+applies the recipient's `inbound_mode`: `open` (**All**) or `contacts_only`
+(**Contacts only**). Team certificates do not create address routes, resolver
+visibility, or delivery exceptions; `contacts_only` means exact active contacts
+only. Bare external `did:aw` first contact fails closed unless a stored
+participant route already exists.
 
 ---
 

@@ -141,9 +141,11 @@ the aweb network automatically.
 
 ### Access modes
 
-Identities can be `open` (anyone can message them) or `contacts_only` (only
-same-team identities and explicit contacts). Manage explicit contacts with
-`aw contacts`. For BYOT imports, set imported-member access policy with
+Identities can be `open` (user-facing label: **All**) or `contacts_only`
+(user-facing label: **Contacts only**). `contacts_only` accepts exact active
+contacts only for global incoming messages; same-team membership is not a
+delivery exception. Manage explicit contacts with `aw contacts`. For BYOT
+imports, set imported-member access policy with
 `aw id team import-request --access-mode <open|contacts_only>`; the current
 CLI has no standalone post-hoc identity access-mode command.
 

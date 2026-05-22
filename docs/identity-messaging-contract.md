@@ -29,13 +29,11 @@ oracle.
 Global recipients expose an explicit delivery-time `inbound_mode`:
 
 - `open`: accept valid senders after address route and identity binding
-  validation.
-- `contacts_or_teammates`: after the same route and identity validation, accept
-  either an exact active identity contact for the verified sender address or a
-  sender with a valid team certificate for the recipient's team.
+  validation. User-facing label: **All**.
 - `contacts_only`: after the same route and identity validation, accept only an
-  exact active identity contact for the verified sender address; same-team
-  non-contacts are rejected.
+  exact active identity contact for the verified sender address. Same-team
+  membership, team certificates, and local team rows do not create a delivery
+  exception. User-facing label: **Contacts only**.
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
@@ -96,7 +94,7 @@ recipient selection, or signed-payload validation.
   AWID as private address-read authority.
 - Do not treat address reachability, `visible_to_team_id`, contact membership,
   or conversation ID as routing authority. Contacts authorize only the explicit
-  delivery-time `contacts_only`/local-contact gate and never create a route.
+  delivery-time `contacts_only`/local-contact gate and never create a route. Team membership and team certificates do not bypass `contacts_only`.
 - Do not use stale cache entries as evidence for a recipient binding.
 - Do not infer a canonical sender address by listing all addresses for a
   `did:aw`; use the selected identity address for that context.
