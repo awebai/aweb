@@ -82,7 +82,7 @@ func TestTeamBootstrapCloneURLParsing(t *testing.T) {
 	if cloneURL != "https://github.com/awebai/aweb-team-dev-review.git" {
 		t.Fatalf("cloneURL=%q", cloneURL)
 	}
-	if slug != "awebai-aweb-team-dev-review" {
+	if slug != "aweb-team-dev-review" {
 		t.Fatalf("slug=%q", slug)
 	}
 	if full != "awebai/aweb-team-dev-review" {
@@ -96,7 +96,7 @@ func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 		Responsibility: "implementation",
 		RoleName:       "developer",
 		Name:           "builder",
-		HomeDir:        filepath.Join(templateDir, "homes", "implementation"),
+		HomeDir:        filepath.Join(templateDir, "agents", "implementation"),
 		Instructions:   filepath.Join(templateDir, "agents", "implementation", "AGENTS.md"),
 	}
 	workRepo := filepath.Join(templateDir, "workrepo")

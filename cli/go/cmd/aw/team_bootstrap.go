@@ -113,7 +113,7 @@ type teamBootstrapOutput struct {
 }
 
 func init() {
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent home/workspace dirs are created (default: ./.aw/team-agents/<template-name>)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent workspaces are created (default: <template-dir>/agents)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Optional repository to symlink into each agent home as work")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
@@ -150,7 +150,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 
 	homeRoot := strings.TrimSpace(teamBootstrapHomeRoot)
 	if homeRoot == "" {
-		homeRoot = filepath.Join(".", ".aw", "team-agents", filepath.Base(resolved.TemplateDir))
+		homeRoot = filepath.Join(resolved.TemplateDir, "agents")
 	}
 	homeRoot, err = filepath.Abs(homeRoot)
 	if err != nil {
@@ -188,37 +188,51 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if !teamBootstrapSkipRoles {
-		if err := installTeamBootstrapRoles(spec, resolved.TemplateDir); err != nil {
-			return err
-		}
-		out.RolesInstalled = true
-	}
-	if !teamBootstrapSkipInstructions {
-		installed, err := installTeamBootstrapInstructions(spec, resolved.TemplateDir)
-		if err != nil {
-			return err
-		}
-		out.InstructionsInstalled = installed
-	}
-
 	for _, plan := range plans {
 		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, workRepo); err != nil {
 			return err
 		}
 	}
 
-	if strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != "" {
+	autoBYOD := strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != ""
+	autoHosted := !autoBYOD && (isTTY() || strings.TrimSpace(teamBootstrapUsername) != "")
+
+	if autoBYOD {
 		if err := bootstrapBYODTeamAndInitAgentDirs(cmd, plans); err != nil {
 			return err
 		}
+		rolesInstalled, instructionsInstalled, err := installTeamBootstrapOverridesAfterConnect(spec, resolved.TemplateDir, plans)
+		if err != nil {
+			return err
+		}
+		out.RolesInstalled = rolesInstalled
+		out.InstructionsInstalled = instructionsInstalled
 		out.NextCommands = nil
-	} else if isTTY() || strings.TrimSpace(teamBootstrapUsername) != "" {
+	} else if autoHosted {
 		if err := bootstrapHostedTeamAndInitAgentDirs(cmd, resolved.TemplateDir, plans); err != nil {
 			return err
 		}
+		rolesInstalled, instructionsInstalled, err := installTeamBootstrapOverridesAfterConnect(spec, resolved.TemplateDir, plans)
+		if err != nil {
+			return err
+		}
+		out.RolesInstalled = rolesInstalled
+		out.InstructionsInstalled = instructionsInstalled
 		out.NextCommands = nil
 	} else {
+		if !teamBootstrapSkipRoles {
+			if err := installTeamBootstrapRoles(spec, resolved.TemplateDir); err != nil {
+				return err
+			}
+			out.RolesInstalled = true
+		}
+		if !teamBootstrapSkipInstructions {
+			installed, err := installTeamBootstrapInstructions(spec, resolved.TemplateDir)
+			if err != nil {
+				return err
+			}
+			out.InstructionsInstalled = installed
+		}
 		out.NextCommands = plannedInitCommands(plans)
 	}
 	printOutput(out, formatTeamBootstrapOutput)
@@ -350,7 +364,7 @@ func resolveTeamBootstrapCloneURL(ref string) (string, string, string, error) {
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return "", "", "", fmt.Errorf("invalid gh: template ref %q (expected gh:OWNER/REPO)", ref)
 		}
-		slug := sanitizeSlug(parts[0] + "-" + parts[1])
+		slug := sanitizeSlug(parts[1])
 		full := parts[0] + "/" + parts[1]
 		return "https://github.com/" + full + ".git", slug, full, nil
 	}
@@ -364,9 +378,6 @@ func resolveTeamBootstrapCloneURL(ref string) (string, string, string, error) {
 		path = strings.TrimSuffix(path, ".git")
 		parts := strings.Split(path, "/")
 		slug := sanitizeSlug(parts[len(parts)-1])
-		if len(parts) >= 2 {
-			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
-		}
 		return ref, slug, "", nil
 	}
 
@@ -383,9 +394,6 @@ func resolveTeamBootstrapCloneURL(ref string) (string, string, string, error) {
 			return "", "", "", fmt.Errorf("invalid git template ref %q", ref)
 		}
 		slug := sanitizeSlug(parts[len(parts)-1])
-		if len(parts) >= 2 {
-			slug = sanitizeSlug(parts[len(parts)-2] + "-" + parts[len(parts)-1])
-		}
 		return ref, slug, "", nil
 	}
 
@@ -517,15 +525,9 @@ func bootstrapBYODTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrap
 func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string, plans []teamBootstrapAgentPlan) error {
 	_ = templateDir // reserved for future template-driven hosted defaults.
 
-	if len(plans) == 0 {
-		return fmt.Errorf("no agents defined")
-	}
-	primary := plans[0]
-	for _, candidate := range plans {
-		if candidate.Responsibility == "implementation" {
-			primary = candidate
-			break
-		}
+	primary, err := primaryTeamBootstrapPlan(plans)
+	if err != nil {
+		return err
 	}
 
 	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
@@ -692,7 +694,63 @@ func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot 
 	return plans, nil
 }
 
+func primaryTeamBootstrapPlan(plans []teamBootstrapAgentPlan) (teamBootstrapAgentPlan, error) {
+	if len(plans) == 0 {
+		return teamBootstrapAgentPlan{}, fmt.Errorf("no agents defined")
+	}
+	primary := plans[0]
+	for _, candidate := range plans {
+		if candidate.Responsibility == "implementation" {
+			primary = candidate
+			break
+		}
+	}
+	return primary, nil
+}
+
+func installTeamBootstrapOverridesAfterConnect(spec *teamBootstrapSpec, templateDir string, plans []teamBootstrapAgentPlan) (bool, bool, error) {
+	if teamBootstrapSkipRoles && teamBootstrapSkipInstructions {
+		return false, false, nil
+	}
+	primary, err := primaryTeamBootstrapPlan(plans)
+	if err != nil {
+		return false, false, err
+	}
+	client, _, err := resolveClientSelectionForDir(primary.HomeDir)
+	if err != nil {
+		return false, false, err
+	}
+
+	rolesInstalled := false
+	instructionsInstalled := false
+	if !teamBootstrapSkipRoles {
+		if err := installTeamBootstrapRolesWithClient(client, spec, templateDir); err != nil {
+			return false, false, err
+		}
+		rolesInstalled = true
+	}
+	if !teamBootstrapSkipInstructions {
+		installed, err := installTeamBootstrapInstructionsWithClient(client, spec, templateDir)
+		if err != nil {
+			return false, false, err
+		}
+		instructionsInstalled = installed
+	}
+	return rolesInstalled, instructionsInstalled, nil
+}
+
 func installTeamBootstrapRoles(spec *teamBootstrapSpec, templateDir string) error {
+	client, _, err := resolveClientSelection()
+	if err != nil {
+		return err
+	}
+	return installTeamBootstrapRolesWithClient(client, spec, templateDir)
+}
+
+func installTeamBootstrapRolesWithClient(client *aweb.Client, spec *teamBootstrapSpec, templateDir string) error {
+	if client == nil {
+		return fmt.Errorf("nil aweb client")
+	}
 	bundle := aweb.TeamRolesBundle{Roles: map[string]aweb.RoleDefinition{}}
 	for name, role := range spec.Roles {
 		body, err := os.ReadFile(filepath.Join(templateDir, role.File))
@@ -706,10 +764,6 @@ func installTeamBootstrapRoles(spec *teamBootstrapSpec, templateDir string) erro
 		bundle.Roles[name] = aweb.RoleDefinition{Title: title, PlaybookMD: string(body)}
 	}
 
-	client, _, err := resolveClientSelection()
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
@@ -728,6 +782,17 @@ func installTeamBootstrapRoles(spec *teamBootstrapSpec, templateDir string) erro
 }
 
 func installTeamBootstrapInstructions(spec *teamBootstrapSpec, templateDir string) (bool, error) {
+	client, _, err := resolveClientSelection()
+	if err != nil {
+		return false, err
+	}
+	return installTeamBootstrapInstructionsWithClient(client, spec, templateDir)
+}
+
+func installTeamBootstrapInstructionsWithClient(client *aweb.Client, spec *teamBootstrapSpec, templateDir string) (bool, error) {
+	if client == nil {
+		return false, fmt.Errorf("nil aweb client")
+	}
 	file := strings.TrimSpace(spec.Instructions.File)
 	if file == "" {
 		candidate := filepath.Join(templateDir, "docs", "team.md")
@@ -741,10 +806,7 @@ func installTeamBootstrapInstructions(spec *teamBootstrapSpec, templateDir strin
 	if err != nil {
 		return false, err
 	}
-	client, _, err := resolveClientSelection()
-	if err != nil {
-		return false, err
-	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	active, err := client.ActiveTeamInstructions(ctx)
@@ -768,16 +830,36 @@ func materializeTeamBootstrapAgent(templateDir string, plan teamBootstrapAgentPl
 	if err := os.MkdirAll(plan.HomeDir, 0o755); err != nil {
 		return err
 	}
-	if err := linkOrCopyFile(plan.Instructions, filepath.Join(plan.HomeDir, "AGENTS.md")); err != nil {
+
+	agentsMDPath := filepath.Join(plan.HomeDir, "AGENTS.md")
+	absDst, derr := filepath.Abs(agentsMDPath)
+	absSrc, serr := filepath.Abs(plan.Instructions)
+	if derr != nil {
+		return derr
+	}
+	if serr != nil {
+		return serr
+	}
+	if absSrc != absDst {
+		if err := linkOrCopyFile(plan.Instructions, agentsMDPath); err != nil {
+			return err
+		}
+	} else if _, err := os.Stat(agentsMDPath); err != nil {
 		return err
 	}
+
 	claudePath := filepath.Join(plan.HomeDir, "CLAUDE.md")
 	_ = os.Remove(claudePath)
 	if err := os.Symlink("AGENTS.md", claudePath); err != nil {
-		if err := linkOrCopyFile(plan.Instructions, claudePath); err != nil {
-			return err
+		data, rerr := os.ReadFile(agentsMDPath)
+		if rerr != nil {
+			return rerr
+		}
+		if werr := os.WriteFile(claudePath, data, 0o644); werr != nil {
+			return werr
 		}
 	}
+
 	if workRepo != "" {
 		workLink := filepath.Join(plan.HomeDir, "work")
 		_ = os.Remove(workLink)

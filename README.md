@@ -73,21 +73,21 @@ Happy path (fork the canonical template and bootstrap all agent workspaces in on
 ```bash
 mkdir my-team && cd my-team
 aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes
-# Prompts for a hosted username, then creates + connects every agent dir under:
-#   ./.aw/team-agents/awebai-aweb-team-dev-review/
+# Clones ./aweb-team-dev-review and bootstraps each workspace in:
+#   ./aweb-team-dev-review/agents/<responsibility>/
 ```
 
-Then run agents from their directories (default location):
+Then run agents from their directories:
 
 ```bash
-cd .aw/team-agents/<template-name>/implementation
+cd aweb-team-dev-review/agents/implementation
 aw run codex
 
 cd ../review
 aw run codex
 ```
 
-To create agent dirs somewhere more obvious (for example, `./agents/`):
+Optional: place the agent workspaces somewhere else (instead of inside the template repo):
 
 ```bash
 aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes --home-root ./agents
