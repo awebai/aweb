@@ -30,15 +30,16 @@ def test_canonical_chain_is_a_single_consolidated_baseline():
 
 
 def test_agents_table_declares_final_inbound_mode_shape_directly():
-    """The three-value canonical inbound_mode CHECK is declared inline
-    in the agents CREATE TABLE — no separate ADD/DROP CONSTRAINT
-    migration history (was 008 + 011 in the prior chain)."""
+    """aapl.4 two-state contract: the canonical inbound_mode CHECK is
+    declared inline in the agents CREATE TABLE with the strict
+    open|contacts_only set — no third teammate-exception value, no
+    legacy migration history."""
     migration = (AWEB_MIGRATIONS / "001_initial.sql").read_text()
     assert "agents_inbound_mode_valid" in migration
     assert "'open'" in migration
-    assert "'contacts_or_teammates'" in migration
     assert "'contacts_only'" in migration
-    # Legacy two-value-only intermediate states must NOT appear.
+    # Withdrawn third value and legacy intermediate states must NOT appear.
+    assert "contacts_or_teammates" not in migration
     assert "messaging_policy = 'everyone'" not in migration
     assert "messaging_policy = 'contacts'" not in migration
     assert "team_only" not in migration
