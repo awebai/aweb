@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +53,11 @@ var (
 	teamBootstrapTemplateCacheDir string
 	teamBootstrapRefreshTemplate  bool
 	teamBootstrapForkTemplate     bool
+	teamBootstrapNamespace        string
+	teamBootstrapTeamName         string
+	teamBootstrapTeamDisplayName  string
+	teamBootstrapRegistryURL      string
+	teamBootstrapAwebURL          string
 	teamBootstrapDryRun           bool
 	teamBootstrapYes              bool
 	teamBootstrapSkipRoles        bool
@@ -109,6 +117,11 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOD team namespace domain to create/use (required for one-step team + identity bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOD team name/slug to create/use (required for one-step team + identity bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOD team")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override for BYOD team create/invites")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Accept default agent names without prompting")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
@@ -192,7 +205,15 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	out.NextCommands = plannedInitCommands(plans)
+
+	if strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != "" {
+		if err := bootstrapTeamAndInitAgentDirs(cmd, plans); err != nil {
+			return err
+		}
+		out.NextCommands = nil
+	} else {
+		out.NextCommands = plannedInitCommands(plans)
+	}
 	printOutput(out, formatTeamBootstrapOutput)
 	return nil
 }
@@ -394,6 +415,96 @@ func runGHRepoForkClone(cmd *cobra.Command, repoFullName string, destDir string)
 
 func templateRefForOutput(raw string) string {
 	return strings.TrimSpace(raw)
+}
+
+func bootstrapTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrapAgentPlan) error {
+	namespace := awconfig.NormalizeDomain(strings.TrimSpace(teamBootstrapNamespace))
+	teamName := strings.ToLower(strings.TrimSpace(teamBootstrapTeamName))
+	if namespace == "" {
+		return usageError("--namespace is required for one-step team bootstrap")
+	}
+	if teamName == "" {
+		return usageError("--team is required for one-step team bootstrap")
+	}
+
+	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
+	if awebURL == "" {
+		awebURL = DefaultAwebURL
+	}
+	var err error
+	awebURL, err = normalizeAwebBaseURL(awebURL)
+	if err != nil {
+		return fmt.Errorf("invalid --aweb-url: %w", err)
+	}
+
+	controllerKey, err := awconfig.LoadControllerKey(namespace)
+	if err != nil {
+		return fmt.Errorf(
+			"no local namespace controller key for %s: %w\n\nRun `aw id create --domain %s --name <controller-name>` first.",
+			namespace,
+			err,
+			namespace,
+		)
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := strings.TrimSpace(teamBootstrapRegistryURL)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid --registry: %w", err)
+		}
+	}
+	resolvedRegistryURL := strings.TrimSpace(registry.DefaultRegistryURL)
+
+	// Ensure namespace exists at the registry.
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	plan := &idCreatePlan{Domain: namespace, RegistryURL: resolvedRegistryURL, ControllerDID: controllerDID}
+	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
+		return fmt.Errorf("ensure namespace %s: %w", namespace, err)
+	}
+
+	// Ensure the team exists (creates ~/.config/aw/team-keys/<namespace>/<team>.key if needed).
+	if _, err := ensureLocalTeamRegistered(
+		ctx,
+		registry,
+		resolvedRegistryURL,
+		namespace,
+		teamName,
+		strings.TrimSpace(teamBootstrapTeamDisplayName),
+		controllerKey,
+	); err != nil {
+		return err
+	}
+
+	for _, agent := range plans {
+		if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
+			return err
+		}
+		alias := strings.TrimSpace(agent.Alias)
+		if alias == "" {
+			alias = sanitizeSlug(agent.Name)
+		}
+		_, token, err := createTeamInviteToken(namespace, teamName, resolvedRegistryURL, awebURL, true)
+		if err != nil {
+			return err
+		}
+		accepted, err := acceptTeamInviteWithDetails(agent.HomeDir, token, alias, "")
+		if err != nil {
+			return err
+		}
+		if err := upsertAcceptedTeamMembershipState(agent.HomeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
+			return err
+		}
+		if _, err := initCertificateConnectWithOptions(agent.HomeDir, awebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) error {
