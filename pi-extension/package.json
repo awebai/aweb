@@ -19,16 +19,16 @@
   ],
   "scripts": {
     "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership skills/",
-    "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
+    "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw --external:@awebai/channel-core",
     "prepack": "npm run build",
     "prepublishOnly": "npm run build",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@awebai/aw": "^1.22.1"
+    "@awebai/aw": "^1.22.1",
+    "@awebai/channel-core": "^0.1.0"
   },
   "devDependencies": {
-    "@awebai/channel-core": "file:../channel-core",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^24.5.2",
     "esbuild": "^0.27.0",

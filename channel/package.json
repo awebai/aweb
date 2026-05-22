@@ -14,7 +14,7 @@
     "package.json"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/channel-core",
     "sync-plugin-version": "node -e \"const p=JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8')); p.version=require('./package.json').version; require('fs').writeFileSync('.claude-plugin/plugin.json',JSON.stringify(p,null,2)+'\\n')\"",
     "prepublishOnly": "npm run build && npm run sync-plugin-version",
     "test": "vitest run --exclude test/integration.test.ts",
@@ -22,10 +22,10 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@awebai/channel-core": "^0.1.0",
     "tldts": "^7.0.27"
   },
   "devDependencies": {
-    "@awebai/channel-core": "file:../channel-core",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@noble/ed25519": "^2.2.3",
     "@noble/hashes": "^2.0.1",
