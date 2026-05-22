@@ -571,7 +571,10 @@ func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string,
 	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
 		return err
 	}
-	provisioned, err := provisionHostedIdentity(urls.OnboardingURL, urls.RegistryURL, username, primaryAlias, false)
+	// Team bootstrap creates the team-primary identity as a local
+	// workspace (persistent=false); --inbound-mode applies only to
+	// global identities so we pass "" here unconditionally.
+	provisioned, err := provisionHostedIdentity(urls.OnboardingURL, urls.RegistryURL, username, primaryAlias, false, "")
 	if err != nil {
 		return err
 	}

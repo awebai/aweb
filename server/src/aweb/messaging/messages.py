@@ -88,9 +88,8 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 
 
 INBOUND_MODE_OPEN = "open"
-INBOUND_MODE_CONTACTS_OR_TEAMMATES = "contacts_or_teammates"
 INBOUND_MODE_CONTACTS_ONLY = "contacts_only"
-INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_CONTACTS_OR_TEAMMATES, INBOUND_MODE_CONTACTS_ONLY}
+INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_CONTACTS_ONLY}
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
@@ -138,6 +137,12 @@ async def authorize_message_delivery(
 ) -> None:
     del sender_did  # sender identity binding is verified by the caller/signature path.
 
+    # Sender's team / team-cert context does not authorize global delivery
+    # under the two-state contract — incoming delivery is decoupled from
+    # team membership/authority. The parameter is retained for caller
+    # ergonomics but intentionally unused here.
+    del sender_verified_team_id
+
     if _is_global_recipient(recipient_agent):
         mode = _effective_inbound_mode(recipient_agent)
         if mode == INBOUND_MODE_OPEN:
@@ -148,12 +153,6 @@ async def authorize_message_delivery(
             sender_address=sender_address,
         ):
             return
-        recipient_team_id = str(recipient_agent.get("team_id") or "").strip()
-        verified_team_id = str(sender_verified_team_id or "").strip()
-        if mode == INBOUND_MODE_CONTACTS_OR_TEAMMATES and verified_team_id and verified_team_id == recipient_team_id:
-            return
-        if mode == INBOUND_MODE_CONTACTS_OR_TEAMMATES:
-            raise ForbiddenError("Recipient only accepts messages from exact active contacts or verified teammates")
         raise ForbiddenError("Recipient only accepts messages from exact active contacts")
 
     if stored_route_continuation:

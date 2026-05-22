@@ -53,6 +53,7 @@ var (
 	initPrintExports       bool
 	initRole               string
 	initPersistent         bool
+	initInboundMode        string
 )
 
 var (
@@ -94,6 +95,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initPersistent, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
 	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Compatibility alias for --global")
 	_ = initCmd.Flags().MarkHidden("persistent")
+	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|contacts-only). Only valid with --global.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -109,6 +111,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	if initInjectDocs && initDoNotTouchAgentsMD {
 		return fmt.Errorf("--inject-docs and --do-not-touch-agents-md are mutually exclusive")
+	}
+	if err := validateInitInboundMode(); err != nil {
+		return err
 	}
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
@@ -151,6 +156,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Persistent:  initPersistent,
+			InboundMode: canonicalInitInboundModeForWire(initInboundMode),
 		})
 		if err != nil {
 			return err
@@ -263,6 +269,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 			Persistent:         initPersistent,
+			InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 			DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
 			AskPostCreateSetup: askPostCreateSetup,
@@ -519,6 +526,75 @@ func resolveAliasValue(explicit string) string {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
+}
+
+// validateInitInboundMode enforces the aapl.7 contract on the
+// --inbound-mode flag. The user-facing flag values use the
+// hyphen-spelling CLI convention (open, contacts-only); the
+// underscored canonical form (contacts_only) is the wire-level value
+// translated by canonicalInitInboundModeForWire before the API call.
+//
+// Per Juan c2d25276: --inbound-mode is a real top-level flag of
+// `aw init --global` and every supported global creation path
+// (API-key bootstrap, guided hosted onboarding, BYOD) must forward
+// the value into the create call. This validator only enforces the
+// flag-shape contract; threading through the paths is the runner's
+// responsibility.
+//
+// Two guards:
+//
+//  1. The flag is only meaningful for a global identity (--global);
+//     local workspaces have no inbound delivery mode.
+//  2. Only the two-value set {open, contacts-only} is accepted. The
+//     withdrawn third value "contacts_or_teammates" (or the
+//     hyphenated variant) must fail at parse time so users copying a
+//     stale dashboard command see a clear error instead of a
+//     confusing API rejection.
+func validateInitInboundMode() error {
+	value := strings.TrimSpace(initInboundMode)
+	if value == "" {
+		return nil
+	}
+	if !initPersistent {
+		return fmt.Errorf("--inbound-mode is only valid with --global; local workspaces do not have an inbound delivery mode")
+	}
+	if initBYOD {
+		// BYOD creates the team certificate locally; there is no
+		// hosted creation endpoint at this stage to carry the
+		// inbound_mode value. Fail fast instead of silently
+		// dropping the user's choice (Juan c2d25276: "fail only
+		// where the path genuinely cannot create/configure a
+		// global identity"). The user can set the mode after the
+		// BYOD identity is up via the dashboard's inbound-mode
+		// surface or the hosted REST API
+		// (PATCH /api/v1/agents/{agent_id}/inbound-mode).
+		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or via PATCH /api/v1/agents/<agent_id>/inbound-mode")
+	}
+	switch value {
+	case "open":
+		initInboundMode = "open"
+		return nil
+	case "contacts-only":
+		initInboundMode = "contacts-only"
+		return nil
+	}
+	return fmt.Errorf("--inbound-mode must be one of {open, contacts-only}; got %q", value)
+}
+
+// canonicalInitInboundModeForWire translates the user-facing
+// flag value into the canonical wire form expected by the API:
+// "contacts-only" → "contacts_only". Returns "" when no value was set.
+func canonicalInitInboundModeForWire(flag string) string {
+	switch strings.TrimSpace(flag) {
+	case "":
+		return ""
+	case "open":
+		return "open"
+	case "contacts-only":
+		return "contacts_only"
+	}
+	// Should be unreachable after validateInitInboundMode; defensive only.
+	return strings.TrimSpace(flag)
 }
 
 func resolveRequestedRole(explicit string) string {

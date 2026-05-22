@@ -49,6 +49,11 @@ type guidedOnboardingRequest struct {
 	AgentType          string
 	Role               string
 	Persistent         bool
+	// InboundMode is the canonical wire form ("" | "open" | "contacts_only")
+	// chosen at the CLI by --inbound-mode. Only meaningful when
+	// Persistent is true. Forwarded to whichever creation endpoint
+	// the wizard ends up calling.
+	InboundMode        string
 	InjectAgentDocs    bool
 	DoNotTouchAgentsMD bool
 	AskPostCreateSetup bool
@@ -134,7 +139,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 
 	var provisioned hostedIdentityProvision
 	for {
-		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent)
+		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent, req.InboundMode)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
 				if req.NonInteractive {
@@ -657,7 +662,7 @@ type hostedIdentityProvision struct {
 }
 
 func provisionHostedIdentity(
-	onboardingURL, registryURL, username, alias string, persistent bool,
+	onboardingURL, registryURL, username, alias string, persistent bool, inboundMode string,
 ) (hostedIdentityProvision, error) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -691,10 +696,11 @@ func provisionHostedIdentity(
 	}
 
 	resp, err := guidedOnboardingCliSignup(ctx, onboardingURL, &awid.CliSignupRequest{
-		Username: username,
-		DIDKey:   didKey,
-		DIDAW:    didAW,
-		Alias:    alias,
+		Username:    username,
+		DIDKey:      didKey,
+		DIDAW:       didAW,
+		Alias:       alias,
+		InboundMode: strings.TrimSpace(inboundMode),
 	}, signingKey)
 	if err != nil {
 		return hostedIdentityProvision{}, err

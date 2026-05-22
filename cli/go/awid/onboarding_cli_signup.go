@@ -38,11 +38,18 @@ type CheckUsernameResponse struct {
 // CliSignupRequest is the body for POST /api/v1/onboarding/cli-signup.
 // DIDKey must be the did:key the CLI just registered at awid via POST /v1/did.
 // DIDAW is the stable id (did:aw:...) for that same keypair.
+//
+// InboundMode is the canonical wire value ("open" or "contacts_only")
+// chosen via `aw init --global --inbound-mode <...>` and translated
+// to underscored form by the CLI. Empty means "server default" —
+// matches the API-key bootstrap shape so the hosted onboarding path
+// honors the same flag.
 type CliSignupRequest struct {
-	Username string `json:"username"`
-	DIDKey   string `json:"did_key"`
-	DIDAW    string `json:"did_aw"`
-	Alias    string `json:"alias"`
+	Username    string `json:"username"`
+	DIDKey      string `json:"did_key"`
+	DIDAW       string `json:"did_aw"`
+	Alias       string `json:"alias"`
+	InboundMode string `json:"inbound_mode,omitempty"`
 }
 
 // CliSignupResponse carries the hosted onboarding reply: the signed team certificate

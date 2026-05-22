@@ -91,14 +91,22 @@ async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(awe
     assert inbound_mode is None
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_or_teammates' WHERE agent_id = $1",
+        "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE agent_id = $1",
         agent_id,
     )
     inbound_mode = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
     )
-    assert inbound_mode == "contacts_or_teammates"
+    assert inbound_mode == "contacts_only"
+
+    # aapl.4: the withdrawn third value must be rejected by the CHECK.
+    with pytest.raises(QueryError) as withdrawn_mode:
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_or_teammates' WHERE agent_id = $1",
+            agent_id,
+        )
+    assert "agents_inbound_mode_valid" in str(withdrawn_mode.value)
 
     with pytest.raises(QueryError) as invalid_mode:
         await aweb_cloud_db.aweb_db.execute(
@@ -280,11 +288,14 @@ async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(aweb_
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_contacts_or_teammates_allows_contact_sender(aweb_cloud_db):
+async def test_deliver_message_contacts_only_allows_exact_active_contact(aweb_cloud_db):
+    """aapl.4 two-state contract: contacts_only allows exactly the
+    sender_addresses on the recipient's contacts list. Replaces the
+    withdrawn contacts_or_teammates contact-allow case."""
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
-    bob_did_aw = "did:aw:bob-contact-mode"
+    bob_did_aw = "did:aw:bob-contacts-only-contact"
     await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="ops:otherco.com",
@@ -292,7 +303,7 @@ async def test_deliver_message_contacts_or_teammates_allows_contact_sender(aweb_
         did_key=_make_did_key(),
         did_aw=bob_did_aw,
         address="otherco.com/bob",
-        inbound_mode="contacts_or_teammates",
+        inbound_mode="contacts_only",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -304,7 +315,7 @@ async def test_deliver_message_contacts_or_teammates_allows_contact_sender(aweb_
 
     msg_id, _ = await deliver_message(
         db_shim,
-        from_did="did:aw:alice-contact-mode",
+        from_did="did:aw:alice-contacts-only-contact",
         to_did=bob_did_aw,
         from_alias="alice",
         to_alias="bob",
@@ -317,94 +328,26 @@ async def test_deliver_message_contacts_or_teammates_allows_contact_sender(aweb_
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_contacts_or_teammates_allows_verified_same_team_non_contact(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+async def test_agents_inbound_mode_check_rejects_withdrawn_third_value(aweb_cloud_db):
+    """aapl.4: contacts_or_teammates is no longer a valid inbound_mode
+    in the canonical schema; the CHECK rejects it. Replaces the prior
+    contacts_or_teammates schema-accept test."""
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    bob_did_aw = "did:aw:bob-teammate-mode"
-    await _insert_agent(
+    agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="backend:acme.com",
-        alias="bob",
+        alias="schema-third-mode-reject",
         did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        inbound_mode="contacts_or_teammates",
+        did_aw="did:aw:bob-third-mode-reject",
+        address="acme.com/bob-third-mode-reject",
+        inbound_mode="contacts_only",
     )
-
-    msg_id, _ = await deliver_message(
-        db_shim,
-        from_did="did:aw:alice-teammate-mode",
-        to_did=bob_did_aw,
-        from_alias="alice",
-        to_alias="bob",
-        sender_address="acme.com/alice",
-        sender_verified_team_id="backend:acme.com",
-        subject="Hello",
-        body="Hi Bob!",
-        priority="normal",
-    )
-    assert msg_id is not None
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_contacts_or_teammates_rejects_unverified_same_team_claim(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    bob_did_aw = "did:aw:bob-unverified-team"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        inbound_mode="contacts_or_teammates",
-    )
-
-    with pytest.raises(ForbiddenError, match="verified teammates"):
-        await deliver_message(
-            db_shim,
-            from_did="did:aw:alice-unverified-team",
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            team_id="backend:acme.com",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
+    with pytest.raises(QueryError) as withdrawn_mode:
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_or_teammates' WHERE agent_id = $1",
+            agent_id,
         )
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_contacts_or_teammates_rejects_neither_contact_nor_teammate(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
-    bob_did_aw = "did:aw:bob-neither-mode"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:otherco.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="otherco.com/bob",
-        inbound_mode="contacts_or_teammates",
-    )
-
-    with pytest.raises(ForbiddenError, match="verified teammates"):
-        await deliver_message(
-            db_shim,
-            from_did="did:aw:alice-neither-mode",
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            sender_verified_team_id="backend:acme.com",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
-        )
+    assert "agents_inbound_mode_valid" in str(withdrawn_mode.value)
 
 
 @pytest.mark.asyncio
