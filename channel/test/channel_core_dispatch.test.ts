@@ -448,4 +448,86 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
   });
+
+  test("chat live dispatch hydrates trust fields from signed_payload when top-level row has stable did:aw", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "aweb.ai/ama",
+      from_did: vectors.did,
+      to: self.stableID,
+      to_did: "",
+      type: "chat",
+      subject: "",
+      body: "signed-payload authority",
+      timestamp: "2025-01-01T00:00:00Z",
+      from_stable_id: vectors.stableID,
+      to_stable_id: self.stableID,
+      message_id: "chat-signed-payload-authority",
+      conversation_id: "sess-signed-payload-authority",
+    };
+    const signedPayload = canonicalJSON(env);
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: env.conversation_id,
+          from_agent: "ama",
+          from_address: env.from,
+          to_address: "acme.com/eve",
+          body: env.body,
+          timestamp: env.timestamp,
+          sender_leaving: false,
+          from_did: vectors.stableID,
+          from_stable_id: vectors.stableID,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: signedPayload,
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
+        resolveIdentity: async () => ({
+          did: vectors.did,
+          stableID: vectors.stableID,
+          address: env.from,
+          custody: "self",
+          identityScope: "global",
+        }),
+      } as never,
+      "default:aweb.ai",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: env.conversation_id,
+        conversation_id: env.conversation_id,
+        message_id: env.message_id,
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "signed-payload authority",
+      meta: expect.objectContaining({
+        trust_status: "verified",
+        verified: "true",
+      }),
+    }));
+  });
 });
