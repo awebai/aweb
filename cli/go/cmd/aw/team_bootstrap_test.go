@@ -121,6 +121,65 @@ func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 	}
 }
 
+func TestTeamBootstrapResolveWorkDirectoryRequiresExactlyOneFlag(t *testing.T) {
+	templateDir := writeTeamBootstrapFixture(t)
+	prevWorkDir := teamBootstrapWorkDirectory
+	prevRepoURL := teamBootstrapWorkRepoURL
+	prevLegacy := teamBootstrapWorkRepo
+	t.Cleanup(func() {
+		teamBootstrapWorkDirectory = prevWorkDir
+		teamBootstrapWorkRepoURL = prevRepoURL
+		teamBootstrapWorkRepo = prevLegacy
+	})
+
+	teamBootstrapWorkDirectory = ""
+	teamBootstrapWorkRepoURL = ""
+	teamBootstrapWorkRepo = ""
+	if _, _, err := resolveTeamBootstrapWorkDirectoryAndRepoURL(templateDir); err == nil {
+		t.Fatal("expected error when neither --work-directory nor --work-repo-url is set")
+	}
+
+	teamBootstrapWorkDirectory = filepath.Join(templateDir, "work")
+	teamBootstrapWorkRepoURL = "https://github.com/awebai/aweb.git"
+	teamBootstrapWorkRepo = ""
+	if _, _, err := resolveTeamBootstrapWorkDirectoryAndRepoURL(templateDir); err == nil {
+		t.Fatal("expected error when both --work-directory and --work-repo-url are set")
+	}
+}
+
+func TestTeamBootstrapResolveWorkDirectoryDerivesFromWorkRepoURL(t *testing.T) {
+	templateDir := writeTeamBootstrapFixture(t)
+	prevWorkDir := teamBootstrapWorkDirectory
+	prevRepoURL := teamBootstrapWorkRepoURL
+	prevLegacy := teamBootstrapWorkRepo
+	t.Cleanup(func() {
+		teamBootstrapWorkDirectory = prevWorkDir
+		teamBootstrapWorkRepoURL = prevRepoURL
+		teamBootstrapWorkRepo = prevLegacy
+	})
+
+	repoURL := "https://github.com/awebai/aweb-team-dev-review.git"
+	teamBootstrapWorkDirectory = ""
+	teamBootstrapWorkRepoURL = repoURL
+	teamBootstrapWorkRepo = ""
+
+	workDir, gotURL, err := resolveTeamBootstrapWorkDirectoryAndRepoURL(templateDir)
+	if err != nil {
+		t.Fatalf("resolveTeamBootstrapWorkDirectoryAndRepoURL: %v", err)
+	}
+	if gotURL != repoURL {
+		t.Fatalf("workRepoURL=%q want %q", gotURL, repoURL)
+	}
+	want := filepath.Join(templateDir, "worktrees", "aweb-team-dev-review")
+	wantAbs, err := filepath.Abs(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workDir != wantAbs {
+		t.Fatalf("workDir=%q want %q", workDir, wantAbs)
+	}
+}
+
 func TestTeamBootstrapWorktreesRequireKnownRoleName(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	path := filepath.Join(templateDir, "team.yaml")

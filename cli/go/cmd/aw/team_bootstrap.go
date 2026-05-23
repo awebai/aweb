@@ -124,8 +124,8 @@ type teamBootstrapOutput struct {
 
 func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent workspaces are created (default: <template-dir>/agents)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkDirectory, "work-directory", "", "Directory symlinked into each agent workspace as ./work (required)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Optional git URL or local repo path to ensure a git repo exists under --work-directory")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkDirectory, "work-directory", "", "Directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Deprecated alias for --work-directory (kept for one release cycle)")
 	_ = teamBootstrapCmd.Flags().MarkHidden("work-repo")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
@@ -170,7 +170,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workDirectory, workRepoURL, err := resolveTeamBootstrapWorkDirectoryAndRepoURL()
+	workDirectory, workRepoURL, err := resolveTeamBootstrapWorkDirectoryAndRepoURL(resolved.TemplateDir)
 	if err != nil {
 		return err
 	}
@@ -199,6 +199,11 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if workRepoURL != "" {
+		if err := ensureTeamBootstrapWorktreesGitIgnored(resolved.TemplateDir); err != nil {
+			return err
+		}
+	}
 	if err := ensureTeamBootstrapWorkRepoReady(workDirectory, workRepoURL, spec); err != nil {
 		return err
 	}
@@ -453,36 +458,93 @@ func templateRefForOutput(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-func resolveTeamBootstrapWorkDirectoryAndRepoURL() (string, string, error) {
+func resolveTeamBootstrapWorkDirectoryAndRepoURL(templateDir string) (string, string, error) {
+	templateDir = strings.TrimSpace(templateDir)
 	workDirectory := strings.TrimSpace(teamBootstrapWorkDirectory)
+	workRepoURL := strings.TrimSpace(teamBootstrapWorkRepoURL)
 	legacy := strings.TrimSpace(teamBootstrapWorkRepo)
+	if workRepoURL != "" && legacy != "" {
+		return "", "", usageError("--work-repo-url and --work-repo cannot both be set (work-repo is deprecated; use --work-directory)")
+	}
 	if workDirectory != "" && legacy != "" {
 		return "", "", usageError("--work-directory and --work-repo cannot both be set (work-repo is deprecated; use --work-directory)")
 	}
 	if workDirectory == "" {
 		workDirectory = legacy
 	}
-	if workDirectory == "" {
-		return "", "", usageError("missing required flag: --work-directory")
+	if workDirectory != "" && workRepoURL != "" {
+		return "", "", usageError("--work-directory and --work-repo-url are mutually exclusive; set exactly one")
+	}
+	if workDirectory == "" && workRepoURL == "" {
+		return "", "", usageError("missing required flag: set exactly one of --work-directory or --work-repo-url")
+	}
+	if workRepoURL != "" {
+		derived, err := deriveGitCloneDirName(workRepoURL)
+		if err != nil {
+			return "", "", err
+		}
+		if derived == "" {
+			return "", "", usageError("failed to derive work directory name from --work-repo-url")
+		}
+		workDirectory = filepath.Join(templateDir, "worktrees", derived)
 	}
 	absDir, err := filepath.Abs(workDirectory)
 	if err != nil {
 		return "", "", err
 	}
-	workRepoURL := strings.TrimSpace(teamBootstrapWorkRepoURL)
-	if workRepoURL != "" {
-		// v1: if workRepoURL is a local path, require it matches workDirectory.
-		if info, statErr := os.Stat(workRepoURL); statErr == nil && info.IsDir() {
-			absRepo, aerr := filepath.Abs(workRepoURL)
-			if aerr != nil {
-				return "", "", aerr
-			}
-			if filepath.Clean(absRepo) != filepath.Clean(absDir) {
-				return "", "", usageError("--work-repo-url local path must match --work-directory for this release")
-			}
-		}
-	}
 	return absDir, workRepoURL, nil
+}
+
+func deriveGitCloneDirName(workRepoURL string) (string, error) {
+	workRepoURL = strings.TrimSpace(workRepoURL)
+	if workRepoURL == "" {
+		return "", nil
+	}
+
+	// Match git clone default dir naming: basename of URL/path with optional .git stripped.
+	if strings.HasPrefix(workRepoURL, "http://") || strings.HasPrefix(workRepoURL, "https://") {
+		u, err := url.Parse(workRepoURL)
+		if err != nil {
+			return "", err
+		}
+		base := pathBase(u.Path)
+		base = strings.TrimSuffix(base, ".git")
+		if base == "" {
+			return "", usageError("invalid --work-repo-url %q (missing repo name)", workRepoURL)
+		}
+		return base, nil
+	}
+
+	if strings.HasPrefix(workRepoURL, "git@") {
+		after := workRepoURL
+		if idx := strings.Index(after, ":"); idx >= 0 {
+			after = after[idx+1:]
+		}
+		after = strings.Trim(after, "/")
+		after = strings.TrimSuffix(after, ".git")
+		base := pathBase(after)
+		if base == "" {
+			return "", usageError("invalid --work-repo-url %q (missing repo name)", workRepoURL)
+		}
+		return base, nil
+	}
+
+	// Local path or other git transports: use filepath.Base.
+	base := filepath.Base(filepath.Clean(workRepoURL))
+	base = strings.TrimSuffix(base, ".git")
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return "", usageError("invalid --work-repo-url %q (missing repo name)", workRepoURL)
+	}
+	return base, nil
+}
+
+func pathBase(p string) string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return ""
+	}
+	parts := strings.Split(p, "/")
+	return parts[len(parts)-1]
 }
 
 func ensureTeamBootstrapWorkRepoReady(workDirectory, workRepoURL string, spec *teamBootstrapSpec) error {
@@ -500,26 +562,7 @@ func ensureTeamBootstrapWorkRepoReady(workDirectory, workRepoURL string, spec *t
 		return nil
 	}
 
-	// If workRepoURL is a local directory, ensure it's a git repo and (v1) require it matches workDirectory.
-	if info, err := os.Stat(workRepoURL); err == nil && info.IsDir() {
-		absRepo, aerr := filepath.Abs(workRepoURL)
-		if aerr != nil {
-			return aerr
-		}
-		absDir, derr := filepath.Abs(workDirectory)
-		if derr != nil {
-			return derr
-		}
-		if filepath.Clean(absRepo) != filepath.Clean(absDir) {
-			return usageError("--work-repo-url local path must match --work-directory for this release")
-		}
-		if _, gerr := currentGitWorktreeRootFromDir(workDirectory); gerr != nil {
-			return usageError("--work-directory %s is not a git repo", workDirectory)
-		}
-		return nil
-	}
-
-	// Otherwise treat as clone URL. If workDirectory is already a git repo, do nothing.
+	// If workDirectory is already a git repo, do nothing.
 	if _, err := currentGitWorktreeRootFromDir(workDirectory); err == nil {
 		return nil
 	}
