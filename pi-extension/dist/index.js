@@ -5618,7 +5618,10 @@ var SenderTrustManager = class {
     if (recipientDID.startsWith("did:aw:")) {
       if (recipientStableID)
         return status;
-      return selfStableID ? "identity_mismatch" : status;
+      if (selfStableID) {
+        return recipientDID.toLowerCase() === selfStableID.toLowerCase() ? status : "identity_mismatch";
+      }
+      return status;
     }
     return recipientDID === selfDID ? status : "identity_mismatch";
   }

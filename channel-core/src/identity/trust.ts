@@ -135,7 +135,12 @@ export class SenderTrustManager {
     }
     if (recipientDID.startsWith("did:aw:")) {
       if (recipientStableID) return status;
-      return selfStableID ? "identity_mismatch" : status;
+      // Legacy shape: stable did:aw was carried in to_did.
+      // If we have a self stable_id, treat it as the recipient binding.
+      if (selfStableID) {
+        return recipientDID.toLowerCase() === selfStableID.toLowerCase() ? status : "identity_mismatch";
+      }
+      return status;
     }
     return recipientDID === selfDID ? status : "identity_mismatch";
   }

@@ -81,7 +81,7 @@
       "self_stable_id": "did:aw:self",
       "to_did": "did:aw:self",
       "to_stable_id": "",
-      "expected_status": "identity_mismatch"
+      "expected_status": "verified"
     }
   ]
 }
