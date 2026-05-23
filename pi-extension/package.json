@@ -1,6 +1,6 @@
 {
   "name": "@awebai/pi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Aweb for Pi: real-time channel awakenings, aw CLI onboarding, and aweb skills.",
   "type": "module",
   "main": "./dist/index.js",
