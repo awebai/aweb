@@ -34,22 +34,22 @@ var (
 const guidedOnboardingDefaultTeamName = "default"
 
 type guidedOnboardingRequest struct {
-	WorkingDir         string
-	PromptIn           io.Reader
-	PromptOut          io.Writer
-	BaseURL            string
-	RegistryURL        string
-	ServerName         string
-	BYOD               bool
-	Username           string
-	Domain             string
-	Alias              string
-	Name               string
-	HumanName          string
-	AgentType          string
-	Role               string
-	Persistent         bool
-	// InboundMode is the canonical wire form ("" | "open" | "contacts_only")
+	WorkingDir  string
+	PromptIn    io.Reader
+	PromptOut   io.Writer
+	BaseURL     string
+	RegistryURL string
+	ServerName  string
+	BYOD        bool
+	Username    string
+	Domain      string
+	Alias       string
+	Name        string
+	HumanName   string
+	AgentType   string
+	Role        string
+	Persistent  bool
+	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts")
 	// chosen at the CLI by --inbound-mode. Only meaningful when
 	// Persistent is true. Forwarded to whichever creation endpoint
 	// the wizard ends up calling.

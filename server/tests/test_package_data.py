@@ -1,10 +1,9 @@
 """Packaging + final-schema assertions for the canonical aweb migration set.
 
-aapm.6: the canonical chain was consolidated into a single
-`001_initial.sql` (final clean baseline). Tests below assert the
-package ships exactly that file and that the file declares the final
-shape directly (no historical messaging_policy / lifetime / two-value
-inbound_mode replay)."""
+aapm.6 consolidated the historical chain into `001_initial.sql`. Later
+normal product migrations must remain additive ordered files. Tests below
+assert both the consolidated baseline and the aapq inbound-mode migration
+ship in the package."""
 from importlib.resources import files
 
 
@@ -17,31 +16,28 @@ def test_defaults_and_migrations_are_packaged():
     assert (package_root / "defaults" / "team_instructions.md").is_file()
     assert (package_root / "defaults" / "roles" / "backend.md").is_file()
     assert (AWEB_MIGRATIONS / "001_initial.sql").is_file()
+    assert (AWEB_MIGRATIONS / "002_team_and_contacts_inbound_mode.sql").is_file()
 
 
-def test_canonical_chain_is_a_single_consolidated_baseline():
-    """aapm.6: the rebuild path doesn't need historical replay, so the
-    canonical aweb chain ships as exactly one file."""
+def test_canonical_chain_has_consolidated_baseline_plus_forward_migrations():
+    """aapm.6 produced the clean baseline. aapq is a normal forward
+    migration because production has already applied the baseline."""
     sql_files = sorted(p.name for p in AWEB_MIGRATIONS.iterdir() if p.name.endswith(".sql"))
-    assert sql_files == ["001_initial.sql"], (
-        f"Canonical aweb migration set must be a single consolidated "
-        f"001_initial.sql baseline (aapm.6); found {sql_files}"
-    )
+    assert sql_files == ["001_initial.sql", "002_team_and_contacts_inbound_mode.sql"]
 
 
-def test_agents_table_declares_final_inbound_mode_shape_directly():
-    """aapl.4 two-state contract: the canonical inbound_mode CHECK is
-    declared inline in the agents CREATE TABLE with the strict
-    open|contacts_only set — no third teammate-exception value, no
-    legacy migration history."""
-    migration = (AWEB_MIGRATIONS / "001_initial.sql").read_text()
+def test_agents_table_migrates_to_team_and_contacts_inbound_mode():
+    """aapq contract: global restricted delivery is team-and-contacts,
+    not exact contacts-only."""
+    baseline = (AWEB_MIGRATIONS / "001_initial.sql").read_text()
+    migration = (AWEB_MIGRATIONS / "002_team_and_contacts_inbound_mode.sql").read_text()
+    assert "agents_inbound_mode_valid" in baseline
     assert "agents_inbound_mode_valid" in migration
+    assert "SET inbound_mode = 'team_and_contacts'" in migration
+    assert "WHERE inbound_mode = 'contacts_only'" in migration
     assert "'open'" in migration
-    assert "'contacts_only'" in migration
-    # Withdrawn third value and legacy intermediate states must NOT appear.
+    assert "'team_and_contacts'" in migration
     assert "contacts_or_teammates" not in migration
-    assert "messaging_policy = 'everyone'" not in migration
-    assert "messaging_policy = 'contacts'" not in migration
     assert "team_only" not in migration
 
 

@@ -59,7 +59,7 @@ Flags:
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
-- `--inbound-mode string Inbound delivery mode for a global identity (open|contacts-only). Only valid with --global.`
+- `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--name string Global identity name (required with --global unless .aw/identity.yaml already exists)`
 - `--print-exports Print shell export lines after JSON output`

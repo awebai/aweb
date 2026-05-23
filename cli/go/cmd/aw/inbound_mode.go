@@ -21,7 +21,7 @@ type inboundModeOutput struct {
 }
 
 var inboundModeCmd = &cobra.Command{
-	Use:   "inbound-mode [open|contacts-only]",
+	Use:   "inbound-mode [open|team-and-contacts]",
 	Short: "Show or set the current agent's inbound delivery mode",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runInboundMode,
@@ -60,12 +60,12 @@ func normalizeInboundModeCLIValue(value string) (string, error) {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "open", "all":
 		return "open", nil
-	case "contacts-only", "contacts_only":
-		return "contacts_only", nil
+	case "team-and-contacts", "team_and_contacts", "contacts-only", "contacts_only":
+		return "team_and_contacts", nil
 	case "":
 		return "", usageError("inbound mode is required")
 	default:
-		return "", usageError("inbound mode must be one of {open, contacts-only}; got %q", value)
+		return "", usageError("inbound mode must be one of {open, team-and-contacts}; got %q", value)
 	}
 }
 
@@ -73,8 +73,8 @@ func inboundModeLabel(mode string) string {
 	switch strings.TrimSpace(strings.ToLower(mode)) {
 	case "open":
 		return "All"
-	case "contacts_only":
-		return "Contacts only"
+	case "team_and_contacts", "contacts_only":
+		return "Team and contacts"
 	default:
 		return strings.TrimSpace(mode)
 	}

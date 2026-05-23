@@ -336,7 +336,7 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_clou
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
-        VALUES ($1, $2, $3, $4, 'global', 'active', 'contacts_only')
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'team_and_contacts')
         """,
         agent_id,
         "backend:acme.com",
@@ -357,7 +357,7 @@ async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_clou
         "team_id": "backend:acme.com",
         "alias": "alice",
         "identity_scope": "global",
-        "inbound_mode": "contacts_only",
+        "inbound_mode": "team_and_contacts",
         "configurable": True,
     }
 
@@ -391,7 +391,7 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
         "alice",
     )
 
-    body_bytes = json.dumps({"inbound_mode": "contacts_only"}, separators=(",", ":")).encode()
+    body_bytes = json.dumps({"inbound_mode": "team_and_contacts"}, separators=(",", ":")).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
@@ -404,12 +404,12 @@ async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["inbound_mode"] == "contacts_only"
+    assert resp.json()["inbound_mode"] == "team_and_contacts"
     stored = await aweb_cloud_db.aweb_db.fetch_val(
         "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
     )
-    assert stored == "contacts_only"
+    assert stored == "team_and_contacts"
 
 
 @pytest.mark.asyncio
@@ -440,7 +440,7 @@ async def test_patch_my_inbound_mode_rejects_local_agent(aweb_cloud_db):
         "alice",
     )
 
-    body_bytes = json.dumps({"inbound_mode": "contacts_only"}, separators=(",", ":")).encode()
+    body_bytes = json.dumps({"inbound_mode": "team_and_contacts"}, separators=(",", ":")).encode()
     headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 

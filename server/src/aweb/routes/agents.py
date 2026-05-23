@@ -72,8 +72,10 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
         value = (value or "").strip().lower()
-        if value not in {"open", "contacts_only"}:
-            raise ValueError("inbound_mode must be one of open, contacts_only")
+        if value == "contacts_only":
+            return "team_and_contacts"
+        if value not in {"open", "team_and_contacts"}:
+            raise ValueError("inbound_mode must be one of open, team_and_contacts")
         return value
 
 
@@ -312,7 +314,9 @@ async def _load_current_agent_inbound_mode(
         raise HTTPException(status_code=404, detail="Agent not found")
     identity_scope = str(row.get("identity_scope") or "local")
     inbound_mode = str(row.get("inbound_mode") or "").strip().lower()
-    if inbound_mode not in {"open", "contacts_only"}:
+    if inbound_mode == "contacts_only":
+        inbound_mode = "team_and_contacts"
+    if inbound_mode not in {"open", "team_and_contacts"}:
         raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),

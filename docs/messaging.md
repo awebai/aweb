@@ -8,9 +8,9 @@
 Mail and chat are identity-scoped. First contact to a global address
 (`domain/name`) resolves through awid to the recipient identity, current key,
 and address-route delivery origin, then aweb applies the recipient's
-`inbound_mode`: `open` (**All**) or `contacts_only` (**Contacts only**). Team
-membership and team certificates do not create an incoming-delivery exception;
-`contacts_only` means exact active contacts only. Bare external `did:aw` first
+`inbound_mode`: `open` (**All**) or `team_and_contacts` (**Team and contacts**).
+Verified same-team membership is delivery authority for team-scoped work;
+otherwise `team_and_contacts` requires an exact active contact. Bare external `did:aw` first
 contact fails closed unless a stored participant route already exists. Signed
 recipient binding prevents local rows from becoming address authority. The
 normative trust boundary is

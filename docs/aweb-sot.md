@@ -230,7 +230,7 @@ An **address** is the stable handle for a global identity:
 - Public trust semantics attach to the global address, not to local
   aliases
 - Address assignment is separate from delivery authorization; aweb delivery is
-  controlled by `inbound_mode=open|contacts_only`
+  controlled by `inbound_mode=open|team_and_contacts`
 
 ### Lifecycle: Delete vs Archive vs Replace
 
@@ -460,7 +460,7 @@ CREATE TABLE agents (
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',
-    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'contacts_only')),
+    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'team_and_contacts')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -546,7 +546,7 @@ CREATE TABLE chat_read_receipts (
     PRIMARY KEY (session_id, did)
 );
 
--- Contacts (per-agent address book for contacts-only delivery)
+-- Contacts (per-agent address book for team_and_contacts delivery)
 CREATE TABLE contacts (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_did       TEXT NOT NULL,
@@ -762,17 +762,18 @@ shared team membership.
 
 2. **Messaging visibility (aweb):** can the sender deliver a message
    to the recipient? Gated by the recipient's `inbound_mode` field.
-   `open` accepts valid senders after identity/route binding; `contacts_only`
-   accepts only an exact active identity contact for the verified sender
-   address. Same-team membership and team certificates do not bypass
-   `contacts_only`.
+   `open` accepts valid senders after identity/route binding;
+   `team_and_contacts` accepts verified same-team members plus exact active
+   identity contacts for the verified sender address.
 
 **Contacts** are stored per-identity in aweb. Contacts management:
 `POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may
-carry labels or handle metadata. For delivery authorization, `contacts_only`
-uses only an exact active identity contact for the verified sender's concrete
-`domain/name` address. Domain-level entries, pending contacts, handle contacts,
-and labels/display names do not authorize delivery.
+carry labels or handle metadata. For delivery authorization, stale
+exact-contact-only compatibility input maps to `team_and_contacts`; contacts
+authorize non-team delivery only through an exact active identity contact for
+the verified sender's concrete `domain/name` address. Domain-level entries,
+pending contacts, handle contacts, and labels/display names do not authorize
+delivery.
 
 **Auth for messaging endpoints:** the sender authenticates with a
 DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team

@@ -28,7 +28,7 @@ func TestAwInboundModeShow(t *testing.T) {
 				"team_id":        "backend:demo",
 				"alias":          "alice",
 				"identity_scope": "global",
-				"inbound_mode":   "contacts_only",
+				"inbound_mode":   "team_and_contacts",
 				"configurable":   true,
 			})
 		default:
@@ -58,10 +58,10 @@ func TestAwInboundModeShow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if resp["inbound_mode"] != "contacts_only" {
+	if resp["inbound_mode"] != "team_and_contacts" {
 		t.Fatalf("inbound_mode=%v", resp["inbound_mode"])
 	}
-	if resp["label"] != "Contacts only" {
+	if resp["label"] != "Team and contacts" {
 		t.Fatalf("label=%v", resp["label"])
 	}
 	if resp["configurable"] != true {
@@ -88,7 +88,7 @@ func TestAwInboundModeSetContactsOnly(t *testing.T) {
 				"team_id":        "backend:demo",
 				"alias":          "alice",
 				"identity_scope": "global",
-				"inbound_mode":   "contacts_only",
+				"inbound_mode":   "team_and_contacts",
 				"configurable":   true,
 			})
 		default:
@@ -104,17 +104,17 @@ func TestAwInboundModeSetContactsOnly(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "inbound-mode", "contacts-only", "--json")
+	run := exec.CommandContext(ctx, bin, "inbound-mode", "team-and-contacts", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if gotBody["inbound_mode"] != "contacts_only" {
+	if gotBody["inbound_mode"] != "team_and_contacts" {
 		t.Fatalf("inbound_mode body=%v", gotBody["inbound_mode"])
 	}
-	if strings.Contains(string(out), "contacts-only") && !strings.Contains(string(out), "contacts_only") {
+	if strings.Contains(string(out), "team-and-contacts") && !strings.Contains(string(out), "team_and_contacts") {
 		t.Fatalf("json should expose canonical server value, got %s", string(out))
 	}
 }

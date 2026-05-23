@@ -38,7 +38,7 @@ type apiKeyInitRequest struct {
 	HumanName   string
 	AgentType   string
 	Persistent  bool
-	// InboundMode is "open" or "contacts_only" when --inbound-mode is
+	// InboundMode is "open" or "team_and_contacts" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
 	// to "open" when the field is absent.

@@ -2365,7 +2365,7 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4619,7 +4619,7 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
 
 
 @pytest.mark.asyncio
-async def test_send_message_contacts_only_accepts_equivalent_owner_did(aweb_cloud_db):
+async def test_send_message_team_and_contacts_accepts_equivalent_owner_did(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -4631,7 +4631,7 @@ async def test_send_message_contacts_only_accepts_equivalent_owner_did(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
-        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+        VALUES ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         bob_did_key,
     )
@@ -4734,11 +4734,10 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_send_message_contacts_only_rejects_verified_same_team_non_contact_http(aweb_cloud_db):
-    """aapl.4: HTTP-level regression — a same-team valid team certificate
-    does NOT authorize delivery into a contacts_only recipient that has
-    no exact active contact for the sender. Replaces the withdrawn
-    contacts_or_teammates teammate-accept HTTP test."""
+async def test_send_message_team_and_contacts_accepts_verified_same_team_non_contact_http(aweb_cloud_db):
+    """aapq: HTTP-level regression — a same-team valid team certificate
+    authorizes delivery into a team_and_contacts recipient even without
+    an exact active contact."""
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -4755,7 +4754,7 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         alice_did_key,
         bob_did_key,
@@ -4777,7 +4776,7 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_alias": "bob", "subject": "no teammate exception", "body": "hi"}
+    payload = {"to_alias": "bob", "subject": "team delivery", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body_bytes),
@@ -4786,12 +4785,11 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "exact active contacts" in resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
-async def test_send_message_contacts_only_rejects_verified_same_team_non_contact(aweb_cloud_db):
+async def test_send_message_team_and_contacts_accepts_verified_same_team_non_contact(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -4808,7 +4806,7 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         alice_did_key,
         bob_did_key,
@@ -4830,7 +4828,7 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_alias": "bob", "subject": "blocked teammate", "body": "hi"}
+    payload = {"to_alias": "bob", "subject": "team delivery", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body_bytes),
@@ -4839,8 +4837,7 @@ async def test_send_message_contacts_only_rejects_verified_same_team_non_contact
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "exact active contacts" in resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -5156,7 +5153,7 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
             ('backend:acme.com', $1, NULL, NULL, 'alice', 'global', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         alice_did_key,
         bob_did_key,
@@ -5821,7 +5818,7 @@ async def test_send_message_global_recipient_allows_explicit_inbound_mode_open(a
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_global_address_contacts_only_rejects_non_contact(aweb_cloud_db):
+async def test_send_message_to_global_address_team_and_contacts_rejects_non_contact(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -5832,7 +5829,7 @@ async def test_send_message_to_global_address_contacts_only_rejects_non_contact(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
-        VALUES ('ops:otherco.com', 'did:key:bob-contacts', 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'contacts_only')
+        VALUES ('ops:otherco.com', 'did:key:bob-contacts', 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'team_and_contacts')
         """
     )
 

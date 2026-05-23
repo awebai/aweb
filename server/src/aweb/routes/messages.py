@@ -935,7 +935,9 @@ async def _send_mail_conversation_continuation(
             created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation_id,
-            skip_policy_check=True,
+            sender_verified_team_id=auth.verified_team_id,
+            sender_verified_dids=auth_dids(auth),
+            stored_route_continuation=True,
         )
         await touch_conversation_activity(db, conversation_id=conversation_id)
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
@@ -1419,6 +1421,7 @@ async def send_message(
                 sender_address=sender_address,
                 sender_team_id=auth.team_id,
                 sender_verified_team_id=auth.verified_team_id,
+                sender_verified_dids=auth_dids(auth),
             )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.

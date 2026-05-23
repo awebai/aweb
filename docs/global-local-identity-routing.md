@@ -50,10 +50,8 @@ can also write outbound to a global agent through its home server. The sender an
 recipient still prove key possession with signed envelopes. No team
 certificate, address visibility flag, or conversation id creates a route or
 resolver visibility. Contacts do not create routes or resolver visibility, but an exact active
-identity contact is required for delivery when the recipient's `inbound_mode` is
-`contacts_only`. Team membership and team certificates do not create a delivery
-exception; they remain coordination/membership authority, not incoming-message
-authority.
+identity contact or verified same-team membership is required for delivery when
+the recipient's `inbound_mode` is `team_and_contacts`.
 
 ### Local agent
 
@@ -174,11 +172,11 @@ The target model deletes these concepts as resolver/auth layers:
 - Team-certificate address visibility gates.
 - The old five-value recipient policy gate as a live delivery authorization
   surface. The replacement live surface is the explicit global
-  `inbound_mode=open|contacts_only`; old broader team/org/block-all semantics
-  are not renamed or preserved. Contacts may authorize the explicit
-  `contacts_only` or local-contact gates, but they remain exact address-book
-  state and never resolver visibility or routing authority. Team certificates
-  do not authorize incoming-message delivery. Recipient-side blocklists, abuse
+  `inbound_mode=open|team_and_contacts`; old broader org/block-all semantics
+  are not renamed or preserved. Contacts may authorize non-team delivery under
+  `team_and_contacts`, but they remain exact address-book state and never
+  resolver visibility or routing authority. Team certificates prove same-team
+  membership; they do not create routes. Recipient-side blocklists, abuse
   throttles, and spam controls may still run after identity/route resolution;
   they are not resolver visibility rules.
 - Known-pin or local-row fallback that bypasses global identity resolution for a
@@ -186,8 +184,9 @@ The target model deletes these concepts as resolver/auth layers:
 - Conversation-id auth bypasses for mail/chat continuation.
 
 Team certificates remain the credential for team-scoped coordination endpoints:
-tasks, claims, roles, locks, instructions, workspace state, and presence. They do not grant special powers to discover a global address, create a route,
-or bypass `contacts_only`.
+tasks, claims, roles, locks, instructions, workspace state, and presence. They
+do not grant special powers to discover a global address or create a route; they
+do prove same-team membership for `team_and_contacts` delivery.
 
 ## Routing model
 
@@ -209,9 +208,8 @@ or bypass `contacts_only`.
 
 No reachability flag, contact membership, or conversation id creates the route.
 After route and identity binding, the recipient's `inbound_mode` decides
-delivery: `open` accepts valid routed senders, and `contacts_only` accepts exact
-active contacts only. Same-team membership and team certificates do not bypass
-`contacts_only`.
+delivery: `open` accepts valid routed senders, and `team_and_contacts` accepts
+verified same-team members plus exact active contacts.
 
 ### Global reply
 
@@ -349,9 +347,9 @@ mismatched outer fields and stale routes.
 - Render old reachability settings as ignored/deprecated in dashboard/support
   views with repair guidance.
 - Contacts remain exact address-book state. They do not route or affect resolver
-  visibility, but exact active identity contacts authorize delivery for the
-  `contacts_only` and local-contact gates. Team certificates still do not route,
-  affect resolver visibility, or authorize incoming-message delivery.
+visibility, but exact active identity contacts authorize delivery for the
+  `team_and_contacts` and local-contact gates. Team certificates still do not
+  route or affect resolver visibility; they prove same-team delivery authority.
 
 ### Phase 5: delete dead code and schema
 

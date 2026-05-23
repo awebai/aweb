@@ -23,7 +23,7 @@ This consolidation **changes the checksum of `001_initial.sql` and removes the l
 | `008_agent_inbound_mode.sql` | inline `agents.inbound_mode TEXT` column with the final 3-value CHECK (no two-value intermediate; no messaging_policy backfill UPDATEs) |
 | `009_drop_messaging_policy.sql` | `messaging_policy` absent from the baseline (not declared, not dropped) |
 | `010_agent_identity_scope.sql` | inline `agents.identity_scope TEXT NOT NULL DEFAULT 'local'` + `agents_identity_scope_valid` CHECK; `lifetime` absent from the baseline |
-| `011_contacts_or_teammates_inbound_mode.sql` | historical aapm.6 folding of the then-current three-value CHECK into 001 (no DROP+ADD CONSTRAINT churn). This row is audit evidence only; the active product contract after the aapl reversal is two-state `open|contacts_only`. |
+| `011_contacts_or_teammates_inbound_mode.sql` | historical aapm.6 folding of the then-current three-value CHECK into 001 (no DROP+ADD CONSTRAINT churn). This row is audit evidence only; later product decisions changed the active contract. |
 
 Column ordinal positions in `agents` and `contacts` match the historical chain so `pg_dump --schema-only` diffs clean (see "Result" below): `inbound_mode` and `identity_scope` declared at the end of the agents column list; 004 contacts columns declared after `created_at`.
 
@@ -63,7 +63,12 @@ The consolidated baseline produces every table the prior chain produced, with id
 
 ## Later product decision
 
-After this equivalence evidence was recorded, the aapl reversal removed the `contacts_or_teammates` product/API value. Current canonical docs and schema should describe only `open|contacts_only`; this document preserves the historical old-chain mapping that aapm.6 verified at the time.
+After this equivalence evidence was recorded, aapl removed the
+`contacts_or_teammates` product/API value, and aapq later replaced the
+exact-contacts-only restricted state with `team_and_contacts`. Current
+canonical docs and schema should describe only `open|team_and_contacts`; this
+document preserves the historical old-chain mapping that aapm.6 verified at the
+time.
 
 ## What's intentionally different
 

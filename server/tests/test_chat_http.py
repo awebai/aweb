@@ -2304,12 +2304,10 @@ async def test_create_chat_session_global_recipient_allows_explicit_inbound_mode
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_contact(aweb_cloud_db):
-    """aapl.4: HTTP-level chat regression — a same-team valid team
-    certificate does NOT authorize creating a chat session whose
-    recipient is contacts_only and has no exact active contact for the
-    sender. Replaces the withdrawn contacts_or_teammates teammate-accept
-    chat test."""
+async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_non_contact(aweb_cloud_db):
+    """aapq: a same-team valid team certificate authorizes chat session
+    creation for a team_and_contacts recipient even without an exact
+    active contact."""
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -2326,7 +2324,7 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         alice_did_key,
         bob_did_key,
@@ -2348,7 +2346,7 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_aliases": ["bob"], "message": "no teammate exception"}
+    payload = {"to_aliases": ["bob"], "message": "team delivery"}
     body = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body),
@@ -2357,12 +2355,11 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "exact active contacts" in resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_contact(aweb_cloud_db):
+async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_non_contact_duplicate_path(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -2379,7 +2376,7 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'contacts_only')
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts')
         """,
         alice_did_key,
         bob_did_key,
@@ -2401,7 +2398,7 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    payload = {"to_aliases": ["bob"], "message": "blocked teammate"}
+    payload = {"to_aliases": ["bob"], "message": "team delivery"}
     body = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header, body),
@@ -2410,8 +2407,7 @@ async def test_create_chat_session_contacts_only_rejects_verified_same_team_non_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "exact active contacts" in resp.text
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -4569,8 +4565,8 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
-        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', 'open')
         """,
         uuid4(),
     )

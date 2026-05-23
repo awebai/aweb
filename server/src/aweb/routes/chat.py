@@ -25,7 +25,7 @@ from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
-from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -814,6 +814,7 @@ async def _resolve_chat_targets(
                 sender_address=sender_address,
                 sender_team_id=auth.team_id,
                 sender_verified_team_id=auth.verified_team_id,
+                sender_verified_dids=auth_dids(auth),
             )
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -861,6 +862,9 @@ async def _resolve_session_recipient_rows(
                 "did_key": ((resolved or {}).get("did_key") or "").strip()
                 or (participant.get("current_did_key") or "").strip()
                 or (participant_did if participant_did.startswith("did:key:") else ""),
+                "agent_id": ((resolved or {}).get("agent_id") if resolved else None),
+                "team_id": ((resolved or {}).get("team_id") if resolved else None),
+                "inbound_mode": ((resolved or {}).get("inbound_mode") if resolved else None),
                 "local_resolved": resolved is not None,
             }
         )
@@ -1201,7 +1205,7 @@ async def create_or_send(
             conversation_id=str(session_id),
             conversation_type="chat",
         )
-    except ForbiddenError as exc:
+    except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     aweb_db = db.get_manager("aweb")
@@ -2048,7 +2052,20 @@ async def send_message(
             conversation_id=str(session_uuid),
             conversation_type="chat",
         )
-    except ForbiddenError as exc:
+        for row in recipient_rows:
+            if _target_delivery_origin(row) or not row.get("local_resolved"):
+                continue
+            await authorize_message_delivery(
+                db,
+                recipient_agent=row,
+                sender_did=actor_did,
+                sender_address=sender_address,
+                sender_team_id=auth.team_id,
+                sender_verified_team_id=auth.verified_team_id,
+                sender_verified_dids=auth_dids(auth),
+                stored_route_continuation=True,
+            )
+    except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     msg_created_at = datetime.now(timezone.utc)

@@ -17,10 +17,10 @@ The intended authority split is:
 - `aweb` owns coordination state: mail, chat, conversations, tasks, roles, and
   workspace behavior.
 - Address resolution controls first contact routing; delivery authorization is
-  the recipient's aweb `inbound_mode`: `open` (**All**) or `contacts_only`
-  (**Contacts only**). Team certificates do not create routes, resolver
-  visibility, or delivery exceptions; `contacts_only` means exact active
-  contacts only.
+  the recipient's aweb `inbound_mode`: `open` (**All**) or
+  `team_and_contacts` (**Team and contacts**). Team certificates do not create
+  routes or resolver visibility; verified same-team membership authorizes
+  delivery when the recipient uses `team_and_contacts`.
 - Once a conversation exists, replies are authorized by stored conversation
   participation and route state, not by re-running address discovery.
 - A global identity can belong to multiple teams without becoming a new
@@ -43,11 +43,10 @@ The release gate must cover these cases for both mail and chat where applicable:
 3. Same-team alias-first, then full-address continuation.
 4. Cross-team same namespace with explicit team selector.
 5. Cross-namespace address first contact with `inbound_mode=open`.
-6. Cross-namespace address first contact with `inbound_mode=contacts_only` and
-   an exact active identity contact.
-7. Cross-namespace address first contact with `inbound_mode=contacts_only` and
-   only same-team membership or a team certificate, but no exact active contact,
-   fails closed.
+6. Cross-namespace address first contact with `inbound_mode=team_and_contacts`
+   and an exact active identity contact.
+7. Cross-namespace address first contact with `inbound_mode=team_and_contacts`
+   and verified same-team membership but no exact active contact.
 8. Cross-namespace address first contact without a valid route or required
    exact contact fails closed.
 9. Reply by existing participant route after first contact, without re-running

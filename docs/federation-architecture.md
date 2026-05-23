@@ -307,8 +307,8 @@ Current shipped guidance:
 
 Historical tests from the original plan remain useful as regression categories
 when they are phrased against the current contract: cross-server address first
-contact for `open` and `contacts_only`, contacts-only rejection without an exact
-active identity contact, stored-route replies, recipient-binding mismatch,
+contact for `open` and `team_and_contacts`, restricted rejection without an exact
+active identity contact or verified same-team membership, stored-route replies, recipient-binding mismatch,
 replay/idempotency, multi-team sender context, local alias non-federation, and
 fail-closed behavior when a namespace/address route lacks a delivery origin.
 

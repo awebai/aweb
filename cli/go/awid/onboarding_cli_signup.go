@@ -39,7 +39,7 @@ type CheckUsernameResponse struct {
 // DIDKey must be the did:key the CLI just registered at awid via POST /v1/did.
 // DIDAW is the stable id (did:aw:...) for that same keypair.
 //
-// InboundMode is the canonical wire value ("open" or "contacts_only")
+// InboundMode is the canonical wire value ("open" or "team_and_contacts")
 // chosen via `aw init --global --inbound-mode <...>` and translated
 // to underscored form by the CLI. Empty means "server default" —
 // matches the API-key bootstrap shape so the hosted onboarding path

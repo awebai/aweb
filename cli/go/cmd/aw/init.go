@@ -95,7 +95,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initPersistent, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
 	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Compatibility alias for --global")
 	_ = initCmd.Flags().MarkHidden("persistent")
-	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|contacts-only). Only valid with --global.")
+	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -530,8 +530,8 @@ func resolveAliasValue(explicit string) string {
 
 // validateInitInboundMode enforces the aapl.7 contract on the
 // --inbound-mode flag. The user-facing flag values use the
-// hyphen-spelling CLI convention (open, contacts-only); the
-// underscored canonical form (contacts_only) is the wire-level value
+// hyphen-spelling CLI convention (open, team-and-contacts); the
+// underscored canonical form (team_and_contacts) is the wire-level value
 // translated by canonicalInitInboundModeForWire before the API call.
 //
 // Per Juan c2d25276: --inbound-mode is a real top-level flag of
@@ -545,11 +545,11 @@ func resolveAliasValue(explicit string) string {
 //
 //  1. The flag is only meaningful for a global identity (--global);
 //     local workspaces have no inbound delivery mode.
-//  2. Only the two-value set {open, contacts-only} is accepted. The
-//     withdrawn third value "contacts_or_teammates" (or the
-//     hyphenated variant) must fail at parse time so users copying a
-//     stale dashboard command see a clear error instead of a
-//     confusing API rejection.
+//  2. Only the two-value set {open, team-and-contacts} is canonical.
+//     The stale contacts-only spelling is accepted as a compatibility
+//     alias and normalized to team-and-contacts. The withdrawn value
+//     "contacts_or_teammates" (or the hyphenated variant) must fail at
+//     parse time so users copying stale commands see a clear error.
 func validateInitInboundMode() error {
 	value := strings.TrimSpace(initInboundMode)
 	if value == "" {
@@ -568,30 +568,30 @@ func validateInitInboundMode() error {
 		// BYOD identity is up via the dashboard's inbound-mode
 		// surface or the hosted REST API
 		// (`aw inbound-mode <mode>`).
-		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or with `aw inbound-mode <open|contacts-only>`")
+		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or with `aw inbound-mode <open|team-and-contacts>`")
 	}
 	switch value {
 	case "open":
 		initInboundMode = "open"
 		return nil
-	case "contacts-only":
-		initInboundMode = "contacts-only"
+	case "team-and-contacts", "contacts-only":
+		initInboundMode = "team-and-contacts"
 		return nil
 	}
-	return fmt.Errorf("--inbound-mode must be one of {open, contacts-only}; got %q", value)
+	return fmt.Errorf("--inbound-mode must be one of {open, team-and-contacts}; got %q", value)
 }
 
 // canonicalInitInboundModeForWire translates the user-facing
 // flag value into the canonical wire form expected by the API:
-// "contacts-only" → "contacts_only". Returns "" when no value was set.
+// "team-and-contacts" → "team_and_contacts". Returns "" when no value was set.
 func canonicalInitInboundModeForWire(flag string) string {
 	switch strings.TrimSpace(flag) {
 	case "":
 		return ""
 	case "open":
 		return "open"
-	case "contacts-only":
-		return "contacts_only"
+	case "team-and-contacts", "contacts-only":
+		return "team_and_contacts"
 	}
 	// Should be unreachable after validateInitInboundMode; defensive only.
 	return strings.TrimSpace(flag)

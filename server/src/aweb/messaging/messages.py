@@ -88,8 +88,9 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 
 
 INBOUND_MODE_OPEN = "open"
-INBOUND_MODE_CONTACTS_ONLY = "contacts_only"
-INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_CONTACTS_ONLY}
+INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
+INBOUND_MODE_CONTACTS_ONLY_LEGACY = "contacts_only"
+INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS}
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
@@ -98,10 +99,67 @@ def _is_global_recipient(recipient_agent: dict) -> bool:
 
 def _effective_inbound_mode(recipient_agent: dict) -> str:
     mode = str(recipient_agent.get("inbound_mode") or "").strip().lower()
+    if mode == INBOUND_MODE_CONTACTS_ONLY_LEGACY:
+        return INBOUND_MODE_TEAM_AND_CONTACTS
     if mode in INBOUND_MODES:
         return mode
 
     raise ForbiddenError("Recipient inbound_mode migration required")
+
+
+def _identity_dids_from_agent(agent: dict) -> list[str]:
+    dids: list[str] = []
+    for value in (agent.get("did_aw"), agent.get("did_key")):
+        did = str(value or "").strip()
+        if did and did not in dids:
+            dids.append(did)
+    return dids
+
+
+def _normalize_dids(dids: list[str] | tuple[str, ...] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in dids or []:
+        did = str(value or "").strip()
+        if did and did not in normalized:
+            normalized.append(did)
+    return normalized
+
+
+async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
+    dids = _normalize_dids(dids)
+    if not dids:
+        return set()
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT DISTINCT team_id
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+        """,
+        dids,
+    )
+    return {str(row["team_id"]) for row in rows if row.get("team_id")}
+
+
+async def _has_verified_same_team_membership(
+    db,
+    *,
+    recipient_agent: dict,
+    sender_verified_team_id: str | None,
+    sender_verified_dids: list[str] | tuple[str, ...] | None,
+) -> bool:
+    recipient_team_ids = await _active_team_ids_for_identity(db, _identity_dids_from_agent(recipient_agent))
+    if not recipient_team_ids:
+        return False
+
+    sender_team_ids: set[str] = set()
+    verified_team = str(sender_verified_team_id or "").strip()
+    if verified_team:
+        sender_team_ids.add(verified_team)
+    sender_team_ids.update(await _active_team_ids_for_identity(db, _normalize_dids(sender_verified_dids)))
+
+    return bool(sender_team_ids & recipient_team_ids)
 
 
 async def _recipient_has_exact_sender_contact(
@@ -133,19 +191,21 @@ async def authorize_message_delivery(
     sender_address: str | None,
     sender_team_id: str | None = None,
     sender_verified_team_id: str | None = None,
+    sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
 ) -> None:
     del sender_did  # sender identity binding is verified by the caller/signature path.
 
-    # Sender's team / team-cert context does not authorize global delivery
-    # under the two-state contract — incoming delivery is decoupled from
-    # team membership/authority. The parameter is retained for caller
-    # ergonomics but intentionally unused here.
-    del sender_verified_team_id
-
     if _is_global_recipient(recipient_agent):
         mode = _effective_inbound_mode(recipient_agent)
         if mode == INBOUND_MODE_OPEN:
+            return
+        if await _has_verified_same_team_membership(
+            db,
+            recipient_agent=recipient_agent,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+        ):
             return
         if await _recipient_has_exact_sender_contact(
             db,
@@ -153,7 +213,7 @@ async def authorize_message_delivery(
             sender_address=sender_address,
         ):
             return
-        raise ForbiddenError("Recipient only accepts messages from exact active contacts")
+        raise ForbiddenError("Recipient only accepts messages from verified team members or exact active contacts")
 
     if stored_route_continuation:
         return
@@ -190,6 +250,8 @@ async def deliver_message(
     sender_address: str | None = None,
     team_id: str | None = None,
     sender_verified_team_id: str | None = None,
+    sender_verified_dids: list[str] | tuple[str, ...] | None = None,
+    stored_route_continuation: bool = False,
     from_agent_id: str | None = None,
     to_agent_id: str | None = None,
     signature: str | None = None,
@@ -219,6 +281,8 @@ async def deliver_message(
             sender_address=sender_address,
             sender_team_id=team_id,
             sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
         )
 
     if created_at is None:

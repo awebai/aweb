@@ -16,16 +16,16 @@ import (
 //
 // Two layers:
 //   1. validateInitInboundMode parse-time tests (no network) cover the
-//      flag-shape contract: only {open, contacts-only} on --global,
+//      flag-shape contract: only {open, team-and-contacts} on --global,
 //      reject on local, reject the withdrawn third value.
 //   2. runAPIKeyBootstrapInit payload tests using the existing
 //      newLocalHTTPServer fixture cover the wire-level translation
-//      (contacts-only -> contacts_only in the POST body, omitted when
+//      (team-and-contacts -> team_and_contacts in the POST body, omitted when
 //      the flag is unset).
 //
-// The user-facing flag value is hyphen-spelled (contacts-only) per
+// The user-facing flag value is hyphen-spelled (team-and-contacts) per
 // Juan's CLI convention; the wire/API value stays underscored
-// (contacts_only).
+// (team_and_contacts).
 
 // resetInboundModeFlags resets package-level CLI state between tests.
 func resetInboundModeFlags() {
@@ -36,16 +36,16 @@ func resetInboundModeFlags() {
 
 func TestValidateInitInboundModeAcceptsContactsOnlyWithGlobal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
-	initInboundMode = "contacts-only"
+	initInboundMode = "team-and-contacts"
 	initPersistent = true
 	if err := validateInitInboundMode(); err != nil {
 		t.Fatalf("expected accept, got %v", err)
 	}
-	if initInboundMode != "contacts-only" {
-		t.Fatalf("normalized value=%q want contacts-only", initInboundMode)
+	if initInboundMode != "team-and-contacts" {
+		t.Fatalf("normalized value=%q want team-and-contacts", initInboundMode)
 	}
-	if got := canonicalInitInboundModeForWire(initInboundMode); got != "contacts_only" {
-		t.Fatalf("wire form=%q want contacts_only", got)
+	if got := canonicalInitInboundModeForWire(initInboundMode); got != "team_and_contacts" {
+		t.Fatalf("wire form=%q want team_and_contacts", got)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestValidateInitInboundModeOmittedYieldsEmptyWireValue(t *testing.T) {
 
 func TestValidateInitInboundModeRejectsContactsOnlyOnLocal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
-	initInboundMode = "contacts-only"
+	initInboundMode = "team-and-contacts"
 	initPersistent = false
 	err := validateInitInboundMode()
 	if err == nil {
@@ -97,7 +97,7 @@ func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesUnderscore(t 
 	if !strings.Contains(err.Error(), "contacts_or_teammates") {
 		t.Fatalf("error should echo the invalid value; got %v", err)
 	}
-	if !strings.Contains(err.Error(), "open") || !strings.Contains(err.Error(), "contacts-only") {
+	if !strings.Contains(err.Error(), "open") || !strings.Contains(err.Error(), "team-and-contacts") {
 		t.Fatalf("error should describe valid values; got %v", err)
 	}
 }
@@ -125,7 +125,7 @@ func TestValidateInitInboundModeRejectsUnknownValue(t *testing.T) {
 // (Juan c2d25276 + Grace 68bcc81c).
 func TestValidateInitInboundModeRejectsBYODGlobal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
-	initInboundMode = "contacts-only"
+	initInboundMode = "team-and-contacts"
 	initPersistent = true
 	initBYOD = true
 	err := validateInitInboundMode()
@@ -206,7 +206,7 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 		}
 	}))
 
-	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, "contacts_only")
+	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, "team_and_contacts")
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
 	}
@@ -214,8 +214,8 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("cli-signup body should carry inbound_mode; got %v", signupBody["inbound_mode"])
 	}
-	if wire != "contacts_only" {
-		t.Fatalf("inbound_mode=%q want contacts_only", wire)
+	if wire != "team_and_contacts" {
+		t.Fatalf("inbound_mode=%q want team_and_contacts", wire)
 	}
 }
 
@@ -386,7 +386,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 		HumanName:   "Alice",
 		AgentType:   "codex",
 		Persistent:  true,
-		InboundMode: "contacts_only", // canonical wire form post-validation
+		InboundMode: "team_and_contacts", // canonical wire form post-validation
 	})
 	if err != nil {
 		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
@@ -395,8 +395,8 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("workspaces/init body should carry inbound_mode; got %v", initBody["inbound_mode"])
 	}
-	if wire != "contacts_only" {
-		t.Fatalf("inbound_mode=%q want contacts_only", wire)
+	if wire != "team_and_contacts" {
+		t.Fatalf("inbound_mode=%q want team_and_contacts", wire)
 	}
 }
 
