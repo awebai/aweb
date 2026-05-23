@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     inbound_mode    TEXT
                     CONSTRAINT agents_inbound_mode_valid
                     CHECK (inbound_mode IS NULL OR inbound_mode IN
-                        ('open', 'contacts_only')),
+                        ('open', 'team_and_contacts')),
     identity_scope  TEXT NOT NULL DEFAULT 'local'
                     CONSTRAINT agents_identity_scope_valid
                     CHECK (identity_scope IN ('global', 'local'))
