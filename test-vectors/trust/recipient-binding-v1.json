@@ -75,7 +75,7 @@
       "expected_status": "failed"
     },
     {
-      "name": "legacy-aalf-shape-did-aw-in-to-did-without-stable-field-matches-self-stable", 
+      "name": "legacy-aalf-shape-did-aw-in-to-did-without-stable-field-matches-self-stable",
       "initial_status": "verified",
       "self_did": "did:key:zSelfCurrent",
       "self_stable_id": "did:aw:self",
