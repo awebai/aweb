@@ -4901,7 +4901,9 @@ async function resolveConfig(workdir) {
   const certificate = await loadConfiguredTeamCertificate(workdir, teamID, certPath);
   const identity = await readYAML(identityPath);
   const did = computeDIDKey(getPublicKey(signingKey));
-  const stableID = (identity?.stable_id || "").trim() || (certificate.member_did_aw || "").trim();
+  const identityStableID = (identity?.stable_id || "").trim();
+  const certificateStableID = (certificate.member_did_aw || "").trim();
+  const stableID = certificateStableID || identityStableID;
   const address = (certificate.member_address || "").trim() || (identity?.address || "").trim();
   const registryURL = (identity?.registry_url || "").trim();
   if ((identity?.did || "").trim() && did !== identity?.did?.trim()) {
@@ -5613,10 +5615,8 @@ var SenderTrustManager = class {
     if (!recipientDID || !selfDID) {
       return status;
     }
-    if (recipientDID.startsWith("did:aw:")) {
-      if (recipientStableID)
-        return status;
-      return selfStableID ? "identity_mismatch" : status;
+    if (!selfStableID && recipientDID.startsWith("did:aw:") && !recipientStableID) {
+      return status;
     }
     return recipientDID === selfDID ? status : "identity_mismatch";
   }

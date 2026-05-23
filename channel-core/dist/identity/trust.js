@@ -55,10 +55,12 @@ export class SenderTrustManager {
         if (!recipientDID || !selfDID) {
             return status;
         }
-        if (recipientDID.startsWith("did:aw:")) {
-            if (recipientStableID)
-                return status;
-            return selfStableID ? "identity_mismatch" : status;
+        // If the recipient binding only carries a did:aw (legacy stored-route global shape)
+        // but we do not have a stable_id for this workspace, we cannot safely enforce
+        // recipient binding. Preserve the verified status rather than producing a false
+        // identity_mismatch against did:key.
+        if (!selfStableID && recipientDID.startsWith("did:aw:") && !recipientStableID) {
+            return status;
         }
         return recipientDID === selfDID ? status : "identity_mismatch";
     }

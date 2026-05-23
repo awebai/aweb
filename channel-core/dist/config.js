@@ -38,7 +38,9 @@ export async function resolveConfig(workdir) {
     const certificate = await loadConfiguredTeamCertificate(workdir, teamID, certPath);
     const identity = await readYAML(identityPath);
     const did = computeDIDKey(ed.getPublicKey(signingKey));
-    const stableID = ((identity?.stable_id || "").trim()) || (certificate.member_did_aw || "").trim();
+    const identityStableID = (identity?.stable_id || "").trim();
+    const certificateStableID = (certificate.member_did_aw || "").trim();
+    const stableID = certificateStableID || identityStableID;
     const address = ((certificate.member_address || "").trim()) || ((identity?.address || "").trim());
     const registryURL = (identity?.registry_url || "").trim();
     if ((identity?.did || "").trim() && did !== identity?.did?.trim()) {

@@ -107,6 +107,32 @@ describe("resolveConfig", () => {
     expect(config.teamCertificateHeader).toBeTruthy();
   });
 
+  test("prefers certificate stable_id over identity.yaml when both are present", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(join(awDir, "team-certs"), { recursive: true });
+    const seed = new Uint8Array(32).fill(23);
+    const certificateStableID = "did:aw:cert";
+    const identityStableID = "did:aw:stale";
+    const { did } = await writeTeamCertificate(join(awDir, "team-certs", "backend__acme.com.pem"), seed, {
+      team_id: "backend:acme.com",
+      alias: "alice",
+      member_did_aw: certificateStableID,
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
+
+    writeWorkspaceBinding(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
+    writeTeamState(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
+    writeFileSync(join(awDir, "identity.yaml"), [
+      `did: ${did}`,
+      `stable_id: ${identityStableID}`,
+      "",
+    ].join("\n"));
+
+    const config = await resolveConfig(dir);
+    expect(config.stableID).toBe(certificateStableID);
+  });
+
   test("ignores stray active_team in workspace.yaml and uses teams.yaml as source of truth", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
