@@ -664,7 +664,7 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 		From:           "example.com/rose",
 		FromDID:        did,
 		To:             "did:aw:monitor",
-		ToDID:          "did:aw:monitor",
+		ToDID:          "",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -747,7 +747,7 @@ func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
-		ToDID:          "did:aw:monitor",
+		ToDID:          "",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -821,7 +821,7 @@ func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T)
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
-		ToDID:          "did:aw:monitor",
+		ToDID:          "",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -895,7 +895,7 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 		FromDID:        did,
 		FromStableID:   stableID,
 		To:             "did:aw:monitor",
-		ToDID:          "did:aw:monitor",
+		ToDID:          "",
 		ToStableID:     "did:aw:monitor",
 		Type:           "chat",
 		Body:           "ping",
@@ -6273,7 +6273,7 @@ func TestChatCreateSessionGlobalDIDMissingCurrentKeyFailsClosed(t *testing.T) {
 	}
 }
 
-func TestSignEnvelopeStoredRouteMailGlobalTargetSignsStableAsToDIDWithoutResolver(t *testing.T) {
+func TestSignEnvelopeStoredRouteMailGlobalTargetOmitsToDIDWithoutResolver(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6301,19 +6301,22 @@ func TestSignEnvelopeStoredRouteMailGlobalTargetSignsStableAsToDIDWithoutResolve
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fields.ToStableID != recipientStableID || fields.ToDID != recipientStableID {
+	if fields.ToStableID != recipientStableID || fields.ToDID != "" {
 		t.Fatalf("fields target to_did=%q to_stable_id=%q", fields.ToDID, fields.ToStableID)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(fields.SignedPayload), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["to_stable_id"] != recipientStableID || payload["to_did"] != recipientStableID {
+	if payload["to_stable_id"] != recipientStableID {
 		t.Fatalf("signed payload target = %+v", payload)
+	}
+	if payload["to_did"] != "" {
+		t.Fatalf("stored-route signed payload should leave unresolved to_did empty, got %+v", payload)
 	}
 }
 
-func TestSignEnvelopeStoredRouteChatGlobalTargetSignsStableAsToDIDWithoutResolver(t *testing.T) {
+func TestSignEnvelopeStoredRouteChatGlobalTargetOmitsToDIDWithoutResolver(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6340,14 +6343,17 @@ func TestSignEnvelopeStoredRouteChatGlobalTargetSignsStableAsToDIDWithoutResolve
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fields.ToStableID != recipientStableID || fields.ToDID != recipientStableID {
+	if fields.ToStableID != recipientStableID || fields.ToDID != "" {
 		t.Fatalf("fields target to_did=%q to_stable_id=%q", fields.ToDID, fields.ToStableID)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(fields.SignedPayload), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["to_stable_id"] != recipientStableID || payload["to_did"] != recipientStableID {
+	if payload["to_stable_id"] != recipientStableID {
 		t.Fatalf("signed payload target = %+v", payload)
+	}
+	if payload["to_did"] != "" {
+		t.Fatalf("stored-route signed payload should leave unresolved to_did empty, got %+v", payload)
 	}
 }

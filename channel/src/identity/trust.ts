@@ -121,7 +121,6 @@ export class SenderTrustManager {
     if (status !== "verified") {
       return status;
     }
-
     const selfStableID = this.selfStableID.trim();
     const recipientStableID = (toStableID || "").trim();
     if (selfStableID && recipientStableID) {
@@ -129,21 +128,15 @@ export class SenderTrustManager {
         ? status
         : "identity_mismatch";
     }
-
     const selfDID = this.selfDid.trim();
     const recipientDID = (toDID || "").trim();
     if (!recipientDID || !selfDID) {
       return status;
     }
-
-    // If the recipient binding only carries a did:aw (legacy stored-route global shape)
-    // but we do not have a stable_id for this workspace, we cannot safely enforce
-    // recipient binding. Preserve the verified status rather than producing a false
-    // identity_mismatch against did:key.
-    if (!selfStableID && recipientDID.startsWith("did:aw:") && !recipientStableID) {
-      return status;
+    if (recipientDID.startsWith("did:aw:")) {
+      if (recipientStableID) return status;
+      return selfStableID ? "identity_mismatch" : status;
     }
-
     return recipientDID === selfDID ? status : "identity_mismatch";
   }
 

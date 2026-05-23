@@ -57,6 +57,15 @@
       "expected_status": "verified"
     },
     {
+      "name": "stored-route-stable-target-without-self-stable-is-inconclusive",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "",
+      "to_did": "did:aw:self",
+      "to_stable_id": "did:aw:self",
+      "expected_status": "verified"
+    },
+    {
       "name": "recipient-binding-does-not-upgrade-failed-crypto",
       "initial_status": "failed",
       "self_did": "did:key:zSelfCurrent",

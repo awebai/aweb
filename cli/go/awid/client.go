@@ -134,9 +134,6 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 			}
 		}
 	}
-	if storedRouteGlobalTarget && env.ToDID == "" && bindingTarget == strings.TrimSpace(env.ToStableID) {
-		env.ToDID = strings.TrimSpace(env.ToStableID)
-	}
 	if bindingRequired && env.ToDID == "" && bindingTarget != "" {
 		return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
 	}
@@ -734,6 +731,15 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 		return IdentityMismatch
 	}
 	if toDID == "" || c.did == "" {
+		return status
+	}
+	if strings.HasPrefix(strings.TrimSpace(toDID), "did:aw:") {
+		if strings.TrimSpace(toStableID) != "" {
+			return status
+		}
+		if strings.TrimSpace(c.stableID) != "" {
+			return IdentityMismatch
+		}
 		return status
 	}
 	if toDID != c.did {

@@ -436,7 +436,7 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
-	if got.ToAlias != "" || got.ToDID != "did:aw:bob" {
+	if got.ToAlias != "" || got.ToDID != "" {
 		t.Fatalf("continuation used unexpected recipient fields: %+v", got)
 	}
 	if got.ToAddress != "" {
@@ -455,8 +455,11 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "did:aw:bob" || signed["to_did"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
+	if signed["to"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
 		t.Fatalf("signed continuation did not bind rediscovered participant identity: %+v", signed)
+	}
+	if got, _ := signed["to_did"].(string); got != "" {
+		t.Fatalf("signed continuation should leave unresolved to_did empty for stored did:aw route: %+v", signed)
 	}
 }
 
