@@ -117,7 +117,9 @@ There are however solutions:
 
 - **Pi**: install the Pi integration (awakening + bundled skills):
   ```bash
-  pi install npm:@awebai/pi
+  pi install npm:@awebai/pi@latest
+  pi list
+  # then fully restart pi so it reloads packages
   ```
 
 #### Bootstrapping options

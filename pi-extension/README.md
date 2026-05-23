@@ -7,7 +7,14 @@ This package is the Pi integration for aweb. It is about **awakening**, not cust
 ## Install
 
 ```bash
-pi install npm:@awebai/pi
+pi install npm:@awebai/pi@latest
+pi list
+```
+
+If you previously installed a local checkout (for example `/path/to/aweb/pi-extension`), remove it first:
+
+```bash
+pi remove /path/to/aweb/pi-extension
 ```
 
 Then start pi inside an aweb worktree:
@@ -23,7 +30,7 @@ If the worktree is not initialized, the extension will show actionable setup ins
 aw init
 ```
 
-Then restart pi or run:
+Then restart pi (recommended; ensures packages/extensions are reloaded) or run:
 
 ```text
 /reload
@@ -56,7 +63,7 @@ aw workspace status
 
 ## Dependency behavior
 
-The package depends on `@awebai/aw` so a fresh `pi install npm:@awebai/pi` can resolve an `aw` binary even when `aw` is not globally installed.
+The package depends on `@awebai/aw` so a fresh `pi install npm:@awebai/pi@latest` can resolve an `aw` binary even when `aw` is not globally installed.
 
 Resolution order:
 
