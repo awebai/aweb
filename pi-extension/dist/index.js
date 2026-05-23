@@ -5613,6 +5613,9 @@ var SenderTrustManager = class {
     if (!recipientDID || !selfDID) {
       return status;
     }
+    if (selfStableID && recipientDID.startsWith("did:aw:") && !recipientStableID) {
+      return recipientDID.toLowerCase() === selfStableID.toLowerCase() ? status : "identity_mismatch";
+    }
     return recipientDID === selfDID ? status : "identity_mismatch";
   }
   async checkStableIdentityRegistry(status, trustAddress, fromDID, fromStableID) {

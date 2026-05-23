@@ -55,6 +55,13 @@ export class SenderTrustManager {
         if (!recipientDID || !selfDID) {
             return status;
         }
+        // Stored-route global continuations may carry the stable did:aw in to_did.
+        // Treat did:aw in to_did as to_stable_id for recipient binding.
+        if (selfStableID && recipientDID.startsWith("did:aw:") && !recipientStableID) {
+            return recipientDID.toLowerCase() === selfStableID.toLowerCase()
+                ? status
+                : "identity_mismatch";
+        }
         return recipientDID === selfDID ? status : "identity_mismatch";
     }
     async checkStableIdentityRegistry(status, trustAddress, fromDID, fromStableID) {
