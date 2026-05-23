@@ -9,9 +9,9 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `claim-human`, `init`, `reset`, `workspace` |
+| Workspace Setup | `claim-human`, `init`, `reset`, `team`, `workspace` |
 | Identity | `id`, `mcp-config`, `whoami` |
-| Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
+| Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `upgrade`, `version` |
 
@@ -59,6 +59,7 @@ Flags:
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
+- `--inbound-mode string Inbound delivery mode for a global identity (open|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--name string Global identity name (required with --global unless .aw/identity.yaml already exists)`
 - `--print-exports Print shell export lines after JSON output`
@@ -78,6 +79,57 @@ Removes the local .aw/context and .aw/workspace.yaml files in the current direct
 
 Flags:
 - `-h, --help help for reset`
+
+## `team`
+
+### `team`
+
+Bootstrap agent teams from templates
+
+Subcommands:
+- `bootstrap` Bootstrap an agent team from a template repository
+
+Flags:
+- `-h, --help help for team`
+- `--team string Override the selected team_id for this command`
+
+## `team bootstrap`
+
+### `team bootstrap`
+
+Bootstrap an agent team from a template repository.
+
+The template repository is convention-first:
+
+  docs/                  shared team/project instructions
+  roles/                 role playbooks installed with aw roles set
+  agents/<responsibility>/AGENTS.md
+  team.yaml              maps agent responsibility dirs to aw role names
+
+team.yaml supplies the parts that cannot be inferred safely: role bundle
+metadata, each agent responsibility's role_name, and default identity names.
+Agent directory names are responsibilities (for example implementation or
+review), not fixed human/agent names; bootstrap prompts for the actual name
+unless --yes is used.
+
+Flags:
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the bootstrap plan without changing files or team roles`
+- `--fork Fork the template repository with gh and clone the fork into the destination directory`
+- `-h, --help help for bootstrap`
+- `--home-root string Directory where agent workspaces are created (default: <template-dir>/agents)`
+- `--namespace string BYOD team namespace domain to create/use (required for one-step BYOD team bootstrap)`
+- `--refresh-template Re-clone the template into the destination directory before using it`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOD team name/slug to create/use (required for one-step BYOD team bootstrap)`
+- `--team-display-name string Optional team display name when creating a new BYOD team`
+- `--template-cache-dir string Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)`
+- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--work-directory string Directory symlinked into each agent workspace as ./work (required)`
+- `--work-repo-url string Optional git URL or local repo path to ensure a git repo exists under --work-directory`
+- `--yes Accept default agent names without prompting`
 
 ## `workspace`
 
@@ -782,6 +834,16 @@ Send an explicit presence heartbeat
 
 Flags:
 - `-h, --help help for heartbeat`
+- `--team string Override the selected team_id for this command`
+
+## `inbound-mode`
+
+### `inbound-mode`
+
+Show or set the current agent's inbound delivery mode
+
+Flags:
+- `-h, --help help for inbound-mode`
 - `--team string Override the selected team_id for this command`
 
 ## `log`

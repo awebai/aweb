@@ -567,8 +567,8 @@ func validateInitInboundMode() error {
 		// global identity"). The user can set the mode after the
 		// BYOD identity is up via the dashboard's inbound-mode
 		// surface or the hosted REST API
-		// (PATCH /api/v1/agents/{agent_id}/inbound-mode).
-		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or via PATCH /api/v1/agents/<agent_id>/inbound-mode")
+		// (`aw inbound-mode <mode>`).
+		return fmt.Errorf("--inbound-mode is not supported on --byod global creation today (no server-side creation endpoint to carry the value); run `aw init --byod --global` first, then set the inbound mode from the dashboard or with `aw inbound-mode <open|contacts-only>`")
 	}
 	switch value {
 	case "open":

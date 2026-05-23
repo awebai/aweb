@@ -97,6 +97,15 @@ func formatIntrospect(v any) string {
 	if out.AccessMode != "" {
 		sb.WriteString(fmt.Sprintf("Access:    %s\n", out.AccessMode))
 	}
+	if out.InboundMode != "" {
+		label := strings.TrimSpace(out.InboundModeLabel)
+		if label == "" {
+			label = inboundModeLabel(out.InboundMode)
+		}
+		sb.WriteString(fmt.Sprintf("Inbound:   %s (%s)\n", label, out.InboundMode))
+	} else if out.InboundModeError != "" {
+		sb.WriteString(fmt.Sprintf("Inbound:   unknown (%s)\n", out.InboundModeError))
+	}
 	if out.DID != "" {
 		sb.WriteString(fmt.Sprintf("DID:       %s\n", out.DID))
 	}

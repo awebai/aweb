@@ -40,6 +40,7 @@ class AgentView(BaseModel):
     last_seen: Optional[str] = None
     online: bool = False
     identity_scope: str = "local"
+    inbound_mode: Optional[str] = None
 
 
 class ListAgentsResponse(BaseModel):
@@ -51,6 +52,29 @@ class HeartbeatResponse(BaseModel):
     agent_id: str
     alias: str
     last_seen_at: str
+
+
+class AgentInboundModeResponse(BaseModel):
+    agent_id: str
+    team_id: str
+    alias: str
+    identity_scope: str
+    inbound_mode: str
+    configurable: bool
+
+
+class UpdateAgentInboundModeRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    inbound_mode: str = Field(..., min_length=1, max_length=32)
+
+    @field_validator("inbound_mode")
+    @classmethod
+    def validate_inbound_mode(cls, value: str) -> str:
+        value = (value or "").strip().lower()
+        if value not in {"open", "contacts_only"}:
+            raise ValueError("inbound_mode must be one of open, contacts_only")
+        return value
 
 
 class SuggestAliasPrefixResponse(BaseModel):
@@ -154,7 +178,7 @@ async def list_agents(
     rows = await aweb_db.fetch_all(
         """
         SELECT agent_id, alias, did_key, did_aw, address,
-               human_name, agent_type, role, identity_scope, status
+               human_name, agent_type, role, identity_scope, inbound_mode, status
         FROM {{tables.agents}}
         WHERE team_id = $1 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -221,6 +245,7 @@ async def list_agents(
                 last_seen=last_seen,
                 online=online,
                 identity_scope=str(r.get("identity_scope") or "local"),
+                inbound_mode=r.get("inbound_mode") or None,
             )
         )
 
@@ -265,6 +290,78 @@ async def heartbeat(
         alias=identity.alias,
         last_seen_at=last_seen,
     )
+
+
+async def _load_current_agent_inbound_mode(
+    db,
+    identity: TeamIdentity,
+) -> AgentInboundModeResponse:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, team_id, alias, identity_scope, inbound_mode
+        FROM {{tables.agents}}
+        WHERE team_id = $1
+          AND agent_id = $2::UUID
+          AND deleted_at IS NULL
+        """,
+        identity.team_id,
+        identity.agent_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    identity_scope = str(row.get("identity_scope") or "local")
+    inbound_mode = str(row.get("inbound_mode") or "").strip().lower()
+    if inbound_mode not in {"open", "contacts_only"}:
+        raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
+    return AgentInboundModeResponse(
+        agent_id=str(row["agent_id"]),
+        team_id=str(row["team_id"]),
+        alias=str(row["alias"]),
+        identity_scope=identity_scope,
+        inbound_mode=inbound_mode,
+        configurable=identity_scope == "global",
+    )
+
+
+@router.get("/me/inbound-mode", response_model=AgentInboundModeResponse)
+async def get_my_inbound_mode(
+    request: Request,
+    db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> AgentInboundModeResponse:
+    """Return the calling agent's inbound delivery mode."""
+    return await _load_current_agent_inbound_mode(db, identity)
+
+
+@router.patch("/me/inbound-mode", response_model=AgentInboundModeResponse)
+async def update_my_inbound_mode(
+    request: Request,
+    payload: UpdateAgentInboundModeRequest,
+    db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> AgentInboundModeResponse:
+    """Update the calling global agent's inbound delivery mode."""
+    state = await _load_current_agent_inbound_mode(db, identity)
+    if state.identity_scope != "global":
+        raise HTTPException(status_code=409, detail="inbound_mode is only configurable for global identities")
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        UPDATE {{tables.agents}}
+        SET inbound_mode = $3
+        WHERE team_id = $1
+          AND agent_id = $2::UUID
+          AND deleted_at IS NULL
+        RETURNING agent_id, team_id, alias, identity_scope, inbound_mode
+        """,
+        identity.team_id,
+        identity.agent_id,
+        payload.inbound_mode,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return await _load_current_agent_inbound_mode(db, identity)
 
 
 @router.patch("/me", response_model=PatchWorkspaceResponse)

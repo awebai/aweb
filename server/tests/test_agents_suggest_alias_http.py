@@ -313,3 +313,144 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
         workspace_id,
     )
     assert row["role"] == "reviewer"
+
+
+@pytest.mark.asyncio
+async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="global",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'contacts_only')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com")
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/agents/me/inbound-mode", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "agent_id": str(agent_id),
+        "team_id": "backend:acme.com",
+        "alias": "alice",
+        "identity_scope": "global",
+        "inbound_mode": "contacts_only",
+        "configurable": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_patch_my_inbound_mode_updates_global_agent_policy(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="global",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    body_bytes = json.dumps({"inbound_mode": "contacts_only"}, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(
+            "/v1/agents/me/inbound-mode",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["inbound_mode"] == "contacts_only"
+    stored = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id = $1",
+        agent_id,
+    )
+    assert stored == "contacts_only"
+
+
+@pytest.mark.asyncio
+async def test_patch_my_inbound_mode_rejects_local_agent(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="local",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'local', 'active', 'open')
+        """,
+        uuid4(),
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    body_bytes = json.dumps({"inbound_mode": "contacts_only"}, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(
+            "/v1/agents/me/inbound-mode",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 409, resp.text
+    assert "global" in resp.text

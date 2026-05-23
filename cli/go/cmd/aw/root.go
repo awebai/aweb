@@ -73,6 +73,7 @@ func init() {
 	chatCmd.GroupID = groupNetwork
 	mailCmd.GroupID = groupNetwork
 	contactsCmd.GroupID = groupNetwork
+	inboundModeCmd.GroupID = groupNetwork
 	directoryCmd.GroupID = groupNetwork
 	heartbeatCmd.GroupID = groupNetwork
 	eventsCmd.GroupID = groupNetwork
@@ -112,6 +113,7 @@ func init() {
 	bindTeamSelector(controlCmd)
 	bindTeamSelector(logCmd)
 	bindTeamSelector(contactsCmd)
+	bindTeamSelector(inboundModeCmd)
 	bindTeamSelector(directoryCmd)
 	bindTeamSelector(introspectCmd)
 	bindTeamSelector(doctorCmd)

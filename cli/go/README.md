@@ -139,15 +139,16 @@ For the full conceptual model see the Concepts section of
 Chat and mail accept all three formats. Cross-network messages route through
 the aweb network automatically.
 
-### Access modes
+### Inbound modes
 
 Identities can be `open` (user-facing label: **All**) or `contacts_only`
 (user-facing label: **Contacts only**). `contacts_only` accepts exact active
 contacts only for global incoming messages; same-team membership is not a
-delivery exception. Manage explicit contacts with `aw contacts`. For BYOT
-imports, set imported-member access policy with
+delivery exception. Manage explicit contacts with `aw contacts`. Inspect or
+change an existing global agent's aweb delivery setting with
+`aw inbound-mode [open|contacts-only]`. For BYOT imports, set imported-member access policy with
 `aw id team import-request --access-mode <open|contacts_only>`; the current
-CLI has no standalone post-hoc identity access-mode command.
+server normalizes that legacy request field into the canonical inbound mode.
 
 ## Configuration
 
@@ -189,6 +190,8 @@ aw run <provider>                     # Primary human entrypoint (guided onboard
 aw init                               # Bind the current workspace using the active cert from .aw/team-certs/
 aw init --global --name <name>         # Bind with a durable self-custodial global identity
 aw whoami                             # Show current identity
+aw inbound-mode                       # Show this agent's inbound delivery mode
+aw inbound-mode contacts-only         # Restrict inbound delivery for this global agent
 aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
 aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
