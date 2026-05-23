@@ -40,6 +40,10 @@ agents:
     role_name: reviewer
     default_name: reviewer
     default_alias: review
+worktrees:
+  - name: impl
+    role_name: developer
+    alias: dev
 `)
 	mustWrite("docs/team.md", "# Team\n")
 	mustWrite("roles/developer.md", "# Developer\n")
@@ -99,11 +103,11 @@ func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 		HomeDir:        filepath.Join(templateDir, "agents", "implementation"),
 		Instructions:   filepath.Join(templateDir, "agents", "implementation", "AGENTS.md"),
 	}
-	workRepo := filepath.Join(templateDir, "workrepo")
-	if err := os.MkdirAll(workRepo, 0o755); err != nil {
+	workDir := filepath.Join(templateDir, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeTeamBootstrapAgent(templateDir, plan, workRepo); err != nil {
+	if err := materializeTeamBootstrapAgent(templateDir, plan, workDir); err != nil {
 		t.Fatalf("materializeTeamBootstrapAgent: %v", err)
 	}
 	for _, rel := range []string{"AGENTS.md", "CLAUDE.md", "work"} {
@@ -114,5 +118,36 @@ func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 	commands := plannedInitCommands([]teamBootstrapAgentPlan{{HomeDir: plan.HomeDir, Name: "builder", RoleName: "developer", Alias: "dev"}})
 	if len(commands) != 1 || !strings.Contains(commands[0], "aw init --name builder --role-name developer") {
 		t.Fatalf("unexpected init command: %#v", commands)
+	}
+}
+
+func TestTeamBootstrapWorktreesRequireKnownRoleName(t *testing.T) {
+	templateDir := writeTeamBootstrapFixture(t)
+	path := filepath.Join(templateDir, "team.yaml")
+	if err := os.WriteFile(path, []byte(`name: dev-review-two-agent
+instructions:
+  file: docs/team.md
+roles:
+  developer:
+    title: Developer
+    file: roles/developer.md
+agents:
+  implementation:
+    role_name: developer
+    default_name: builder
+    default_alias: dev
+worktrees:
+  - name: impl
+    role_name: missing
+    alias: dev
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := loadTeamBootstrapSpec(templateDir)
+	if err != nil {
+		t.Fatalf("loadTeamBootstrapSpec: %v", err)
+	}
+	if err := validateTeamBootstrapSpec(templateDir, spec); err == nil {
+		t.Fatal("expected validateTeamBootstrapSpec to fail")
 	}
 }
