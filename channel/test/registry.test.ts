@@ -115,6 +115,28 @@ describe("registry verification", () => {
     expect(result.nextHead?.entryHash).toBe(rotate!.entry_hash);
   });
 
+  test("verifies register_did log-head vectors", () => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did");
+    expect(register).toBeDefined();
+
+    const resolution: DidKeyResolution = {
+      did_aw: identityLogVectors.mapping.did_aw,
+      current_did_key: identityLogVectors.mapping.initial_did_key,
+      log_head: {
+        ...register!.entry_payload,
+        entry_hash: register!.entry_hash,
+        signature: register!.signature_b64,
+      },
+    };
+
+    expect(canonicalDidLogPayload(identityLogVectors.mapping.did_aw, resolution.log_head!))
+      .toBe(register!.canonical_entry_payload);
+
+    const result = verifyDidKeyResolution(resolution, undefined, Date.now());
+    expect(result.outcome).toBe("OK_VERIFIED");
+    expect(result.nextHead?.entryHash).toBe(register!.entry_hash);
+  });
+
   test("degrades when log_head is missing", () => {
     const result = verifyDidKeyResolution({
       did_aw: identityLogVectors.mapping.did_aw,

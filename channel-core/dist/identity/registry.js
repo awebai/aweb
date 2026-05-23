@@ -274,14 +274,14 @@ export function verifyDidKeyResolution(resolution, cached, nowMs) {
         return { outcome: "HARD_ERROR", error: "log_head seq must be >= 1" };
     }
     if (head.seq === 1) {
-        if (head.operation !== "create") {
-            return { outcome: "HARD_ERROR", error: "seq=1 requires create operation" };
+        if (head.operation !== "create" && head.operation !== "register_did") {
+            return { outcome: "HARD_ERROR", error: "seq=1 requires create/register_did operation" };
         }
         if (head.prev_entry_hash != null) {
             return { outcome: "HARD_ERROR", error: "seq=1 requires null prev_entry_hash" };
         }
         if (head.previous_did_key != null) {
-            return { outcome: "HARD_ERROR", error: "create requires null previous_did_key" };
+            return { outcome: "HARD_ERROR", error: "seq=1 requires null previous_did_key" };
         }
     }
     else {
