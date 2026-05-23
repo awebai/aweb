@@ -715,13 +715,9 @@ func bootstrapTeamBootstrapWorktreeAgents(cmd *cobra.Command, templateDir, workD
 		return err
 	}
 
-	currentRepo := worktreePath
 	for _, wt := range planned[1:] {
 		branchName = wt.Alias
-		worktreePath, err = deriveWorkspaceAddWorktreePath(currentRepo, branchName)
-		if err != nil {
-			return err
-		}
+		worktreePath = filepath.Join(worktreesRoot, repoName+"-"+branchName)
 		if _, err := os.Stat(worktreePath); err == nil {
 			return usageError("worktree path %s already exists", worktreePath)
 		}
