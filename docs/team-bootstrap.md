@@ -35,8 +35,15 @@ a two-agent developer + reviewer team you can run as-is.
 From an empty parent directory:
 
 ```
-aw team bootstrap https://github.com/awebai/aweb-team-dev-review
+aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+  --work-directory ./myproject
 ```
+
+`--work-directory` (or `--work-repo-url`) is required: it's what
+gets symlinked into each responsibility workspace as `work/`. For
+non-code teams it can be any directory; for code teams whose
+template declares [worktree agents](#worktree-agents-optional), it
+must be a git repo.
 
 What you get back:
 
@@ -163,10 +170,172 @@ context the AI session reads. Bootstrap links it into the generated
 workspace as both `AGENTS.md` and `CLAUDE.md`, so it picks up
 regardless of which agent reads which filename.
 
+Templates may also declare an optional `worktrees:` block to opt
+into a second layer of repo-isolated agents. See [Worktree
+agents](#worktree-agents-optional).
+
+## Worktree agents (optional)
+
+The responsibility workspaces under `agents/` work well for
+non-code teams and for code teams where one agent at a time edits
+the repo. For code repos where several agents will edit code in
+parallel, the responsibility-workspace model means everyone shares
+a single checkout — file collisions, branch conflicts, and stepped-on
+work-in-progress get likely fast.
+
+Templates can opt in to a second layer that solves this: a
+local-only team of **worktree agents**, one per entry in the
+template's `worktrees:` block. Each worktree agent lives in its own
+`git worktree` of the work repo, with its own `.aw/` identity and
+team certificate. Agents can branch independently and stay out of
+each other's working directories.
+
+The two layers coexist. Responsibility workspaces stay long-lived
+under `agents/`; worktree agents live under `worktrees/` and are
+specific to one work repo.
+
+### When to use it
+
+Turn worktree agents on when:
+
+- The work directory is a git repo.
+- Multiple agents will edit code in parallel.
+- You want each agent's edits isolated until merge.
+
+Leave it off when:
+
+- The work isn't code (docs, planning, support).
+- A single agent at a time edits the repo.
+
+### The `worktrees:` block
+
+Add a `worktrees:` list to `team.yaml`. Each entry has a required
+`name` and `role_name`, plus an optional `alias`:
+
+    worktrees:
+      - name: lead-builder
+        role_name: developer
+        alias: lead
+      - name: refactorer
+        role_name: developer
+        alias: refactor
+
+- `name` — a logical label. Used for selection/labeling, **not** as
+  the on-disk directory name.
+- `role_name` — must match a key in the top-level `roles:` block.
+  Passed through to `aw workspace add-worktree` as the role.
+- `alias` (optional) — the worktree agent's per-team alias. Becomes
+  part of the on-disk directory name.
+
+The block is optional. Omitting it means bootstrap behaves exactly
+like a non-worktree template — only responsibility workspaces are
+provisioned.
+
+### CLI
+
+When the template includes a `worktrees:` block, bootstrap requires
+a work repo. Provide exactly one of:
+
+- `--work-directory <path>` — point at an existing directory. If
+  the template declares worktrees, the directory must be a git repo.
+- `--work-repo-url <url-or-local-path>` — clone the URL (or copy
+  the local path) into a deterministic location managed by
+  bootstrap, and verify the result is a git repo.
+
+Example with an existing repo:
+
+    aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+      --work-directory ./myproject
+
+Example cloning a fresh checkout:
+
+    aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+      --work-repo-url https://github.com/me/myproject
+
+(For non-worktree templates one of `--work-directory` or
+`--work-repo-url` is still required — it's what gets symlinked into
+each responsibility workspace as `work/` — but it does **not** need
+to be a git repo.)
+
+### What gets created
+
+After bootstrap, the template checkout looks like this:
+
+    aweb-team-dev-review/
+    ├─ team.yaml
+    ├─ docs/team.md
+    ├─ roles/...
+    ├─ agents/                          # responsibility workspaces
+    │  ├─ implementation/
+    │  │  ├─ .aw/
+    │  │  ├─ AGENTS.md
+    │  │  └─ work/                      # symlink → work directory
+    │  └─ review/
+    │     └─ ...
+    └─ worktrees/                       # only when worktrees: present
+       ├─ myproject-lead/                # git worktree of the work repo
+       │  ├─ .aw/                        # local identity + team cert
+       │  └─ (work repo contents at HEAD)
+       └─ myproject-refactor/
+          └─ ...
+
+The on-disk directory name for each worktree agent follows the
+pattern `<repo>-<alias>` (matching what `aw workspace add-worktree`
+uses). The `worktrees/` directory is generated output; templates
+should `.gitignore` it.
+
+### Identity scope
+
+Worktree agents are **always** local-scope: each one has its own
+`.aw/signing.key`, its own DID, and its own team certificate. They
+share team membership with the responsibility workspaces and with
+each other, but they are independent cryptographic identities. Mail
+or chat between two worktree agents is cross-agent traffic, not an
+intra-process aside.
+
+Responsibility workspaces under `agents/` keep whatever identity
+scope the team-creation path produces (hosted, BYOD, or manual).
+
+### Branch model
+
+The first worktree checks out the work repo's default branch
+(usually `main`). Each subsequent worktree, whether created at
+bootstrap time or later, inherits the branching behavior of `aw
+workspace add-worktree` — typically a fresh per-agent branch.
+Worktrees isolate the **working directory** even when two of them
+start on the same branch.
+
+### Adding worktree agents later
+
+The `worktrees:` block captures the agents provisioned at bootstrap.
+To add a worktree agent later without editing the template, run from
+inside an existing worktree (one of the `worktrees/<repo>-<alias>/`
+directories, or the main work repo):
+
+    aw workspace add-worktree <role_name> [--alias <alias>]
+
+This creates a new `git worktree`, materializes a fresh local
+identity in it, and joins the team.
+
+### Re-runs
+
+`aw team bootstrap` is not meant to silently overwrite existing
+worktree agent state. If a `worktrees/<repo>-<alias>/` directory
+already exists for an agent it would provision, bootstrap fails
+loudly. To regenerate, pass the explicit refresh flag (added when
+the CLI ships worktree support — name to be confirmed in the
+released `--help`).
+
 ## Team-creation modes
 
 `aw team bootstrap` provisions the workspaces in all three modes;
 the difference is **how the team itself comes into existence**.
+
+Every mode requires a work root: exactly one of
+[`--work-directory`](#useful-flags) or
+[`--work-repo-url`](#useful-flags). The directory only has to be a
+git repo if the template declares a [`worktrees:`](#worktree-agents-optional)
+block.
 
 ### Hosted (the default for new users)
 
@@ -177,7 +346,9 @@ hosted service provisions a team in `<username>.aweb.ai`, and every
 subsequent workspace joins that team automatically.
 
 ```
-aw team bootstrap https://github.com/awebai/aweb-team-dev-review --username juan
+aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+  --work-directory ./myproject \
+  --username juan
 ```
 
 ### BYOD (bring your own domain)
@@ -189,6 +360,7 @@ that namespace; if you don't already have one, create it first with
 
 ```
 aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+  --work-directory ./myproject \
   --namespace mycompany.com \
   --team dev-review \
   --team-display-name "Dev Review"
@@ -209,8 +381,11 @@ cd agents/implementation && aw init --name builder --role-name developer
 cd agents/review         && aw init --name reviewer --role-name reviewer
 ```
 
-Use this when you want to join an existing team rather than create
-a new one, or when you want to wire up each workspace yourself.
+You still need `--work-directory` (or `--work-repo-url`) in manual
+mode — the `work/` symlinks in the responsibility workspaces get
+created up front. Use this mode when you want to join an existing
+team rather than create a new one, or when you want to wire up each
+workspace yourself.
 
 ## Useful flags
 
@@ -221,7 +396,9 @@ a new one, or when you want to wire up each workspace yourself.
 | `--fork` | Fork the template via `gh` and clone the fork (rather than cloning the upstream). |
 | `--refresh-template` | Re-clone the template over the existing local copy. |
 | `--home-root <dir>` | Place agent workspaces under `<dir>` instead of `<template>/agents/`. |
-| `--work-repo <dir>` | Symlink an existing repo into each agent home as `work/`. Useful when the agents should operate on a separate codebase. |
+| `--work-directory <path>` | The work root. Symlinked as `work/` inside each responsibility workspace. Required; mutually exclusive with `--work-repo-url`. When the template declares a [`worktrees:`](#worktree-agents-optional) block, the directory must be a git repo. |
+| `--work-repo-url <url-or-path>` | Clone the URL (or copy the local path) into a deterministic location managed by bootstrap and treat the result as the work root. Required when `--work-directory` is not set; mutually exclusive with `--work-directory`. |
+| `--work-repo <dir>` | **Deprecated** — alias for `--work-directory`. Errors if both are set. Removed in a future release. |
 | `--skip-roles` | Do not install the role playbooks. |
 | `--skip-instructions` | Do not install the shared team-instructions document. |
 | `--username <name>` | Use hosted onboarding with this username. |
@@ -281,6 +458,12 @@ directory to validate it without writing files. From there, add
 roles, add agents, write a `docs/team.md` with your team
 conventions, and check it into git so anyone can bootstrap the same
 team from the URL.
+
+If the template targets code repos and the team should work in
+isolated checkouts, add an optional [`worktrees:`](#worktree-agents-optional)
+block to `team.yaml` listing the worktree agents to provision at
+bootstrap time. Templates with a `worktrees:` block should also add
+`worktrees/` to `.gitignore`.
 
 ## Further reading
 
