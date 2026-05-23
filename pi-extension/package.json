@@ -21,8 +21,8 @@
     "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership skills/",
     "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
     "test:package": "node scripts/check-package-dist.mjs",
-    "prepack": "npm run build",
-    "prepublishOnly": "npm run build",
+    "prepack": "npm run build && npm run test:package",
+    "prepublishOnly": "npm run prepack",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
