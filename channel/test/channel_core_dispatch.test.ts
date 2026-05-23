@@ -10,7 +10,7 @@ import {
   PinStore,
   type AgentEvent,
   type ChannelAwakening,
-  type SenderTrustManager,
+  SenderTrustManager,
 } from "../../channel-core/src/index.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
 
@@ -367,5 +367,85 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { up_to_message_id: "chat-stable-envelope" });
+  });
+
+  test("chat live dispatch accepts legacy stored-route recipient did:aw when it is this receiver", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "aweb.ai/ama",
+      from_did: vectors.did,
+      to: self.stableID,
+      to_did: self.stableID,
+      type: "chat",
+      subject: "",
+      body: "legacy stored-route recipient",
+      timestamp: "2025-01-01T00:00:00Z",
+      from_stable_id: vectors.stableID,
+      message_id: "chat-legacy-stable-to-did",
+      conversation_id: "sess-legacy-stable",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: env.conversation_id,
+          from_agent: "ama",
+          from_address: env.from,
+          to_address: env.to,
+          body: env.body,
+          timestamp: env.timestamp,
+          sender_leaving: false,
+          from_did: vectors.did,
+          from_stable_id: vectors.stableID,
+          to_did: self.stableID,
+          signature,
+          signing_key_id: vectors.did,
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
+        resolveIdentity: async () => ({
+          did: vectors.did,
+          stableID: vectors.stableID,
+          address: env.from,
+          custody: "self",
+          identityScope: "global",
+        }),
+      } as never,
+      "default:aweb.ai",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: env.conversation_id,
+        conversation_id: env.conversation_id,
+        message_id: env.message_id,
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "legacy stored-route recipient",
+      meta: expect.objectContaining({
+        trust_status: "verified",
+        verified: "true",
+      }),
+    }));
   });
 });

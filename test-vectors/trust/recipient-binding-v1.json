@@ -75,13 +75,22 @@
       "expected_status": "failed"
     },
     {
-      "name": "legacy-aalf-shape-did-aw-in-to-did-without-stable-field-matches-self-stable",
+      "name": "legacy-stored-route-did-aw-in-to-did-matches-self-stable",
       "initial_status": "verified",
       "self_did": "did:key:zSelfCurrent",
       "self_stable_id": "did:aw:self",
       "to_did": "did:aw:self",
       "to_stable_id": "",
       "expected_status": "verified"
+    },
+    {
+      "name": "legacy-stored-route-did-aw-in-to-did-mismatches-other-stable",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:aw:other",
+      "to_stable_id": "",
+      "expected_status": "identity_mismatch"
     }
   ]
 }

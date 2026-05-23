@@ -737,7 +737,11 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 		if strings.TrimSpace(toStableID) != "" {
 			return status
 		}
-		if strings.TrimSpace(c.stableID) != "" {
+		stableID := strings.TrimSpace(c.stableID)
+		if stableID != "" {
+			if strings.EqualFold(strings.TrimSpace(toDID), stableID) {
+				return status
+			}
 			return IdentityMismatch
 		}
 		return status
