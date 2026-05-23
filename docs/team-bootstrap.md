@@ -39,12 +39,13 @@ aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
   --work-directory ./myproject
 ```
 
-`--work-directory` is required: it's what gets symlinked into each
+Pass exactly one of `--work-directory <path>` (existing directory,
+the form shown above) or `--work-repo-url <url>` (let bootstrap
+clone a fresh repo into the template's `worktrees/` directory and
+use that). The work directory is what gets symlinked into each
 responsibility workspace as `work/`. For non-code teams it can be
-any directory; for code teams whose template declares [worktree
-agents](#worktree-agents-optional), it must be a git repo. Pass
-`--work-repo-url` alongside it to clone a repo into the work
-directory.
+any folder; for code teams whose template declares [worktree
+agents](#worktree-agents-optional), it must be a git repo.
 
 What you get back:
 
@@ -239,33 +240,38 @@ directory that gets symlinked into each responsibility workspace
 as `work/`. When the template includes a `worktrees:` block, that
 work directory must additionally be a git repo.
 
-- `--work-directory <path>` — **required**. The path of the work
-  directory on disk. Repo or non-repo, depending on whether the
-  template needs worktree agents.
-- `--work-repo-url <url-or-local-path>` — optional. When set,
-  bootstrap ensures a git repo exists at `--work-directory`. If the
-  value is a URL, bootstrap clones it into `--work-directory` (when
-  the work directory doesn't already contain a repo). If the value
-  is a local path, it must point at an existing git repo and — in
-  the initial release — must match `--work-directory` after
-  absolute-path normalization. (A future release may allow the two
-  to differ.)
+Two flags configure it; **exactly one** must be set:
 
-Existing work directory, no clone needed:
+- `--work-directory <path>` — point at an existing directory on
+  disk. Repo or non-repo, depending on whether the template needs
+  worktree agents.
+- `--work-repo-url <url>` — let bootstrap clone a fresh repo and
+  use that as the work directory. The clone lands inside the
+  template checkout at `worktrees/<derived-name>/`, where
+  `<derived-name>` is the name `git clone <url>` would pick (the
+  URL basename with `.git` stripped). The `worktrees/` directory is
+  already gitignored by template convention, so the clone doesn't
+  pollute the template repo.
+
+The two flags are mutually exclusive — pass one or the other, never
+both.
+
+Existing work directory:
 
     aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
       --work-directory ./myproject
 
-Clone a fresh repo into the work directory:
+Clone a fresh repo (no work-directory needed):
 
     aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
-      --work-directory ./myproject \
       --work-repo-url https://github.com/me/myproject
 
-When the template doesn't declare worktrees, `--work-directory`
-doesn't have to be a git repo — any folder works. `--work-repo-url`
-is only useful when the template (or your usage) needs a repo on
-disk.
+In the second form the resolved work directory is
+`./aweb-team-dev-review/worktrees/myproject/`, and `work/` symlinks
+in the responsibility workspaces point there.
+
+When the template doesn't declare worktrees, `--work-directory` can
+be any folder — non-repo work (docs, planning, support) is fine.
 
 ### What gets created
 
@@ -282,17 +288,21 @@ After bootstrap, the template checkout looks like this:
     │  │  └─ work/                      # symlink → work directory
     │  └─ review/
     │     └─ ...
-    └─ worktrees/                       # only when worktrees: present
-       ├─ myproject-lead/                # git worktree of the work repo
+    └─ worktrees/                       # gitignored by template
+       ├─ myproject/                     # only when --work-repo-url was used
+       │  └─ (work repo contents at HEAD, the work directory)
+       ├─ myproject-lead/                # git worktree (one per worktrees: entry)
        │  ├─ .aw/                        # local identity + team cert
        │  └─ (work repo contents at HEAD)
        └─ myproject-refactor/
           └─ ...
 
-The on-disk directory name for each worktree agent follows the
-pattern `<repo>-<alias>` (matching what `aw workspace add-worktree`
-uses). The `worktrees/` directory is generated output; templates
-should `.gitignore` it.
+The clone created by `--work-repo-url` lives at
+`worktrees/<derived-name>/` and becomes the work directory; the
+worktree-agent dirs sit alongside it at `worktrees/<repo>-<alias>/`
+(matching the naming `aw workspace add-worktree` uses). The whole
+`worktrees/` directory is generated output; templates should ship
+with `worktrees/` in `.gitignore`.
 
 ### Identity scope
 
@@ -341,10 +351,10 @@ released `--help`).
 `aw team bootstrap` provisions the workspaces in all three modes;
 the difference is **how the team itself comes into existence**.
 
-Every mode requires a work root. Pass
-[`--work-directory <path>`](#useful-flags). Optionally also pass
-[`--work-repo-url`](#useful-flags) to clone a repo into that
-directory. The work directory only has to be a git repo if the
+Every mode requires a work root. Pass **exactly one** of
+[`--work-directory <path>`](#useful-flags) (existing directory) or
+[`--work-repo-url <url>`](#useful-flags) (clone a fresh repo into
+`worktrees/`). The work directory only has to be a git repo if the
 template declares a [`worktrees:`](#worktree-agents-optional) block.
 
 ### Hosted (the default for new users)
@@ -391,11 +401,11 @@ cd agents/implementation && aw init --name builder --role-name developer
 cd agents/review         && aw init --name reviewer --role-name reviewer
 ```
 
-You still need `--work-directory` in manual mode — the `work/`
-symlinks in the responsibility workspaces get created up front.
-Use this mode when you want to join an existing team rather than
-create a new one, or when you want to wire up each workspace
-yourself.
+You still need exactly one of `--work-directory` or
+`--work-repo-url` in manual mode — the `work/` symlinks in the
+responsibility workspaces get created up front. Use this mode when
+you want to join an existing team rather than create a new one, or
+when you want to wire up each workspace yourself.
 
 ## Useful flags
 
@@ -406,9 +416,9 @@ yourself.
 | `--fork` | Fork the template via `gh` and clone the fork (rather than cloning the upstream). |
 | `--refresh-template` | Re-clone the template over the existing local copy. |
 | `--home-root <dir>` | Place agent workspaces under `<dir>` instead of `<template>/agents/`. |
-| `--work-directory <path>` | **Required.** The work root. Symlinked as `work/` inside each responsibility workspace. May be any directory; must be a git repo when the template declares a [`worktrees:`](#worktree-agents-optional) block. |
-| `--work-repo-url <url-or-path>` | Optional. Ensures a git repo exists at `--work-directory`. URL value: bootstrap clones it into `--work-directory` if the work directory doesn't already contain a repo. Local-path value: must be an existing git repo and (initial release) must match `--work-directory` after path normalization. |
-| `--work-repo <dir>` | Deprecated alias for `--work-directory`. Kept for one release cycle. Errors if both are set. |
+| `--work-directory <path>` | The work root. Symlinked as `work/` inside each responsibility workspace. Pass this when the work directory already exists on disk; mutually exclusive with `--work-repo-url`. May be any directory; must be a git repo when the template declares a [`worktrees:`](#worktree-agents-optional) block. |
+| `--work-repo-url <url>` | Clone a fresh git repo into `<template-checkout>/worktrees/<derived-name>/` and use that as the work directory. `<derived-name>` is what `git clone <url>` would pick. Pass this instead of `--work-directory` when you want bootstrap to fetch the repo. Mutually exclusive with `--work-directory`. |
+| `--work-repo <dir>` | Deprecated alias for `--work-directory`. Kept for one release cycle. Errors if combined with the new flags. |
 | `--skip-roles` | Do not install the role playbooks. |
 | `--skip-instructions` | Do not install the shared team-instructions document. |
 | `--username <name>` | Use hosted onboarding with this username. |
