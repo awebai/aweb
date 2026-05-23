@@ -245,13 +245,14 @@ Two flags configure it; **exactly one** must be set:
 - `--work-directory <path>` — point at an existing directory on
   disk. Repo or non-repo, depending on whether the template needs
   worktree agents.
-- `--work-repo-url <url>` — let bootstrap clone a fresh repo and
-  use that as the work directory. The clone lands inside the
-  template checkout at `worktrees/<derived-name>/`, where
-  `<derived-name>` is the name `git clone <url>` would pick (the
-  URL basename with `.git` stripped). The `worktrees/` directory is
-  already gitignored by template convention, so the clone doesn't
-  pollute the template repo.
+- `--work-repo-url <url-or-local-path>` — let bootstrap clone a
+  fresh repo and use that as the work directory. The value can be
+  a git URL or a local path; bootstrap runs `git clone <value>`
+  either way. The clone lands inside the template checkout at
+  `worktrees/<derived-name>/`, where `<derived-name>` is the name
+  `git clone` would pick (the basename with `.git` stripped). The
+  `worktrees/` directory is already gitignored by template
+  convention, so the clone doesn't pollute the template repo.
 
 The two flags are mutually exclusive — pass one or the other, never
 both.
@@ -417,7 +418,7 @@ when you want to wire up each workspace yourself.
 | `--refresh-template` | Re-clone the template over the existing local copy. |
 | `--home-root <dir>` | Place agent workspaces under `<dir>` instead of `<template>/agents/`. |
 | `--work-directory <path>` | The work root. Symlinked as `work/` inside each responsibility workspace. Pass this when the work directory already exists on disk; mutually exclusive with `--work-repo-url`. May be any directory; must be a git repo when the template declares a [`worktrees:`](#worktree-agents-optional) block. |
-| `--work-repo-url <url>` | Clone a fresh git repo into `<template-checkout>/worktrees/<derived-name>/` and use that as the work directory. `<derived-name>` is what `git clone <url>` would pick. Pass this instead of `--work-directory` when you want bootstrap to fetch the repo. Mutually exclusive with `--work-directory`. |
+| `--work-repo-url <url-or-local-path>` | Clone a fresh git repo into `<template-checkout>/worktrees/<derived-name>/` and use that as the work directory. URL or local path accepted; bootstrap runs `git clone <value>` either way. `<derived-name>` is what `git clone` would pick. Pass this instead of `--work-directory` when you want bootstrap to fetch the repo. Mutually exclusive with `--work-directory`. |
 | `--work-repo <dir>` | Deprecated alias for `--work-directory`. Kept for one release cycle. Errors if combined with the new flags. |
 | `--skip-roles` | Do not install the role playbooks. |
 | `--skip-instructions` | Do not install the shared team-instructions document. |
