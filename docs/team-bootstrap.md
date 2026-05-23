@@ -233,29 +233,41 @@ provisioned.
 
 ### CLI
 
-When the template includes a `worktrees:` block, bootstrap requires
-a work repo. Provide exactly one of:
+Every `aw team bootstrap` run needs a **work directory** — the
+directory that gets symlinked into each responsibility workspace
+as `work/`. When the template includes a `worktrees:` block, that
+work directory must additionally be a git repo. Two flags configure
+this; at least one is required, and both can be set together:
 
-- `--work-directory <path>` — point at an existing directory. If
-  the template declares worktrees, the directory must be a git repo.
-- `--work-repo-url <url-or-local-path>` — clone the URL (or copy
-  the local path) into a deterministic location managed by
-  bootstrap, and verify the result is a git repo.
+- `--work-directory <path>` — points at where the work directory
+  is on disk. Required if `--work-repo-url` is not set.
+- `--work-repo-url <url-or-local-path>` — ensures a work repo
+  exists. If a URL, bootstrap clones it; if a local path, bootstrap
+  validates it's a git repo. Required if `--work-directory` is not
+  set. When set without `--work-directory`, bootstrap chooses a
+  default work-directory location.
 
-Example with an existing repo:
+Common cases:
+
+Existing work directory (repo or non-repo):
 
     aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
       --work-directory ./myproject
 
-Example cloning a fresh checkout:
+Clone a fresh checkout (bootstrap picks the path):
 
     aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
       --work-repo-url https://github.com/me/myproject
 
-(For non-worktree templates one of `--work-directory` or
-`--work-repo-url` is still required — it's what gets symlinked into
-each responsibility workspace as `work/` — but it does **not** need
-to be a git repo.)
+Clone into a specific path (both flags together):
+
+    aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+      --work-repo-url https://github.com/me/myproject \
+      --work-directory ./myproject
+
+When the template doesn't declare worktrees, the work directory
+doesn't have to be a git repo — it can be any folder you want the
+agents to share via `work/`.
 
 ### What gets created
 
@@ -331,11 +343,11 @@ released `--help`).
 `aw team bootstrap` provisions the workspaces in all three modes;
 the difference is **how the team itself comes into existence**.
 
-Every mode requires a work root: exactly one of
+Every mode requires a work root. Set at least one of
 [`--work-directory`](#useful-flags) or
-[`--work-repo-url`](#useful-flags). The directory only has to be a
-git repo if the template declares a [`worktrees:`](#worktree-agents-optional)
-block.
+[`--work-repo-url`](#useful-flags) (both can be combined). The work
+directory only has to be a git repo if the template declares a
+[`worktrees:`](#worktree-agents-optional) block.
 
 ### Hosted (the default for new users)
 
@@ -396,9 +408,8 @@ workspace yourself.
 | `--fork` | Fork the template via `gh` and clone the fork (rather than cloning the upstream). |
 | `--refresh-template` | Re-clone the template over the existing local copy. |
 | `--home-root <dir>` | Place agent workspaces under `<dir>` instead of `<template>/agents/`. |
-| `--work-directory <path>` | The work root. Symlinked as `work/` inside each responsibility workspace. Required; mutually exclusive with `--work-repo-url`. When the template declares a [`worktrees:`](#worktree-agents-optional) block, the directory must be a git repo. |
-| `--work-repo-url <url-or-path>` | Clone the URL (or copy the local path) into a deterministic location managed by bootstrap and treat the result as the work root. Required when `--work-directory` is not set; mutually exclusive with `--work-directory`. |
-| `--work-repo <dir>` | **Deprecated** — alias for `--work-directory`. Errors if both are set. Removed in a future release. |
+| `--work-directory <path>` | The work root. Symlinked as `work/` inside each responsibility workspace. Required if `--work-repo-url` is not set; can also be combined with `--work-repo-url` to specify where the clone lives. When the template declares a [`worktrees:`](#worktree-agents-optional) block, the resolved work directory must be a git repo. |
+| `--work-repo-url <url-or-path>` | Ensure a work repo exists. If a URL, bootstrap clones it; if a local path, bootstrap validates it is a git repo. Required if `--work-directory` is not set; when set alone, bootstrap chooses a default location. |
 | `--skip-roles` | Do not install the role playbooks. |
 | `--skip-instructions` | Do not install the shared team-instructions document. |
 | `--username <name>` | Use hosted onboarding with this username. |
