@@ -18,8 +18,9 @@ normative trust boundary is
 
 Mail conversations are routed by stored participant route state after the first
 message. A participant can reply to an existing conversation without
-rediscovering the address. Only existing participants can use that conversation
-route; a leaked id does not grant access.
+rediscovering the address, but the recipient's current delivery policy is still
+checked. Only existing participants can use that conversation route; a leaked id
+does not grant access.
 
 ## Mail
 

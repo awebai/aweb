@@ -60,9 +60,9 @@ For supporting reference material that does not redefine the contract:
    identity-scoped, not team-scoped.** First contact to a global recipient uses
    a concrete address route (`domain/name`); continuations use stored
    participant route state. Delivery succeeds or fails based on the recipient's
-   explicit `inbound_mode`. Teams are orthogonal to messaging — they are not
-   the routing scope for message delivery. See the Messaging section below for
-   the full model.
+   explicit `inbound_mode`: teams are not the routing scope for delivery, but
+   verified same-team membership is delivery authority when the recipient uses
+   `team_and_contacts`. See the Messaging section below for the full model.
 
 ---
 
@@ -750,8 +750,9 @@ CREATE TABLE audit_log (
 Messaging is **identity-scoped**: global first contact uses a concrete
 address route (`domain/name`), and continuations use stored participant route
 state. The sender proves their identity via a DIDKey signature. Delivery
-succeeds or fails based on the recipient's explicit `inbound_mode`, not on
-shared team membership.
+succeeds or fails based on the recipient's explicit `inbound_mode`; verified
+shared team membership authorizes delivery when the recipient uses
+`team_and_contacts`.
 
 **Two independent layers control addressing and delivery:**
 

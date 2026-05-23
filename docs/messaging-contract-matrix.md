@@ -21,8 +21,9 @@ The intended authority split is:
   `team_and_contacts` (**Team and contacts**). Team certificates do not create
   routes or resolver visibility; verified same-team membership authorizes
   delivery when the recipient uses `team_and_contacts`.
-- Once a conversation exists, replies are authorized by stored conversation
-  participation and route state, not by re-running address discovery.
+- Once a conversation exists, replies use stored conversation participation and
+  route state instead of re-running address discovery, but they still re-run
+  the recipient's current delivery policy.
 - A global identity can belong to multiple teams without becoming a new
   identity.
 - Bare aliases are local to the active team/namespace. Cross-namespace
@@ -50,7 +51,7 @@ The release gate must cover these cases for both mail and chat where applicable:
 8. Cross-namespace address first contact without a valid route or required
    exact contact fails closed.
 9. Reply by existing participant route after first contact, without re-running
-   address discovery.
+   address discovery, while still satisfying current delivery policy.
 13. Bare external `did:aw` first contact fails closed; stored-route continuation works.
 14. Key rotation preserves conversation continuity.
 15. Local identity: team-local alias only.

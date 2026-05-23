@@ -73,6 +73,8 @@ Mail/chat continuations must use stored participant/session route state:
 - delivery origin / transport hint.
 
 Missing, stale, malformed, mismatched, or revoked route state fails closed.
+Stored route state is not a policy bypass: continuations still apply the
+recipient's current `inbound_mode` at delivery time.
 
 ## Federation Compatibility
 
