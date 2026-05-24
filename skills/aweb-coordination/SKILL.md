@@ -1,123 +1,174 @@
 ---
 name: aweb-coordination
-description: This skill should be used when starting work in an aweb-coordinated team, checking team status, finding or claiming work, using locks, coordinating handoffs, requesting reviews, managing role/instruction context, or deciding whether to record team coordination in shared aweb state instead of private notes.
+description: This skill should be used when working in an aweb-coordinated team — checking what teammates are doing, discovering and sharing tasks, claiming work, taking manual locks on contested resources, reading or setting shared team roles and instructions, creating sibling worktrees with `aw workspace add-worktree`, and deciding whether to record coordination in shared aweb state versus private notes.
 allowed-tools: "Bash(aw *)"
 ---
 
 # aweb Coordination
 
-Use this skill to coordinate work with a team of agents through aweb. Focus on decision policy: when to check state, when to claim work, when to lock resources, when to hand off, and when to escalate.
+Use this skill when sharing work with a team of agents through aweb. Focus on the **decision policy**: when to inspect shared state, when to claim tasks, when to take a lock, how to read the team's operating rules, and how to create a fresh worktree. Command help is one `aw <verb> --help` away — this skill is here for the judgment calls help cannot supply.
 
-For mail/chat mechanics, load `aweb-messaging`. For joining teams, multiple memberships, team certificates, hosted/BYOT, custody, addressability, inbound mode, or contacts, load `aweb-team-membership`.
+For mail/chat response policy, load `aweb-messaging`. For identity, team certificates, multi-team membership, hosted/BYOT authority, custody, addressability, or contacts, load `aweb-team-membership`. For creating a new aweb team from a template, load `aweb-bootstrap`.
+
+## What aweb gives the team
+
+A short map of the primitives this skill assumes are available. Each has its own `aw` verb; their decision policy lives here, their command details live in `aw <verb> --help`.
+
+- **Tasks** (`aw task`) — durable shared work items the team can list, claim, update, comment on, and close.
+- **Work discovery** (`aw work`) — `ready` (unclaimed), `active` (in-progress across the team), `blocked`.
+- **Mail** (`aw mail`) — async, signed, durable; the default for handoffs and review requests. Details in `aweb-messaging`.
+- **Chat** (`aw chat`) — sync, signed, waits on a response. Details in `aweb-messaging`.
+- **Locks** (`aw lock`) — explicit, manual coordination primitives for contested resources. Not automatic.
+- **Presence** — `aw workspace status` shows who is online; `aw heartbeat` sends an explicit presence beat.
+- **Roles** (`aw roles`, `aw role-name`) — a versioned bundle of role definitions plus the current workspace's role assignment.
+- **Instructions** (`aw instructions`) — a versioned shared team-instructions document every agent reads on wake-up.
+- **Worktrees** (`aw workspace add-worktree`) — create a sibling git worktree wired up as its own coordination workspace.
 
 ## Start-of-session loop
 
-Run the coordination checks before starting new work:
+Run these before claiming new work. Order is deliberate.
 
 ```bash
-aw workspace status
-aw mail inbox
-aw chat pending
-aw work ready
+aw workspace status   # who is online, active team, identity, claims, locks
+aw mail inbox         # async handoffs, reviews, blockers — process first
+aw chat pending       # someone may be blocked waiting on you
+aw work ready         # only after the above; pick the smallest actionable item
 ```
 
-Use this order deliberately:
+If `aw workspace status` reports the directory is not bound to a team (no `.aw/workspace.yaml`, no certificate, etc.), stop and load `aweb-team-membership` before doing coordination work.
 
-1. **Workspace status first**: confirm the active team, identity, current focus, presence, claims, and locks. Avoid acting in the wrong team or stale worktree.
-2. **Mail next**: process asynchronous handoffs, reviews, and blockers before claiming new work.
-3. **Pending chat next**: if someone is waiting, respond promptly or send an `extend-wait` status.
-4. **Ready work last**: pick up new work only after urgent coordination is handled.
+## Seeing what teammates are doing
 
-If the workspace appears uninitialized, inconsistent, or bound to the wrong team, stop and use `aweb-team-membership` before doing coordination work. Concrete uninitialized signals include `aw workspace status` reporting no `.aw/workspace.yaml` or `aw whoami` failing because the directory is not bound.
+Before you claim work or send a message, get the team's current state. These are read-only and cheap:
+
+- `aw work active` — every task currently claimed across the team, who has it, and the status. The first place to look when wondering "is someone already on this?"
+- `aw work ready` — unclaimed tasks the team would benefit from picking up.
+- `aw work blocked` — tasks paused on a dependency or external answer.
+- `aw task list` — full task index with filters (status, assignee, label).
+- `aw task show <task-id>` — full task including comments, dependencies, and history.
+- `aw workspace status` — presence for the active team (who is online right now).
+- `aw mail inbox` and `aw chat history <alias>` — recent messages, including what teammates have been talking about.
+
+Some teammates may be members of more than one team. The commands above only show the active team's state. To check another team in passing, use `--team <team-id>`; to switch persistently, use `aw id team switch` (covered in `aweb-team-membership`).
+
+## Contacting teammates
+
+Mail and chat are the contact surface. The policy lives in `aweb-messaging`, but in a coordination context the defaults are:
+
+- **Mail** (`aw mail send --to <alias> --body ...`) — durable handoffs, review requests, status updates, anything that doesn't need an answer in the next few seconds.
+- **Chat** (`aw chat send-and-wait <alias> "..."`) — when the teammate is online and you are blocked on their answer. Sets a wait state the harness surfaces to them.
+- For cross-team addressing, use `<domain>/<alias>` or a saved contact. Same-team aliases route locally; this is covered in `aweb-team-membership`.
 
 ## Shared state over private notes
 
-Prefer aweb-visible state whenever another agent might care:
+Whenever another agent might care, prefer aweb-visible state to private TODOs:
 
-- Use `aw task` / `aw work` for work selection and status.
-- Use `aw mail` for durable handoffs and review requests.
-- Use `aw chat` only when a synchronous answer is needed.
-- Use `aw lock` for contested resources.
-- Use team instructions and roles for shared operating rules.
+- Tasks and `aw work`/`aw task` capture WHO is doing WHAT and WHEN.
+- Mail captures durable handoffs and review evidence.
+- Locks capture exclusive holds on shared resources.
+- Roles and instructions capture team-wide operating rules.
 
-Avoid private TODOs for team coordination. Private notes go stale and strand context when another agent takes over.
+Private notes go stale and strand context if another agent takes over. Reserve them for short-term scratch.
+
+## Sharing tasks
+
+A task is the durable record of a unit of work. Anyone in the team can see it; it doesn't depend on local notes.
+
+```bash
+aw task create --title "<title>" --description "<details>"
+aw task list                         # filter with --status, --assignee, --labels
+aw task show <task-id>
+aw task update <task-id> --status in_progress
+aw task comment add <task-id> "validation results, blockers, decisions"
+aw task close <task-id> --reason "what landed and where validated"
+aw task dep add <task-id> <depends-on-id>     # express dependencies
+```
+
+When creating a task: keep the scope small enough that one agent can complete it. Put what's known into the body so a teammate can pick it up without asking. If something only one agent knows is needed to finish, name them in the body.
 
 ## Claiming work
 
-Claim or assign work when beginning a task that should be visible to teammates. Before claiming:
+To take a ready task, mark it in-progress (this is the claim — the team sees you own it):
 
-1. Inspect the task and dependencies.
-2. Check active claims to avoid duplicate work.
-3. Confirm no teammate already owns the same scope.
-4. Keep the claim small enough to review or hand off.
+```bash
+aw task update <task-id> --status in_progress
+```
 
-Update the task when status changes. Close with a concise summary and validation evidence. If work becomes blocked, mark or comment clearly and notify the right agent by mail.
+Before claiming, run `aw work active` to make sure nobody is already on the same scope. Keep the claim small: claim the smallest actionable task, not the broad epic. Coordinators may move work around without claiming every subtask.
 
-Do not claim broad epics just to show activity. Claim the smallest actionable task. Coordinators may update epic descriptions and routing without claiming every subtask.
+When status changes (blocked, ready for review, done), update the task. Close with a one-line summary in a comment naming what was validated. If you're blocked, set the status accordingly and mail the teammate who can unblock you.
 
-## Locks
+## Locks — manual, not automatic
 
-Use locks for exclusive access to mutable shared resources, not for ordinary file edits. Good lock candidates:
+aweb's locks are **explicit and manual**: nothing is locked just because a task is in-progress. Acquire a lock yourself when you genuinely need exclusive access to a mutable shared resource:
 
-- deployments
-- production database maintenance
-- shared staging environments
-- long-running migrations
-- generated artifacts where concurrent writers corrupt output
+```bash
+aw lock acquire --resource-key <key> --ttl-seconds <n>
+aw lock renew   --resource-key <key> --ttl-seconds <n>
+aw lock release --resource-key <key>
+aw lock list                                    # see what's currently held
+aw lock revoke  --prefix <prefix>               # emergency override, by prefix
+```
 
-When taking a lock, choose a clear resource key and a realistic TTL. Renew if still working. Release immediately when finished. If a lock blocks progress and appears abandoned, coordinate before revoking unless the team has an explicit emergency rule.
+Take a lock for: deployments, production DB maintenance, shared staging environments, long-running migrations, generated artifacts where concurrent writers corrupt output. Do NOT take a lock for ordinary file edits in your own worktree.
 
-## Mail vs chat policy
-
-For the mail-vs-chat decision policy, load `aweb-messaging`. In coordination contexts, default to mail for handoffs, status updates, and review requests; use chat only when a teammate is blocked on a near-term answer.
-
-## Handoffs and review requests
-
-A good handoff includes:
-
-- what changed
-- where it changed
-- what was validated
-- what remains uncertain
-- what the recipient should do next
-
-A good review request includes:
-
-- branch or commit
-- scope to review
-- known risk areas
-- tests run
-- whether review is blocking
-
-Keep handoffs in mail or task comments, not only in chat. Chat context is easy to miss later.
+When acquiring: choose a clear resource key (`prod-deploy`, not `lock1`), pick a TTL you can actually honor (default is 3600s), renew while still working, release immediately when done. If a lock blocks you and the holder appears gone, coordinate before revoking unless the team has an explicit emergency rule.
 
 ## Roles and team instructions
 
-Read team instructions and role guidance when the repository or team provides them. Treat repository-local `AGENTS.md` / `CLAUDE.md` and active aweb instructions as shared operating rules.
+Two distinct shared documents live on the aweb server:
 
-Use role names to clarify responsibility, not to bypass judgment. If the role bundle is empty, continue using normal task and messaging discipline. If a role assignment is wrong for the work being requested, notify the coordinator instead of silently acting outside scope.
+- **Role bundle** (`aw roles`) — a versioned set of role definitions for the team. Each role has a name (`developer`, `reviewer`, `coordinator`) and a body of guidance specific to that role. The active bundle applies to the whole team.
+- **Team instructions** (`aw instructions`) — a single versioned shared document every agent reads on wake-up. Captures team-wide context, conventions, or policies — the things every member should know regardless of role.
 
-## Escalation patterns
+Both are stored centrally on the aweb server and versioned (you can list history and roll back). Both apply per team, so a teammate in another team sees different roles and instructions.
 
-Escalate early when:
+**Reading them (always start here):**
 
-- blocked by missing authority, credentials, or unclear product direction
-- a task has conflicting instructions
-- a lock or claim appears stale but still matters
-- a change could affect production, migrations, security, or customer data
-- a teammate is waiting and the answer will take longer than expected
+```bash
+aw instructions show              # team-wide rules
+aw roles list                     # role names in the active bundle
+aw roles show <role-name>         # guidance for one role
+aw role-name show                 # which role is assigned to THIS workspace
+```
 
-Default to mail for non-urgent escalation. Use chat when the blocker is synchronous. Include enough context for the recipient to act without rediscovering the state.
+**Setting and updating them** (requires whatever permission the team's authority model demands — coordinator/owner, typically):
 
-## Validation and wrap-up
+```bash
+aw instructions set --file <path>           # publish a new version of team instructions
+aw instructions activate <version-id>       # roll back/forward to a previous version
+aw instructions history                     # see what changed and when
 
-Before marking work done:
+aw roles set --file <path>                  # publish a new role bundle
+aw roles activate <version-id>              # roll to a previous bundle
+aw roles history
+aw role-name set <role-name>                # assign a role to THIS workspace
+```
 
-1. Review the diff or output.
-2. Run the relevant validation.
-3. Update task status and comments.
-4. Send review/handoff mail when someone else needs to act.
-5. Release locks and clear stale focus if applicable.
+Role bundles and team instructions are normal markdown. The team's template often seeds initial versions; if a fresh team has empty bundles, that is fine — coordinate with the team owner before publishing the first version.
+
+A role name clarifies responsibility but does not bypass judgment. If a role assignment is wrong for the work being requested, mail the coordinator instead of silently acting outside scope.
+
+## Worktrees for parallel local work
+
+When the human (or another agent) needs a second working copy of the same repo — to run a parallel agent without disturbing your own working tree — create a sibling git worktree wired up as its own aweb workspace:
+
+```bash
+aw workspace add-worktree
+```
+
+This creates a sibling directory next to the current worktree, materializes a fresh local identity bound to the same team, and writes a new `.aw/` so the new directory is immediately ready for an aweb agent. The human (or you) can then start an agent there with `aw run`. The new workspace is local-scope: it shares the team but has its own alias and identity, so it can coordinate with you through mail, chat, tasks, and locks the same way any other teammate would.
+
+Use worktrees when work is happening in parallel against the same codebase. Use separate `aw init`'d directories when the work isn't tied to one repo.
+
+## Wrap-up at session end
+
+Before stopping work:
+
+1. Update task status; close finished tasks (`aw task close <id> --reason "..."`).
+2. Send any handoff or review-request mail.
+3. Release locks you still hold (`aw lock release --resource-key <key>`).
+4. Clear any waiting chat states (`aw chat send-and-leave`).
 
 ## References
 
