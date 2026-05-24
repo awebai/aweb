@@ -10,18 +10,29 @@ Use this skill for the aweb identity, team, and workspace-binding questions that
 
 For day-to-day task coordination, load `aweb-coordination`. For mail/chat response policy, load `aweb-messaging`.
 
+## Foundations
+
+Vocabulary used throughout. Read once; refer back as needed.
+
+- **Signing keypair** — every aweb identity is an Ed25519 keypair. The private key signs messages and requests; the public key verifies them.
+- **`did:key`** — the public key encoded as a DID, e.g. `did:key:z6Mk...`. Identifies the current signing key.
+- **`did:aw`** — a stable identity DID kept in the public AWID registry. Maps to the current `did:key`, so an identity can rotate its signing key without changing its `did:aw`.
+- **AWID** (publicly readable at `awid.ai`) — the public registry of identity and team facts: `did:aw` → `did:key` mappings, namespaces, addresses, team records, team certificates, address-route bindings. Anyone can verify against AWID without trusting aweb.
+- **Namespace** — usually a DNS domain (e.g. `acme.com`) registered in AWID, controlled by a namespace controller keypair. Teams and addresses are scoped under a namespace.
+- **Team controller** — a keypair separate from member identities. Its private key signs team certificates; its public key (recorded in AWID) is what verifies whether a certificate is genuine.
+- **Team certificate** — a signed statement that a specific `did:key` is a member of a specific team, with an alias and metadata. Public; stored locally in `.aw/team-certs/*.pem`.
+- **Custodial vs self-custodial identity** — self-custodial means the local machine holds the private key in `.aw/signing.key`. Custodial means aweb holds the encrypted private key in the hosted account (used by browser/MCP harnesses without a local terminal).
+- **Hosted vs BYOT** — hosted means aweb operates the namespace and team controller keys for `*.aweb.ai`. BYOT (Bring Your Own Team) means the customer controls those keys for their own domain.
+- **Workspace** — a `.aw/` directory binding one machine path to one identity, one active team, and one aweb coordination server. It can live in any directory.
+
 ## Mental model
 
-aweb is a coordination layer built on **public-key cryptography**. Every message is signed by a private key the sender holds; recipients verify the signature against the sender's public key, without trusting the coordination server to vouch for who is who.
+aweb is a coordination layer built on the public-key cryptography above. Recipients verify signatures against the sender's public key, without trusting the coordination server to vouch for who is who. Four distinct layers cooperate:
 
-Four distinct layers cooperate:
-
-1. **Identity** — an Ed25519 key pair. The public key, encoded as a `did:key`, is what others verify against. For durable identities, a stable `did:aw` is registered in the public **awid registry** so the signing key can be rotated without the identity changing.
-2. **Team membership** — a public certificate signed by the team controller naming a specific `did:key` as an authorized member. An identity can hold many certificates simultaneously, one per team.
-3. **Workspace binding** — a `.aw/` directory on the agent's machine that ties THIS process to one identity, one active team, and one aweb coordination server. `.aw/` can live in any directory; it is not tied to a repo or worktree.
-4. **Coordination** — what happens inside an active team on the aweb server: mail, chat, tasks, presence, roles, instructions, locks. The server brokers these primitives and is authoritative for them.
-
-awid (publicly readable at `awid.ai`) is the trust root: it stores `did:aw` → `did:key` mappings, public team certificates, and public address-route bindings. Any agent can verify identity and membership against awid without trusting aweb. Team controller private keys stay on the controller machine; aweb never holds them for BYOT teams.
+1. **Identity** — the signing keypair plus, for global identities, the `did:aw` registry record.
+2. **Team membership** — a team certificate (signed by the team controller) authorizing this identity's `did:key` in a team. One identity can hold many certificates, one per team.
+3. **Workspace binding** — `.aw/` on the agent's machine, tying THIS process to one identity, one active team, and one aweb coordination server. Independent of repos or worktrees.
+4. **Coordination** — what happens inside an active team on the aweb server: mail, chat, tasks, presence, roles, instructions, locks. The server brokers these and is authoritative for them.
 
 Most confusing failures come from mixing these layers. Diagnose the layer first.
 
@@ -32,7 +43,7 @@ The workspace directory is the same regardless of how it was created (`aw init`,
 - `signing.key` — Ed25519 private key for self-custodial workspaces. If absent, this workspace has no signing identity.
 - `workspace.yaml` — server URL, active team id, and which identity is bound here. If absent or empty, the workspace is not bound to any server or team, even when `signing.key` is present.
 - `teams.yaml` — local index of teams this identity is a member of, plus the active-team selection.
-- `team-certs/` — directory of public team certificates this identity has been issued (one file per team membership).
+- `team-certs/*.pem` — public team certificates this identity has been issued (one `.pem` file per team membership).
 - `context/`, `interaction-log.jsonl`, and similar — runtime/audit state, not security-relevant for membership questions.
 
 Custodial (browser/MCP) identities keep the equivalent key material server-side in the hosted account, not in a local `.aw/`. For custodial identities, the workspace concept is virtual; identity and team binding live in the hosted record.
@@ -54,9 +65,9 @@ Interpret failures by layer, pointing at specific files:
 - **No `.aw/` in this directory** — there is no workspace here at all, and therefore no identity. Run `aw init` to create one, or move to a directory that has been initialized.
 - **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created. Custodial workspaces never have this file locally; check whether the harness expects custodial custody.
 - **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to a server, team, or identity, even when `signing.key` is present. The agent cannot reach an aweb server until `workspace.yaml` is populated (re-run `aw init` or `aw workspace add-worktree`).
-- **No `.aw/team-certs/<team>.json` matching `workspace.yaml`'s active team** — identity exists but holds no team certificate for the active team. The agent can sign messages but cannot act inside the team. Accept an invite, request a certificate, or switch active team.
-- **Active team mismatch** — `teams.yaml` lists multiple memberships and `workspace.yaml` names one as active; commands route to whichever is active. If commands appear to land in the wrong team, the active selection in `workspace.yaml` is pointing at the wrong membership. Switch with `aw id team switch <team-id>`.
-- **Address route, inbound-mode, or contact failure** — sender and recipient may both exist with valid certificates, but the recipient's awid route entry or `inbound_mode=open|team_and_contacts` policy prevents discovery or inbound delivery (covered in detail in the addressability section).
+- **No `.aw/team-certs/<team>.pem` for `workspace.yaml`'s active team** — identity exists but holds no team certificate for the active team. The agent can sign messages but cannot act inside the team. Accept an invite, request a certificate, or switch active team.
+- **Active team mismatch** — `teams.yaml` lists multiple memberships and `workspace.yaml` names one as active; commands route to whichever is active unless a per-command `--team <team-id>` arg overrides it. If commands appear to land in the wrong team, either the active selection in `workspace.yaml` is wrong (switch with `aw id team switch <team-id>`) or a CLI override was/wasn't supplied.
+- **Address route, inbound-mode, or contact failure** — sender and recipient may both exist with valid certificates, but the recipient's AWID route entry or the recipient's `inbound_mode` policy (their delivery-authorization setting, checked after a route resolves) prevents discovery or delivery. See the addressability section for the full model.
 
 ## Joining a team
 
@@ -98,9 +109,9 @@ Do not ask aweb cloud to mint BYOT team certificates with customer controller au
 
 ## Multiple team memberships
 
-A global identity can belong to multiple teams. Which team certificate is used — and therefore which team's mail, chat, tasks, presence, roles, and locks a command reaches — depends on the active team in `workspace.yaml`.
+One identity can hold multiple team certificates (one per team), all kept under `.aw/team-certs/`. Which one is in effect for a given command — and therefore which team's mail, chat, tasks, presence, roles, and locks a command reaches — comes from either the active-team selection in `workspace.yaml` or a per-command `--team <team-id>` CLI argument that overrides it for that one invocation.
 
-Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Use `--team <team-id>` for one-off command overrides when supported. Prefer switching only when the workspace's ongoing work should move to that team.
+Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Prefer the persistent switch only when the workspace's ongoing work should move to that team; otherwise use the per-command `--team` override.
 
 Team membership is not the same as task assignment or role assignment. Acting in the wrong active team can send messages, claims, or locks to the wrong coordination boundary.
 
