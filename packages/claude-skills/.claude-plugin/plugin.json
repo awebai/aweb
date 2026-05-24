@@ -1,5 +1,5 @@
 {
   "name": "aweb-skills",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "aweb agent coordination skills — teach your Claude Code agent how to use the aw CLI for mail, chat, tasks, and team coordination."
 }
