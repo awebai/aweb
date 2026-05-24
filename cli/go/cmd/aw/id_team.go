@@ -1423,7 +1423,6 @@ func buildTeamImportRequestOutput(
 		"organization_id": strings.TrimSpace(organizationID),
 		"team_id":         strings.TrimSpace(cloudTeamID),
 		"dry_run":         dryRun,
-		"access_mode":     strings.TrimSpace(accessMode),
 		"timestamp":       strings.TrimSpace(timestamp),
 	}
 	canonical, err := awid.CanonicalJSONValue(payload)
@@ -1437,7 +1436,6 @@ func buildTeamImportRequestOutput(
 		"organization_id":      nullableString(strings.TrimSpace(organizationID)),
 		"team_id":              nullableString(strings.TrimSpace(cloudTeamID)),
 		"dry_run":              dryRun,
-		"access_mode":          strings.TrimSpace(accessMode),
 		"timestamp":            strings.TrimSpace(timestamp),
 		"controller_signature": signature,
 	}
