@@ -80,7 +80,6 @@ func formatTeamImportRequest(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.AWIDTeamID))
 	sb.WriteString(fmt.Sprintf("Mode:        %s\n", map[bool]string{true: "dry-run", false: "apply"}[out.DryRun]))
-	sb.WriteString(fmt.Sprintf("Access:      %s\n", out.AccessMode))
 	sb.WriteString(fmt.Sprintf("Timestamp:   %s\n", out.Timestamp))
 	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
 	sb.WriteString(fmt.Sprintf("Signature:   %s\n", out.ControllerSignature))

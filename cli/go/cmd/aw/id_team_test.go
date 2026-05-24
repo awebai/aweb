@@ -107,14 +107,12 @@ func setTeamImportRequestGlobalsForTest(t *testing.T, team, namespace string) {
 	oldNamespace := teamImportRequestNamespace
 	oldOrganizationID := teamImportRequestOrganizationID
 	oldCloudTeamID := teamImportRequestCloudTeamID
-	oldAccessMode := teamImportRequestAccessMode
 	oldTimestamp := teamImportRequestTimestamp
 	oldApply := teamImportRequestApply
 	teamImportRequestTeam = team
 	teamImportRequestNamespace = namespace
 	teamImportRequestOrganizationID = "org-1"
 	teamImportRequestCloudTeamID = ""
-	teamImportRequestAccessMode = "open"
 	teamImportRequestTimestamp = "2026-05-09T12:00:00Z"
 	teamImportRequestApply = false
 	t.Cleanup(func() {
@@ -122,7 +120,6 @@ func setTeamImportRequestGlobalsForTest(t *testing.T, team, namespace string) {
 		teamImportRequestNamespace = oldNamespace
 		teamImportRequestOrganizationID = oldOrganizationID
 		teamImportRequestCloudTeamID = oldCloudTeamID
-		teamImportRequestAccessMode = oldAccessMode
 		teamImportRequestTimestamp = oldTimestamp
 		teamImportRequestApply = oldApply
 	})
@@ -184,7 +181,6 @@ func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
 		"org-1",
 		"",
 		true,
-		"open",
 		"2026-05-09T12:00:00Z",
 	)
 	if err != nil {
@@ -223,6 +219,19 @@ func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
 	}
 	if _, ok := out.RequestBody["access_mode"]; ok {
 		t.Fatal("request body must not include stale unsigned access_mode")
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "access_mode") {
+		t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+	}
+}
+
+func TestTeamImportRequestCommandDoesNotExposeAccessModeFlag(t *testing.T) {
+	if flag := teamImportRequestCmd.Flags().Lookup("access-mode"); flag != nil {
+		t.Fatal("BYOT import-request must not expose stale --access-mode flag")
 	}
 }
 

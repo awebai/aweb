@@ -146,9 +146,9 @@ Identities can be `open` (user-facing label: **All**) or `team_and_contacts`
 verified same-team members plus exact active contacts for global incoming
 messages. Manage explicit contacts with `aw contacts`. Inspect or
 change an existing global agent's aweb delivery setting with
-`aw inbound-mode [open|team-and-contacts]`. For BYOT imports, set imported-member access policy with
-`aw id team import-request --access-mode <open|team_and_contacts>`; the current
-server normalizes that legacy request field into the canonical inbound mode.
+`aw inbound-mode [open|team-and-contacts]`. For BYOT imports, the signed team
+state carries membership facts only; imported global agents keep their own
+inbound mode and can inspect or change it with `aw inbound-mode`.
 
 ## Configuration
 
@@ -201,7 +201,7 @@ aw id team add-member                 # Add a member to a team and publish a fet
 aw id team fetch-cert                 # Fetch and install an approved team certificate
 aw id team accept-invite <token>      # Accept hosted aw_inv_ or local-controller team invite
 aw id team remove-member              # Remove a member from a team
-aw id team import-request --namespace <domain> --team <team> --organization-id <org> --access-mode open
+aw id team import-request --namespace <domain> --team <team> --organization-id <org>
 aw id rotate-key                      # Rotate the local signing key
 aw id show                            # Show current identity and registry status
 aw claim-human --email <email>        # Attach a human owner for dashboard access

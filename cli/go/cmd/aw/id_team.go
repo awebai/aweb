@@ -66,7 +66,6 @@ type teamImportRequestOutput struct {
 	Status              string         `json:"status"`
 	AWIDTeamID          string         `json:"awid_team_id"`
 	DryRun              bool           `json:"dry_run"`
-	AccessMode          string         `json:"access_mode"`
 	Timestamp           string         `json:"timestamp"`
 	ControllerDID       string         `json:"controller_did"`
 	ControllerSignature string         `json:"controller_signature"`
@@ -186,7 +185,6 @@ var (
 	teamImportRequestNamespace      string
 	teamImportRequestOrganizationID string
 	teamImportRequestCloudTeamID    string
-	teamImportRequestAccessMode     string
 	teamImportRequestTimestamp      string
 	teamImportRequestApply          bool
 )
@@ -357,7 +355,6 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestNamespace, "namespace", "", "Namespace domain")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestOrganizationID, "organization-id", "", "AC organization id for a new imported team")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestCloudTeamID, "cloud-team-id", "", "Existing AC team id to sync")
-	teamImportRequestCmd.Flags().StringVar(&teamImportRequestAccessMode, "access-mode", "open", "Access mode for imported members")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
 	teamCmd.AddCommand(teamImportRequestCmd)
@@ -1366,7 +1363,6 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 	domain := awconfig.NormalizeDomain(teamImportRequestNamespace)
 	organizationID := strings.TrimSpace(teamImportRequestOrganizationID)
 	cloudTeamID := strings.TrimSpace(teamImportRequestCloudTeamID)
-	accessMode := strings.TrimSpace(teamImportRequestAccessMode)
 	timestamp := strings.TrimSpace(teamImportRequestTimestamp)
 	if team == "" {
 		return usageError("--team is required")
@@ -1379,9 +1375,6 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 	}
 	if organizationID != "" && cloudTeamID != "" {
 		return usageError("--organization-id and --cloud-team-id are mutually exclusive")
-	}
-	if accessMode == "" {
-		accessMode = "open"
 	}
 	if timestamp == "" {
 		timestamp = time.Now().UTC().Format(time.RFC3339)
@@ -1398,7 +1391,6 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 		organizationID,
 		cloudTeamID,
 		!teamImportRequestApply,
-		accessMode,
 		timestamp,
 	)
 	if err != nil {
@@ -1414,7 +1406,6 @@ func buildTeamImportRequestOutput(
 	organizationID string,
 	cloudTeamID string,
 	dryRun bool,
-	accessMode string,
 	timestamp string,
 ) (teamImportRequestOutput, error) {
 	payload := map[string]any{
@@ -1443,7 +1434,6 @@ func buildTeamImportRequestOutput(
 		Status:              "signed",
 		AWIDTeamID:          strings.TrimSpace(awidTeamID),
 		DryRun:              dryRun,
-		AccessMode:          strings.TrimSpace(accessMode),
 		Timestamp:           strings.TrimSpace(timestamp),
 		ControllerDID:       controllerDID,
 		ControllerSignature: signature,
