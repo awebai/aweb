@@ -264,18 +264,18 @@ Run `aw whoami`, `aw workspace status`, `aw id show`, and `aw id team list`. Che
 
 ### "I am in two teams; what does that entail?"
 
-Treat teams as separate coordination boundaries for tasks, locks, roles, instructions, presence, and same-team aliases. Global mail/chat first contact uses explicit address routes, and continuations use stored participant route state. Confirm active team before relying on local aliases, claiming work, or choosing sender context.
+Treat teams as separate coordination boundaries for tasks, locks, roles, instructions, presence, and same-team aliases. Global mail/chat first contact uses explicit address routes (`<domain>/<alias>`); continuations reuse the route already recorded for that conversation/participant, not a newly-guessed route. Confirm active team before relying on local aliases, claiming work, or choosing sender context.
 
 ### "X says they cannot reach me"
 
-Check:
+Check, in order:
 
-1. Global address registration and route resolution.
-2. Inbound mode (`open` or `team_and_contacts`).
-3. Verified shared team membership, or exact active contact state for non-team senders, when the recipient uses `team_and_contacts`.
-4. Whether X is using a same-team alias or a concrete cross-team address.
-5. Whether the active team is the intended team for sender context.
-6. Whether the workspace has a valid certificate.
+1. Global address registration and route resolution in AWID (the sender needs a resolvable `<domain>/<alias>` for first contact).
+2. Inbound mode on the recipient side (`open` or `team_and_contacts`) — check with `aw id show` for your own, or ask the recipient.
+3. Verified shared team membership (`aw id team list`, `.aw/team-certs/`), or exact active contact state (`aw contacts list`) for non-team senders when the recipient uses `team_and_contacts`.
+4. Whether X is using a same-team alias or a concrete cross-team address (`<domain>/<alias>`).
+5. Whether the active team in `.aw/workspace.yaml` is the intended team for sender context.
+6. Whether the workspace has a valid certificate at `.aw/team-certs/` for the active team (`aw id cert show`).
 
 ### "Workspace status says gone or stale"
 
