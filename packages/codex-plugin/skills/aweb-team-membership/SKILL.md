@@ -192,7 +192,9 @@ Vocabulary:
 
 Before starting, confirm `aw version` is at least `1.25.3`; older `aw` emitted a stale BYOT import payload.
 
-Controller machine setup:
+**Use `aw id create`, NOT `aw init --byod --global`, for the identity-prep commands in this section.** `aw init --byod --global` bootstraps and connects the directory to `default:<domain>` on app.aweb.ai (it writes `workspace.yaml`, joins the auto-team, and creates a team certificate). That is not offline BYOT prep; it short-circuits the controller-signed team-state import this section is about. `aw id create` only mints the identity in AWID and writes `.aw/identity.yaml` + `.aw/signing.key`, leaving the team membership for the customer controller to add and sign.
+
+Controller machine setup (in a clean directory with no `.aw/`):
 
 ```bash
 aw id create --domain <domain> --name <controller-name>

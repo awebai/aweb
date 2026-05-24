@@ -28,17 +28,24 @@ A workspace can hold any combination of these. For team-related files (`teams.ya
 - `signing.key` — Ed25519 private key for self-custodial workspaces. If absent, this directory has no local signing identity. Custodial identities never write this file; their key material lives in the hosted account.
 - `workspace.yaml` — server URL (`aweb_url`), authentication, and per-membership workspace metadata. Binds this directory to one aweb coordination server. Does NOT hold the active-team selection (that's in `teams.yaml`).
 
-## What `aw init` does
+## `aw init` vs `aw id create` — workspace onboarding vs identity-only
 
-`aw init` creates or updates a workspace in the current directory. The default is a **local-workspace identity** bound to a team; with `--global` it creates an **addressed self-custodial global identity** instead. Three onboarding flows are supported:
+These two commands look similar and are not interchangeable. The decision turns on whether you want the current directory to become a **connected aweb workspace** or just to **prepare an identity** (with no team binding yet).
 
-1. **Connect with an existing team certificate** — when `.aw/` already has a usable team certificate (for example after `aw id team accept-invite` or `aw id team fetch-cert`), `aw init` finishes wiring the workspace to the configured aweb server and records the binding in `.aw/workspace.yaml`. The server URL comes from the command's configuration/flags, not from the certificate itself; certificates name members and teams, not servers.
-2. **Hosted aweb.ai onboarding** — for a clean directory with no `.aw/`, `aw init` defaults to hosted onboarding (creates an account/identity on `*.aweb.ai` if needed).
-3. **`--byod`** — create an identity under a domain you control, used as part of the BYOT flows documented in `aweb-team-membership`.
+- **`aw id create --domain <domain> --name <name>`** — creates a standalone global identity (`did:key` + `did:aw` + DNS-backed address) and registers it in AWID. Writes `.aw/identity.yaml` and `.aw/signing.key`, performs DNS-TXT verification, but does **not** create a team certificate and does **not** connect this directory to an aweb server (no `workspace.yaml` server binding, no `teams.yaml` membership entry, no `team-certs/*.pem`). Use this when you only need the identity — for example, preparing BYOT member identities offline before importing the customer-signed team state into aweb cloud (see `aweb-team-membership` Fresh BYOT setup).
 
-`aw init` also updates the `aweb` section of `AGENTS.md` / `CLAUDE.md` in the directory by default; pass `--do-not-touch-agents-md` to skip that.
+- **`aw init`** — workspace onboarding. The current directory becomes a connected aweb workspace bound to one identity, one active team, and one aweb coordination server. Three onboarding flows are supported:
+  1. **Connect with an existing team certificate** — when `.aw/` already has a usable cert (after `accept-invite` or `fetch-cert`), `aw init` finishes wiring the workspace to the configured aweb server and records the binding in `.aw/workspace.yaml`. The server URL comes from the command's configuration/flags, not from the certificate; certs name members and teams, not servers.
+  2. **Hosted aweb.ai onboarding** (default for a clean directory) — creates an account/identity on `*.aweb.ai` and binds the directory to it.
+  3. **`--byod`** — onboards under a customer-owned domain instead of hosted aweb.ai. This still creates a workspace binding and a team (`default:<domain>`) on app.aweb.ai. `--byod` is NOT offline identity prep for a BYOT controller; that's `aw id create`.
+- **`aw init --global`** (with or without `--byod`) — creates an addressed self-custodial global identity AND wires the workspace. The workspace half is what makes this different from `aw id create`. Do not reach for `aw init --global` when you want only an identity.
 
-When deciding whether to run `aw init`: only run it in a directory you intend to use as an aweb workspace. It refuses to overwrite an existing identity in `.aw/`.
+`aw init` updates the `aweb` section of `AGENTS.md` / `CLAUDE.md` by default; pass `--do-not-touch-agents-md` to skip. It refuses to overwrite an existing identity in `.aw/`.
+
+When deciding which to run:
+
+- "I want this directory to start coordinating with a team" → `aw init` (one of the three flows above).
+- "I want to mint an identity I'll later attach to a BYOT team via controller-signed facts" → `aw id create`. Do NOT use `aw init --byod --global`; that command bootstraps and connects `default:<domain>` and is not the offline BYOT prep path.
 
 ## Custodial vs self-custodial in practice
 
@@ -55,7 +62,7 @@ Do NOT promise that a local CLI command can recover a lost custodial key. For cu
 
 Local identities are the default for a CLI workspace. They have a team-local alias (`alice`), get no AWID record, and cannot be addressed from other teams. They are fine for most work-inside-one-team scenarios.
 
-Global identities are addressable across teams. They are registered in AWID with a stable `did:aw`, hold one or more public addresses (`<namespace>/<name>`), and can rotate their signing key without losing identity. Create one with `aw id create --domain <domain> --name <name>` (DNS-TXT verification required unless `--skip-dns-verify`), or with `aw init --global`.
+Global identities are addressable across teams. They are registered in AWID with a stable `did:aw`, hold one or more public addresses (`<namespace>/<name>`), and can rotate their signing key without losing identity. Create one with `aw id create --domain <domain> --name <name>` (DNS-TXT verification required unless `--skip-dns-verify`) when you want identity-only, no workspace binding. Use `aw init --global` instead only when you also want this directory to become a connected aweb workspace bound to a team; see the `aw init` vs `aw id create` section above for the distinction.
 
 A workspace binds to exactly one identity at a time. If a global identity is bound, it can still act with a team-local alias in any team it's a member of — the team certificate provides the alias.
 
@@ -128,7 +135,8 @@ Interpret failures by what's missing (file references assume a self-custodial CL
 - **No `.aw/` in this directory** — there is no workspace here at all. Run `aw init` or move to a directory that has been initialized.
 - **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created.
 - **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to any aweb server, even when `signing.key` is present. Re-run `aw init`.
-- **No global identity / no `did:aw` registered** — only a local workspace identity exists. Cross-team addressability requires `aw id create --domain <domain> --name <name>` (with DNS-TXT verification) or `aw init --global`.
+- **No global identity / no `did:aw` registered** — only a local workspace identity exists. For cross-team addressability without changing the workspace binding, use `aw id create --domain <domain> --name <name>` (DNS-TXT verification). Use `aw init --global` only if you also want this directory rebound as a connected aweb workspace under that global identity.
+- **Already ran `aw init --byod --global` expecting offline BYOT prep** — that command bootstrapped and connected this directory to `default:<domain>` on app.aweb.ai, leaving `.aw/{identity.yaml,signing.key,teams.yaml,workspace.yaml,team-certs/}` populated. This is a connected workspace under a customer-domain auto-team, NOT a BYOT-imported team. For true offline BYOT prep, use `aw id create` in a clean directory and follow the `aweb-team-membership` Fresh BYOT setup. To recover: either reset this directory (back up `.aw/` then `aw reset`) and start over with `aw id create`, or coordinate with the team owner about whether the `default:<domain>` team is acceptable for the workflow.
 - **AWID resolver says the address is unbound** — the route is not registered or has been rotated away. Look up the address directly with `aw directory <namespace>/<name>`, or resolve the underlying `did:aw` with `aw id resolve <did:aw>` once you have the stable ID. Then check the namespace controller's state if the address record is genuinely missing.
 
 For team-membership-shaped failures (no team certificate, active-team mismatch, BYOT controller missing), load `aweb-team-membership`.
@@ -141,7 +149,7 @@ Run `aw whoami` and `aw id show`. Check identity (local vs global), `did:key` if
 
 ### "I need to be reachable across teams"
 
-You need a global identity. Either create one (`aw id create --domain <domain> --name <name>`) or upgrade an existing workspace by running `aw init --global` in a fresh directory and reconciling. Then publish the address and set `inbound_mode` appropriately.
+You need a global identity. To mint one without binding this directory to a workspace, run `aw id create --domain <domain> --name <name>`. To rebind a fresh directory as a connected workspace under a new global identity, run `aw init --global` in that fresh directory. Then publish the address and set `inbound_mode` appropriately.
 
 ### "Someone says my messages are unverified"
 
