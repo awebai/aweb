@@ -91,6 +91,31 @@ func formatTeamImportRequest(v any) string {
 	return sb.String()
 }
 
+func formatTeamCleanupCloud(v any) string {
+	out := v.(teamCleanupCloudOutput)
+	var sb strings.Builder
+	if out.DryRun {
+		sb.WriteString("Status:      dry-run\n")
+	} else {
+		sb.WriteString("Status:      deleted\n")
+	}
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
+	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
+	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.CloudURL))
+	sb.WriteString(fmt.Sprintf("Agents:      %d\n", out.AgentsDeleted))
+	sb.WriteString(fmt.Sprintf("Workspaces:  %d\n", out.WorkspacesDeleted))
+	sb.WriteString(fmt.Sprintf("Metadata:    %d\n", out.CloudWorkspaceMetadataDeleted))
+	sb.WriteString(fmt.Sprintf("Members:     %d\n", out.TeamMembersDeleted))
+	if out.BYOTAuthorizationsDeleted > 0 {
+		sb.WriteString(fmt.Sprintf("BYOT auths:  %d\n", out.BYOTAuthorizationsDeleted))
+	}
+	sb.WriteString(fmt.Sprintf("Team row:    %t\n", out.TeamDeleted))
+	if strings.TrimSpace(out.AuditID) != "" {
+		sb.WriteString(fmt.Sprintf("Audit:       %s\n", out.AuditID))
+	}
+	return sb.String()
+}
+
 func formatTeamAdd(v any) string {
 	out := v.(teamAddOutput)
 	var sb strings.Builder

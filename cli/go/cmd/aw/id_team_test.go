@@ -235,6 +235,78 @@ func TestTeamImportRequestCommandDoesNotExposeAccessModeFlag(t *testing.T) {
 	}
 }
 
+func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
+	t.Parallel()
+
+	teamKey := ed25519.NewKeyFromSeed([]byte{
+		0, 1, 2, 3, 4, 5, 6, 7,
+		8, 9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+		24, 25, 26, 27, 28, 29, 30, 31,
+	})
+	pub := teamKey.Public().(ed25519.PublicKey)
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/byoidt/projection-delete" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"dry_run":                          false,
+			"canonical_team_id":                "research:acme.com",
+			"team_id":                          "server-team-id",
+			"agents_deleted":                   2,
+			"workspaces_deleted":               2,
+			"cloud_workspace_metadata_deleted": 2,
+			"team_members_deleted":             1,
+			"byot_authorizations_deleted":      0,
+			"team_deleted":                     true,
+			"audit_id":                         "audit-1",
+		})
+	}))
+	defer server.Close()
+
+	out, err := executeTeamCleanupCloud(
+		context.Background(),
+		teamKey,
+		"research:acme.com",
+		false,
+		"2026-05-24T12:00:00Z",
+		server.URL,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "deleted" || out.TeamID != "research:acme.com" || !out.TeamDeleted {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+	if gotBody["awid_team_id"] != "research:acme.com" || gotBody["dry_run"] != false {
+		t.Fatalf("unexpected body: %#v", gotBody)
+	}
+	canonical, err := awid.CanonicalJSONValue(map[string]any{
+		"operation":    "byoidt_projection_delete",
+		"awid_team_id": "research:acme.com",
+		"dry_run":      false,
+		"timestamp":    "2026-05-24T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, ok := gotBody["controller_signature"].(string)
+	if !ok || signature == "" {
+		t.Fatalf("missing controller_signature in %#v", gotBody)
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ed25519.Verify(pub, []byte(canonical), sig) {
+		t.Fatal("cleanup signature does not verify against canonical projection-delete payload")
+	}
+}
+
 func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	t.Parallel()
 

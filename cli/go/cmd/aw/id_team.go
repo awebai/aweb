@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -71,6 +73,21 @@ type teamImportRequestOutput struct {
 	ControllerSignature string         `json:"controller_signature"`
 	CanonicalPayload    string         `json:"canonical_payload"`
 	RequestBody         map[string]any `json:"request_body"`
+}
+
+type teamCleanupCloudOutput struct {
+	Status                        string `json:"status"`
+	TeamID                        string `json:"team_id"`
+	DryRun                        bool   `json:"dry_run"`
+	ControllerDID                 string `json:"controller_did"`
+	CloudURL                      string `json:"cloud_url"`
+	AgentsDeleted                 int    `json:"agents_deleted"`
+	WorkspacesDeleted             int    `json:"workspaces_deleted"`
+	CloudWorkspaceMetadataDeleted int    `json:"cloud_workspace_metadata_deleted"`
+	TeamMembersDeleted            int    `json:"team_members_deleted"`
+	BYOTAuthorizationsDeleted     int    `json:"byot_authorizations_deleted"`
+	TeamDeleted                   bool   `json:"team_deleted"`
+	AuditID                       string `json:"audit_id,omitempty"`
 }
 
 type teamAddOutput struct {
@@ -187,6 +204,13 @@ var (
 	teamImportRequestCloudTeamID    string
 	teamImportRequestTimestamp      string
 	teamImportRequestApply          bool
+
+	teamCleanupCloudTeam        string
+	teamCleanupCloudNamespace   string
+	teamCleanupCloudURL         string
+	teamCleanupCloudTeamKeyPath string
+	teamCleanupCloudTimestamp   string
+	teamCleanupCloudApply       bool
 )
 
 // --- commands ---
@@ -286,6 +310,17 @@ var teamImportRequestCmd = &cobra.Command{
 	RunE: runTeamImportRequest,
 }
 
+var teamCleanupCloudCmd = &cobra.Command{
+	Use:   "cleanup-cloud",
+	Short: "Delete aweb Cloud's BYOT projection after registry team deletion",
+	Long: "Delete aweb Cloud's imported BYOT team projection using the local team controller key.\n\n" +
+		"This command does not mutate AWID. Use it after revoking members and deleting\n" +
+		"the AWID team, and before purging local team keys. It signs the cleanup request\n" +
+		"with ~/.config/aw/team-keys/<namespace>/<team>.key so aweb Cloud can verify\n" +
+		"that the customer-controlled team controller authorized the projection delete.",
+	RunE: runTeamCleanupCloud,
+}
+
 var certShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the current team certificate",
@@ -358,6 +393,14 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
 	teamCmd.AddCommand(teamImportRequestCmd)
+
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTeam, "team", "", "Team name")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudNamespace, "namespace", "", "Namespace domain")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudURL, "aweb-url", DefaultAwebURL, "aweb Cloud URL")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTeamKeyPath, "team-key", "", "Team controller key path override")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
+	teamCleanupCloudCmd.Flags().BoolVar(&teamCleanupCloudApply, "apply", false, "Apply the cleanup instead of dry-run")
+	teamCmd.AddCommand(teamCleanupCloudCmd)
 
 	identityCmd.AddCommand(teamCmd)
 
@@ -1400,6 +1443,35 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	team := strings.ToLower(strings.TrimSpace(teamCleanupCloudTeam))
+	domain := awconfig.NormalizeDomain(teamCleanupCloudNamespace)
+	if team == "" {
+		return usageError("--team is required")
+	}
+	if domain == "" {
+		return usageError("--namespace is required")
+	}
+	timestamp := strings.TrimSpace(teamCleanupCloudTimestamp)
+	if timestamp == "" {
+		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	teamID := awid.BuildTeamID(domain, team)
+	teamKey, err := loadTeamCleanupCloudKey(domain, team, teamCleanupCloudTeamKeyPath)
+	if err != nil {
+		return teamKeyLoadError(teamID, domain, err)
+	}
+	out, err := executeTeamCleanupCloud(ctx, teamKey, teamID, !teamCleanupCloudApply, timestamp, teamCleanupCloudURL)
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatTeamCleanupCloud)
+	return nil
+}
+
 func buildTeamImportRequestOutput(
 	teamKey ed25519.PrivateKey,
 	awidTeamID string,
@@ -1440,6 +1512,123 @@ func buildTeamImportRequestOutput(
 		CanonicalPayload:    canonical,
 		RequestBody:         body,
 	}, nil
+}
+
+func loadTeamCleanupCloudKey(domain, team, path string) (ed25519.PrivateKey, error) {
+	if strings.TrimSpace(path) != "" {
+		return awid.LoadSigningKey(strings.TrimSpace(path))
+	}
+	return awconfig.LoadTeamKey(domain, team)
+}
+
+func executeTeamCleanupCloud(
+	ctx context.Context,
+	teamKey ed25519.PrivateKey,
+	awidTeamID string,
+	dryRun bool,
+	timestamp string,
+	awebURL string,
+) (teamCleanupCloudOutput, error) {
+	if strings.TrimSpace(awidTeamID) == "" {
+		return teamCleanupCloudOutput{}, usageError("team id is required")
+	}
+	if strings.TrimSpace(timestamp) == "" {
+		return teamCleanupCloudOutput{}, usageError("timestamp is required")
+	}
+	if strings.TrimSpace(awebURL) == "" {
+		awebURL = DefaultAwebURL
+	}
+	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	signPayload := map[string]any{
+		"operation":    "byoidt_projection_delete",
+		"awid_team_id": strings.TrimSpace(awidTeamID),
+		"dry_run":      dryRun,
+		"timestamp":    strings.TrimSpace(timestamp),
+	}
+	canonical, err := awid.CanonicalJSONValue(signPayload)
+	if err != nil {
+		return teamCleanupCloudOutput{}, err
+	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	body := map[string]any{
+		"awid_team_id":         strings.TrimSpace(awidTeamID),
+		"dry_run":              dryRun,
+		"timestamp":            strings.TrimSpace(timestamp),
+		"controller_signature": signature,
+	}
+	var response struct {
+		DryRun                        bool   `json:"dry_run"`
+		CanonicalTeamID               string `json:"canonical_team_id"`
+		TeamID                        string `json:"team_id"`
+		AgentsDeleted                 int    `json:"agents_deleted"`
+		WorkspacesDeleted             int    `json:"workspaces_deleted"`
+		CloudWorkspaceMetadataDeleted int    `json:"cloud_workspace_metadata_deleted"`
+		TeamMembersDeleted            int    `json:"team_members_deleted"`
+		BYOTAuthorizationsDeleted     int    `json:"byot_authorizations_deleted"`
+		TeamDeleted                   bool   `json:"team_deleted"`
+		AuditID                       string `json:"audit_id"`
+	}
+	if err := postTeamCleanupCloud(ctx, awebURL, body, &response); err != nil {
+		return teamCleanupCloudOutput{}, err
+	}
+	status := "dry-run"
+	if !response.DryRun {
+		status = "deleted"
+	}
+	return teamCleanupCloudOutput{
+		Status:                        status,
+		TeamID:                        response.CanonicalTeamID,
+		DryRun:                        response.DryRun,
+		ControllerDID:                 controllerDID,
+		CloudURL:                      strings.TrimRight(awebURL, "/"),
+		AgentsDeleted:                 response.AgentsDeleted,
+		WorkspacesDeleted:             response.WorkspacesDeleted,
+		CloudWorkspaceMetadataDeleted: response.CloudWorkspaceMetadataDeleted,
+		TeamMembersDeleted:            response.TeamMembersDeleted,
+		BYOTAuthorizationsDeleted:     response.BYOTAuthorizationsDeleted,
+		TeamDeleted:                   response.TeamDeleted,
+		AuditID:                       response.AuditID,
+	}, nil
+}
+
+func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]any, out any) error {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	path := "/api/v1/teams/byoidt/projection-delete"
+	base := strings.TrimRight(strings.TrimSpace(awebURL), "/")
+	if strings.HasSuffix(base, "/api") {
+		path = strings.TrimPrefix(path, "/api")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var detail struct {
+			Detail any `json:"detail"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		if detail.Detail != nil {
+			encoded, _ := json.Marshal(detail.Detail)
+			return fmt.Errorf("aweb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
+		}
+		return fmt.Errorf("aweb: http %d", resp.StatusCode)
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nullableString(value string) any {
