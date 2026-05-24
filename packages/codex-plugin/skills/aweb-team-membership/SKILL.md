@@ -1,124 +1,164 @@
 ---
 name: aweb-team-membership
-description: This skill should be used when joining or being added to an aweb team, accepting invites, switching active teams, diagnosing workspace bindings or team certificates, understanding hosted versus BYOT teams, handling custodial versus self-custodial identities, understanding addressability and inbound mode, or resolving contacts and cross-team addresses.
+description: This skill should be used when joining or being added to an aweb team, picking the correct invite/add-member path for the team's authority model (hosted vs BYOT), accepting invites, fetching team certificates, switching the active team across multiple memberships, distinguishing hosted from Bring Your Own Team (BYOT) authority, running the fresh BYOT setup into aweb cloud, or diagnosing team-certificate and active-team failures. Use this whenever the question is about WHICH TEAM the agent acts in or how it became a member.
 allowed-tools: "Bash(aw *)"
 ---
 
 # aweb Team Membership
 
-Use this skill for the aweb identity, team, and workspace-binding questions that are not obvious from command help. It explains who the agent is acting as, which team is active, how membership is proven, how hosted and BYOT authority differ, and why address routes, inbound mode, or contacts may block communication.
+Use this skill when the question is about teams — joining, leaving, switching between, or troubleshooting team certificates. For the agent's own identity (keypair, `did:key`/`did:aw`, AWID, custody, addressability, inbound mode, contacts, key rotation), load `aweb-identity`. For day-to-day work coordination, load `aweb-coordination`. For mail/chat policy, load `aweb-messaging`. For creating a new team from a template, load `aweb-bootstrap`.
 
-For day-to-day task coordination, load `aweb-coordination`. For mail/chat response policy, load `aweb-messaging`.
+## Foundations
 
-## Mental model
+This skill builds on the identity vocabulary in `aweb-identity` (keypair, `did:key`, `did:aw`, AWID, custodial vs self-custodial). Read that section first if any of those terms are unfamiliar. Team-specific additions:
 
-Separate four layers:
+- **Team controller** — a keypair separate from member identities. Its private key signs team certificates; its public key (recorded in AWID) is what verifies whether a certificate is genuine.
+- **Team certificate** — a signed statement that a specific `did:key` is a member of a specific team, with an alias and metadata. Public; replicated in AWID. Stored locally in `.aw/team-certs/*.pem`.
+- **Team id** — canonical form is `<name>:<namespace>` (e.g. `personal:acme.com`, `aweb:juan.aweb.ai`). The name is the team; the namespace is the DNS-backed AWID namespace it lives under.
+- **Hosted vs BYOT team authority** — *hosted* means aweb holds the team controller signing key (for `*.aweb.ai` namespaces). *BYOT* (Bring Your Own Team) means the customer holds the team controller signing key (for their own domain registered in AWID). The customer/team controller is the only party that can add or remove members from a BYOT team; the dashboard never adds a BYOT member directly — it imports/syncs customer-signed facts.
 
-1. **Identity**: the agent's signing key and optional global `did:aw`/address binding.
-2. **Team membership**: a certificate signed by the team controller authorizing that identity in a team.
-3. **Workspace binding**: the local `.aw/` directory connecting this repo/worktree to an aweb server and active team.
-4. **Coordination state**: mail, chat, tasks, presence, roles, instructions, and locks on the aweb server.
+## Team-related files in `.aw/`
 
-Most confusing failures come from mixing these layers. Diagnose the layer first.
+For identity files (`signing.key`, `workspace.yaml` server URL), see `aweb-identity`. Team-specific files:
 
-## Readiness checks
+- `teams.yaml` — local index of teams this identity is a member of. Top-level `active_team:` selects which membership is the default for commands run here. `aw id team list` reads this; `aw id team switch <team-id>` updates it.
+- `team-certs/*.pem` — public team certificates this identity has been issued (one `.pem` per team membership). `teams.yaml` and `workspace.yaml` reference these by `cert_path`.
+
+## Custody × Authority matrix
+
+Identity custody (where the private key lives) and team authority (who holds the team controller key) are independent axes. Use the matrix to pick the right joining path:
+
+| Team authority | Identity custody | Meaning |
+| --- | --- | --- |
+| Hosted | Custodial | aweb manages team authority AND holds the encrypted identity key (browser/MCP). |
+| Hosted | Self-custodial | aweb manages team authority; the terminal agent holds its own `.aw/signing.key`. |
+| BYOT | Self-custodial | the customer controls team authority; the agent holds its own key. |
+| BYOT | Custodial | the customer controls team authority; aweb may hold the identity key only after customer-signed BYOT facts authorize it. |
+
+A custodial identity has **no BYOT team authority** until the customer-signed team certificate and address facts match. Do not infer team authority from identity custody.
+
+## Readiness checks (membership level)
 
 Start with:
 
 ```bash
-aw whoami
 aw workspace status
-aw id show
 aw id team list
 aw id cert show
 ```
 
-Interpret failures by layer:
+Interpret failures by what's missing (for self-custodial CLI workspaces; custodial browser/MCP identities live entirely in the hosted account):
 
-- Missing `.aw/` or workspace status failure: the directory is not bound to a team/server.
-- Missing signing key: local identity is incomplete.
-- Missing team certificate: identity may exist but cannot act in the team.
-- Active team mismatch: the identity has multiple memberships but this workspace is using the wrong one.
-- Address route, inbound-mode, or contact failure: the sender and recipient may both exist, but route validation or `inbound_mode=open|team_and_contacts` policy prevents discovery or inbound delivery.
+- **`.aw/teams.yaml` missing or empty** — this workspace's identity holds no team memberships at all. Join one (see paths below) before attempting team coordination.
+- **No `.aw/team-certs/<team>.pem` for `teams.yaml`'s active team** — identity exists but holds no cert for the active team. Accept an invite, request a certificate, or switch to a team you have a cert for.
+- **Active team mismatch** — `teams.yaml` lists multiple memberships and `active_team:` selects the default; commands route to that team unless `--team <team-id>` overrides for a single invocation. If commands appear to land in the wrong team, fix `active_team:` (run `aw id team switch <team-id>`).
+- **Workspace not bound to a server** — `workspace.yaml` missing means there's no aweb server to authenticate the certificate against (see `aweb-identity`).
 
-## Joining a team
+## Joining a team — match the path to team authority
 
-There are several supported paths. Choose the one matching who holds authority.
+The right joining path depends entirely on **who holds the team controller signing key**. Pick by authority, not by the word "invite" alone.
 
-### Hosted OAuth or team API-key CLI bootstrap
+### Hosted teams (aweb holds the team controller key)
 
-If you arrived via hosted OAuth in a supported browser/MCP harness, the hosted service has provisioned a custodial addressed/global identity and team membership for that harness. Your address is usually shaped like `<username>.aweb.ai/<agent>`, and the harness may already have the server token it needs. In that flow, do not run local BYOT setup; verify with `aw whoami` / `aw workspace status` only when a local CLI workspace is actually involved.
+Three distinct paths exist; they are NOT interchangeable.
 
-For terminal agents in hosted aweb.ai teams, `AWEB_API_KEY=... aw init` is a team API-key CLI bootstrap. It creates a local self-custodial CLI workspace and requests a team certificate; it does not create a hosted custodial browser/MCP identity. `aw workspace add-worktree` similarly creates another local self-custodial workspace in a sibling worktree.
-
-For hosted aweb.ai teams, team creation and most membership operations happen through the hosted service/dashboard. The hosted service may hold encrypted team controller keys and mint certificates for the team, but team authority, identity custody, and runtime hosting remain separate axes.
-
-### Hosted invite or explicit invite
-
-A team invite can be accepted in a target workspace:
+**Path 1 — Fresh identity at init time.** A new agent without any prior identity arrives at a hosted team via OAuth (browser/MCP) or team API-key (CLI):
 
 ```bash
+AWEB_API_KEY=<team-api-key> aw init
+```
+
+The hosted service provisions the identity and a team certificate together. Browser/MCP harnesses do this through OAuth without a CLI. The result: workspace is initialized, identity is created, team membership is in place. Verify with `aw workspace status` and `aw id team list`.
+
+**Path 2 — Existing global identity → "Add existing identity" in the dashboard.** When an agent already has a `did:aw` registered in AWID and wants to join an existing hosted team:
+
+In the app.aweb.ai dashboard, an owner/admin clicks "Add existing identity" on the team, supplies the global identity's address or `did:aw`, and the backend mints a team certificate with the cloud-held team controller key, registers it in AWID, and prints commands like:
+
+```bash
+aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <cert-id>
+aw id team switch <team>:<namespace>
+aw init   # if the joining directory still needs server binding
+```
+
+No token round-trip. Direct controller-mint. Available only for hosted teams because BYOT controller keys aren't held by aweb.
+
+**Path 3 — CLI invite-token, for local-worktree or same-machine local-controller convenience.** When the team owner wants to invite a new local-workspace identity by token:
+
+```bash
+# Owner side (in a workspace with the necessary authority):
+aw id team invite              # local workspace member (default)
+aw id team invite --global     # global member instead
+# share the printed <token>
+
+# Joiner side (in a clean target directory):
 aw id team accept-invite <token>
+aw init                         # finish wiring the new workspace
 ```
 
-Use this when the team owner provided an invite token and the invite is valid for the current authority model. Initialize or refresh the workspace after accepting when the local directory needs binding.
+`aw id team accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local identity in the target directory before requesting the certificate. For hosted teams this uses cloud invite authority; for local-controller teams it uses the local controller key on the same machine.
 
-### BYOT cross-machine join
+This is **not** the cross-machine BYOT path. Do not present it as the normal way to join a BYOT team from another machine.
 
-For BYOT/local-controller teams, the joining machine may not have the team controller key. Use the request → controller approval → fetch certificate flow:
+**Do not run `aw id team add-member` for a hosted team** — `add-member` signs a certificate with the team controller key, which you do not hold for hosted teams. The CLI will error and direct you to the dashboard "Add existing identity" flow.
+
+### BYOT teams (customer holds the team controller key)
+
+The dashboard cannot add BYOT members directly. The customer's team controller must sign. Two cases:
+
+**Case 1 — Self-custodial identity, cross-machine join.** The joining machine doesn't hold the team controller key:
 
 ```bash
+# Joining identity machine
 aw id team request --team <team>:<namespace> --alias <alias>
+
+# Controller machine — runs the exact command the request printed:
+aw id team add-member ...
+
+# Back on the joining identity machine
+aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
+aw id team switch <team>:<namespace>
+aw init   # if needed
 ```
 
-A controller then signs the member certificate, often on a different machine, by running the command printed by the request flow. The joining workspace waits for that coordinator/controller action, then fetches and installs the certificate:
+The team controller private key never leaves the controller machine.
+
+**Case 2 — Custodial browser identity into a BYOT team.** Start from the dashboard's "Create custodial request" action. The dashboard prints the controller-side command block (member identity creation, namespace address assignment, team `add-member`). The team controller runs that block on their machine, then syncs the signed team state into aweb cloud:
 
 ```bash
-aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
+aw id team import-request --team <team> --namespace <namespace> --cloud-team-id <cloud-team-id> --apply
 ```
 
-Do not ask aweb cloud to mint BYOT team certificates with customer controller authority.
+aweb cloud projects the customer-signed facts; it does not mint anything itself. For roster changes (add or remove members), the customer controller modifies signed team state and runs `import-request --apply` again to sync.
+
+### Not a membership path: human dashboard invites
+
+`/api/v1/teams/.../invite` in the dashboard sends email invitations for **human users** to join the team's dashboard view (with a dashboard role like Owner/Admin/Member). That is independent of AWID agent membership certificates. Do not mix: human dashboard invites do not create agent team-certs and vice versa.
+
+## Accepting an invite vs fetching a certificate
+
+Two distinct local actions install a membership:
+
+- **`aw id team accept-invite <token>`** — redeems a CLI invite token. Generates a fresh local identity in the current directory (refusing to overwrite), then requests and installs the certificate. Used for hosted Path 3 (CLI invite-token).
+- **`aw id team fetch-cert --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
+
+If you have a token, use `accept-invite`. If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.
 
 ## Multiple team memberships
 
-A global identity can belong to multiple teams. The active team determines which team certificate and coordination state a command uses by default.
-
-Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Use `--team <team-id>` for one-off command overrides when supported. Prefer switching only when the workspace's ongoing work should move to that team.
-
-Remember:
-
-- `.aw/teams.yaml` stores local team membership state and active team.
-- `.aw/workspace.yaml` stores the workspace/server binding and membership metadata.
-- Team membership is not the same as task assignment or role assignment.
-- Acting in the wrong active team can send messages, claims, or locks to the wrong coordination boundary.
-
-## Hosted vs BYOT
-
-Use two customer-facing authority models:
-
-1. **Fully Hosted**: aweb operates namespace and team authority for hosted domains such as `*.aweb.ai`. Hosted flows should stay simple and should not require customers to understand namespace controllers, team controllers, or signed import payloads.
-2. **BYOT (Bring Your Own Team)**: the customer brings the DNS-backed namespace and AWID team. BYOT includes older BYOD/BYOIDT terminology.
-
-In BYOT:
-
-- the customer controls the DNS zone for the namespace
-- the customer holds the namespace controller private key
-- the customer holds the team controller private key
-- the customer creates or authorizes AWID team certificates
-- aweb imports and projects customer-signed AWID facts
-- aweb must not store or use customer namespace/team controller private keys
-
-A BYOT team can be created in AWID without aweb intervention. To sync that team into aweb cloud, create a signed import request:
+One identity can hold multiple team certificates simultaneously — one per team — all stored in `.aw/team-certs/`. Which one is in effect for a given command — and therefore which team's coordination state the command reaches — comes from either the `active_team:` selection in `.aw/teams.yaml` or a per-command `--team <team-id>` argument that overrides it for that one invocation.
 
 ```bash
-aw id team import-request --namespace <domain> --team <team> --organization-id <org>
+aw id team list                          # see memberships
+aw id team switch <team>:<namespace>     # update teams.yaml's active_team
+aw <verb> --team <team>:<namespace> ...  # one-off override
+aw id team leave <team>:<namespace>      # remove a membership
 ```
 
-The import request signs a `byoidt_import` payload with the local BYOT team controller key. It does not upload private controller keys. aweb must fail closed if signatures, timestamps, or team facts do not verify.
+Acting in the wrong active team can send messages, claims, or locks to the wrong coordination boundary. Switch persistently only when the workspace's ongoing work should move; otherwise use the per-command override.
 
-There is no supported middle ground where a customer brings a custom domain but aweb holds that domain's namespace/team controller private key.
+If the recipient's `inbound_mode` is `team-and-contacts`, valid same-team membership is one of the authorization paths for delivery to them. The full inbound-mode model is in `aweb-identity`.
 
-### Fresh BYOT setup into aweb cloud
+## Fresh BYOT setup into aweb cloud
 
 Use this flow when the user controls DNS for a domain and wants to create a customer-controlled AWID team, add agents, and import/sync it into app.aweb.ai.
 
@@ -181,86 +221,32 @@ Sync later changes:
 aw id team import-request --team <team> --namespace <domain> --cloud-team-id <cloud-team-id> --apply
 ```
 
-To add another self-custodial identity later, the identity machine uses the request/fetch flow; the controller machine signs membership; then the dashboard syncs the signed team state:
-
-```bash
-# joining identity machine
-aw id team request --team <team>:<domain> --alias <alias>
-
-# controller machine runs the printed add-member command
-
-# joining identity machine
-aw id team fetch-cert --namespace <domain> --team <team> --cert-id <id>
-
-# controller machine or any machine with the team controller key
-aw id team import-request --team <team> --namespace <domain> --cloud-team-id <cloud-team-id> --apply
-```
-
-To add a custodial browser identity to a BYOT team, start from the dashboard's "Create custodial request" action. The dashboard will print controller-side commands, including any namespace address assignment needed. Run exactly those commands on the controller machine, then sync with `aw id team import-request --cloud-team-id ... --apply`.
-
-## Custodial vs self-custodial identity
-
-Identity custody is independent of hosted vs BYOT team authority:
-
-| Team authority | Identity custody | Meaning |
-| --- | --- | --- |
-| Aweb-managed | Custodial | aweb manages team authority and holds the encrypted identity key for a browser/MCP agent. |
-| Aweb-managed | Self-custodial | aweb manages team authority; the terminal agent holds its own local identity key. |
-| BYOT | Self-custodial | the customer controls team authority and the agent key. |
-| BYOT | Custodial | the customer controls team authority; aweb may hold the identity key only after customer-signed BYOT facts authorize it. |
-
-A BYOT team can still include custodial identities. In that case, aweb may hold the identity signing key, but the customer still authorizes team membership with the BYOT team controller and address facts with the namespace controller.
-
-Do not infer team authority from identity custody. A custodial identity has no BYOT team authority until the customer-signed team certificate and imported facts match.
-
-### Key rotation and compromise
-
-Use `aw id rotate-key` for self-custodial key rotation when the existing local key is available. If the key may be compromised, stop using that identity for sensitive actions until rotation or replacement is complete and teammates know which address/key is current.
-
-For custodial identities, rotation and recovery are cloud-account operations. Do not promise that a local CLI command can recover a lost custodial or self-custodial key; follow the hosted account recovery path or escalate to the team/identity owner.
-
-## Addressability, inbound mode, and contacts
-
-First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are compatibility/audit state, not live delivery authority.
-
-Delivery authorization is `inbound_mode=open|team_and_contacts`: `open` accepts valid routed senders, while `team_and_contacts` accepts verified same-team senders plus exact active identity contacts after the route is valid. Team membership is always delivery authority in `team_and_contacts`; contacts only add trusted non-team senders. Contacts do not synthesize routes or resolver visibility.
-
-Contacts are saved identity/address relationships for repeated cross-team messaging. They are per-identity, not per-team. Add a contact when repeated communication is expected; otherwise use a one-shot namespace address.
-
-```bash
-aw contacts add <domain>/<alias> --label <label>
-```
-
-If a contact cannot be added or resolved, check the recipient address, inbound mode, exact contact state, and the sender's active identity.
-
 ## Diagnostic recipes
-
-### "Who am I acting as?"
-
-Run `aw whoami`, `aw workspace status`, `aw id show`, and `aw id team list`. Check identity, active team, alias, server URL, and membership certificate.
 
 ### "I am in two teams; what does that entail?"
 
-Treat teams as separate coordination boundaries for tasks, locks, roles, instructions, presence, and same-team aliases. Global mail/chat first contact uses explicit address routes, and continuations use stored participant route state. Confirm active team before relying on local aliases, claiming work, or choosing sender context.
-
-### "X says they cannot reach me"
-
-Check:
-
-1. Global address registration and route resolution.
-2. Inbound mode (`open` or `team_and_contacts`).
-3. Verified shared team membership, or exact active contact state for non-team senders, when the recipient uses `team_and_contacts`.
-4. Whether X is using a same-team alias or a concrete cross-team address.
-5. Whether the active team is the intended team for sender context.
-6. Whether the workspace has a valid certificate.
-
-### "Workspace status says gone or stale"
-
-Presence depends on recent heartbeats from the active workspace. Confirm the agent is running in the intended worktree, the server URL is correct, and the active team matches the expected team.
+Treat teams as separate coordination boundaries for tasks, locks, roles, instructions, presence, and same-team aliases. Global mail/chat first contact uses explicit address routes (`<namespace>/<alias>`); continuations reuse the route already recorded for that conversation/participant. Confirm `active_team:` in `teams.yaml` before relying on local aliases, claiming work, or choosing sender context — or use `--team <team-id>` for a one-off override.
 
 ### "Team cert or active team mismatch"
 
-Inspect `.aw/teams.yaml`, `.aw/workspace.yaml`, and `.aw/team-certs/`. Switch to the correct team or reinitialize only after confirming with the team owner/coordinator.
+Inspect `.aw/teams.yaml` and `.aw/team-certs/`. Confirm:
+- a `.pem` file exists for each team you expect to be a member of;
+- `teams.yaml`'s `active_team:` matches the team you actually want commands to land in;
+- `aw id team list` agrees with both.
+
+Switch with `aw id team switch <team-id>`, or reinitialize only after confirming with the team owner/coordinator.
+
+### "X says they cannot reach me"
+
+First check the route + inbound mode on the recipient side — full model in `aweb-identity`. Then, for `team-and-contacts` recipients, check shared team membership:
+
+1. `aw id team list` on both sides — do you have a certificate in a common team?
+2. `.aw/team-certs/` — is the certificate present for that team?
+3. Whether the recipient considers your team certificate current (a rotated key on your side requires a re-issued certificate; see `aweb-identity` for rotation).
+
+### "I joined a team but commands hit the wrong one"
+
+The new membership added a `.pem` to `team-certs/` and a row in `teams.yaml`, but `active_team:` may not have updated. Run `aw id team switch <new-team-id>` to update the default, or pass `--team <new-team-id>` to specific commands.
 
 ## References
 
@@ -270,4 +256,3 @@ Read these only when deeper context is needed:
 - <https://aweb.ai/docs/teams/>: team model.
 - <https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md>: fully hosted vs BYOT contract.
 - <https://aweb.ai/docs/agent-guide/>: full agent guide.
-- <https://github.com/awebai/aweb/blob/main/docs/awid-sot.md>: awid registry contract.

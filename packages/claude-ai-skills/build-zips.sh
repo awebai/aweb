@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 rm -rf dist staging
 mkdir -p dist staging
 
-for name in aweb-coordination aweb-messaging aweb-team-membership aweb-bootstrap; do
+for name in aweb-coordination aweb-messaging aweb-team-membership aweb-bootstrap aweb-identity; do
   src="../../skills/$name"
   if [ ! -d "$src" ]; then
     echo "ERROR: canonical skill source missing at $src"

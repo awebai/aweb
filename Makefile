@@ -238,14 +238,14 @@ publish-skills:
 		echo "" && \
 		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will:" && \
 		echo "    - publish @awebai/claude-skills@$$NEW_VERSION to npm" && \
-		echo "    - attach 4 ZIPs to the GH Release for Claude.ai users" && \
+		echo "    - attach 5 ZIPs to the GH Release for Claude.ai users" && \
 		echo "" && \
 		echo "  After GH Actions completes:" && \
 		echo "    1) Bump awebai/claude-plugins/.claude-plugin/marketplace.json" && \
 		echo "       version field to $$NEW_VERSION so /plugin update finds the" && \
 		echo "       new content." && \
 		echo "    2) Claude.ai users: ZIPs at" && \
-		echo "       https://github.com/awebai/aweb/releases/download/skills-v$$NEW_VERSION/{aweb-coordination,aweb-messaging,aweb-team-membership,aweb-bootstrap}.zip"
+		echo "       https://github.com/awebai/aweb/releases/download/skills-v$$NEW_VERSION/{aweb-coordination,aweb-messaging,aweb-team-membership,aweb-bootstrap,aweb-identity}.zip"
 
 # ── Unified release ──────────────────────────────────────────────────
 
