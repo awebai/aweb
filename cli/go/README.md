@@ -205,6 +205,7 @@ aw id team delete                     # Delete an AWID team after active certs a
 aw id team import-request --namespace <domain> --team <team> --organization-id <org>
 aw id rotate-key                      # Rotate the local signing key
 aw id show                            # Show current identity and registry status
+aw id namespace delete                # Delete an AWID namespace after active certs are revoked
 aw claim-human --email <email>        # Attach a human owner for dashboard access
 ```
 
