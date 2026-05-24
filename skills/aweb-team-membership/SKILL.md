@@ -1,6 +1,6 @@
 ---
 name: aweb-team-membership
-description: This skill should be used when joining or being added to an aweb team, accepting invites, switching active teams, diagnosing workspace bindings or team certificates, understanding hosted versus BYOT teams, handling custodial versus self-custodial identities, understanding addressability and inbound mode, or resolving contacts and cross-team addresses.
+description: This skill should be used when joining or being added to an aweb team, accepting invites, switching active teams, diagnosing workspace bindings or team certificates, understanding hosted versus Bring Your Own Team (BYOT) teams, handling custodial versus self-custodial identities, understanding addressability and inbound mode, or resolving contacts and cross-team addresses.
 allowed-tools: "Bash(aw *)"
 ---
 
