@@ -41,9 +41,9 @@ Most confusing failures come from mixing these layers. Diagnose the layer first.
 The workspace directory is the same regardless of how it was created (`aw init`, `aw workspace add-worktree`, or `aw team bootstrap`). Files that matter:
 
 - `signing.key` — Ed25519 private key for self-custodial workspaces. If absent, this workspace has no signing identity.
-- `workspace.yaml` — server URL, active team id, and which identity is bound here. If absent or empty, the workspace is not bound to any server or team, even when `signing.key` is present.
-- `teams.yaml` — local index of teams this identity is a member of, plus the active-team selection.
-- `team-certs/*.pem` — public team certificates this identity has been issued (one `.pem` file per team membership).
+- `workspace.yaml` — server URL (`aweb_url`), API key/auth, and per-membership workspace metadata for this directory. Defines which aweb server this workspace talks to. Does NOT hold the active-team selection.
+- `teams.yaml` — local index of teams this identity is a member of, plus the `active_team:` field that selects which membership is the default for commands run here.
+- `team-certs/*.pem` — public team certificates this identity has been issued (one `.pem` file per team membership; `teams.yaml` and `workspace.yaml` reference these by `cert_path`).
 - `context/`, `interaction-log.jsonl`, and similar — runtime/audit state, not security-relevant for membership questions.
 
 Custodial (browser/MCP) identities keep the equivalent key material server-side in the hosted account, not in a local `.aw/`. For custodial identities, the workspace concept is virtual; identity and team binding live in the hosted record.
@@ -60,13 +60,13 @@ aw id team list
 aw id cert show
 ```
 
-Interpret failures by layer, pointing at specific files:
+Interpret failures by layer, pointing at specific files. These checks assume a local CLI workspace; custodial browser/MCP identities live entirely in the hosted account and never have a local `.aw/`.
 
-- **No `.aw/` in this directory** — there is no workspace here at all, and therefore no identity. Run `aw init` to create one, or move to a directory that has been initialized.
-- **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created. Custodial workspaces never have this file locally; check whether the harness expects custodial custody.
-- **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to a server, team, or identity, even when `signing.key` is present. The agent cannot reach an aweb server until `workspace.yaml` is populated (re-run `aw init` or `aw workspace add-worktree`).
-- **No `.aw/team-certs/<team>.pem` for `workspace.yaml`'s active team** — identity exists but holds no team certificate for the active team. The agent can sign messages but cannot act inside the team. Accept an invite, request a certificate, or switch active team.
-- **Active team mismatch** — `teams.yaml` lists multiple memberships and `workspace.yaml` names one as active; commands route to whichever is active unless a per-command `--team <team-id>` arg overrides it. If commands appear to land in the wrong team, either the active selection in `workspace.yaml` is wrong (switch with `aw id team switch <team-id>`) or a CLI override was/wasn't supplied.
+- **No `.aw/` in this directory** — for a local CLI workspace, there is no workspace here at all, and therefore no identity. Run `aw init` to create one, or move to a directory that has been initialized.
+- **`.aw/signing.key` missing** — for a self-custodial CLI workspace, the workspace exists but has no signing key. Identity is unusable until the key is restored from backup or a new identity is created.
+- **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to a server, even when `signing.key` is present. The agent cannot reach an aweb server until `workspace.yaml` is populated (re-run `aw init` or `aw workspace add-worktree`).
+- **No `.aw/team-certs/<team>.pem` for `teams.yaml`'s active team** — identity exists but holds no team certificate for the active team. The agent can sign messages but cannot act inside the team. Accept an invite, request a certificate, or switch active team.
+- **Active team mismatch** — `teams.yaml` lists multiple memberships and its `active_team:` field selects the default; commands route to that team unless a per-command `--team <team-id>` arg overrides it. If commands appear to land in the wrong team, either `teams.yaml`'s `active_team:` is wrong (switch with `aw id team switch <team-id>`) or a CLI override was or wasn't supplied as intended.
 - **Address route, inbound-mode, or contact failure** — sender and recipient may both exist with valid certificates, but the recipient's AWID route entry or the recipient's `inbound_mode` policy (their delivery-authorization setting, checked after a route resolves) prevents discovery or delivery. See the addressability section for the full model.
 
 ## Joining a team
@@ -93,6 +93,8 @@ Use this when the team owner provided an invite token and the invite is valid fo
 
 ### BYOT cross-machine join
 
+This path only applies to BYOT teams. If you are in a fully hosted `*.aweb.ai` team and do not control a team controller key, skip this section and use the hosted invite path above instead.
+
 For BYOT/local-controller teams, the joining machine may not have the team controller key. Use the request → controller approval → fetch certificate flow:
 
 ```bash
@@ -109,9 +111,9 @@ Do not ask aweb cloud to mint BYOT team certificates with customer controller au
 
 ## Multiple team memberships
 
-One identity can hold multiple team certificates (one per team), all kept under `.aw/team-certs/`. Which one is in effect for a given command — and therefore which team's mail, chat, tasks, presence, roles, and locks a command reaches — comes from either the active-team selection in `workspace.yaml` or a per-command `--team <team-id>` CLI argument that overrides it for that one invocation.
+One identity can hold multiple team certificates (one per team), all kept under `.aw/team-certs/`. Which one is in effect for a given command — and therefore which team's mail, chat, tasks, presence, roles, and locks a command reaches — comes from either the `active_team:` selection in `.aw/teams.yaml` or a per-command `--team <team-id>` CLI argument that overrides it for that one invocation.
 
-Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Prefer the persistent switch only when the workspace's ongoing work should move to that team; otherwise use the per-command `--team` override.
+Check and switch memberships with `aw id team list` and `aw id team switch <team-id>` (which updates `teams.yaml`'s `active_team:`). Prefer the persistent switch only when the workspace's ongoing work should move to that team; otherwise use the per-command `--team` override.
 
 Team membership is not the same as task assignment or role assignment. Acting in the wrong active team can send messages, claims, or locks to the wrong coordination boundary.
 
@@ -243,6 +245,8 @@ Use `aw id rotate-key` for self-custodial key rotation when the existing local k
 For custodial identities, rotation and recovery are cloud-account operations. Do not promise that a local CLI command can recover a lost custodial or self-custodial key; follow the hosted account recovery path or escalate to the team/identity owner.
 
 ## Addressability, inbound mode, and contacts
+
+Delivery happens in two steps: (1) resolve a route — the recipient's AWID-registered `<domain>/<alias>` — so the sender knows where to deliver; (2) evaluate the recipient's `inbound_mode` policy to decide whether this specific sender is allowed to deliver via that route. Team certificates prove membership for step 2; they do not create a route in step 1.
 
 First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are compatibility/audit state, not live delivery authority.
 
