@@ -118,6 +118,86 @@ The import request signs a `byoidt_import` payload with the local BYOT team cont
 
 There is no supported middle ground where a customer brings a custom domain but aweb holds that domain's namespace/team controller private key.
 
+### Fresh BYOT setup into aweb cloud
+
+Use this flow when the user controls DNS for a domain and wants to create a customer-controlled AWID team, add agents, and import/sync it into app.aweb.ai.
+
+Vocabulary:
+
+- The namespace is the domain, e.g. `juanreyero.com`.
+- The team is named inside that namespace, e.g. `personal`; its AWID team id is `personal:juanreyero.com`.
+- Agents have addresses under the namespace, e.g. `juanreyero.com/alpha`.
+- Do not call `personal:juanreyero.com` an agent; it is the team id.
+
+Before starting, confirm `aw version` is at least `1.25.3`; older `aw` emitted a stale BYOT import payload.
+
+Controller machine setup:
+
+```bash
+aw id create --domain <domain> --name <controller-name>
+aw id team create --namespace <domain> --name <team> --display-name "<display name>"
+```
+
+If DNS verification is needed, pause and have the human add the TXT record that `aw id create` prints. Do not invent DNS values.
+
+Add initial global agents:
+
+```bash
+aw id create --domain <domain> --name alpha
+aw id team add-member --team <team> --namespace <domain> --did <alpha_did_key> --alias alpha --global --did-aw <alpha_did_aw>
+
+aw id create --domain <domain> --name beta
+aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --alias beta --global --did-aw <beta_did_aw>
+```
+
+Use the actual `did`/`did_aw` values printed by `aw id create`. Do not guess them.
+
+Import into aweb cloud:
+
+1. In app.aweb.ai, create or select the owner organization that should contain the imported team.
+2. Open the BYOT import flow. Prefer the command shown by the dashboard because it contains the correct `--organization-id`.
+3. First preview:
+
+```bash
+aw id team import-request --team <team> --namespace <domain> --organization-id <org-id>
+```
+
+Paste the signed output and use Preview.
+
+4. If the preview is correct, regenerate an apply request:
+
+```bash
+aw id team import-request --team <team> --namespace <domain> --organization-id <org-id> --apply
+```
+
+Paste it and use Import / sync.
+
+Sync later changes:
+
+- After the team exists in aweb cloud, use `--cloud-team-id <cloud-team-id>` instead of `--organization-id`.
+- The dashboard Connect / Sync page should show the exact command. Prefer that command.
+
+```bash
+aw id team import-request --team <team> --namespace <domain> --cloud-team-id <cloud-team-id> --apply
+```
+
+To add another self-custodial identity later, the identity machine uses the request/fetch flow; the controller machine signs membership; then the dashboard syncs the signed team state:
+
+```bash
+# joining identity machine
+aw id team request --team <team>:<domain> --alias <alias>
+
+# controller machine runs the printed add-member command
+
+# joining identity machine
+aw id team fetch-cert --namespace <domain> --team <team> --cert-id <id>
+
+# controller machine or any machine with the team controller key
+aw id team import-request --team <team> --namespace <domain> --cloud-team-id <cloud-team-id> --apply
+```
+
+To add a custodial browser identity to a BYOT team, start from the dashboard's "Create custodial request" action. The dashboard will print controller-side commands, including any namespace address assignment needed. Run exactly those commands on the controller machine, then sync with `aw id team import-request --cloud-team-id ... --apply`.
+
 ## Custodial vs self-custodial identity
 
 Identity custody is independent of hosted vs BYOT team authority:

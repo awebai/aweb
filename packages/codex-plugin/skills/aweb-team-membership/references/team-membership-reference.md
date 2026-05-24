@@ -34,6 +34,13 @@ aw id team import-request --namespace <domain> --team <team> --organization-id <
 
 Use current `aw ... --help` for exact flags. Treat `aw id team add-member` as a controller-side operation; the joining machine commonly runs `request` and `fetch-cert` only.
 
+For the dashboard import/sync path:
+
+- Use `--organization-id <org-id>` only for the first import into an owner organization.
+- Use `--cloud-team-id <cloud-team-id>` for later syncs of an already-imported team.
+- Omit `--apply` for preview; add `--apply` only after the preview is correct.
+- The dashboard's Connect / Sync page should show the exact command for the current team. Prefer that command over reconstructing IDs by hand.
+
 ## Addressability, inbound mode, and contacts
 
 Addressability and delivery authorization are separate:
