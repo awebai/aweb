@@ -26,6 +26,13 @@ For the underlying team model — what a team is, how membership
 certificates work, how cross-team addressing differs from same-team
 aliases — see [teams.md](https://aweb.ai/docs/teams.md).
 
+If you are walking an AI agent through bootstrap (template choice,
+hosted/BYOT/manual mode, work-directory vs work-repo-url, optional
+worktree agents, post-bootstrap validation, re-run safety), install
+the [`aweb-bootstrap`](https://github.com/awebai/aweb/tree/main/skills/aweb-bootstrap)
+skill — it captures the decision policy this page describes in a
+shape agents load on demand.
+
 ## Quick start
 
 The reference template is
