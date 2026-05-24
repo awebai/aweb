@@ -14,11 +14,12 @@ Do not treat `cli/go/skills/` as canonical. The old seed packs from that directo
 
 ## V1 skill set
 
-V1 ships three default skills:
+V1 ships four default skills:
 
 - `aweb-coordination`: session/work-loop policy for coordinating with an aweb team.
 - `aweb-messaging`: mail/chat/channel-awakening response policy.
 - `aweb-team-membership`: joining teams, multi-team membership, workspace binding, hosted vs BYOT, custody, addressability, inbound mode, contacts.
+- `aweb-bootstrap`: creating a new aweb team from a template — template choice, hosted/BYOT/manual modes, work-directory vs work-repo-url XOR, optional worktree agents, post-bootstrap validation, re-run safety.
 
 Do not ship separate top-level v1 skills for awid, directory, or channel internals. Those topics appear as references/sections unless a future operator/developer audience needs a dedicated non-default skill such as `awid-operator`.
 

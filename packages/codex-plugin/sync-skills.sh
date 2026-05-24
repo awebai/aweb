@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 rm -rf skills
 mkdir skills
-for name in aweb-coordination aweb-messaging aweb-team-membership; do
+for name in aweb-coordination aweb-messaging aweb-team-membership aweb-bootstrap; do
   cp -R "../../skills/$name" "skills/$name"
 done
 echo "Synced $(ls skills | wc -l | tr -d ' ') skill(s) into packages/codex-plugin/skills/"
