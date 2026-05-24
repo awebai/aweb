@@ -14,8 +14,8 @@ For mail/chat response policy, load `aweb-messaging`. For identity, team certifi
 
 A short map of the primitives this skill assumes are available. Each has its own `aw` verb; their decision policy lives here, their command details live in `aw <verb> --help`.
 
-- **Tasks** (`aw task`) — durable shared work items the team can list, claim, update, comment on, and close.
-- **Work discovery** (`aw work`) — `ready` (unclaimed), `active` (in-progress across the team), `blocked`.
+- **Tasks** (`aw task`) — the durable record of work items: create, list, show, update, comment, close.
+- **Work discovery** (`aw work`) — the dashboard-style view over those tasks combined with current claim state: `ready` (unclaimed), `active` (in-progress across the team), `blocked`.
 - **Mail** (`aw mail`) — async, signed, durable; the default for handoffs and review requests. Details in `aweb-messaging`.
 - **Chat** (`aw chat`) — sync, signed, waits on a response. Details in `aweb-messaging`.
 - **Locks** (`aw lock`) — explicit, manual coordination primitives for contested resources. Not automatic.
@@ -57,7 +57,7 @@ Mail and chat are the contact surface. The policy lives in `aweb-messaging`, but
 
 - **Mail** (`aw mail send --to <alias> --body ...`) — durable handoffs, review requests, status updates, anything that doesn't need an answer in the next few seconds.
 - **Chat** (`aw chat send-and-wait <alias> "..."`) — when the teammate is online and you are blocked on their answer. Sets a wait state the harness surfaces to them.
-- For cross-team addressing, use `<domain>/<alias>` or a saved contact. Same-team aliases route locally; this is covered in `aweb-team-membership`.
+- For cross-team addressing, use `<domain>/<alias>` or a saved contact. Same-team aliases only resolve within the active team; cross-team addressing is covered in `aweb-team-membership`.
 
 ## Shared state over private notes
 
@@ -96,7 +96,9 @@ aw task update <task-id> --status in_progress
 
 Before claiming, run `aw work active` to make sure nobody is already on the same scope. Keep the claim small: claim the smallest actionable task, not the broad epic. Coordinators may move work around without claiming every subtask.
 
-When status changes (blocked, ready for review, done), update the task. Close with a one-line summary in a comment naming what was validated. If you're blocked, set the status accordingly and mail the teammate who can unblock you.
+When status changes, update the task. Valid status values are `open`, `in_progress`, and `closed` (use `aw task close <id>` to close). Closing with `--reason "..."` records why; comments capture validation evidence and decisions.
+
+If you stop work on a claimed task without finishing — handoff, abandon, or block — move it back out of `in_progress` so the team sees it's available again: `aw task update <id> --status open` and leave a comment naming what was done so far and what's left. Mail the teammate who can unblock or continue.
 
 ## Locks — manual, not automatic
 
@@ -123,29 +125,31 @@ Two distinct shared documents live on the aweb server:
 
 Both are stored centrally on the aweb server and versioned (you can list history and roll back). Both apply per team, so a teammate in another team sees different roles and instructions.
 
+Neither lives in the repo by default. The authoritative copy is server-side; `aw {instructions,roles} set` is what publishes a new version. Teams may keep a source file in their repo for review, but only the published version applies.
+
 **Reading them (always start here):**
 
 ```bash
 aw instructions show              # team-wide rules
 aw roles list                     # role names in the active bundle
 aw roles show <role-name>         # guidance for one role
-aw role-name show                 # which role is assigned to THIS workspace
+aw workspace status               # reports this workspace's assigned role among other things
 ```
 
 **Setting and updating them** (requires whatever permission the team's authority model demands — coordinator/owner, typically):
 
 ```bash
-aw instructions set --file <path>           # publish a new version of team instructions
+aw instructions set --body-file <path>      # publish a new version of team instructions (markdown body)
 aw instructions activate <version-id>       # roll back/forward to a previous version
 aw instructions history                     # see what changed and when
 
-aw roles set --file <path>                  # publish a new role bundle
+aw roles set --bundle-file <path>           # publish a new role bundle (JSON bundle)
 aw roles activate <version-id>              # roll to a previous bundle
 aw roles history
 aw role-name set <role-name>                # assign a role to THIS workspace
 ```
 
-Role bundles and team instructions are normal markdown. The team's template often seeds initial versions; if a fresh team has empty bundles, that is fine — coordinate with the team owner before publishing the first version.
+Team instructions are markdown; a role bundle is JSON (one entry per role, each with name + guidance). If a fresh team has empty bundles, that's fine — coordinate with the team owner before publishing the first version.
 
 A role name clarifies responsibility but does not bypass judgment. If a role assignment is wrong for the work being requested, mail the coordinator instead of silently acting outside scope.
 
@@ -157,7 +161,7 @@ When the human (or another agent) needs a second working copy of the same repo �
 aw workspace add-worktree
 ```
 
-This creates a sibling directory next to the current worktree, materializes a fresh local identity bound to the same team, and writes a new `.aw/` so the new directory is immediately ready for an aweb agent. The human (or you) can then start an agent there with `aw run`. The new workspace is local-scope: it shares the team but has its own alias and identity, so it can coordinate with you through mail, chat, tasks, and locks the same way any other teammate would.
+This creates a sibling directory next to the current worktree, materializes a fresh local identity bound to the same team, and writes a new `.aw/` so the new directory is immediately ready for an aweb agent. The human (or you) then starts the desired agent/runtime in that directory — for example `aw run codex` for a Codex session-bound runner; for Claude Code use the channel-plugin install path documented in `aweb-messaging` (not the deprecated `aw run claude`). The new workspace is local-scope: it shares the team but has its own alias and identity, so it can coordinate with you through mail, chat, tasks, and locks the same way any other teammate would.
 
 Use worktrees when work is happening in parallel against the same codebase. Use separate `aw init`'d directories when the work isn't tied to one repo.
 
@@ -168,7 +172,7 @@ Before stopping work:
 1. Update task status; close finished tasks (`aw task close <id> --reason "..."`).
 2. Send any handoff or review-request mail.
 3. Release locks you still hold (`aw lock release --resource-key <key>`).
-4. Clear any waiting chat states (`aw chat send-and-leave`).
+4. Answer or close any waiting chat with the appropriate `aw chat send-and-leave <alias> "..."` so teammates aren't left in a wait state.
 
 ## References
 
