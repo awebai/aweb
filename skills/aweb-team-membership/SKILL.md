@@ -82,22 +82,20 @@ aw init   # if the joining directory still needs server binding
 
 No token round-trip. Direct controller-mint. Available only for hosted teams because BYOT controller keys aren't held by aweb.
 
-**Path 3 — CLI invite-token, for local-worktree or same-machine local-controller convenience.** When the team owner wants to invite a new local-workspace identity by token:
+**Path 3 — CLI invite-token, for hosted local-worktree only.** Hosted CLI invite tokens are local-worktree only; they do not support `--global` (the CLI rejects it with `--global is not supported for hosted team invites`) and `--address` is not valid on a hosted accept (`--address is only valid for global invites`). Use this when the owner wants to invite a new local-workspace identity by token:
 
 ```bash
 # Owner side (in a workspace with the necessary authority):
-aw id team invite              # local workspace member (default)
-aw id team invite --global     # global member instead
+aw id team invite              # local-worktree member token
+
 # share the printed <token>
 
 # Joiner side (in a clean target directory):
-aw id team accept-invite <token>
-# for a global invite, the joiner can attach an address:
-aw id team accept-invite <token> --address <namespace>/<name>
+aw id team accept-invite <token> --alias <alias>
 aw init                        # finish wiring the new workspace
 ```
 
-For a **local-member invite** (the default), `aw id team accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local identity in the target directory before requesting the certificate. For a **global-member invite** (`--global` at issue time), the joiner accepts with an `--address` flag to bind a global identity instead. For hosted teams the underlying authority is the cloud invite endpoint; for local-controller teams the local controller key signs on the same machine.
+`accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local self-custodial identity in the target directory before requesting the certificate. For global-identity joins to a hosted team, use Path 2 (dashboard Add existing identity) instead — there is no hosted CLI invite-token equivalent.
 
 This is **not** the cross-machine BYOT path. Do not present it as the normal way to join a BYOT team from another machine.
 
@@ -105,7 +103,7 @@ This is **not** the cross-machine BYOT path. Do not present it as the normal way
 
 ### BYOT teams (customer holds the team controller key)
 
-The dashboard cannot add BYOT members directly. The customer's team controller must sign. Two cases:
+The dashboard cannot add BYOT members directly. The customer's team controller must sign. Three cases:
 
 **Case 1 — Self-custodial identity, cross-machine join.** The joining machine doesn't hold the team controller key:
 
@@ -132,6 +130,27 @@ aw id team import-request --team <team> --namespace <namespace> --cloud-team-id 
 
 aweb cloud projects the customer-signed facts; it does not mint anything itself. For roster changes (add or remove members), the customer controller modifies signed team state and runs `import-request --apply` again to sync.
 
+**Case 3 — Same-machine local-controller invite-token convenience.** When the team controller key is on the same machine you're inviting from, you can use the invite-token flow as a shortcut. Two variants:
+
+```bash
+# Owner side, same machine, local-controller key present:
+aw id team invite              # local-worktree member (default)
+aw id team invite --global     # global-member token (requires existing global identity in the accepting directory)
+
+# Joiner side (still same machine, different directory):
+
+# For a local invite:
+aw id team accept-invite <token> --alias <alias>
+
+# For a global invite, the accepting directory must already have a global identity:
+aw id create --domain <domain> --name <name>
+aw id team accept-invite <token> --address <namespace>/<name>
+```
+
+For the `--global` case, `accept-invite` does NOT create the global identity — it errors with `no identity found; run aw id create first, or use --local invite` if no identity is present. `--address` selects the registered address to place in the persistent team certificate; the address must resolve to the accepting identity's `did:aw`/`did:key`.
+
+This is the local-controller convenience case only. For cross-machine BYOT joins, use Case 1.
+
 ### Not a membership path: human dashboard invites
 
 `/api/v1/teams/.../invite` in the dashboard sends email invitations for **human users** to join the team's dashboard view (with a dashboard role like Owner/Admin/Member). That is independent of AWID agent membership certificates. Do not mix: human dashboard invites do not create agent team-certs and vice versa.
@@ -140,7 +159,7 @@ aweb cloud projects the customer-signed facts; it does not mint anything itself.
 
 Two distinct local actions install a membership:
 
-- **`aw id team accept-invite <token>`** — redeems a CLI invite token. For local-member invites, generates a fresh local identity in the current directory (refusing to overwrite). For global-member invites, accepts with `--address <namespace>/<name>` to bind a global identity. Used for hosted Path 3 (CLI invite-token).
+- **`aw id team accept-invite <token>`** — redeems a CLI invite token. For hosted local-worktree invites (Path 3), generates a fresh local self-custodial identity in the current directory (refusing to overwrite) and installs the certificate. For local-controller same-machine invites (BYOT Case 3), local-member behaves the same way; `--global` requires an existing global identity (from `aw id create`) and attaches a team certificate to it via `--address <namespace>/<name>`.
 - **`aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
 
 If you have a token, use `accept-invite`. If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.
