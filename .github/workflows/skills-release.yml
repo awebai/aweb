@@ -1,6 +1,10 @@
-name: Skills Release (npm)
+name: Skills Release
 
-# Tag skills-vX.Y.Z to publish @awebai/claude-skills to npm.
+# Tag skills-vX.Y.Z to:
+#   1) publish @awebai/claude-skills to npm (for Claude Code), and
+#   2) attach three per-skill ZIPs to a GitHub Release for the Claude.ai
+#      web Skills upload path (see packages/claude-ai-skills/).
+#
 # Uses NPM_TOKEN secret (automation token from npmjs.com).
 
 on:
@@ -8,9 +12,12 @@ on:
     tags:
       - 'skills-v*'
 
+permissions:
+  contents: write   # required to create the GitHub Release + upload assets
+
 jobs:
   publish:
-    name: Build and publish to npm
+    name: Build and publish skill artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +38,22 @@ jobs:
           fi
           echo "Version: $PKG_VERSION"
 
-      - name: Publish to npm
+      - name: Publish @awebai/claude-skills to npm
         working-directory: packages/claude-skills
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build Claude.ai Skills ZIPs
+        working-directory: packages/claude-ai-skills
+        run: ./build-zips.sh
+
+      - name: Attach ZIPs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            packages/claude-ai-skills/dist/aweb-coordination.zip
+            packages/claude-ai-skills/dist/aweb-messaging.zip
+            packages/claude-ai-skills/dist/aweb-team-membership.zip

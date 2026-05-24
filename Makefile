@@ -236,11 +236,16 @@ publish-skills:
 	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
 		git push origin "skills-v$$NEW_VERSION" && \
 		echo "" && \
-		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will publish @awebai/claude-skills@$$NEW_VERSION." && \
+		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will:" && \
+		echo "    - publish @awebai/claude-skills@$$NEW_VERSION to npm" && \
+		echo "    - attach 3 ZIPs to the GH Release for Claude.ai users" && \
 		echo "" && \
-		echo "  After GH Actions completes, bump" && \
-		echo "    awebai/claude-plugins/.claude-plugin/marketplace.json" && \
-		echo "  version field to $$NEW_VERSION so /plugin update finds the new content."
+		echo "  After GH Actions completes:" && \
+		echo "    1) Bump awebai/claude-plugins/.claude-plugin/marketplace.json" && \
+		echo "       version field to $$NEW_VERSION so /plugin update finds the" && \
+		echo "       new content." && \
+		echo "    2) Claude.ai users: ZIPs at" && \
+		echo "       https://github.com/awebai/aweb/releases/download/skills-v$$NEW_VERSION/{aweb-coordination,aweb-messaging,aweb-team-membership}.zip"
 
 # ── Unified release ──────────────────────────────────────────────────
 
