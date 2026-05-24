@@ -12,7 +12,7 @@ Use this skill when the question is about the agent's own identity — its keys,
 
 Vocabulary used throughout this skill and referenced by sibling skills. Read once; refer back as needed.
 
-- **Signing keypair** — every aweb identity is an Ed25519 keypair. The private key signs messages, requests, and certificates; the public key verifies them. Every aweb message is signed end-to-end; recipients verify with the public key without trusting the coordination server.
+- **Signing keypair** — every aweb identity is an Ed25519 keypair. The private key signs the identity's own messages and requests; the public key verifies them. Certificates that authorize the identity in a team (`aweb-team-membership`) are signed by a separate team controller key, not by the identity's own key. Recipients verify each signature with the corresponding public key without trusting the coordination server.
 - **`did:key`** — the public key encoded as a DID, e.g. `did:key:z6Mk...`. Identifies the current signing key.
 - **`did:aw`** — a stable identity DID kept in the public AWID registry. Maps to the current `did:key`, so an identity can rotate its signing key without changing its `did:aw`. Only global identities have a `did:aw`.
 - **AWID** (publicly readable at `awid.ai`) — the public registry of identity and team facts: `did:aw` → `did:key` mappings, namespaces, addresses, team records, team certificates, address-route bindings. Anyone can verify against AWID without trusting aweb.
@@ -32,7 +32,7 @@ A workspace can hold any combination of these. For team-related files (`teams.ya
 
 `aw init` creates or updates a workspace in the current directory. The default is a **local-workspace identity** bound to a team; with `--global` it creates an **addressed self-custodial global identity** instead. Three onboarding flows are supported:
 
-1. **Connect with an existing team certificate** — when `.aw/` already has a usable team certificate (for example after `aw id team accept-invite` or `aw id team fetch-cert`), `aw init` finishes wiring the workspace up to the server named in that certificate.
+1. **Connect with an existing team certificate** — when `.aw/` already has a usable team certificate (for example after `aw id team accept-invite` or `aw id team fetch-cert`), `aw init` finishes wiring the workspace to the configured aweb server and records the binding in `.aw/workspace.yaml`. The server URL comes from the command's configuration/flags, not from the certificate itself; certificates name members and teams, not servers.
 2. **Hosted aweb.ai onboarding** — for a clean directory with no `.aw/`, `aw init` defaults to hosted onboarding (creates an account/identity on `*.aweb.ai` if needed).
 3. **`--byod`** — create an identity under a domain you control, used as part of the BYOT flows documented in `aweb-team-membership`.
 
@@ -57,7 +57,7 @@ Local identities are the default for a CLI workspace. They have a team-local ali
 
 Global identities are addressable across teams. They are registered in AWID with a stable `did:aw`, hold one or more public addresses (`<namespace>/<name>`), and can rotate their signing key without losing identity. Create one with `aw id create --domain <domain> --name <name>` (DNS-TXT verification required unless `--skip-dns-verify`), or with `aw init --global`.
 
-A workspace can have a local identity, a global identity, or a global identity acting through a local-workspace role — the workspace binding chooses.
+A workspace binds to exactly one identity at a time. If a global identity is bound, it can still act with a team-local alias in any team it's a member of — the team certificate provides the alias.
 
 ## Addressability
 
@@ -129,7 +129,7 @@ Interpret failures by what's missing (file references assume a self-custodial CL
 - **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created.
 - **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to any aweb server, even when `signing.key` is present. Re-run `aw init`.
 - **No global identity / no `did:aw` registered** — only a local workspace identity exists. Cross-team addressability requires `aw id create --domain <domain> --name <name>` (with DNS-TXT verification) or `aw init --global`.
-- **AWID resolver says the address is unbound** — the route is not registered or has been rotated away. Re-resolve with `aw id resolve` (or the equivalent diagnostic command) and check the namespace controller's state.
+- **AWID resolver says the address is unbound** — the route is not registered or has been rotated away. Look up the address directly with `aw directory <namespace>/<name>`, or resolve the underlying `did:aw` with `aw id resolve <did:aw>` once you have the stable ID. Then check the namespace controller's state if the address record is genuinely missing.
 
 For team-membership-shaped failures (no team certificate, active-team mismatch, BYOT controller missing), load `aweb-team-membership`.
 

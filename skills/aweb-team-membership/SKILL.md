@@ -92,10 +92,12 @@ aw id team invite --global     # global member instead
 
 # Joiner side (in a clean target directory):
 aw id team accept-invite <token>
-aw init                         # finish wiring the new workspace
+# for a global invite, the joiner can attach an address:
+aw id team accept-invite <token> --address <namespace>/<name>
+aw init                        # finish wiring the new workspace
 ```
 
-`aw id team accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local identity in the target directory before requesting the certificate. For hosted teams this uses cloud invite authority; for local-controller teams it uses the local controller key on the same machine.
+For a **local-member invite** (the default), `aw id team accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local identity in the target directory before requesting the certificate. For a **global-member invite** (`--global` at issue time), the joiner accepts with an `--address` flag to bind a global identity instead. For hosted teams the underlying authority is the cloud invite endpoint; for local-controller teams the local controller key signs on the same machine.
 
 This is **not** the cross-machine BYOT path. Do not present it as the normal way to join a BYOT team from another machine.
 
@@ -138,8 +140,8 @@ aweb cloud projects the customer-signed facts; it does not mint anything itself.
 
 Two distinct local actions install a membership:
 
-- **`aw id team accept-invite <token>`** — redeems a CLI invite token. Generates a fresh local identity in the current directory (refusing to overwrite), then requests and installs the certificate. Used for hosted Path 3 (CLI invite-token).
-- **`aw id team fetch-cert --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
+- **`aw id team accept-invite <token>`** — redeems a CLI invite token. For local-member invites, generates a fresh local identity in the current directory (refusing to overwrite). For global-member invites, accepts with `--address <namespace>/<name>` to bind a global identity. Used for hosted Path 3 (CLI invite-token).
+- **`aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
 
 If you have a token, use `accept-invite`. If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.
 
