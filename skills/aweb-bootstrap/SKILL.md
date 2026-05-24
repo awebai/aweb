@@ -101,7 +101,7 @@ Bootstrap can be used in three broad modes:
 Policy guidance:
 
 - Prefer hosted for “get a working team now”.
-- Prefer BYOD when you need local control over identity and routing.
+- Prefer BYOT when you need local control over identity and routing.
 - Prefer manual when you need human confirmation at each step.
 
 ## Worktree agents (team.yaml worktrees:)
