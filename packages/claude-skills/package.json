@@ -1,0 +1,30 @@
+{
+  "name": "@awebai/claude-skills",
+  "version": "0.1.0",
+  "description": "Content-only Claude Code plugin shipping the canonical aweb agent-coordination skills: aweb-coordination, aweb-messaging, aweb-team-membership.",
+  "license": "MIT",
+  "homepage": "https://aweb.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/awebai/aweb.git",
+    "directory": "packages/claude-skills"
+  },
+  "keywords": [
+    "claude-plugin",
+    "aweb",
+    "agent-coordination",
+    "messaging",
+    "skills"
+  ],
+  "files": [
+    ".claude-plugin",
+    "skills",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../../skills/aweb-coordination ../../skills/aweb-messaging ../../skills/aweb-team-membership skills/",
+    "prepack": "npm run sync-skills",
+    "prepublishOnly": "npm run sync-skills"
+  }
+}
