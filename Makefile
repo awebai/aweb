@@ -8,6 +8,7 @@
 	release-cli-tag release-cli-push \
 	release-awid-site \
 	release-all-check release-all-tag release-all-push \
+	publish-skills \
 	ship
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
@@ -202,6 +203,44 @@ release-cli-tag:
 
 release-cli-push:
 	git push origin aw-v$(CLI_VERSION)
+
+# ── Claude skills release (bump + tag + push; GH Actions publishes) ─
+
+# Usage: make publish-skills [BUMP=patch|minor|major]
+# Bumps packages/claude-skills/package.json, syncs the plugin.json
+# version, commits, tags skills-vX.Y.Z, pushes main and tag.
+# The skills-release.yml workflow runs on the pushed tag and runs
+# `npm publish --access public` against @awebai/claude-skills.
+#
+# Pre-flight: working tree clean, on main, in sync with origin/main.
+# Contract smoke: `npm pack --dry-run` succeeds (catches the
+# sync-skills "missing canonical source" foot-gun before the tag fires).
+# Hestia owns this lane (release-channel-skill conventions).
+publish-skills: BUMP ?= patch
+publish-skills:
+	@git diff --quiet || (echo "ERROR: working tree has unstaged changes"; exit 1)
+	@git diff --cached --quiet || (echo "ERROR: staged changes pending"; exit 1)
+	@test "$$(git branch --show-current)" = "main" || (echo "ERROR: not on main"; exit 1)
+	git fetch origin
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || \
+		(echo "ERROR: local main is not in sync with origin/main"; exit 1)
+	cd packages/claude-skills && npm pack --dry-run
+	cd packages/claude-skills && npm version $(BUMP) --no-git-tag-version
+	cd packages/claude-skills && npm run sync-plugin-version
+	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
+		git add packages/claude-skills/package.json packages/claude-skills/.claude-plugin/plugin.json && \
+		git commit -m "release: @awebai/claude-skills $$NEW_VERSION" && \
+		git tag "skills-v$$NEW_VERSION" && \
+		echo "Created tag skills-v$$NEW_VERSION."
+	git push origin main
+	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
+		git push origin "skills-v$$NEW_VERSION" && \
+		echo "" && \
+		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will publish @awebai/claude-skills@$$NEW_VERSION." && \
+		echo "" && \
+		echo "  After GH Actions completes, bump" && \
+		echo "    awebai/claude-plugins/.claude-plugin/marketplace.json" && \
+		echo "  version field to $$NEW_VERSION so /plugin update finds the new content."
 
 # ── Unified release ──────────────────────────────────────────────────
 
