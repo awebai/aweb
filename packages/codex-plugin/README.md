@@ -3,12 +3,14 @@
 Codex plugin packaging for the canonical aweb skill bodies.
 
 This directory is **not** the source of truth. The three skill bodies live at
-[`aweb/skills/`](../../skills/), and the `skills/` subdirectory here is a
-symlink to that canonical location.
+[`aweb/skills/`](../../skills/). The `skills/` subdirectory here holds
+generated copies of those bodies, produced by [`sync-skills.sh`](./sync-skills.sh)
+and committed to Git so the marketplace's `git-subdir` install delivers a
+self-contained plugin.
 
 ## What this plugin ships
 
-Three skills, auto-discovered from the symlinked `skills/` directory:
+Three skills, auto-discovered from the bundled `skills/` directory:
 
 - **`aweb-coordination`** — session/work-loop policy.
 - **`aweb-messaging`** — mail/chat policy + channel-awakening response.
@@ -30,15 +32,24 @@ codex plugin marketplace add awebai/codex-plugins      # add marketplace
 # then install "aweb-skills" via Codex's plugin directory UI
 ```
 
-## Why a symlink for `skills/`
+## Maintaining the bundled `skills/`
 
-Codex follows symlinks in skill scan paths. When Codex resolves this plugin via
-the marketplace's `git-subdir` source it clones the full aweb repo, so
-`skills/ → ../../skills/` resolves correctly.
+Before committing any change to either `aweb/skills/` (canonical) or this
+directory, run:
 
-If a future Codex version stops following symlinks inside `skills:`, the
-fallback is a `sync-skills.sh` script that copies bodies into `skills/` at
-build time. Try the symlink path first.
+```bash
+./sync-skills.sh
+```
+
+The script copies the three canonical skill directories into
+`packages/codex-plugin/skills/` and reports the count. The copies must be
+checked in: Codex's plugin installer treats `skills:` paths as relative to the
+plugin root and does not follow symlinks out of it, so a real directory of
+files is the only working shape. Manifest paths must "stay inside the plugin
+root" per the [Codex plugin docs](https://developers.openai.com/codex/plugins/build).
+
+If `aweb/skills/` and `packages/codex-plugin/skills/` ever drift, the script is
+idempotent — re-run it and commit the diff.
 
 ## Versioning
 
