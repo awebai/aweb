@@ -262,7 +262,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 }
 
 func guidedOnboardingHasReconnectState(workingDir string) bool {
-	_, err := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml"))
+	_, err := os.Stat(awconfig.WorktreeSigningKeyPath(workingDir))
 	if err != nil {
 		return false
 	}

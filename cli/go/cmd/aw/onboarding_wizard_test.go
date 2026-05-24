@@ -46,6 +46,13 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("name: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	_, memberKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
 	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "default:jack.aweb.ai", &awid.TeamCertificate{Team: "default:jack.aweb.ai"}); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +104,78 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 	if hostedCalls != 0 || byodCalls != 0 {
 		t.Fatalf("expected reconnect path only, got hosted=%d byod=%d", hostedCalls, byodCalls)
+	}
+}
+
+func TestGuidedOnboardingReconnectSkipsWizardWhenLocalSigningKeyAndCertExist(t *testing.T) {
+	oldConnect := guidedOnboardingConnect
+	oldHosted := guidedOnboardingExecuteHostedPath
+	oldBYOD := guidedOnboardingExecuteBYODPath
+	t.Cleanup(func() {
+		guidedOnboardingConnect = oldConnect
+		guidedOnboardingExecuteHostedPath = oldHosted
+		guidedOnboardingExecuteBYODPath = oldBYOD
+	})
+
+	tmp := t.TempDir()
+	_, memberKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	cert := &awid.TeamCertificate{
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey)),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, cert.Team, cert); err != nil {
+		t.Fatalf("save team certificate: %v", err)
+	}
+
+	var hostedCalls, byodCalls int
+	var connectWorkingDir string
+	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
+		connectWorkingDir = workingDir
+		return connectOutput{
+			Status:        "connected",
+			TeamID:        cert.Team,
+			Alias:         cert.Alias,
+			AwebURL:       serverURL,
+			IdentityScope: awid.IdentityModeLocal,
+		}, nil
+	}
+	guidedOnboardingExecuteHostedPath = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		hostedCalls++
+		return &guidedOnboardingResult{}, nil
+	}
+	guidedOnboardingExecuteBYODPath = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		byodCalls++
+		return &guidedOnboardingResult{}, nil
+	}
+
+	result, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader(""),
+		PromptOut:  &bytes.Buffer{},
+		BaseURL:    "https://app.aweb.ai",
+	})
+	if err != nil {
+		t.Fatalf("executeGuidedOnboardingWizard: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+	if connectWorkingDir != tmp {
+		t.Fatalf("working_dir=%q", connectWorkingDir)
+	}
+	if hostedCalls != 0 || byodCalls != 0 {
+		t.Fatalf("expected reconnect path only, got hosted=%d byod=%d", hostedCalls, byodCalls)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should remain absent for local reconnect, err=%v", err)
 	}
 }
 
@@ -2039,6 +2118,13 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("did: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	_, memberKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
 	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "default:acme.com", &awid.TeamCertificate{Team: "default:acme.com"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2065,7 +2151,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 		return &claudeHooksResult{}
 	}
 
-	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
+	_, err = executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "n\nn\n"},
 		PromptOut:          &bytes.Buffer{},
