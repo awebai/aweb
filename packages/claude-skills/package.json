@@ -1,6 +1,6 @@
 {
   "name": "@awebai/claude-skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Content-only Claude Code plugin shipping the canonical aweb agent-coordination skills: aweb-coordination, aweb-messaging, aweb-team-membership, aweb-bootstrap.",
   "license": "MIT",
   "homepage": "https://aweb.ai",
