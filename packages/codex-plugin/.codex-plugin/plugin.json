@@ -1,0 +1,23 @@
+{
+  "name": "aweb-skills",
+  "version": "0.1.0",
+  "description": "aweb agent coordination skills for Codex: messaging, team membership, and work coordination.",
+  "author": {
+    "name": "aweb",
+    "url": "https://aweb.ai"
+  },
+  "homepage": "https://aweb.ai",
+  "repository": "https://github.com/awebai/aweb",
+  "license": "MIT",
+  "keywords": ["aweb", "agent-coordination", "messaging", "team-coordination"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "aweb skills",
+    "shortDescription": "Agent coordination for Codex via aweb",
+    "longDescription": "Three customer-facing skills — aweb-coordination (session/work-loop), aweb-messaging (mail + chat + channel awakenings), aweb-team-membership (joining, BYOT, custody, addressability). Requires the aw CLI: npm install -g @awebai/aw",
+    "developerName": "aweb",
+    "category": "Productivity",
+    "websiteURL": "https://aweb.ai",
+    "brandColor": "#14b8a6"
+  }
+}
