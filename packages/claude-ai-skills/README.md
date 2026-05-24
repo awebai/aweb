@@ -42,7 +42,7 @@ https://github.com/awebai/aweb/releases/download/skills-v<X.Y.Z>/aweb-<name>.zip
 
 Anthropic's [Agent Skills overview](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)
 documents one `SKILL.md` per upload. Multi-skill ZIPs are undocumented
-behavior; we ship three discrete ZIPs to stay on the spec.
+behavior; we ship one discrete ZIP per canonical skill to stay on the spec.
 
 ## Why this exists separately from `@awebai/claude-skills`
 

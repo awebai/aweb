@@ -2,7 +2,7 @@
 
 Codex plugin packaging for the canonical aweb skill bodies.
 
-This directory is **not** the source of truth. The three skill bodies live at
+This directory is **not** the source of truth. The four skill bodies live at
 [`aweb/skills/`](../../skills/). The `skills/` subdirectory here holds
 generated copies of those bodies, produced by [`sync-skills.sh`](./sync-skills.sh)
 and committed to Git so the marketplace's `git-subdir` install delivers a
@@ -10,12 +10,13 @@ self-contained plugin.
 
 ## What this plugin ships
 
-Three skills, auto-discovered from the bundled `skills/` directory:
+Four skills, auto-discovered from the bundled `skills/` directory:
 
 - **`aweb-coordination`** — session/work-loop policy.
 - **`aweb-messaging`** — mail/chat policy + channel-awakening response.
 - **`aweb-team-membership`** — joining, BYOT, custody, addressability,
   inbound mode, contacts.
+- **`aweb-bootstrap`** — creating a new aweb team from a template.
 
 ## How it ships to users
 
@@ -41,7 +42,7 @@ directory, run:
 ./sync-skills.sh
 ```
 
-The script copies the three canonical skill directories into
+The script copies the four canonical skill directories into
 `packages/codex-plugin/skills/` and reports the count. The copies must be
 checked in: Codex's plugin installer treats `skills:` paths as relative to the
 plugin root and does not follow symlinks out of it, so a real directory of

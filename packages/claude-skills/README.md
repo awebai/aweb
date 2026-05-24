@@ -1,7 +1,8 @@
 # `@awebai/claude-skills`
 
-Content-only Claude Code plugin packaging the three canonical aweb skills:
-`aweb-coordination`, `aweb-messaging`, `aweb-team-membership`.
+Content-only Claude Code plugin packaging the four canonical aweb skills:
+`aweb-coordination`, `aweb-messaging`, `aweb-team-membership`, and
+`aweb-bootstrap`.
 
 Distinct from [`@awebai/claude-channel`](https://github.com/awebai/aweb/tree/main/channel),
 which ships the real-time channel runtime and requires

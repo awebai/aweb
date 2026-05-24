@@ -39,7 +39,7 @@ Interpret failures by layer:
 - Missing signing key: local identity is incomplete.
 - Missing team certificate: identity may exist but cannot act in the team.
 - Active team mismatch: the identity has multiple memberships but this workspace is using the wrong one.
-- Address route, inbound-mode, or contact failure: the sender and recipient may both exist, but route validation or `inbound_mode=open|contacts_only` policy prevents discovery or inbound delivery.
+- Address route, inbound-mode, or contact failure: the sender and recipient may both exist, but route validation or `inbound_mode=open|team_and_contacts` policy prevents discovery or inbound delivery.
 
 ## Joining a team
 
@@ -143,7 +143,7 @@ For custodial identities, rotation and recovery are cloud-account operations. Do
 
 First contact to a global identity uses a concrete address route such as `<domain>/<alias>`. A bare `did:aw` is identity binding, not a first-contact delivery route. Legacy reachability fields may still appear in support/audit views, but they are compatibility/audit state, not live delivery authority.
 
-Delivery authorization is `inbound_mode=open|contacts_only`: `open` accepts valid senders after route validation, while `contacts_only` requires an exact active identity contact after the route is valid. Contacts do not synthesize routes and are not team-global authority.
+Delivery authorization is `inbound_mode=open|team_and_contacts`: `open` accepts valid routed senders, while `team_and_contacts` accepts verified same-team senders plus exact active identity contacts after the route is valid. Team membership is always delivery authority in `team_and_contacts`; contacts only add trusted non-team senders. Contacts do not synthesize routes or resolver visibility.
 
 Contacts are saved identity/address relationships for repeated cross-team messaging. They are per-identity, not per-team. Add a contact when repeated communication is expected; otherwise use a one-shot namespace address.
 
@@ -168,8 +168,8 @@ Treat teams as separate coordination boundaries for tasks, locks, roles, instruc
 Check:
 
 1. Global address registration and route resolution.
-2. Inbound mode (`open` or `contacts_only`).
-3. Exact active contact state when the recipient uses `contacts_only`.
+2. Inbound mode (`open` or `team_and_contacts`).
+3. Verified shared team membership, or exact active contact state for non-team senders, when the recipient uses `team_and_contacts`.
 4. Whether X is using a same-team alias or a concrete cross-team address.
 5. Whether the active team is the intended team for sender context.
 6. Whether the workspace has a valid certificate.
