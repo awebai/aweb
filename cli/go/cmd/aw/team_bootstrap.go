@@ -829,6 +829,9 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	}
 
 	if hasAPIKey {
+		if strings.TrimSpace(teamBootstrapAwebURL) == "" && strings.TrimSpace(os.Getenv("AWEB_URL")) == "" {
+			return teamBootstrapSource{}, usageError("AWEB_API_KEY team source requires --aweb-url or AWEB_URL")
+		}
 		return teamBootstrapSource{Kind: teamBootstrapSourceAPIKey}, nil
 	}
 	if hasInvite {
@@ -1190,14 +1193,7 @@ func primaryTeamBootstrapPlan(plans []teamBootstrapAgentPlan) (teamBootstrapAgen
 	if len(plans) == 0 {
 		return teamBootstrapAgentPlan{}, fmt.Errorf("no agents defined")
 	}
-	primary := plans[0]
-	for _, candidate := range plans {
-		if candidate.Responsibility == "implementation" {
-			primary = candidate
-			break
-		}
-	}
-	return primary, nil
+	return plans[0], nil
 }
 
 func installTeamBootstrapOverridesAfterConnect(spec *teamBootstrapSpec, templateDir string, plans []teamBootstrapAgentPlan) (bool, bool, error) {

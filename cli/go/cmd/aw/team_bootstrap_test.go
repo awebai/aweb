@@ -180,6 +180,20 @@ func TestTeamBootstrapResolveWorkDirectoryDerivesFromWorkRepoURL(t *testing.T) {
 	}
 }
 
+func TestTeamBootstrapPrimaryPlanIsFirstGeneratedAgent(t *testing.T) {
+	plans := []teamBootstrapAgentPlan{
+		{Responsibility: "alpha", HomeDir: "/tmp/alpha"},
+		{Responsibility: "implementation", HomeDir: "/tmp/implementation"},
+	}
+	primary, err := primaryTeamBootstrapPlan(plans)
+	if err != nil {
+		t.Fatalf("primaryTeamBootstrapPlan: %v", err)
+	}
+	if primary.Responsibility != "alpha" {
+		t.Fatalf("primary responsibility=%q, want alpha", primary.Responsibility)
+	}
+}
+
 func TestTeamBootstrapResolveSourceRejectsConflicts(t *testing.T) {
 	prevInvite := teamBootstrapInviteToken
 	prevUsername := teamBootstrapUsername
@@ -204,6 +218,62 @@ func TestTeamBootstrapResolveSourceRejectsConflicts(t *testing.T) {
 
 	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "set only one team source") {
 		t.Fatalf("expected conflict error, got %v", err)
+	}
+}
+
+func TestTeamBootstrapResolveSourceRejectsAPIKeyWithoutURL(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevAwebURL := teamBootstrapAwebURL
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		teamBootstrapAwebURL = prevAwebURL
+	})
+	t.Setenv("AWEB_API_KEY", "aw_sk_test")
+	t.Setenv("AWEB_URL", "")
+	teamBootstrapInviteToken = ""
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+	teamBootstrapAwebURL = ""
+
+	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "requires --aweb-url or AWEB_URL") {
+		t.Fatalf("expected missing API-key URL error, got %v", err)
+	}
+}
+
+func TestTeamBootstrapResolveSourceUsesAPIKeyWithURL(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevAwebURL := teamBootstrapAwebURL
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		teamBootstrapAwebURL = prevAwebURL
+	})
+	t.Setenv("AWEB_API_KEY", "aw_sk_test")
+	t.Setenv("AWEB_URL", "https://app.aweb.ai")
+	teamBootstrapInviteToken = ""
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+	teamBootstrapAwebURL = ""
+
+	source, err := resolveTeamBootstrapSource()
+	if err != nil {
+		t.Fatalf("resolveTeamBootstrapSource: %v", err)
+	}
+	if source.Kind != teamBootstrapSourceAPIKey {
+		t.Fatalf("source kind=%q, want api-key", source.Kind)
 	}
 }
 
