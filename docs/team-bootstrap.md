@@ -10,7 +10,7 @@ AI agents that coordinate" to a working team. It takes a **team
 template** — a small git repo describing roles and agent
 responsibilities — and produces:
 
-- a registered aweb team (hosted, BYOD, or manual),
+- a registered or joined aweb team (hosted, BYOT, invite, API key, or current-workspace forwarding),
 - one workspace directory per agent, each with its own identity,
   team certificate, and per-role context already mounted,
 - the team's role playbooks installed on the coordination server,
@@ -27,7 +27,7 @@ certificates work, how cross-team addressing differs from same-team
 aliases — see [teams.md](https://aweb.ai/docs/teams.md).
 
 If you are walking an AI agent through bootstrap (template choice,
-hosted/BYOT/manual mode, work-directory vs work-repo-url, optional
+hosted/BYOT/existing-team source, work-directory vs work-repo-url, optional
 worktree agents, post-bootstrap validation, re-run safety), install
 the [`aweb-bootstrap`](https://github.com/awebai/aweb/tree/main/skills/aweb-bootstrap)
 skill — it captures the decision policy this page describes in a
@@ -322,7 +322,8 @@ or chat between two worktree agents is cross-agent traffic, not an
 intra-process aside.
 
 Responsibility workspaces under `agents/` keep whatever identity
-scope the team-creation path produces (hosted, BYOD, or manual).
+scope the selected team source produces (hosted new team, BYOT,
+API-key bootstrap, invite, or current-workspace forwarding).
 
 ### Branch model
 
@@ -354,12 +355,12 @@ loudly. To regenerate, pass the explicit refresh flag (added when
 the CLI ships worktree support — name to be confirmed in the
 released `--help`).
 
-## Team-creation modes
+## Team sources
 
-`aw team bootstrap` provisions the workspaces in all three modes;
-the difference is **how the team itself comes into existence**.
+`aw team bootstrap` provisions the workspaces from one explicit team
+source. The difference is **where the team context comes from**.
 
-Every mode requires a work root. Pass **exactly one** of
+Every source requires a work root. Pass **exactly one** of
 [`--work-directory <path>`](#useful-flags) (existing directory) or
 [`--work-repo-url <url>`](#useful-flags) (clone a fresh repo into
 `worktrees/`). The work directory only has to be a git repo if the
@@ -367,8 +368,9 @@ template declares a [`worktrees:`](#worktree-agents-optional) block.
 
 ### Hosted (the default for new users)
 
-If you pass `--username <name>` (or run interactively in a TTY,
-without `--namespace`/`--team`), bootstrap drives hosted onboarding:
+If you pass `--username <name>` (or run interactively in a TTY
+outside an initialized aw workspace, with no explicit source),
+bootstrap drives hosted onboarding:
 the first generated workspace runs the same flow as `aw init`, the
 hosted service provisions a team in `<username>.aweb.ai`, and every
 subsequent workspace joins that team automatically.
@@ -379,12 +381,14 @@ aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
   --username juan
 ```
 
-### BYOD (bring your own domain)
+### BYOT (bring your own team)
 
-If you pass `--namespace` and `--team`, bootstrap creates the team
-in a namespace you control. You need a local controller key for
-that namespace; if you don't already have one, create it first with
-`aw id create --domain <namespace> --name <controller-name>`.
+If you pass `--namespace` and `--team`, bootstrap creates or uses a
+team in a namespace you control. BYOT includes bringing your own
+domain: the team is created under that namespace/domain, and you
+need a local controller key for it. If you don't already have one,
+create it first with `aw id create --domain <namespace> --name
+<controller-name>`.
 
 ```
 aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
@@ -397,23 +401,40 @@ aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
 Optional: `--aweb-url` to point the team at a non-default
 coordination server, `--registry` to override the AWID registry.
 
-### Manual (no team flags)
+### Existing hosted team via API key
 
-If you pass neither `--username` nor `--namespace`/`--team`,
-bootstrap stops after generating the workspaces and installing the
-roles + shared instructions. It then prints one `aw init` command
-per workspace for you to run by hand:
+If `AWEB_API_KEY` is set, bootstrap uses the same API-key init path
+as `aw init`. The first generated workspace joins the API key's
+hosted team, roles and instructions are installed there, then the
+remaining generated workspaces join that established team.
 
 ```
-cd agents/implementation && aw init --name builder --role-name developer
-cd agents/review         && aw init --name reviewer --role-name reviewer
+AWEB_API_KEY=aw_sk_... AWEB_URL=https://app.aweb.ai \
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
+  --work-directory ./myproject
 ```
 
-You still need exactly one of `--work-directory` or
-`--work-repo-url` in manual mode — the `work/` symlinks in the
-responsibility workspaces get created up front. Use this mode when
-you want to join an existing team rather than create a new one, or
-when you want to wire up each workspace yourself.
+### Existing team via invite token
+
+Pass `--invite-token <token>` to accept that invite into the first
+generated workspace. Bootstrap then uses that first workspace as the
+anchor for roles, instructions, and subsequent agent invites.
+
+### Current workspace forwarding
+
+If you run from an initialized `.aw` workspace and do not set an
+explicit team source, bootstrap creates a one-use invite from the
+current active team and accepts it into the first generated
+workspace. This is the safe way to bootstrap a template into the
+team you are already using.
+
+### Dry-run planning
+
+Use `--dry-run` to validate the template and print the planned
+workspace commands without creating identities, installing server
+state, or connecting agents. Non-dry-run bootstrap requires a real
+team source; the old manual "print commands after installing roles
+from caller cwd" flow is intentionally gone.
 
 ## Useful flags
 
@@ -430,9 +451,10 @@ when you want to wire up each workspace yourself.
 | `--skip-roles` | Do not install the role playbooks. |
 | `--skip-instructions` | Do not install the shared team-instructions document. |
 | `--username <name>` | Use hosted onboarding with this username. |
-| `--namespace <domain>` | Create/use a BYOD team in `<domain>`. Requires `--team`. |
-| `--team <slug>` | Team slug to create/use in the BYOD namespace. |
-| `--team-display-name <text>` | Optional display name when creating a new BYOD team. |
+| `--invite-token <token>` | Accept an existing team invite into the first generated workspace, then invite the remaining generated agents from that team context. |
+| `--namespace <domain>` | Create/use a BYOT team in `<domain>`. Requires `--team`. |
+| `--team <slug>` | Team slug to create/use in the BYOT namespace. |
+| `--team-display-name <text>` | Optional display name when creating a new BYOT team. |
 | `--aweb-url <url>` | Coordination server base URL each generated workspace connects to. |
 | `--registry <url>` | AWID registry URL override. |
 | `--template-cache-dir <dir>` | Clone remote templates here instead of the working directory. |

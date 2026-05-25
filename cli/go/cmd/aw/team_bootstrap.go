@@ -59,6 +59,7 @@ var (
 	teamBootstrapNamespace        string
 	teamBootstrapTeamName         string
 	teamBootstrapTeamDisplayName  string
+	teamBootstrapInviteToken      string
 	teamBootstrapRegistryURL      string
 	teamBootstrapAwebURL          string
 	teamBootstrapDryRun           bool
@@ -132,9 +133,10 @@ func init() {
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOD team namespace domain to create/use (required for one-step BYOD team bootstrap)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOD team name/slug to create/use (required for one-step BYOD team bootstrap)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOD team")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use (required for one-step BYOT team bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use (required for one-step BYOT team bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOT team")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapInviteToken, "invite-token", "", "Team invite token to accept into the first generated agent workspace")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
@@ -199,6 +201,11 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	source, err := resolveTeamBootstrapSource()
+	if err != nil {
+		return err
+	}
+
 	if workRepoURL != "" {
 		if err := ensureTeamBootstrapWorktreesGitIgnored(resolved.TemplateDir); err != nil {
 			return err
@@ -214,51 +221,15 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	autoBYOD := strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != ""
-	autoHosted := !autoBYOD && (isTTY() || strings.TrimSpace(teamBootstrapUsername) != "")
-
-	if autoBYOD {
-		if err := bootstrapBYODTeamAndInitAgentDirs(cmd, plans); err != nil {
-			return err
-		}
-		rolesInstalled, instructionsInstalled, err := installTeamBootstrapOverridesAfterConnect(spec, resolved.TemplateDir, plans)
-		if err != nil {
-			return err
-		}
-		out.RolesInstalled = rolesInstalled
-		out.InstructionsInstalled = instructionsInstalled
-		out.NextCommands = nil
-	} else if autoHosted {
-		if err := bootstrapHostedTeamAndInitAgentDirs(cmd, resolved.TemplateDir, plans); err != nil {
-			return err
-		}
-		rolesInstalled, instructionsInstalled, err := installTeamBootstrapOverridesAfterConnect(spec, resolved.TemplateDir, plans)
-		if err != nil {
-			return err
-		}
-		out.RolesInstalled = rolesInstalled
-		out.InstructionsInstalled = instructionsInstalled
-		out.NextCommands = nil
-	} else {
-		if !teamBootstrapSkipRoles {
-			if err := installTeamBootstrapRoles(spec, resolved.TemplateDir); err != nil {
-				return err
-			}
-			out.RolesInstalled = true
-		}
-		if !teamBootstrapSkipInstructions {
-			installed, err := installTeamBootstrapInstructions(spec, resolved.TemplateDir)
-			if err != nil {
-				return err
-			}
-			out.InstructionsInstalled = installed
-		}
-		out.NextCommands = plannedInitCommands(plans)
+	rolesInstalled, instructionsInstalled, err := bootstrapTeamAndInitAgentDirs(cmd, source, spec, resolved.TemplateDir, plans)
+	if err != nil {
+		return err
 	}
-	if out.NextCommands == nil {
-		if err := bootstrapTeamBootstrapWorktreeAgents(cmd, resolved.TemplateDir, workDirectory, spec, plans); err != nil {
-			return err
-		}
+	out.RolesInstalled = rolesInstalled
+	out.InstructionsInstalled = instructionsInstalled
+	out.NextCommands = nil
+	if err := bootstrapTeamBootstrapWorktreeAgents(cmd, resolved.TemplateDir, workDirectory, spec, plans); err != nil {
+		return err
 	}
 
 	printOutput(out, formatTeamBootstrapOutput)
@@ -791,29 +762,302 @@ func bootstrapTeamBootstrapWorktreeAgents(cmd *cobra.Command, templateDir, workD
 	return nil
 }
 
-func bootstrapBYODTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrapAgentPlan) error {
+type teamBootstrapSourceKind string
+
+const (
+	teamBootstrapSourceHostedNew teamBootstrapSourceKind = "hosted-new"
+	teamBootstrapSourceAPIKey    teamBootstrapSourceKind = "api-key"
+	teamBootstrapSourceInvite    teamBootstrapSourceKind = "invite"
+	teamBootstrapSourceCurrent   teamBootstrapSourceKind = "current-workspace"
+	teamBootstrapSourceBYOT      teamBootstrapSourceKind = "byot"
+)
+
+type teamBootstrapSource struct {
+	Kind        teamBootstrapSourceKind
+	InviteToken string
+}
+
+type teamBootstrapInvite struct {
+	Token   string
+	AwebURL string
+}
+
+func bootstrapTeamAndInitAgentDirs(cmd *cobra.Command, source teamBootstrapSource, spec *teamBootstrapSpec, templateDir string, plans []teamBootstrapAgentPlan) (bool, bool, error) {
+	primary, err := primaryTeamBootstrapPlan(plans)
+	if err != nil {
+		return false, false, err
+	}
+
+	// 1) Connect the first generated agent. This workspace becomes the team anchor.
+	if err := initTeamBootstrapPrimaryAgent(cmd, source, primary); err != nil {
+		return false, false, err
+	}
+
+	// 2) Install template roles/instructions before creating the remaining agents.
+	rolesInstalled, instructionsInstalled, err := installTeamBootstrapOverridesAfterConnect(spec, templateDir, plans)
+	if err != nil {
+		return false, false, err
+	}
+
+	// 3) Create/connect the remaining generated agents in the established team.
+	for _, agent := range plans {
+		if agent.HomeDir == primary.HomeDir {
+			continue
+		}
+		if err := initTeamBootstrapAdditionalAgent(primary.HomeDir, agent); err != nil {
+			return false, false, err
+		}
+	}
+
+	return rolesInstalled, instructionsInstalled, nil
+}
+
+func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
+	hasAPIKey := resolveInitAPIKey() != ""
+	hasInvite := strings.TrimSpace(teamBootstrapInviteToken) != ""
+	hasBYOT := strings.TrimSpace(teamBootstrapNamespace) != "" || strings.TrimSpace(teamBootstrapTeamName) != ""
+	hasUsername := strings.TrimSpace(teamBootstrapUsername) != ""
+
+	explicit := 0
+	for _, set := range []bool{hasAPIKey, hasInvite, hasBYOT, hasUsername} {
+		if set {
+			explicit++
+		}
+	}
+	if explicit > 1 {
+		return teamBootstrapSource{}, usageError("set only one team source: AWEB_API_KEY, --invite-token, --username, or --namespace/--team")
+	}
+
+	if hasAPIKey {
+		return teamBootstrapSource{Kind: teamBootstrapSourceAPIKey}, nil
+	}
+	if hasInvite {
+		return teamBootstrapSource{Kind: teamBootstrapSourceInvite, InviteToken: strings.TrimSpace(teamBootstrapInviteToken)}, nil
+	}
+	if hasBYOT {
+		if strings.TrimSpace(teamBootstrapNamespace) == "" {
+			return teamBootstrapSource{}, usageError("--namespace is required with --team")
+		}
+		if strings.TrimSpace(teamBootstrapTeamName) == "" {
+			return teamBootstrapSource{}, usageError("--team is required with --namespace")
+		}
+		return teamBootstrapSource{Kind: teamBootstrapSourceBYOT}, nil
+	}
+	if hasUsername {
+		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
+	}
+
+	if currentHasTeamWorkspace() {
+		return teamBootstrapSource{Kind: teamBootstrapSourceCurrent}, nil
+	}
+	if isTTY() {
+		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
+	}
+	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY + AWEB_URL, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
+}
+
+func currentHasTeamWorkspace() bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	sel, err := resolveSelectionForDir(wd)
+	return err == nil && strings.TrimSpace(sel.TeamID) != ""
+}
+
+func initTeamBootstrapPrimaryAgent(cmd *cobra.Command, source teamBootstrapSource, primary teamBootstrapAgentPlan) error {
+	alias := strings.TrimSpace(primary.Alias)
+	if alias == "" {
+		alias = sanitizeSlug(primary.Name)
+	}
+	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
+		return err
+	}
+
+	switch source.Kind {
+	case teamBootstrapSourceAPIKey:
+		return initTeamBootstrapAgentViaAPIKey(primary.HomeDir, alias, primary.RoleName)
+	case teamBootstrapSourceInvite:
+		_, err := acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, teamBootstrapInvite{Token: source.InviteToken}, alias, primary.RoleName)
+		return err
+	case teamBootstrapSourceCurrent:
+		invite, err := createTeamBootstrapInviteFromCurrentWorkspace()
+		if err != nil {
+			return err
+		}
+		_, err = acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, invite, alias, primary.RoleName)
+		return err
+	case teamBootstrapSourceBYOT:
+		invite, err := createTeamBootstrapBYOTInvite()
+		if err != nil {
+			return err
+		}
+		_, err = acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, invite, alias, primary.RoleName)
+		return err
+	case teamBootstrapSourceHostedNew:
+		_, err := guidedOnboardingWizard(guidedOnboardingRequest{
+			WorkingDir:         primary.HomeDir,
+			PromptIn:           cmd.InOrStdin(),
+			PromptOut:          cmd.ErrOrStderr(),
+			BaseURL:            strings.TrimSpace(teamBootstrapAwebURL),
+			RegistryURL:        strings.TrimSpace(teamBootstrapRegistryURL),
+			Username:           strings.TrimSpace(teamBootstrapUsername),
+			Alias:              alias,
+			Role:               primary.RoleName,
+			Persistent:         false,
+			InjectAgentDocs:    false,
+			DoNotTouchAgentsMD: true,
+			AskPostCreateSetup: false,
+			NonInteractive:     !isTTY() || teamBootstrapYes,
+		})
+		return err
+	default:
+		return fmt.Errorf("unsupported team bootstrap source %q", source.Kind)
+	}
+}
+
+func initTeamBootstrapAdditionalAgent(primaryDir string, agent teamBootstrapAgentPlan) error {
+	alias := strings.TrimSpace(agent.Alias)
+	if alias == "" {
+		alias = sanitizeSlug(agent.Name)
+	}
+	if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
+		return err
+	}
+
+	invite, err := createTeamBootstrapInviteFromWorkspace(primaryDir)
+	if err != nil {
+		return err
+	}
+	_, err = acceptInviteAndConnectTeamBootstrapAgent(agent.HomeDir, invite, alias, agent.RoleName)
+	return err
+}
+
+func initTeamBootstrapAgentViaAPIKey(homeDir, alias, roleName string) error {
+	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+	}
+	if awebURL == "" {
+		return usageError("--aweb-url or AWEB_URL is required when AWEB_API_KEY is set")
+	}
+	awebURL, err := normalizeAPIKeyBootstrapBaseURL(awebURL)
+	if err != nil {
+		return fmt.Errorf("invalid --aweb-url: %w", err)
+	}
+	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir:  homeDir,
+		AwebURL:     awebURL,
+		RegistryURL: strings.TrimSpace(teamBootstrapRegistryURL),
+		APIKey:      resolveInitAPIKey(),
+		Alias:       alias,
+		Role:        strings.TrimSpace(roleName),
+	})
+	return err
+}
+
+func acceptInviteAndConnectTeamBootstrapAgent(homeDir string, invite teamBootstrapInvite, alias, roleName string) (connectOutput, error) {
+	accepted, err := acceptTeamInviteWithBootstrapAwebURL(homeDir, invite, alias)
+	if err != nil {
+		return connectOutput{}, err
+	}
+	awebURL := strings.TrimSpace(accepted.AwebURL)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(invite.AwebURL)
+	}
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(teamBootstrapAwebURL)
+	}
+	if awebURL == "" {
+		awebURL = DefaultAwebURL
+	}
+	if err := upsertAcceptedTeamMembershipState(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
+		return connectOutput{}, err
+	}
+	return initCertificateConnectWithOptions(homeDir, awebURL, certificateConnectOptions{Role: strings.TrimSpace(roleName)})
+}
+
+func acceptTeamInviteWithBootstrapAwebURL(homeDir string, invite teamBootstrapInvite, alias string) (*acceptedTeamInvite, error) {
+	preferredAwebURL := strings.TrimSpace(invite.AwebURL)
+	if preferredAwebURL == "" {
+		preferredAwebURL = strings.TrimSpace(teamBootstrapAwebURL)
+	}
+	if preferredAwebURL == "" {
+		return acceptTeamInviteWithDetails(homeDir, invite.Token, alias, "")
+	}
+
+	previous, hadPrevious := os.LookupEnv("AWEB_URL")
+	if err := os.Setenv("AWEB_URL", preferredAwebURL); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if hadPrevious {
+			_ = os.Setenv("AWEB_URL", previous)
+		} else {
+			_ = os.Unsetenv("AWEB_URL")
+		}
+	}()
+	return acceptTeamInviteWithDetails(homeDir, invite.Token, alias, "")
+}
+
+func createTeamBootstrapInviteFromCurrentWorkspace() (teamBootstrapInvite, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return teamBootstrapInvite{}, err
+	}
+	return createTeamBootstrapInviteFromWorkspace(wd)
+}
+
+func createTeamBootstrapInviteFromWorkspace(workingDir string) (teamBootstrapInvite, error) {
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return teamBootstrapInvite{}, err
+	}
+	teamID := strings.TrimSpace(sel.TeamID)
+	if teamID == "" {
+		return teamBootstrapInvite{}, fmt.Errorf("workspace %s has no active team", workingDir)
+	}
+	teamDomain, teamName, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return teamBootstrapInvite{}, err
+	}
+	awebURL := awebURLForTeamInvite(workingDir, teamID)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(sel.BaseURL)
+	}
+	if exists, err := awconfig.TeamKeyExists(teamDomain, teamName); err != nil {
+		return teamBootstrapInvite{}, err
+	} else if exists {
+		registryURL := registryURLForTeamInvite(workingDir, teamDomain, awebURL)
+		_, token, err := createTeamInviteToken(teamDomain, teamName, registryURL, awebURL, true)
+		return teamBootstrapInvite{Token: token, AwebURL: awebURL}, err
+	}
+	_, token, err := createHostedTeamInviteToken(workingDir, teamID, true)
+	return teamBootstrapInvite{Token: token, AwebURL: awebURL}, err
+}
+
+func createTeamBootstrapBYOTInvite() (teamBootstrapInvite, error) {
 	namespace := awconfig.NormalizeDomain(strings.TrimSpace(teamBootstrapNamespace))
 	teamName := strings.ToLower(strings.TrimSpace(teamBootstrapTeamName))
 	if namespace == "" {
-		return usageError("--namespace is required for one-step team bootstrap")
+		return teamBootstrapInvite{}, usageError("--namespace is required for one-step team bootstrap")
 	}
 	if teamName == "" {
-		return usageError("--team is required for one-step team bootstrap")
+		return teamBootstrapInvite{}, usageError("--team is required for one-step team bootstrap")
 	}
 
 	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
 	if awebURL == "" {
 		awebURL = DefaultAwebURL
 	}
-	var err error
-	awebURL, err = normalizeAwebBaseURL(awebURL)
+	awebURL, err := normalizeAwebBaseURL(awebURL)
 	if err != nil {
-		return fmt.Errorf("invalid --aweb-url: %w", err)
+		return teamBootstrapInvite{}, fmt.Errorf("invalid --aweb-url: %w", err)
 	}
 
 	controllerKey, err := awconfig.LoadControllerKey(namespace)
 	if err != nil {
-		return fmt.Errorf(
+		return teamBootstrapInvite{}, fmt.Errorf(
 			"no local namespace controller key for %s: %w\n\nRun `aw id namespace prepare-controller --domain %s` first.",
 			namespace,
 			err,
@@ -823,23 +1067,22 @@ func bootstrapBYODTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrap
 
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
-		return err
+		return teamBootstrapInvite{}, err
 	}
 	registryURL := strings.TrimSpace(teamBootstrapRegistryURL)
 	if registryURL != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid --registry: %w", err)
+			return teamBootstrapInvite{}, fmt.Errorf("invalid --registry: %w", err)
 		}
 	}
 	resolvedRegistryURL := strings.TrimSpace(registry.DefaultRegistryURL)
 
-	// Ensure namespace exists at the registry.
 	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	plan := &idCreatePlan{Domain: namespace, RegistryURL: resolvedRegistryURL, ControllerDID: controllerDID}
 	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
-		return fmt.Errorf("ensure namespace %s: %w", namespace, err)
+		return teamBootstrapInvite{}, fmt.Errorf("ensure namespace %s: %w", namespace, err)
 	}
 
 	// Ensure the team exists (creates ~/.awid/team-keys/<namespace>/<team>.key if needed).
@@ -852,123 +1095,11 @@ func bootstrapBYODTeamAndInitAgentDirs(cmd *cobra.Command, plans []teamBootstrap
 		strings.TrimSpace(teamBootstrapTeamDisplayName),
 		controllerKey,
 	); err != nil {
-		return err
+		return teamBootstrapInvite{}, err
 	}
 
-	for _, agent := range plans {
-		if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
-			return err
-		}
-		alias := strings.TrimSpace(agent.Alias)
-		if alias == "" {
-			alias = sanitizeSlug(agent.Name)
-		}
-		_, token, err := createTeamInviteToken(namespace, teamName, resolvedRegistryURL, awebURL, true)
-		if err != nil {
-			return err
-		}
-		accepted, err := acceptTeamInviteWithDetails(agent.HomeDir, token, alias, "")
-		if err != nil {
-			return err
-		}
-		if err := upsertAcceptedTeamMembershipState(agent.HomeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
-			return err
-		}
-		if _, err := initCertificateConnectWithOptions(agent.HomeDir, awebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func bootstrapHostedTeamAndInitAgentDirs(cmd *cobra.Command, templateDir string, plans []teamBootstrapAgentPlan) error {
-	_ = templateDir // reserved for future template-driven hosted defaults.
-
-	primary, err := primaryTeamBootstrapPlan(plans)
-	if err != nil {
-		return err
-	}
-
-	// 1) Create/connect the first agent workspace using the same codepath as `aw init`.
-	// We deliberately do not reimplement hosted onboarding here.
-	username := strings.TrimSpace(teamBootstrapUsername)
-	if username == "" && !isTTY() {
-		return usageError("--username is required when not running in a TTY")
-	}
-	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
-		return err
-	}
-
-	primaryAlias := strings.TrimSpace(primary.Alias)
-	if primaryAlias == "" {
-		primaryAlias = sanitizeSlug(primary.Name)
-	}
-
-	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
-	registryURL := strings.TrimSpace(teamBootstrapRegistryURL)
-	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
-		WorkingDir:         primary.HomeDir,
-		PromptIn:           cmd.InOrStdin(),
-		PromptOut:          cmd.ErrOrStderr(),
-		BaseURL:            awebURL,
-		RegistryURL:        registryURL,
-		Username:           username,
-		Alias:              primaryAlias,
-		Role:               primary.RoleName,
-		Persistent:         false,
-		InjectAgentDocs:    false,
-		DoNotTouchAgentsMD: true,
-		AskPostCreateSetup: false,
-		NonInteractive:     !isTTY() || teamBootstrapYes,
-	})
-	if err != nil {
-		return err
-	}
-	_ = result
-
-	// Resolve the active team + server URLs from the initialized primary workspace.
-	sel, err := resolveSelectionForDir(primary.HomeDir)
-	if err != nil {
-		return err
-	}
-	teamID := strings.TrimSpace(sel.TeamID)
-	if teamID == "" {
-		return fmt.Errorf("bootstrap: primary workspace is missing team_id")
-	}
-	serviceURLs, err := resolveOnboardingServiceURLs(strings.TrimSpace(sel.BaseURL))
-	if err != nil {
-		return err
-	}
-
-	// 2) For each additional agent: create an invite (same codepath as `aw id team invite`),
-	// accept it (same codepath as `aw id team accept-invite`), then connect (same codepath as `aw init`).
-	for _, agent := range plans {
-		if agent.HomeDir == primary.HomeDir {
-			continue
-		}
-		alias := strings.TrimSpace(agent.Alias)
-		if alias == "" {
-			alias = sanitizeSlug(agent.Name)
-		}
-		if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
-			return err
-		}
-
-		_, token, err := createHostedTeamInviteToken(primary.HomeDir, teamID, true)
-		if err != nil {
-			return err
-		}
-		accepted, err := acceptTeamInviteWithDetails(agent.HomeDir, token, alias, "")
-		if err != nil {
-			return err
-		}
-		if _, err := initCertificateConnectWithOptions(agent.HomeDir, serviceURLs.AwebURL, certificateConnectOptions{Role: agent.RoleName}); err != nil {
-			return err
-		}
-		_ = accepted
-	}
-
-	return nil
+	_, token, err := createTeamInviteToken(namespace, teamName, resolvedRegistryURL, awebURL, true)
+	return teamBootstrapInvite{Token: token, AwebURL: awebURL}, err
 }
 
 func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) error {
@@ -1100,14 +1231,6 @@ func installTeamBootstrapOverridesAfterConnect(spec *teamBootstrapSpec, template
 	return rolesInstalled, instructionsInstalled, nil
 }
 
-func installTeamBootstrapRoles(spec *teamBootstrapSpec, templateDir string) error {
-	client, _, err := resolveClientSelection()
-	if err != nil {
-		return err
-	}
-	return installTeamBootstrapRolesWithClient(client, spec, templateDir)
-}
-
 func installTeamBootstrapRolesWithClient(client *aweb.Client, spec *teamBootstrapSpec, templateDir string) error {
 	if client == nil {
 		return fmt.Errorf("nil aweb client")
@@ -1140,14 +1263,6 @@ func installTeamBootstrapRolesWithClient(client *aweb.Client, spec *teamBootstra
 	}
 	_, err = client.ActivateTeamRoles(ctx, created.TeamRolesID)
 	return err
-}
-
-func installTeamBootstrapInstructions(spec *teamBootstrapSpec, templateDir string) (bool, error) {
-	client, _, err := resolveClientSelection()
-	if err != nil {
-		return false, err
-	}
-	return installTeamBootstrapInstructionsWithClient(client, spec, templateDir)
 }
 
 func installTeamBootstrapInstructionsWithClient(client *aweb.Client, spec *teamBootstrapSpec, templateDir string) (bool, error) {

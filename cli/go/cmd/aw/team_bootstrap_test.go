@@ -180,6 +180,99 @@ func TestTeamBootstrapResolveWorkDirectoryDerivesFromWorkRepoURL(t *testing.T) {
 	}
 }
 
+func TestTeamBootstrapResolveSourceRejectsConflicts(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevCwd, _ := os.Getwd()
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		_ = os.Chdir(prevCwd)
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWEB_API_KEY", "aw_sk_test")
+	teamBootstrapInviteToken = "invite-token"
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+
+	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "set only one team source") {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+}
+
+func TestTeamBootstrapResolveSourceUsesInviteToken(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevCwd, _ := os.Getwd()
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		_ = os.Chdir(prevCwd)
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWEB_API_KEY", "")
+	teamBootstrapInviteToken = "invite-token"
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+
+	source, err := resolveTeamBootstrapSource()
+	if err != nil {
+		t.Fatalf("resolveTeamBootstrapSource: %v", err)
+	}
+	if source.Kind != teamBootstrapSourceInvite || source.InviteToken != "invite-token" {
+		t.Fatalf("unexpected source: %+v", source)
+	}
+}
+
+func TestTeamBootstrapResolveSourceErrorsWithoutSourceNonInteractive(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevCwd, _ := os.Getwd()
+	prevStdin := os.Stdin
+	nonTTY, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = nonTTY
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		os.Stdin = prevStdin
+		_ = os.Chdir(prevCwd)
+		_ = nonTTY.Close()
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWEB_API_KEY", "")
+	teamBootstrapInviteToken = ""
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+
+	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "requires a team source") {
+		t.Fatalf("expected missing source error, got %v", err)
+	}
+}
+
 func TestTeamBootstrapWorktreesRequireKnownRoleName(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	path := filepath.Join(templateDir, "team.yaml")
