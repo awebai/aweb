@@ -139,11 +139,12 @@ func TestIDCreateEOFExplainsNonInteractiveDNSVerification(t *testing.T) {
 
 	var prompt bytes.Buffer
 	_, err := executeIDCreate(workingDir, idCreateOptions{
-		Name:      "alice",
-		Domain:    "acme.com",
-		PromptIn:  strings.NewReader(""),
-		PromptOut: &prompt,
-		Now:       func() time.Time { return time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC) },
+		Name:        "alice",
+		Domain:      "acme.com",
+		PromptIn:    strings.NewReader(""),
+		PromptOut:   &prompt,
+		TXTResolver: staticTXTResolver{},
+		Now:         func() time.Time { return time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC) },
 	})
 	if err == nil {
 		t.Fatal("expected EOF guidance error")
@@ -181,11 +182,12 @@ func TestIDCreateNonTerminalStdinDoesNotPrompt(t *testing.T) {
 
 	var prompt bytes.Buffer
 	_, err = executeIDCreate(workingDir, idCreateOptions{
-		Name:      "alice",
-		Domain:    "acme.com",
-		PromptIn:  in,
-		PromptOut: &prompt,
-		Now:       func() time.Time { return time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC) },
+		Name:        "alice",
+		Domain:      "acme.com",
+		PromptIn:    in,
+		PromptOut:   &prompt,
+		TXTResolver: staticTXTResolver{},
+		Now:         func() time.Time { return time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC) },
 	})
 	if err == nil {
 		t.Fatal("expected non-terminal guidance error")
