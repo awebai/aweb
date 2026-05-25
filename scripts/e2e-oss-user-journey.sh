@@ -872,7 +872,7 @@ run_aw_in "$DAVE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
 dave_init_exit=$?
 assert_eq "dave init exit" "0" "$dave_init_exit"
 
-set_inbound_mode "$ALICE_DID_AW" "contacts_only"
+set_inbound_mode "$ALICE_DID_AW" "team_and_contacts"
 run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>&1
 contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
