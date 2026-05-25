@@ -412,9 +412,21 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	t.Parallel()
 
 	var gotPayload map[string]any
+	var gotNamespacePayload map[string]any
 	var gotAuthHeader string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			if err := json.NewDecoder(r.Body).Decode(&gotNamespacePayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"domain":         "acme.com",
+				"controller_did": gotNamespacePayload["controller_did"],
+				"created_at":     "2026-04-06T00:00:00Z",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
 			gotAuthHeader = r.Header.Get("Authorization")
 			if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
@@ -475,6 +487,9 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	if gotPayload["name"] != "backend" {
 		t.Fatalf("registry payload name=%v", gotPayload["name"])
 	}
+	if gotNamespacePayload["domain"] != "acme.com" {
+		t.Fatalf("namespace payload domain=%v", gotNamespacePayload["domain"])
+	}
 	if !strings.HasPrefix(gotAuthHeader, "DIDKey ") {
 		t.Fatalf("expected DIDKey auth, got %q", gotAuthHeader)
 	}
@@ -487,10 +502,22 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 }
 
 func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *testing.T) {
+	var gotNamespacePayload map[string]any
 	var gotCreatePayload map[string]any
 	var gotCertPayload map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			if err := json.NewDecoder(r.Body).Decode(&gotNamespacePayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"domain":         "acme.com",
+				"controller_did": gotNamespacePayload["controller_did"],
+				"created_at":     "2026-04-07T00:00:00Z",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
 			if err := json.NewDecoder(r.Body).Decode(&gotCreatePayload); err != nil {
 				t.Fatal(err)
@@ -548,6 +575,9 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	}
 	if result.Certificate.MemberAddress != "acme.com/alice" {
 		t.Fatalf("member_address=%q", result.Certificate.MemberAddress)
+	}
+	if gotNamespacePayload["domain"] != "acme.com" {
+		t.Fatalf("namespace payload domain=%v", gotNamespacePayload["domain"])
 	}
 	if result.Certificate.Alias != "alice" {
 		t.Fatalf("alias=%q", result.Certificate.Alias)

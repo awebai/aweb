@@ -1875,6 +1875,14 @@ func ensureLocalTeamRegistered(
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
+	if err := ensureStandaloneNamespace(ctx, registry, &idCreatePlan{
+		Domain:        domain,
+		RegistryURL:   registryURL,
+		ControllerDID: controllerDID,
+	}, controllerKey); err != nil {
+		return nil, fmt.Errorf("ensure namespace at registry: %w", err)
+	}
 
 	var teamPriv ed25519.PrivateKey
 	exists, err := awconfig.TeamKeyExists(domain, name)
