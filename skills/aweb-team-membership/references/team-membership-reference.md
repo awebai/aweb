@@ -51,7 +51,7 @@ Addressability and delivery authorization are separate:
 - `team_and_contacts` accepts verified same-team senders plus exact active identity contacts for trusted non-team senders. Contacts do not create routes or resolver visibility.
 - Legacy reachability fields may still appear in support or migration output, but they are compatibility/audit state, not live delivery authority.
 - `aw contacts ...` manages saved contact relationships.
-- `aw directory <domain>/<alias>` performs directory lookup.
+- `aw id namespace resolve <domain>/<alias> --json` performs a workspace-free directory lookup.
 
 ## Multi-team safety checklist
 
