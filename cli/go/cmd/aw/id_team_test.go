@@ -381,6 +381,33 @@ func TestExecuteTeamCleanupCloudCanSignWithNamespaceControllerScope(t *testing.T
 	}
 }
 
+func TestLoadTeamCleanupCloudNamespaceKeyVerifiesDNSController(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	key := ed25519.NewKeyFromSeed([]byte{
+		3, 1, 4, 1, 5, 9, 2, 6,
+		5, 3, 5, 8, 9, 7, 9, 3,
+		2, 3, 8, 4, 6, 2, 6, 4,
+		3, 3, 8, 3, 2, 7, 9, 5,
+	})
+	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	writeControllerKeyForTest(t, home, "acme.com", key)
+
+	priorResolver := teamCleanupCloudTXTResolver
+	teamCleanupCloudTXTResolver = staticTXTResolver{
+		"_awid.acme.com": {"awid=v1; controller=" + controllerDID + ";"},
+	}
+	t.Cleanup(func() { teamCleanupCloudTXTResolver = priorResolver })
+
+	loaded, err := loadTeamCleanupCloudNamespaceKey(context.Background(), "acme.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if awid.ComputeDIDKey(loaded.Public().(ed25519.PublicKey)) != controllerDID {
+		t.Fatal("loaded wrong namespace controller key")
+	}
+}
+
 func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	t.Parallel()
 

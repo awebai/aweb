@@ -214,8 +214,9 @@ var (
 	teamCleanupCloudTimestamp           string
 	teamCleanupCloudApply               bool
 	teamCleanupCloudNamespaceController bool
-	teamCleanupCloudRegistry            string
 )
+
+var teamCleanupCloudTXTResolver awid.TXTResolver
 
 // --- commands ---
 
@@ -406,7 +407,6 @@ func init() {
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudURL, "aweb-url", DefaultAwebURL, "aweb Cloud URL")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTeamKeyPath, "team-key", "", "Team controller key path override")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudNamespaceKeyPath, "namespace-key", "", "Namespace controller key path override for --namespace-controller")
-	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudRegistry, "registry", "", "Registry origin override for --namespace-controller key verification")
 	teamCleanupCloudCmd.Flags().BoolVar(&teamCleanupCloudNamespaceController, "namespace-controller", false, "Authorize cleanup with the namespace controller key instead of the team controller key")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamCleanupCloudCmd.Flags().BoolVar(&teamCleanupCloudApply, "apply", false, "Apply the cleanup instead of dry-run")
@@ -1472,9 +1472,6 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	if !teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudNamespaceKeyPath) != "" {
 		return usageError("--namespace-key requires --namespace-controller")
 	}
-	if !teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudRegistry) != "" {
-		return usageError("--registry is only used with --namespace-controller")
-	}
 	if teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudTeamKeyPath) != "" {
 		return usageError("--team-key cannot be combined with --namespace-controller")
 	}
@@ -1484,7 +1481,7 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	var err error
 	if teamCleanupCloudNamespaceController {
 		controllerScope = "namespace"
-		controllerKey, err = loadTeamCleanupCloudNamespaceKey(ctx, domain, teamCleanupCloudNamespaceKeyPath, teamCleanupCloudRegistry)
+		controllerKey, err = loadTeamCleanupCloudNamespaceKey(ctx, domain, teamCleanupCloudNamespaceKeyPath)
 		if err != nil {
 			return fmt.Errorf("load namespace controller key for %s: %w", domain, err)
 		}
@@ -1551,30 +1548,24 @@ func loadTeamCleanupCloudKey(domain, team, path string) (ed25519.PrivateKey, err
 	return awconfig.LoadTeamKey(domain, team)
 }
 
-func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path, registryOverride string) (ed25519.PrivateKey, error) {
-	if strings.TrimSpace(path) == "" {
-		key, _, err := loadVerifiedNamespaceControllerKey(ctx, domain, registryOverride)
-		return key, err
+func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path string) (ed25519.PrivateKey, error) {
+	var key ed25519.PrivateKey
+	var err error
+	if strings.TrimSpace(path) != "" {
+		key, err = awid.LoadSigningKey(strings.TrimSpace(path))
+	} else {
+		key, err = awconfig.LoadControllerKey(domain)
 	}
-	key, err := awid.LoadSigningKey(strings.TrimSpace(path))
 	if err != nil {
 		return nil, err
 	}
 	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	registry, err := newRegistryClientWithPreferredBaseURL(registryOverride)
+	authority, err := awid.VerifyExactDomainAuthority(ctx, teamCleanupCloudTXTResolver, domain)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verify DNS authority for %s: %w", domain, err)
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
-	if err != nil {
-		return nil, fmt.Errorf("discover registry for %s: %w", domain, err)
-	}
-	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, domain)
-	if err != nil {
-		return nil, fmt.Errorf("fetch namespace %s: %w", domain, err)
-	}
-	if strings.TrimSpace(namespace.ControllerDID) != controllerDID {
-		return nil, fmt.Errorf("local namespace controller key for %s does not match registered controller (local=%s, registry=%s)", domain, controllerDID, strings.TrimSpace(namespace.ControllerDID))
+	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
+		return nil, fmt.Errorf("local namespace controller key for %s does not match DNS controller (local=%s, dns=%s)", domain, controllerDID, strings.TrimSpace(authority.ControllerDID))
 	}
 	return key, nil
 }
