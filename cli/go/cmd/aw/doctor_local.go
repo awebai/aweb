@@ -93,10 +93,12 @@ type doctorTeamStateYAML struct {
 }
 
 type doctorTeamMembershipYAML struct {
-	TeamID   string `yaml:"team_id,omitempty"`
-	Alias    string `yaml:"alias,omitempty"`
-	CertPath string `yaml:"cert_path,omitempty"`
-	JoinedAt string `yaml:"joined_at,omitempty"`
+	TeamID      string `yaml:"team_id,omitempty"`
+	Alias       string `yaml:"alias,omitempty"`
+	CertPath    string `yaml:"cert_path,omitempty"`
+	JoinedAt    string `yaml:"joined_at,omitempty"`
+	RegistryURL string `yaml:"registry_url,omitempty"`
+	AwebURL     string `yaml:"aweb_url,omitempty"`
 }
 
 func (r *doctorRunner) runLocalChecks() {
@@ -626,7 +628,21 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 
 	identityAddress := strings.TrimSpace(identity.Address)
 	certAddress := strings.TrimSpace(cert.MemberAddress)
-	if identityAddress != certAddress {
+	identityStableID := strings.TrimSpace(identity.StableID)
+	certStableID := strings.TrimSpace(cert.MemberDIDAW)
+	switch {
+	case identityAddress == certAddress:
+		r.add(localPathCheck(doctorCheckIdentityAddress, doctorStatusOK, state.identityPath, "Identity address matches the team certificate member_address.", "", map[string]any{"address": identityAddress}))
+	case certAddress == "" && certStableID != "" && identityStableID == certStableID:
+		r.add(localPathCheck(
+			doctorCheckIdentityAddress,
+			doctorStatusInfo,
+			state.identityPath,
+			"Team certificate is bound to the identity did:aw; no member_address is recorded.",
+			"",
+			map[string]any{"identity_address": identityAddress, "certificate_member_did_aw": certStableID},
+		))
+	default:
 		r.add(localPathCheck(
 			doctorCheckIdentityAddress,
 			doctorStatusFail,
@@ -635,13 +651,9 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 			"Repair identity.yaml or restore the matching team certificate.",
 			map[string]any{"identity_address": identityAddress, "certificate_member_address": certAddress},
 		))
-	} else {
-		r.add(localPathCheck(doctorCheckIdentityAddress, doctorStatusOK, state.identityPath, "Identity address matches the team certificate member_address.", "", map[string]any{"address": identityAddress}))
 	}
 
 	if lifetime == awid.LifetimePersistent {
-		identityStableID := strings.TrimSpace(identity.StableID)
-		certStableID := strings.TrimSpace(cert.MemberDIDAW)
 		switch {
 		case identityStableID == "":
 			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusFail, state.identityPath, "Global identity stable_id is missing.", "Restore the global identity stable_id.", nil))
@@ -772,10 +784,12 @@ func loadDoctorTeamStateFromDir(workingDir string) (*awconfig.TeamState, error) 
 	}
 	for _, membership := range raw.Memberships {
 		state.Memberships = append(state.Memberships, awconfig.TeamMembership{
-			TeamID:   strings.TrimSpace(membership.TeamID),
-			Alias:    strings.TrimSpace(membership.Alias),
-			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
-			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+			TeamID:      strings.TrimSpace(membership.TeamID),
+			Alias:       strings.TrimSpace(membership.Alias),
+			CertPath:    filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
+			JoinedAt:    strings.TrimSpace(membership.JoinedAt),
+			RegistryURL: strings.TrimSpace(membership.RegistryURL),
+			AwebURL:     strings.TrimSpace(membership.AwebURL),
 		})
 	}
 	return state, nil

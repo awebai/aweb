@@ -103,7 +103,7 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	}
 
 	output := string(out)
-	if !strings.Contains(output, "Verification email sent to alice@example.com. Click the link in the email to activate your dashboard login.") {
+	if !strings.Contains(output, "Verification email requested for alice@example.com. Click the link in the email to activate your dashboard login.") {
 		t.Fatalf("output=%q", output)
 	}
 }
@@ -197,8 +197,64 @@ func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
 	}
 
 	output := string(out)
-	if !strings.Contains(output, "Verification email sent to alice@example.com. Click the link in the email to activate your dashboard login.") {
+	if !strings.Contains(output, "Verification email requested for alice@example.com. Click the link in the email to activate your dashboard login.") {
 		t.Fatalf("output=%q", output)
+	}
+}
+
+func TestClaimHumanCommandPrintsAlreadyAttachedWithoutEmailClaim(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	var onboardingURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   "https://api.awid.ai",
+				"version":        "1.7.0",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "already_attached",
+				"email":  "alice@example.com",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "alice.aweb.ai/alice-laptop", didKey, stableID, "https://api.awid.ai", priv)
+
+	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--mock-url", server.URL)
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("claim-human failed: %v\n%s", err, string(out))
+	}
+
+	output := string(out)
+	if !strings.Contains(output, "Human account alice@example.com is already attached. No verification email was sent.") {
+		t.Fatalf("output=%q", output)
+	}
+	if strings.Contains(output, "Verification email") {
+		t.Fatalf("already_attached output must not claim email delivery:\n%s", output)
 	}
 }
 

@@ -923,6 +923,29 @@ memberships:
 				doctorCheckCertificateExists:    doctorStatusBlocked,
 			},
 		},
+		{
+			name: "teams state with service metadata",
+			body: `aweb_url: https://app.example.com/api
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    workspace_id: ws-1
+    cert_path: team-certs/backend__example.com.pem
+`,
+			teamBody: `active_team: backend:example.com
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    cert_path: team-certs/backend__example.com.pem
+    registry_url: https://api.awid.ai
+    aweb_url: https://app.example.com/api
+`,
+			checks: map[string]doctorStatus{
+				doctorCheckWorkspaceParse:      doctorStatusOK,
+				doctorCheckTeamsActiveTeam:     doctorStatusOK,
+				doctorCheckWorkspaceMembership: doctorStatusOK,
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -948,6 +971,76 @@ memberships:
 			}
 		})
 	}
+}
+
+func TestAwDoctorLocalChecksGlobalStableOnlyCertificateWithIdentityAddress(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	memberPub, memberPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("generate member keypair: %v", err)
+	}
+	_, teamPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("generate team keypair: %v", err)
+	}
+	didKey := awid.ComputeDIDKey(memberPub)
+	stableID := awid.ComputeStableID(memberPub)
+	teamID := "backend:example.com"
+	cert, err := awid.SignTeamCertificate(teamPriv, awid.TeamCertificateFields{
+		Team:          teamID,
+		MemberDIDKey:  didKey,
+		MemberDIDAW:   stableID,
+		Alias:         "mia",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatalf("sign certificate: %v", err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, teamID, cert); err != nil {
+		t.Fatalf("save certificate: %v", err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberPriv); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	if err := awconfig.SaveTeamState(tmp, &awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:      teamID,
+			Alias:       "mia",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			RegistryURL: "https://api.awid.ai",
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		AwebURL: "https://app.example.com/api",
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "mia",
+			WorkspaceID: "ws-global",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+		}},
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:         didKey,
+		StableID:    stableID,
+		Address:     "example.com/mia",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: "https://api.awid.ai",
+		CreatedAt:   "2026-04-04T00:00:00Z",
+	})
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityAddress, doctorStatusInfo)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityStableID, doctorStatusOK)
 }
 
 func TestAwDoctorLocalChecksCorruptSigningKey(t *testing.T) {

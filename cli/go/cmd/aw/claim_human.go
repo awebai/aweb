@@ -182,8 +182,24 @@ func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.Cla
 	if resp != nil && strings.TrimSpace(resp.Email) != "" {
 		finalEmail = strings.TrimSpace(resp.Email)
 	}
-	_, err := fmt.Fprintf(out, "Verification email sent to %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
-	return err
+	status := ""
+	if resp != nil {
+		status = strings.TrimSpace(resp.Status)
+	}
+	switch status {
+	case "already_attached":
+		_, err := fmt.Fprintf(out, "Human account %s is already attached. No verification email was sent.\n", finalEmail)
+		return err
+	case "attached":
+		_, err := fmt.Fprintf(out, "Human account %s is attached. No verification email was sent because the email is already verified.\n", finalEmail)
+		return err
+	case "verification_sent":
+		_, err := fmt.Fprintf(out, "Verification email requested for %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
+		return err
+	default:
+		_, err := fmt.Fprintf(out, "Claim-human completed for %s with status %q.\n", finalEmail, status)
+		return err
+	}
 }
 
 func resolveClaimHumanBaseURL(mockURL string) (string, error) {
