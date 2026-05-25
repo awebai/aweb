@@ -6,9 +6,9 @@ allowed-tools: "Bash(aw *)"
 
 # aweb Bootstrap
 
-Use this skill when a human wants to create a new aweb team for the first time, and you need to guide them through `aw team bootstrap` decisions and validation.
+Use this skill when a human wants to create or extend an aweb team from a reusable template, and you need to guide them through `aw team bootstrap` decisions and validation.
 
-This skill is about **decision policy + safe execution**, not memorizing flags.
+This skill is about **mental model + decision policy + safe execution**, not memorizing flags.
 
 Related skills:
 
@@ -18,13 +18,48 @@ Related skills:
 
 Long-form reference: docs/team-bootstrap.md in the aweb repo.
 
+## Mental model: what bootstrap is assembling
+
+`aw team bootstrap` combines four separate things that are easy to confuse:
+
+1) Template repo — the blueprint.
+
+- Contains `team.yaml`, role playbooks, shared instructions, and `agents/<responsibility>/AGENTS.md` files.
+- The template says what responsibilities should exist and which `role_name` each should use.
+
+2) Work directory or work repo — the thing agents work on.
+
+- `--work-directory` points at an existing folder.
+- `--work-repo-url` clones a repo into `<template>/worktrees/<derived-name>/` and uses that clone as the work directory.
+- Each responsibility workspace gets this directory symlinked as `./work`.
+
+3) Team source — the authority/context the generated agents join.
+
+- Hosted new team, existing hosted team via `AWEB_API_KEY`, explicit `--invite-token`, current workspace forwarding, or BYOT.
+- Exactly one explicit source is allowed. If no explicit source is set and cwd is already an aw workspace, bootstrap forwards that current team. If no current workspace exists and the run is interactive, bootstrap creates a hosted team. Non-interactive runs need an explicit source.
+
+4) Generated workspaces — the identities that will act.
+
+- Each `agents/<responsibility>/` directory becomes an aw workspace with its own identity and team certificate.
+- The **first generated plan** is the anchor: bootstrap connects it first, installs roles/instructions from that workspace's team context, then invites/connects the rest.
+- Do not assume a responsibility named `implementation` is special. The anchor is the first plan the CLI generated.
+
+Aweb team source terms:
+
+- Hosted new team: aweb.ai creates/hosts the team.
+- API key: joins the hosted team represented by `AWEB_API_KEY`; `--aweb-url`/`AWEB_URL` is optional and defaults to hosted aweb.ai.
+- Invite token: first generated workspace accepts an existing invite.
+- Current workspace forwarding: caller cwd already has `.aw`; bootstrap creates a one-use invite from that active team.
+- BYOT: bring your own team. This includes bringing your own domain/namespace and controller key. Do not describe a separate domain-only bootstrap mode.
+
 ## Bootstrap vs join (first decision)
 
 Bootstrap when:
 
-- You are creating a brand-new team (new template repo clone, new identities, new role bundle).
+- You are creating a brand-new team from a template.
+- You are extending an existing team with a template-defined set of agent workspaces, roles, and instructions.
 - You want reproducible setup for multiple agents/workspaces.
-- You want a “one command creates the team + installs roles + provisions agent dirs” flow.
+- You want a “one command resolves the team source + installs roles + provisions agent dirs” flow.
 
 Do NOT bootstrap when:
 
@@ -81,7 +116,16 @@ If both flags are set, treat it as a user error and stop.
 
 ## Team source policy
 
-Non-dry-run bootstrap needs exactly one coherent team source. The first generated agent workspace is the anchor: bootstrap connects it first, installs roles/instructions from that workspace's team context, then invites/connects the remaining agents.
+Non-dry-run bootstrap needs one coherent team source. This is the most important decision: it determines which team owns the roles, instructions, tasks, mail, chat, and membership certificates created during bootstrap.
+
+Resolution order:
+
+- If any explicit source is set (`AWEB_API_KEY`, `--invite-token`, `--username`, or `--namespace/--team`), do not set another explicit source.
+- If no explicit source is set and cwd is an initialized aw workspace, bootstrap forwards the current active team.
+- If no explicit source is set, cwd is not an aw workspace, and the run is interactive, bootstrap creates/uses a hosted team through onboarding prompts.
+- If no source can be resolved, stop and ask the human which team source to use.
+
+The first generated agent workspace is the anchor: bootstrap connects it first, installs roles/instructions from that workspace's team context, then invites/connects the remaining agents and any declared worktree agents.
 
 Supported sources:
 
@@ -94,7 +138,7 @@ Supported sources:
 2) Existing hosted team via API key
 
 - If `AWEB_API_KEY` is set, bootstrap joins the API key's hosted team.
-- `--aweb-url`/`AWEB_URL` is optional; when omitted, the hosted default is used. Set it only to target a non-default stack.
+- `--aweb-url`/`AWEB_URL` is optional; when omitted, the hosted aweb.ai default is used. Set it only to target a non-default stack.
 - Do not also pass `--username`, `--invite-token`, or BYOT flags.
 
 3) Existing team via invite token
@@ -113,10 +157,18 @@ Supported sources:
 - BYOT includes bringing your own domain; there is no separate supported domain-only bootstrap mode.
 - Bootstrap creates/ensures the team in that namespace, invites the first generated workspace, then uses it as the anchor.
 
+Decision recipe:
+
+- Human says “make me a new team” and has no existing aw context: use hosted (`--username` or interactive prompt).
+- Human has a dashboard/API key: use `AWEB_API_KEY=... aw team bootstrap ...`; do not ask for `AWEB_URL` unless they are using a non-default stack.
+- Human pasted an invite: use `--invite-token`.
+- Human is already inside the team workspace that should own the new agents: use current workspace forwarding (no explicit source).
+- Human controls a namespace/domain and wants the team under that namespace: use BYOT (`--namespace` + `--team`).
+
 Policy guidance:
 
 - Prefer hosted for “get a working team now”.
-- Prefer API key or invite when the team already exists.
+- Prefer API key or invite when the team already exists but the caller is not already inside it.
 - Prefer current workspace forwarding when you are already inside the target team.
 - Prefer BYOT when you need local control over the team namespace/domain and routing.
 - Use `--dry-run` for planning only. The old manual "print commands after installing server state from caller cwd" flow is not coherent and should not be recommended.

@@ -4,6 +4,21 @@ This reference is support material for the aweb-bootstrap skill. Use it when you
 
 It is intentionally narrower than docs/team-bootstrap.md: it focuses on common decision points and failure modes.
 
+## Quick mental model
+
+- Template repo = blueprint for roles, instructions, and responsibility directories.
+- Work directory/repo = the project/content agents see as `./work`.
+- Team source = the authority the generated agents join.
+- First generated workspace = bootstrap anchor. It connects first; roles/instructions install through it; all other generated agents join through invites from that established team context.
+- BYOT means bring your own team, including your own namespace/domain and controller key. Do not present a separate domain-only bootstrap mode.
+
+Team-source precedence:
+
+- Explicit sources conflict: use only one of `AWEB_API_KEY`, `--invite-token`, `--username`, or `--namespace/--team`.
+- With no explicit source, an initialized caller cwd forwards its current active team.
+- With no explicit source and no caller workspace, an interactive run uses hosted onboarding.
+- Non-interactive runs need an explicit source or initialized caller workspace.
+
 ## Scenario: first-time hosted team from a template (recommended)
 
 Goal: create a new aweb.ai team and provision agent workspaces from a template.

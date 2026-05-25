@@ -26,6 +26,36 @@ For the underlying team model — what a team is, how membership
 certificates work, how cross-team addressing differs from same-team
 aliases — see [teams.md](https://aweb.ai/docs/teams.md).
 
+## Mental model
+
+Bootstrap is easier to reason about if you keep four layers
+separate:
+
+1. **Template repo** — the blueprint. It contains `team.yaml`, role
+   playbooks, shared instructions, and one `AGENTS.md` per
+   responsibility.
+2. **Work directory or work repo** — the project or content the
+   agents should work on. Bootstrap symlinks it into each
+   responsibility workspace as `work/`.
+3. **Team source** — the authority/context the generated agents
+   join: hosted new team, hosted API key, invite token, current
+   workspace forwarding, or BYOT.
+4. **Generated workspaces** — the actual agent homes under
+   `agents/<responsibility>/` and, optionally, repo-isolated
+   worktree agents under `worktrees/`.
+
+The first generated workspace is the **anchor**. Bootstrap connects
+that workspace first, installs role playbooks and shared
+instructions through that workspace's team context, then uses that
+established team context to invite/connect the remaining generated
+agents and any declared worktree agents. A responsibility named
+`implementation` is not special; use `--dry-run` when you need to
+see the generated order before provisioning.
+
+BYOT means **bring your own team**. In this flow that includes
+bringing your own namespace/domain and controller key; there is no
+separate domain-only bootstrap mode.
+
 If you are walking an AI agent through bootstrap (template choice,
 hosted/BYOT/existing-team source, work-directory vs work-repo-url, optional
 worktree agents, post-bootstrap validation, re-run safety), install
@@ -39,12 +69,14 @@ The reference template is
 [awebai/aweb-team-dev-review](https://github.com/awebai/aweb-team-dev-review):
 a two-agent developer + reviewer team you can run as-is.
 
-From an empty parent directory:
+From an empty parent directory in an interactive terminal:
 
 ```
 aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
   --work-directory ./myproject
 ```
+
+If you are not running interactively, provide an explicit team source such as `--username`, `AWEB_API_KEY`, `--invite-token`, or `--namespace/--team`.
 
 Pass exactly one of `--work-directory <path>` (existing directory,
 the form shown above) or `--work-repo-url <url>` (let bootstrap
@@ -357,8 +389,22 @@ released `--help`).
 
 ## Team sources
 
-`aw team bootstrap` provisions the workspaces from one explicit team
-source. The difference is **where the team context comes from**.
+`aw team bootstrap` provisions workspaces from one team source. The
+difference is **where the team context comes from**.
+
+Team-source resolution is intentionally conservative:
+
+- Explicit sources conflict. Use only one of `AWEB_API_KEY`,
+  `--invite-token`, `--username`, or `--namespace`/`--team`.
+- If no explicit source is set and the caller's current directory is
+  already an aw workspace, bootstrap forwards that current active
+  team by creating a one-use invite for the first generated
+  workspace.
+- If no explicit source is set, the caller is not in an aw
+  workspace, and the command is running interactively, bootstrap
+  uses hosted onboarding.
+- If no source can be resolved, bootstrap stops before provisioning;
+  choose a source explicitly.
 
 Every source requires a work root. Pass **exactly one** of
 [`--work-directory <path>`](#useful-flags) (existing directory) or
