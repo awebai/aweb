@@ -171,7 +171,7 @@ Policy guidance:
 - Prefer API key or invite when the team already exists but the caller is not already inside it.
 - Prefer current workspace forwarding when you are already inside the target team.
 - Prefer BYOT when you need local control over the team namespace/domain and routing.
-- Use `--dry-run` for planning only. The old manual "print commands after installing server state from caller cwd" flow is not coherent and should not be recommended.
+- Use `--dry-run` for planning only. It prints the resolved plan (template ref, work directory, team source, generated workspaces) without writing identities, files, or server state. Do not pair it with side-effecting flags expecting partial provisioning.
 
 ## Worktree agents (team.yaml worktrees:)
 
