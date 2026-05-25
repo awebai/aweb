@@ -347,6 +347,36 @@ func TestTeamBootstrapResolveSourceErrorsWithoutSourceNonInteractive(t *testing.
 	}
 }
 
+func TestTeamBootstrapResolveSourceYesWithoutExplicitSourceNeedsSource(t *testing.T) {
+	prevInvite := teamBootstrapInviteToken
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevYes := teamBootstrapYes
+	prevCwd, _ := os.Getwd()
+	t.Cleanup(func() {
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		teamBootstrapYes = prevYes
+		_ = os.Chdir(prevCwd)
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWEB_API_KEY", "")
+	teamBootstrapInviteToken = ""
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+	teamBootstrapYes = true
+
+	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "omit --yes") {
+		t.Fatalf("expected --yes source guidance, got %v", err)
+	}
+}
+
 func TestTeamBootstrapWorktreesRequireKnownRoleName(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	path := filepath.Join(templateDir, "team.yaml")

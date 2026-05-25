@@ -30,13 +30,13 @@ Checklist:
   - awebai/aweb-team-dev-review for a minimal 2-agent setup.
   - awebai/aweb-team-company-surfaces for a 6-agent cross-functional setup.
 
-Example (using an existing local work directory):
+Example (using an existing local work directory, with an explicit hosted username so --yes does not need prompts):
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --work-directory /path/to/work
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username alice --work-directory /path/to/work
 
 Example (clone the work repo into the template checkout):
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --work-repo-url https://github.com/ORG/REPO.git
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username alice --work-repo-url https://github.com/ORG/REPO.git
 
 Notes:
 

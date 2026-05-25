@@ -850,10 +850,10 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	if currentHasTeamWorkspace() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceCurrent}, nil
 	}
-	if isTTY() {
+	if isTTY() && !teamBootstrapYes {
 		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
 	}
-	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
+	return teamBootstrapSource{}, usageError("team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team; in an interactive terminal, omit --yes to use hosted onboarding prompts")
 }
 
 func currentHasTeamWorkspace() bool {

@@ -159,7 +159,7 @@ Supported sources:
 
 Decision recipe:
 
-- Human says “make me a new team” and has no existing aw context: use hosted (`--username` or interactive prompt).
+- Human says “make me a new team” and has no existing aw context: use hosted (`--username` or interactive prompt). If using `--yes`, include `--username`; otherwise omit `--yes` so hosted onboarding can prompt.
 - Human has a dashboard/API key: use `AWEB_API_KEY=... aw team bootstrap ...`; do not ask for `AWEB_URL` unless they are using a non-default stack.
 - Human pasted an invite: use `--invite-token`.
 - Human is already inside the team workspace that should own the new agents: use current workspace forwarding (no explicit source).
