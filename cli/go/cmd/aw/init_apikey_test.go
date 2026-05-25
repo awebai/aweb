@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -614,45 +613,24 @@ func TestResolveAPIKeyInitAwebURLStripsAPISuffix(t *testing.T) {
 	}
 }
 
-func TestInitAPIKeyRequiresExplicitAwebURL(t *testing.T) {
-	// Cannot use t.Parallel() — uses cwd and globals.
-
-	oldIsTTY := initIsTTY
+func TestResolveAPIKeyInitAwebURLDefaultsToHosted(t *testing.T) {
 	oldAwebURL := initAwebURL
 	oldCompatURL := initURL
-	oldInjectDocs := initInjectDocs
-	oldSetupHooks := initSetupHooks
-	oldSetupChannel := initSetupChannel
 	t.Cleanup(func() {
-		initIsTTY = oldIsTTY
 		initAwebURL = oldAwebURL
 		initURL = oldCompatURL
-		initInjectDocs = oldInjectDocs
-		initSetupHooks = oldSetupHooks
-		initSetupChannel = oldSetupChannel
 	})
-	initIsTTY = func() bool { return false }
 
-	tmp := t.TempDir()
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_missing_url")
 	t.Setenv("AWEB_URL", "")
 	initAwebURL = ""
 	initURL = ""
-	initInjectDocs = false
-	initSetupHooks = false
-	initSetupChannel = false
 
-	cmd := &cobraCommandClone{Command: *initCmd}
-	cmd.ResetFlagsForTest()
-	cmd.Command.SetContext(context.Background())
-	if err := runInit(&cmd.Command, nil); err == nil || !strings.Contains(err.Error(), "AWEB_URL is required") {
-		t.Fatalf("unexpected error: %v", err)
+	awebURL, err := resolveAPIKeyInitAwebURL()
+	if err != nil {
+		t.Fatalf("resolveAPIKeyInitAwebURL: %v", err)
+	}
+	if awebURL != DefaultAwebURL {
+		t.Fatalf("awebURL=%q want %q", awebURL, DefaultAwebURL)
 	}
 }
 

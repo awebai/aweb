@@ -720,8 +720,8 @@ func bootstrapTeamBootstrapWorktreeAgents(cmd *cobra.Command, templateDir, workD
 			first.Alias, first.RoleName, workspaceState,
 		)
 	} else {
-		_, err = addWorktreeViaCloudBootstrap(
-			worktreePath, workRepoRoot, branchName, branchCreated,
+		_, err = addWorktreeViaPrimaryInvite(
+			primary.HomeDir, worktreePath, workRepoRoot, branchName, branchCreated,
 			sourceServerURL, first.Alias, first.RoleName, workspaceState,
 		)
 	}
@@ -750,8 +750,8 @@ func bootstrapTeamBootstrapWorktreeAgents(cmd *cobra.Command, templateDir, workD
 				wt.Alias, wt.RoleName, workspaceState,
 			)
 		} else {
-			_, err = addWorktreeViaCloudBootstrap(
-				worktreePath, workRepoRoot, branchName, branchCreated,
+			_, err = addWorktreeViaPrimaryInvite(
+				primary.HomeDir, worktreePath, workRepoRoot, branchName, branchCreated,
 				sourceServerURL, wt.Alias, wt.RoleName, workspaceState,
 			)
 		}
@@ -829,9 +829,6 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	}
 
 	if hasAPIKey {
-		if strings.TrimSpace(teamBootstrapAwebURL) == "" && strings.TrimSpace(os.Getenv("AWEB_URL")) == "" {
-			return teamBootstrapSource{}, usageError("AWEB_API_KEY team source requires --aweb-url or AWEB_URL")
-		}
 		return teamBootstrapSource{Kind: teamBootstrapSourceAPIKey}, nil
 	}
 	if hasInvite {
@@ -856,7 +853,7 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	if isTTY() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
 	}
-	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY + AWEB_URL, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
+	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
 }
 
 func currentHasTeamWorkspace() bool {
@@ -942,7 +939,7 @@ func initTeamBootstrapAgentViaAPIKey(homeDir, alias, roleName string) error {
 		awebURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
 	}
 	if awebURL == "" {
-		return usageError("--aweb-url or AWEB_URL is required when AWEB_API_KEY is set")
+		awebURL = DefaultAwebURL
 	}
 	awebURL, err := normalizeAPIKeyBootstrapBaseURL(awebURL)
 	if err != nil {
@@ -1103,6 +1100,57 @@ func createTeamBootstrapBYOTInvite() (teamBootstrapInvite, error) {
 
 	_, token, err := createTeamInviteToken(namespace, teamName, resolvedRegistryURL, awebURL, true)
 	return teamBootstrapInvite{Token: token, AwebURL: awebURL}, err
+}
+
+func addWorktreeViaPrimaryInvite(
+	primaryDir, worktreePath, root, branchName string, branchCreated bool,
+	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
+) (connectOutput, error) {
+	invite, err := createTeamBootstrapInviteFromWorkspace(primaryDir)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, fmt.Errorf("create team invite from primary workspace: %w", err)
+	}
+	if strings.TrimSpace(invite.AwebURL) == "" {
+		invite.AwebURL = sourceServerURL
+	}
+
+	accepted, err := acceptTeamInviteWithBootstrapAwebURL(worktreePath, invite, alias)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
+	}
+
+	awebURL := strings.TrimSpace(accepted.AwebURL)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(invite.AwebURL)
+	}
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(sourceServerURL)
+	}
+	if awebURL == "" {
+		awebURL = DefaultAwebURL
+	}
+	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, err
+	}
+
+	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
+	connectResult, err := initCertificateConnectWithOptions(worktreePath, awebURL, certificateConnectOptions{
+		Role:      role,
+		HumanName: strings.TrimSpace(state.HumanName),
+		AgentType: strings.TrimSpace(state.AgentType),
+	})
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
+	}
+	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
+	}
+	return connectResult, nil
 }
 
 func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) error {

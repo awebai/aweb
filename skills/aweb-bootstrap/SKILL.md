@@ -94,7 +94,7 @@ Supported sources:
 2) Existing hosted team via API key
 
 - If `AWEB_API_KEY` is set, bootstrap joins the API key's hosted team.
-- `AWEB_URL` or `--aweb-url` must identify the hosted API base.
+- `--aweb-url`/`AWEB_URL` is optional; when omitted, the hosted default is used. Set it only to target a non-default stack.
 - Do not also pass `--username`, `--invite-token`, or BYOT flags.
 
 3) Existing team via invite token

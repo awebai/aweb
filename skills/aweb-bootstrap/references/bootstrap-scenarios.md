@@ -62,12 +62,12 @@ Goal: provision a template into the hosted team associated with an API key.
 Checklist:
 
 - Set AWEB_API_KEY.
-- Set AWEB_URL or pass --aweb-url.
+- Optionally set AWEB_URL or pass --aweb-url to target a non-default stack; otherwise the hosted default is used.
 - Do not also pass --username, --invite-token, or BYOT flags.
 
 Example:
 
-  AWEB_API_KEY=aw_sk_... AWEB_URL=https://app.aweb.ai \
+  AWEB_API_KEY=aw_sk_... \
     aw team bootstrap /path/to/template --work-directory /path/to/work
 
 ## Scenario: existing team via invite token

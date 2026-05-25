@@ -106,7 +106,7 @@ func resolveInitAPIKey() string {
 func resolveAPIKeyInitAwebURL() (string, error) {
 	value := resolveInitAwebURLOverride()
 	if value == "" {
-		return "", usageError("--aweb-url, --url, or AWEB_URL is required when AWEB_API_KEY is set")
+		value = DefaultAwebURL
 	}
 	return normalizeAPIKeyBootstrapBaseURL(value)
 }
@@ -119,7 +119,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, usageError("AWEB_API_KEY is required for API key bootstrap")
 	}
 	if strings.TrimSpace(req.AwebURL) == "" {
-		return connectOutput{}, usageError("--aweb-url, --url, or AWEB_URL is required when AWEB_API_KEY is set")
+		req.AwebURL = DefaultAwebURL
 	}
 	if err := ensureConnectTargetClean(req.WorkingDir); err != nil {
 		return connectOutput{}, err

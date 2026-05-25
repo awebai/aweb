@@ -409,9 +409,12 @@ hosted team, roles and instructions are installed there, then the
 remaining generated workspaces join that established team.
 
 ```
-AWEB_API_KEY=aw_sk_... AWEB_URL=https://app.aweb.ai \
+AWEB_API_KEY=aw_sk_... \
   aw team bootstrap https://github.com/awebai/aweb-team-dev-review \
   --work-directory ./myproject
+
+# Optional for non-default stacks:
+#   --aweb-url https://app.example.com
 ```
 
 ### Existing team via invite token

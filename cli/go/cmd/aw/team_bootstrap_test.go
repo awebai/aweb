@@ -221,7 +221,7 @@ func TestTeamBootstrapResolveSourceRejectsConflicts(t *testing.T) {
 	}
 }
 
-func TestTeamBootstrapResolveSourceRejectsAPIKeyWithoutURL(t *testing.T) {
+func TestTeamBootstrapResolveSourceUsesAPIKeyWithDefaultURL(t *testing.T) {
 	prevInvite := teamBootstrapInviteToken
 	prevUsername := teamBootstrapUsername
 	prevNamespace := teamBootstrapNamespace
@@ -242,8 +242,12 @@ func TestTeamBootstrapResolveSourceRejectsAPIKeyWithoutURL(t *testing.T) {
 	teamBootstrapTeamName = ""
 	teamBootstrapAwebURL = ""
 
-	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "requires --aweb-url or AWEB_URL") {
-		t.Fatalf("expected missing API-key URL error, got %v", err)
+	source, err := resolveTeamBootstrapSource()
+	if err != nil {
+		t.Fatalf("resolveTeamBootstrapSource: %v", err)
+	}
+	if source.Kind != teamBootstrapSourceAPIKey {
+		t.Fatalf("source kind=%q, want api-key", source.Kind)
 	}
 }
 
