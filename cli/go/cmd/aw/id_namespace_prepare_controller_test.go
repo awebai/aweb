@@ -160,6 +160,51 @@ func TestIDCreateEOFExplainsNonInteractiveDNSVerification(t *testing.T) {
 	}
 }
 
+func TestIDCreateNonTerminalStdinDoesNotPrompt(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	workingDir := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	in, err := os.CreateTemp(tmp, "stdin-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	if _, err := in.WriteString("y\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	var prompt bytes.Buffer
+	_, err = executeIDCreate(workingDir, idCreateOptions{
+		Name:      "alice",
+		Domain:    "acme.com",
+		PromptIn:  in,
+		PromptOut: &prompt,
+		Now:       func() time.Time { return time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC) },
+	})
+	if err == nil {
+		t.Fatal("expected non-terminal guidance error")
+	}
+	if !strings.Contains(err.Error(), "aw id namespace check-txt --domain acme.com") {
+		t.Fatalf("error did not mention check-txt: %v", err)
+	}
+	text := prompt.String()
+	if !strings.Contains(text, "Create this DNS TXT record before continuing") {
+		t.Fatalf("prompt output missing TXT instructions: %q", text)
+	}
+	if strings.Contains(text, "Verify this DNS TXT record now?") {
+		t.Fatalf("non-terminal stdin should not receive interactive prompt: %q", text)
+	}
+	if _, statErr := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("identity should not be persisted on non-terminal prompt refusal, stat err=%v", statErr)
+	}
+}
+
 func TestIDNamespacePrepareControllerReusesExistingKey(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

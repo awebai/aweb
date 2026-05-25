@@ -23,6 +23,7 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/identityutil"
 	"github.com/joho/godotenv"
+	"golang.org/x/term"
 )
 
 // DefaultAwebURL is the public aweb instance used when no aweb URL is
@@ -944,6 +945,16 @@ func bufferedPromptReader(in io.Reader) *bufio.Reader {
 		return reader
 	}
 	return bufio.NewReader(in)
+}
+
+func readerIsTerminal(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+func readerIsNonTerminalFile(in io.Reader) bool {
+	_, ok := in.(*os.File)
+	return ok && !readerIsTerminal(in)
 }
 
 func promptStringWithIO(label, defaultValue string, in io.Reader, out io.Writer) (string, error) {
