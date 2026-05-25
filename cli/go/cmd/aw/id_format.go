@@ -41,6 +41,9 @@ func formatIDCreate(v any) string {
 	if strings.TrimSpace(out.RegistryError) != "" {
 		sb.WriteString(fmt.Sprintf("Registry Err: %s\n", out.RegistryError))
 	}
+	if strings.TrimSpace(out.ControllerDID) != "" {
+		sb.WriteString("\nKeep ~/.awid safe and backed up. It contains namespace controller keys for domains you manage.\n")
+	}
 	return sb.String()
 }
 

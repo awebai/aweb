@@ -172,7 +172,7 @@ Projection paths:
   team certificate, then projects the member into aweb runtime rows. Audit
   operation: `hosted-add-existing-agent`.
 - **Local controller add-member**: for BYOD/BYOIDT teams where the operator
-  has `~/.config/aw/team-keys/<namespace>/<team>.key`, `aw id team add-member`
+  has `~/.awid/team-keys/<namespace>/<team>.key`, `aw id team add-member`
   signs and registers the AWID certificate. It does not create cloud runtime
   state by itself.
 - **Certificate-based lazy projection**: a member that presents a valid team

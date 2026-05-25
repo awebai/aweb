@@ -200,7 +200,7 @@ Namespace controller setup (does not create an identity or team):
 aw id namespace prepare-controller --domain <domain>
 ```
 
-Pause and have the human add the printed `_awid.<domain>` TXT record. Do not invent DNS values. After DNS propagates, verify it:
+Pause and have the human add the printed `_awid.<domain>` TXT record. Do not invent DNS values. Tell the human to back up `~/.awid` now; it contains the namespace controller key. After DNS propagates, verify it:
 
 ```bash
 aw id namespace check-txt --domain <domain>
@@ -211,6 +211,8 @@ Then create the BYOT team with the namespace controller key:
 ```bash
 aw id team create --namespace <domain> --name <team> --display-name "<display name>"
 ```
+
+After team creation, tell the human to back up `~/.awid` again; it now also contains the team controller key under `~/.awid/team-keys/<domain>/<team>.key`.
 
 Add initial global agents:
 

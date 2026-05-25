@@ -47,12 +47,15 @@ team key rotation within the namespace.
 | Aspect                   | Detail                                                                                                                                               |
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                              |
-| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                     |
+| **Private key location** | BYOD: `~/.awid/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                          |
 | **Public key location**  | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`)                                                                             |
 | **Authorizes**           | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign        |
 | **Created by**           | BYOD: `aw id create` on first identity for a domain. Managed: the operator on behalf of the user                                                     |
 | **Rotation**             | `aw id namespace rotate-controller` (requires DNS reverify)                                                                                          |
 | **Recovery if lost**     | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
+
+For BYOD namespaces, keep `~/.awid` safe and backed up. It contains the
+namespace controller private key.
 
 #### Parent delegation
 
@@ -78,7 +81,7 @@ The authority over team membership.  Issues and revokes team certificates.
 | Aspect                   | Detail                                                                                                                                                       |
 |--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                                      |
-| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                |
+| **Private key location** | BYOD: `~/.awid/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                     |
 | **Public key location**  | awid `teams.team_did_key`                                                                                                                                    |
 | **Authorizes**           | Certificate issuance, certificate revocation, team visibility toggle                                                                                         |
 | **Created by**           | `aw id team create` generates the keypair and registers the public key at awid                                                                               |
@@ -159,11 +162,14 @@ boundary between awid authority and aweb local routing state, see
 ### BYOD (self-hosted / CLI-only)
 
 ```
-~/.config/aw/controllers/<domain>.key       # Namespace controller key
-~/.config/aw/team-keys/<domain>/<team>.key  # Team controller key
+~/.awid/controllers/<domain>.key       # Namespace controller key
+~/.awid/team-keys/<domain>/<team>.key  # Team controller key
 <repo>/.aw/signing.key                      # Identity signing key (per workspace)
 <repo>/.aw/team-certs/<team_id>.pem         # Team membership certificate (not a key)
 ```
+
+Back up `~/.awid` after creating a namespace or team controller. These keys
+control namespace addresses and team membership.
 
 ### Managed (hosted at app.aweb.ai)
 

@@ -162,8 +162,16 @@ The local files that bind a workspace to a team and identity:
 | `.aw/identity.yaml` | Global identity metadata (DID, stable ID, address, custody, identity scope) |
 | `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
 | `.aw/context` | Small non-secret local coordination pointer |
+| `~/.awid/controllers/` | AWID namespace controller private keys and metadata |
+| `~/.awid/team-keys/` | AWID team controller private keys |
 | `~/.config/aw/known_agents.yaml` | TOFU pins for peer identity verification |
 | `~/.config/aw/run.json` | Optional `aw run` defaults |
+
+Keep `~/.awid` safe and backed up. It contains controller authority for
+customer-owned namespaces and BYOT teams. Losing those keys can require DNS
+recovery or team re-creation. The CLI can still read legacy controller keys
+from `~/.config/aw/{controllers,team-keys}` for compatibility, but new keys are
+written under `~/.awid`.
 
 For the full schema and resolution rules see
 [`configuration.md`](https://github.com/awebai/aweb/blob/main/docs/configuration.md).

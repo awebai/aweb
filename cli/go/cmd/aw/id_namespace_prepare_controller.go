@@ -37,8 +37,9 @@ var (
 		Long: "Create or show a local namespace controller key and DNS TXT value.\n\n" +
 			"This command is deliberately local-only: it writes the namespace controller\n" +
 			"key under ~/.awid/controllers and prints the _awid TXT record to publish.\n" +
-			"It does not call AWID, create a did:aw identity, claim an address, create a\n" +
-			"team, or modify aweb Cloud state.",
+			"Keep ~/.awid safe and backed up; losing this key means losing direct namespace\n" +
+			"controller authority unless you recover via DNS. It does not call AWID, create\n" +
+			"a did:aw identity, claim an address, create a team, or modify aweb Cloud state.",
 		RunE: runIDNamespacePrepareController,
 	}
 )
@@ -135,5 +136,6 @@ func formatIDNamespacePrepareController(v any) string {
 	sb.WriteString("DNS TXT:\n")
 	sb.WriteString(fmt.Sprintf("  Name:  %s\n", out.DNSName))
 	sb.WriteString(fmt.Sprintf("  Value: %s\n", out.DNSValue))
+	sb.WriteString("\nKeep the ~/.awid controller key safe and backed up. It controls this namespace.\n")
 	return sb.String()
 }

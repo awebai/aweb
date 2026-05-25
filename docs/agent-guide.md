@@ -503,7 +503,8 @@ aw lock list --mine
 
 ### Local files
 
-Everything lives in `.aw/` in the working directory:
+Worktree identity and connection state lives in `.aw/` in the working
+directory:
 
 - `.aw/signing.key` — Ed25519 private key (identity).
 - `.aw/identity.yaml` — global identity metadata (only for
@@ -513,13 +514,16 @@ Everything lives in `.aw/` in the working directory:
   memberships.
 - `.aw/workspace.yaml` — aweb binding: server URL, workspace API
   key, memberships, metadata.
-- `~/.config/aw/controllers/<domain>.key` — namespace controller
+- `~/.awid/controllers/<domain>.key` — namespace controller
   key (BYOT/local-controller).
-- `~/.config/aw/team-keys/<domain>/<name>.key` — team controller
+- `~/.awid/team-keys/<domain>/<name>.key` — team controller
   key.
 - `CLAUDE.md` and/or `AGENTS.md` — injected team instructions
   between `<!-- AWEB:START -->` / `<!-- AWEB:END -->`
   markers. See [Team instructions](#team-instructions).
+
+Keep `~/.awid` safe and backed up. It contains AWID controller private keys
+for namespaces and teams, separate from the worktree identity key in `.aw/`.
 
 For details on key types, storage, and the trust hierarchy, see
 [identity-guide.md](https://awid.ai/identity-guide.md) and

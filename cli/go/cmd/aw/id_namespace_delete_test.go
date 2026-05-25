@@ -172,7 +172,7 @@ func TestIDNamespaceDeletePurgeLocalMovesControllerAndTeamKeys(t *testing.T) {
 	if out.LocalBackupDir == "" {
 		t.Fatal("expected local backup dir")
 	}
-	stateDir, err := awconfig.DefaultUserStateDir()
+	stateDir, err := awconfig.DefaultAWIDStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ func formatTeamCreate(v any) string {
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
 	}
+	sb.WriteString("\nKeep the ~/.awid team controller key safe and backed up. It controls team membership.\n")
 	return sb.String()
 }
 

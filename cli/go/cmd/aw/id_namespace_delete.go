@@ -42,7 +42,7 @@ var (
 			"revoked first. It does not update DNS; remove any _awid TXT record at your\n" +
 			"DNS provider after the registry delete succeeds. Local controller/team key\n" +
 			"files are preserved unless --purge-local is set, in which case they are moved\n" +
-			"to ~/.config/aw/deregister-backups/ instead of being unlinked.",
+			"to ~/.awid/deregister-backups/ instead of being unlinked.",
 		RunE: runIDNamespaceDelete,
 	}
 )
@@ -51,7 +51,7 @@ func init() {
 	idNamespaceDeleteCmd.Flags().StringVar(&idNamespaceDeleteDomain, "domain", "", "Namespace domain (e.g. aweb.ai)")
 	idNamespaceDeleteCmd.Flags().StringVar(&idNamespaceDeleteRegistry, "registry", "", "Registry origin override")
 	idNamespaceDeleteCmd.Flags().StringVar(&idNamespaceDeleteReason, "reason", "", "Optional deletion reason recorded by the registry")
-	idNamespaceDeleteCmd.Flags().BoolVar(&idNamespaceDeletePurgeLocal, "purge-local", false, "Move local controller and team keys for the namespace to ~/.config/aw/deregister-backups after successful registry delete")
+	idNamespaceDeleteCmd.Flags().BoolVar(&idNamespaceDeletePurgeLocal, "purge-local", false, "Move local controller and team keys for the namespace to ~/.awid/deregister-backups after successful registry delete")
 	idNamespaceCmd.AddCommand(idNamespaceDeleteCmd)
 }
 
@@ -118,7 +118,7 @@ func executeIDNamespaceDelete(ctx context.Context, opts idNamespaceDeleteOptions
 func moveNamespaceLocalState(domain string) (string, []string, error) {
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	safeDomain := strings.ReplaceAll(domain, string(filepath.Separator), "_")
-	backupDir, err := awconfig.PathInUserState("deregister-backups", safeDomain+"-"+stamp)
+	backupDir, err := awconfig.PathInAWIDState("deregister-backups", safeDomain+"-"+stamp)
 	if err != nil {
 		return "", nil, err
 	}

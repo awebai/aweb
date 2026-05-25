@@ -6,6 +6,17 @@ repo or worktree.
 For the canonical contract, see [aweb-sot.md](aweb-sot.md) and
 [awid-sot.md](awid-sot.md).
 
+## AWID Controller State: `~/.awid/`
+
+AWID namespace and team controller private keys are user-level authority keys.
+Keep `~/.awid` safe and backed up. Losing these keys can leave you unable to
+manage namespace addresses or team membership without a DNS recovery flow.
+
+Common files and directories include:
+
+- `~/.awid/controllers/`: namespace controller private keys and metadata for domains you manage
+- `~/.awid/team-keys/`: team controller private keys for local-controller teams
+
 ## User State: `~/.config/aw/`
 
 `aw` still uses a small user-state directory, but it no longer uses a global
@@ -15,8 +26,6 @@ Common files and directories include:
 
 - `~/.config/aw/known_agents.yaml`: TOFU pins for peer identity verification
 - `~/.config/aw/run.json`: optional `aw run` defaults
-- `~/.config/aw/controllers/`: controller keys and controller metadata for domains you manage
-- `~/.config/aw/team-keys/`: local team controller keys
 - `~/.config/aw/team-invites/`: pending local-controller invite records created on this machine
 
 These are user-level artifacts, not repo-local shared state.

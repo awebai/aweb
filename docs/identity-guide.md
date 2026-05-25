@@ -110,7 +110,8 @@ then the hosted operator creates the managed address). See
 for the authority model.
 
 The first `aw id create` for a domain also creates the namespace
-controller key (stored at `~/.config/aw/team-keys/<domain>/`).  The
+controller key (stored at `~/.awid/controllers/<domain>.key`). Keep
+`~/.awid` safe and backed up; it contains AWID controller keys. The
 CLI stores the identity private key in `.aw/signing.key` and writes
 metadata to `.aw/identity.yaml`.
 
@@ -468,9 +469,12 @@ Identity-related files in a workspace:
 Shared across workspaces on the same machine:
 
 ```
-~/.config/aw/controllers/<domain>.key   # Namespace controller key
-~/.config/aw/team-keys/<domain>/<name>.key  # Team controller key
+~/.awid/controllers/<domain>.key   # Namespace controller key
+~/.awid/team-keys/<domain>/<name>.key  # Team controller key
 ```
+
+Back up `~/.awid` after creating namespace or team controller keys. These keys
+control namespace addresses and team membership.
 
 ---
 
