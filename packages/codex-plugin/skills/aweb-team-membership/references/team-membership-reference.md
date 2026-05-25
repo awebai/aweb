@@ -24,6 +24,8 @@ In BYOT, the customer controls the DNS namespace controller and team controller.
 Key command surfaces:
 
 ```bash
+aw id namespace prepare-controller --domain <domain>
+aw id namespace check-txt --domain <domain>
 aw id create --name <name> --domain <domain>
 aw id team create --namespace <namespace> --name <team>
 aw id team request --team <team>:<namespace> --alias <alias>
@@ -32,7 +34,7 @@ aw id team fetch-cert --team <team> --namespace <namespace> --cert-id <id>
 aw id team import-request --namespace <domain> --team <team> --organization-id <org>
 ```
 
-Use current `aw ... --help` for exact flags. Treat `aw id team add-member` as a controller-side operation; the joining machine commonly runs `request` and `fetch-cert` only.
+Use current `aw ... --help` for exact flags. Treat `aw id namespace prepare-controller` as namespace-authority setup, not identity creation. Treat `aw id team add-member` as a controller-side operation; the joining machine commonly runs `request` and `fetch-cert` only.
 
 For the dashboard import/sync path:
 

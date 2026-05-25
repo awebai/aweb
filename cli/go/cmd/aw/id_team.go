@@ -433,7 +433,7 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	// Load namespace controller key for auth
 	controllerKey, err := awconfig.LoadControllerKey(domain)
 	if err != nil {
-		return fmt.Errorf("load controller key for %s: %w (run `aw id create --domain %s` first)", domain, err, domain)
+		return fmt.Errorf("load controller key for %s: %w (run `aw id namespace prepare-controller --domain %s` first)", domain, err, domain)
 	}
 
 	registry, err := newConfiguredRegistryClient(nil, "")

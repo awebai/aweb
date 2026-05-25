@@ -335,6 +335,9 @@ func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error
 	for {
 		proceed, err := promptYesNoWithIO("Verify this DNS TXT record now?", true, promptIn, promptOut)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return usageError("DNS verification needs interactive input. Publish the TXT record, verify it with `aw id namespace check-txt --domain %s`, then rerun `aw id create --domain %s --name %s`.", plan.Domain, plan.Domain, plan.Name)
+			}
 			return err
 		}
 		if !proceed {

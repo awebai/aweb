@@ -190,18 +190,27 @@ Vocabulary:
 - Agents have addresses under the namespace, e.g. `juanreyero.com/alpha`.
 - Do not call `personal:juanreyero.com` an agent; it is the team id.
 
-Before starting, confirm `aw version` is at least `1.25.3`; older `aw` emitted a stale BYOT import payload.
+Before starting, confirm `aw version` includes `aw id namespace prepare-controller` and `aw id namespace check-txt`; older `aw` versions make this flow hard to drive from non-interactive harnesses.
 
 **Use `aw id create`, NOT `aw init --byod --global`, for the identity-prep commands in this section.** `aw init --byod --global` is workspace onboarding: it bootstraps the directory and connects it to the `default:<domain>` team on app.aweb.ai (the team created during BYOD onboarding), writing `workspace.yaml`, joining that team, and minting a team certificate. That short-circuits the controller-signed team-state import this section is about. `aw id create` only mints the identity in AWID and writes `.aw/identity.yaml` + `.aw/signing.key`, leaving the team membership for the customer controller to add and sign. If a user already ran the wrong command and needs to recover, see the matching diagnostic bullet in `aweb-identity`'s readiness checks.
 
-Controller machine setup (in a clean directory with no `.aw/`):
+Namespace controller setup (does not create an identity or team):
 
 ```bash
-aw id create --domain <domain> --name <controller-name>
-aw id team create --namespace <domain> --name <team> --display-name "<display name>"
+aw id namespace prepare-controller --domain <domain>
 ```
 
-If DNS verification is needed, pause and have the human add the TXT record that `aw id create` prints. Do not invent DNS values.
+Pause and have the human add the printed `_awid.<domain>` TXT record. Do not invent DNS values. After DNS propagates, verify it:
+
+```bash
+aw id namespace check-txt --domain <domain>
+```
+
+Then create the BYOT team with the namespace controller key:
+
+```bash
+aw id team create --namespace <domain> --name <team> --display-name "<display name>"
+```
 
 Add initial global agents:
 

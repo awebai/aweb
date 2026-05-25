@@ -32,7 +32,9 @@ A workspace can hold any combination of these. For team-related files (`teams.ya
 
 These two commands look similar and are not interchangeable. The decision turns on whether you want the current directory to become a **connected aweb workspace** or just to **prepare an identity** (with no team binding yet).
 
-- **`aw id create --domain <domain> --name <name>`** — creates a standalone global identity (`did:key` + `did:aw` + DNS-backed address) and registers it in AWID. Writes `.aw/identity.yaml` and `.aw/signing.key`, performs DNS-TXT verification, but does **not** create a team certificate and does **not** connect this directory to an aweb server (no `workspace.yaml` server binding, no `teams.yaml` membership entry, no `team-certs/*.pem`). Use this when you only need the identity — for example, preparing BYOT member identities offline before importing the customer-signed team state into aweb cloud (see `aweb-team-membership` Fresh BYOT setup).
+- **`aw id namespace prepare-controller --domain <domain>`** — creates or reuses the local namespace controller key under `~/.config/aw/controllers/` and prints the `_awid.<domain>` DNS TXT value. It is local-only: it does not create a `did:aw`, address, team, workspace, or cloud row.
+- **`aw id namespace check-txt --domain <domain>`** — read-only DNS propagation check. It verifies that `_awid.<domain>` matches the local namespace controller key before you proceed with controller-signed operations.
+- **`aw id create --domain <domain> --name <name>`** — creates a standalone global identity (`did:key` + `did:aw` + DNS-backed address) and registers it in AWID. Writes `.aw/identity.yaml` and `.aw/signing.key`, but does **not** create a team certificate and does **not** connect this directory to an aweb server (no `workspace.yaml` server binding, no `teams.yaml` membership entry, no `team-certs/*.pem`). Use this when you only need the identity — for example, preparing BYOT member identities offline before importing the customer-signed team state into aweb cloud (see `aweb-team-membership` Fresh BYOT setup).
 
 - **`aw init`** — workspace onboarding. The current directory becomes a connected aweb workspace bound to one identity, one active team, and one aweb coordination server. Three onboarding flows are supported:
   1. **Connect with an existing team certificate** — when `.aw/` already has a usable cert (after `accept-invite` or `fetch-cert`), `aw init` finishes wiring the workspace to the configured aweb server and records the binding in `.aw/workspace.yaml`. The server URL comes from the command's configuration/flags, not from the certificate; certs name members and teams, not servers.
@@ -45,7 +47,8 @@ These two commands look similar and are not interchangeable. The decision turns 
 When deciding which to run:
 
 - "I want this directory to start coordinating with a team" → `aw init` (one of the three flows above).
-- "I want to mint an identity I'll later attach to a BYOT team via controller-signed facts" → `aw id create`. Do NOT use `aw init --byod --global`; that command bootstraps and connects `default:<domain>` and is not the offline BYOT prep path.
+- "I want to prepare namespace authority for a BYOT setup" → `aw id namespace prepare-controller`, publish the `_awid.<domain>` TXT, then `aw id namespace check-txt`.
+- "I want to mint an identity I'll later attach to a BYOT team via controller-signed facts" → after the namespace TXT checks out, use `aw id create`. Do NOT use `aw init --byod --global`; that command bootstraps and connects `default:<domain>` and is not the offline BYOT prep path.
 
 ## Custodial vs self-custodial in practice
 
