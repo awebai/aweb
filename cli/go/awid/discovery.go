@@ -13,11 +13,12 @@ import (
 const discoveryPath = "/api/v1/discovery"
 
 type DiscoveryResponse struct {
-	OnboardingURL string   `json:"onboarding_url"`
-	AwebURL       string   `json:"aweb_url"`
-	RegistryURL   string   `json:"registry_url"`
-	Version       string   `json:"version,omitempty"`
-	Features      []string `json:"features,omitempty"`
+	OnboardingURL       string   `json:"onboarding_url"`
+	AwebURL             string   `json:"aweb_url"`
+	RegistryURL         string   `json:"registry_url"`
+	TeamRegistrationURL string   `json:"team_registration_url,omitempty"`
+	Version             string   `json:"version,omitempty"`
+	Features            []string `json:"features,omitempty"`
 }
 
 func DiscoverServices(ctx context.Context, baseURL string) (*DiscoveryResponse, error) {

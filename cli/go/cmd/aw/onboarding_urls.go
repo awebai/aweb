@@ -9,9 +9,10 @@ import (
 )
 
 type onboardingServiceURLs struct {
-	OnboardingURL string
-	AwebURL       string
-	RegistryURL   string
+	OnboardingURL       string
+	AwebURL             string
+	RegistryURL         string
+	TeamRegistrationURL string
 }
 
 func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
@@ -74,9 +75,10 @@ func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		return onboardingServiceURLs{}, err
 	}
 	urls, err := normalizeOnboardingServiceURLs(onboardingServiceURLs{
-		OnboardingURL: resp.OnboardingURL,
-		AwebURL:       resp.AwebURL,
-		RegistryURL:   resp.RegistryURL,
+		OnboardingURL:       resp.OnboardingURL,
+		AwebURL:             resp.AwebURL,
+		RegistryURL:         resp.RegistryURL,
+		TeamRegistrationURL: resp.TeamRegistrationURL,
 	})
 	if err != nil {
 		return onboardingServiceURLs{}, err
@@ -106,6 +108,12 @@ func normalizeOnboardingServiceURLs(urls onboardingServiceURLs) (onboardingServi
 	}
 	if strings.TrimSpace(urls.RegistryURL) != "" {
 		urls.RegistryURL, err = cleanBaseURL(urls.RegistryURL)
+		if err != nil {
+			return onboardingServiceURLs{}, err
+		}
+	}
+	if strings.TrimSpace(urls.TeamRegistrationURL) != "" {
+		urls.TeamRegistrationURL, err = cleanBaseURL(urls.TeamRegistrationURL)
 		if err != nil {
 			return onboardingServiceURLs{}, err
 		}

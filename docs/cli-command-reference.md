@@ -9,7 +9,7 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `claim-human`, `init`, `reset`, `team`, `workspace` |
+| Workspace Setup | `claim-human`, `init`, `reset`, `service`, `team`, `workspace` |
 | Identity | `id`, `mcp-config`, `whoami` |
 | Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
@@ -80,6 +80,38 @@ Removes the local .aw/context and .aw/workspace.yaml files in the current direct
 Flags:
 - `-h, --help help for reset`
 
+## `service`
+
+### `service`
+
+Connect an existing AWID identity and team certificate to an aw-compatible service.
+
+Service commands do not create identities, register AWID teams, mutate team
+membership, or call BYOD onboarding flows. Use `aw id team register` to add a
+team projection to a service first, then run `aw service init` from each
+certified agent workspace.
+
+Subcommands:
+- `init` Initialize this workspace against a service using an existing team certificate
+
+Flags:
+- `-h, --help help for service`
+
+## `service init`
+
+### `service init`
+
+Initialize this workspace against a service using the existing .aw signing key
+and team certificate in this directory. This command only connects this
+workspace to the service; it does not create identities, create teams, or
+change AWID team membership.
+
+Flags:
+- `-h, --help help for init`
+- `--role string Optional role name for this workspace`
+- `--service string Service URL to connect to`
+- `--team string Canonical AWID team id to activate before connecting`
+
 ## `team`
 
 ### `team`
@@ -118,17 +150,18 @@ Flags:
 - `--fork Fork the template repository with gh and clone the fork into the destination directory`
 - `-h, --help help for bootstrap`
 - `--home-root string Directory where agent workspaces are created (default: <template-dir>/agents)`
-- `--namespace string BYOD team namespace domain to create/use (required for one-step BYOD team bootstrap)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT team bootstrap)`
 - `--refresh-template Re-clone the template into the destination directory before using it`
 - `--registry string AWID registry URL override`
 - `--skip-instructions Do not install shared team instructions`
 - `--skip-roles Do not install the roles bundle`
-- `--team string BYOD team name/slug to create/use (required for one-step BYOD team bootstrap)`
-- `--team-display-name string Optional team display name when creating a new BYOD team`
+- `--team string BYOT team name/slug to create/use (required for one-step BYOT team bootstrap)`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
 - `--template-cache-dir string Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)`
 - `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
-- `--work-directory string Directory symlinked into each agent workspace as ./work (required)`
-- `--work-repo-url string Optional git URL or local repo path to ensure a git repo exists under --work-directory`
+- `--work-directory string Directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
+- `--work-repo-url string Git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
 - `--yes Accept default agent names without prompting`
 
 ## `workspace`
@@ -261,6 +294,10 @@ Inspect or recover namespace controller state
 Subcommands:
 - `addresses` List registry namespace addresses
 - `assign-address` Assign a namespace address to an existing did:aw using the local controller key
+- `check-txt` Verify the _awid DNS TXT record matches the local namespace controller key
+- `delete` Delete an AWID namespace using the local controller key
+- `delete-address` Delete a namespace address claim using the local controller key
+- `prepare-controller` Create or show a local namespace controller key and DNS TXT value
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
 - `set-delivery-origin` Set namespace address-route default delivery origin using the local controller key
@@ -289,6 +326,73 @@ Flags:
 - `--domain string Namespace domain (e.g. aweb.ai)`
 - `-h, --help help for assign-address`
 - `--name string Address name (e.g. alice)`
+
+## `id namespace check-txt`
+
+### `id namespace check-txt`
+
+Verify the _awid DNS TXT record matches the local namespace controller key.
+
+This is read-only. It looks up _awid.<domain>, loads the local namespace
+controller key from ~/.awid/controllers/<domain>.key (or --controller-key),
+and fails if DNS has not propagated or points at a different controller DID.
+
+Flags:
+- `--controller-key string Namespace controller key path override`
+- `--domain string Namespace domain`
+- `-h, --help help for check-txt`
+
+## `id namespace delete`
+
+### `id namespace delete`
+
+Delete an AWID namespace using the local namespace controller key.
+
+Namespace deletion requires all active certificates in the namespace to be
+revoked first. It does not update DNS; remove any _awid TXT record at your
+DNS provider after the registry delete succeeds. Local controller/team key
+files are preserved unless --purge-local is set, in which case they are moved
+to ~/.awid/deregister-backups/ instead of being unlinked.
+
+Flags:
+- `--domain string Namespace domain (e.g. aweb.ai)`
+- `-h, --help help for delete`
+- `--purge-local Move local controller and team keys for the namespace to ~/.awid/deregister-backups after successful registry delete`
+- `--reason string Optional deletion reason recorded by the registry`
+- `--registry string Registry origin override`
+
+## `id namespace delete-address`
+
+### `id namespace delete-address`
+
+Delete a namespace address claim using the local namespace controller key.
+
+This removes the address route/claim, not the append-only did:aw audit log. If the
+address has active team certificates, revoke those certificates first.
+
+Flags:
+- `--domain string Namespace domain (e.g. aweb.ai)`
+- `-h, --help help for delete-address`
+- `--name string Address name (e.g. alice)`
+- `--reason string Optional deletion reason recorded by the registry`
+- `--registry string Registry origin override`
+
+## `id namespace prepare-controller`
+
+### `id namespace prepare-controller`
+
+Create or show a local namespace controller key and DNS TXT value.
+
+This command is deliberately local-only: it writes the namespace controller
+key under ~/.awid/controllers and prints the _awid TXT record to publish.
+Keep ~/.awid safe and backed up; losing this key means losing direct namespace
+controller authority unless you recover via DNS. It does not call AWID, create
+a did:aw identity, claim an address, create a team, or modify aweb Cloud state.
+
+Flags:
+- `--domain string Namespace domain`
+- `-h, --help help for prepare-controller`
+- `--registry string Registry origin to place in the DNS TXT record (default: api.awid.ai or AWID_REGISTRY_URL)`
 
 ## `id namespace resolve`
 
@@ -395,12 +499,15 @@ Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add` Join another team with the current identity
 - `add-member` Add a member directly to a team (controller signs certificate)
+- `cleanup-cloud` Delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a team at awid
+- `delete` Delete an AWID team using the namespace controller key
 - `fetch-cert` Fetch and install an approved team certificate
 - `import-request` Create a signed BYOT import request for aweb cloud
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
+- `register` Register or sync a customer-controlled team with a service
 - `remove-member` Remove a member from a team (revoke certificate)
 - `request` Print the add-member command the team owner should run
 - `switch` Switch the active team for this identity
@@ -459,6 +566,31 @@ Flags:
 - `--namespace string Namespace domain`
 - `--team string Team name`
 
+## `id team cleanup-cloud`
+
+### `id team cleanup-cloud`
+
+Delete aweb Cloud's imported BYOT team projection using customer-held controller authority.
+
+This command does not mutate AWID. In the normal path it signs the cleanup
+request with ~/.awid/team-keys/<namespace>/<team>.key so aweb Cloud can
+verify that the customer-controlled team controller authorized the projection
+delete. If the team controller key has already been retired, use
+--namespace-controller to sign with the namespace controller key; aweb Cloud
+will verify that key against the _awid.<domain> DNS TXT controller for the
+team's domain, with AWID registry lookup as a fallback when DNS is absent.
+
+Flags:
+- `--apply Apply the cleanup instead of dry-run`
+- `--aweb-url string aweb Cloud URL (default "https://app.aweb.ai")`
+- `-h, --help help for cleanup-cloud`
+- `--namespace string Namespace domain`
+- `--namespace-controller Authorize cleanup with the namespace controller key instead of the team controller key`
+- `--namespace-key string Namespace controller key path override for --namespace-controller`
+- `--team string Team name`
+- `--team-key string Team controller key path override`
+- `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
+
 ## `id team create`
 
 ### `id team create`
@@ -471,6 +603,22 @@ Flags:
 - `--name string Team name`
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
+
+## `id team delete`
+
+### `id team delete`
+
+Delete an AWID team using the local namespace controller key.
+
+Delete-team requires the team's active certificates to be revoked first. It
+does not delete the namespace or any unrelated address claims.
+
+Flags:
+- `-h, --help help for delete`
+- `--namespace string Namespace domain`
+- `--reason string Optional deletion reason recorded by the registry`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team fetch-cert`
 
@@ -499,7 +647,6 @@ team controller private keys. The cloud import endpoint accepts the signed
 timestamp for five minutes; regenerate the request body after it expires.
 
 Flags:
-- `--access-mode string Access mode for imported members (default "open")`
 - `--apply Create an apply request instead of the default dry-run request`
 - `--cloud-team-id string Existing AC team id to sync`
 - `-h, --help help for import-request`
@@ -542,6 +689,26 @@ List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
+
+## `id team register`
+
+### `id team register`
+
+Register or sync a customer-controlled AWID team with an aw-compatible service.
+
+This command is service-generic: it signs a registration request with the
+local team controller key and sends only public/signed team facts to the
+service. It never uploads namespace or team controller private keys and does
+not initialize any agent workspace. Services may return their own next steps,
+such as `aw service init` or `aw claim-human`.
+
+Flags:
+- `--dry-run Preview registration without mutating the service projection`
+- `-h, --help help for register`
+- `--registry string Registry origin override`
+- `--service string Service URL to register with`
+- `--team string Canonical AWID team id (<team>:<namespace>)`
+- `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by service)`
 
 ## `id team remove-member`
 

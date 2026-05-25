@@ -20,6 +20,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
 
 // writeControllerKeyForTest writes a controller key to the test HOME's AWID state directory.
@@ -226,6 +227,160 @@ func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "access_mode") {
 		t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+	}
+}
+
+func TestExecuteTeamRegisterSignsAndPostsServicePayload(t *testing.T) {
+	teamKey := ed25519.NewKeyFromSeed([]byte{
+		31, 30, 29, 28, 27, 26, 25, 24,
+		23, 22, 21, 20, 19, 18, 17, 16,
+		15, 14, 13, 12, 11, 10, 9, 8,
+		7, 6, 5, 4, 3, 2, 1, 0,
+	})
+	var registerBody map[string]any
+	srv := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url":        "http://" + r.Host,
+				"aweb_url":              "http://" + r.Host + "/api",
+				"registry_url":          "http://registry.example.test",
+				"team_registration_url": "http://" + r.Host + "/api/v1/teams/service-register",
+				"features":              []string{"teams"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/service-register":
+			if err := json.NewDecoder(r.Body).Decode(&registerBody); err != nil {
+				t.Fatalf("decode register body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"dry_run":      false,
+				"status":       "created",
+				"awid_team_id": "circle:juanreyero.com",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+				"next_steps": []map[string]any{{
+					"label":    "Initialize",
+					"command":  "aw service init --service http://" + r.Host + " --team circle:juanreyero.com",
+					"required": true,
+				}},
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	out, err := executeTeamRegister(
+		context.Background(),
+		teamKey,
+		"circle:juanreyero.com",
+		srv.URL,
+		false,
+		"2026-05-25T12:00:00Z",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCanonical := `{"awid_team_id":"circle:juanreyero.com","dry_run":false,"operation":"team_service_register","service_url":"` + srv.URL + `","timestamp":"2026-05-25T12:00:00Z"}`
+	if out.CanonicalPayload != wantCanonical {
+		t.Fatalf("canonical payload mismatch:\n got: %s\nwant: %s", out.CanonicalPayload, wantCanonical)
+	}
+	if out.ControllerDID != awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("controller did mismatch")
+	}
+	if got := registerBody["service_url"]; got != srv.URL {
+		t.Fatalf("posted service_url=%v want %s", got, srv.URL)
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(registerBody["controller_signature"].(string))
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	if !ed25519.Verify(teamKey.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), sig) {
+		t.Fatal("posted controller signature does not verify")
+	}
+	if len(out.NextSteps) != 1 || !strings.Contains(out.NextSteps[0].Command, "aw service init") {
+		t.Fatalf("next steps not preserved: %+v", out.NextSteps)
+	}
+}
+
+func TestRunTeamRegisterUsesDiscoveredRegistryForLocalKeyCheck(t *testing.T) {
+	teamKey := ed25519.NewKeyFromSeed([]byte{
+		31, 30, 29, 28, 27, 26, 25, 24,
+		23, 22, 21, 20, 19, 18, 17, 16,
+		15, 14, 13, 12, 11, 10, 9, 8,
+		7, 6, 5, 4, 3, 2, 1, 0,
+	})
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+	writeTeamKeyForTest(t, home, "juanreyero.com", "circle", teamKey)
+
+	registryHits := 0
+	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryHits++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/juanreyero.com/teams/circle" {
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":      "circle:juanreyero.com",
+			"domain":       "juanreyero.com",
+			"name":         "circle",
+			"display_name": "Circle",
+			"team_did_key": teamDID,
+			"visibility":   "private",
+			"created_at":   "2026-05-25T12:00:00Z",
+		})
+	}))
+
+	var posted bool
+	service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url":        "http://" + r.Host,
+				"aweb_url":              "http://" + r.Host + "/api",
+				"registry_url":          registry.URL,
+				"team_registration_url": "http://" + r.Host + "/api/v1/teams/service-register",
+				"features":              []string{"teams"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/service-register":
+			posted = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"dry_run":      false,
+				"status":       "created",
+				"awid_team_id": "circle:juanreyero.com",
+				"team_did_key": teamDID,
+			})
+		default:
+			t.Fatalf("unexpected service request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	oldTeam := teamRegisterTeam
+	oldService := teamRegisterServiceURL
+	oldRegistry := teamRegisterRegistryURL
+	oldTimestamp := teamRegisterTimestamp
+	oldDryRun := teamRegisterDryRun
+	teamRegisterTeam = "circle:juanreyero.com"
+	teamRegisterServiceURL = service.URL
+	teamRegisterRegistryURL = ""
+	teamRegisterTimestamp = "2026-05-25T12:00:00Z"
+	teamRegisterDryRun = false
+	t.Cleanup(func() {
+		teamRegisterTeam = oldTeam
+		teamRegisterServiceURL = oldService
+		teamRegisterRegistryURL = oldRegistry
+		teamRegisterTimestamp = oldTimestamp
+		teamRegisterDryRun = oldDryRun
+	})
+
+	if err := runTeamRegister(&cobra.Command{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if registryHits != 1 {
+		t.Fatalf("registry hits=%d want 1", registryHits)
+	}
+	if !posted {
+		t.Fatal("service registration endpoint was not called")
 	}
 }
 

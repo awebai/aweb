@@ -66,9 +66,11 @@ services:
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
+      AWEB_PUBLIC_ORIGIN: ${AWEB_PUBLIC_ORIGIN:-http://localhost:8000}
       APP_ENV: ${APP_ENV:-development}
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
       AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-http://awid:8010}
+      AWID_PUBLIC_REGISTRY_URL: ${AWID_PUBLIC_REGISTRY_URL:-${AWID_REGISTRY_URL:-http://awid:8010}}
     depends_on:
       redis:
         condition: service_healthy

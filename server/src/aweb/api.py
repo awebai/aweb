@@ -30,6 +30,7 @@ from .routes.events import router as events_router
 from .routes.federation import router as federation_router
 from .routes.messages import router as messages_router
 from .routes.reservations import router as reservations_router
+from .routes.service_registration import router as service_registration_router
 from .routes.status import router as status_router
 from .coordination.routes.team_instructions import instructions_router
 from .coordination.routes.team_roles import roles_router
@@ -341,6 +342,7 @@ def create_app(
     app.include_router(federation_router)
     app.include_router(messages_router)
     app.include_router(reservations_router)
+    app.include_router(service_registration_router)
     app.include_router(status_router)
     app.include_router(instructions_router)
     app.include_router(roles_router)

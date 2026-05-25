@@ -92,6 +92,41 @@ func formatTeamImportRequest(v any) string {
 	return sb.String()
 }
 
+func formatTeamRegister(v any) string {
+	out := v.(teamRegisterOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.AWIDTeamID))
+	sb.WriteString(fmt.Sprintf("Service:     %s\n", out.ServiceURL))
+	sb.WriteString(fmt.Sprintf("Mode:        %s\n", map[bool]string{true: "dry-run", false: "apply"}[out.DryRun]))
+	sb.WriteString(fmt.Sprintf("Timestamp:   %s\n", out.Timestamp))
+	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
+	if strings.TrimSpace(out.TeamDIDKey) != "" {
+		sb.WriteString(fmt.Sprintf("Team DID:    %s\n", out.TeamDIDKey))
+	}
+	if strings.TrimSpace(out.DashboardURL) != "" {
+		sb.WriteString(fmt.Sprintf("Dashboard:   %s\n", out.DashboardURL))
+	}
+	if len(out.NextSteps) > 0 {
+		sb.WriteString("\nNext steps:\n")
+		for _, step := range out.NextSteps {
+			label := strings.TrimSpace(step.Label)
+			if label == "" {
+				label = "Run"
+			}
+			required := ""
+			if step.Required {
+				required = " (required)"
+			}
+			sb.WriteString(fmt.Sprintf("- %s%s: %s\n", label, required, strings.TrimSpace(step.Command)))
+			if desc := strings.TrimSpace(step.Description); desc != "" {
+				sb.WriteString(fmt.Sprintf("  %s\n", desc))
+			}
+		}
+	}
+	return sb.String()
+}
+
 func formatTeamCleanupCloud(v any) string {
 	out := v.(teamCleanupCloudOutput)
 	var sb strings.Builder

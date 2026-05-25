@@ -289,11 +289,19 @@ aweb. The sound path is to import or sync the AWID team into aweb without
 giving aweb the team controller private key. Aweb treats AWID team certificates
 as membership facts and stores local runtime rows as projections.
 
+Use `aw id team register --service https://app.aweb.ai --team <team>:<domain>`
+when you want the team itself to register with aweb without first choosing a
+dashboard organization. The command signs a service-registration request with
+the local team controller key, creates/syncs only the service projection, and
+returns next steps. Each certified agent then runs
+`aw service init --service https://app.aweb.ai --team <team>:<domain>` from its
+own worktree to connect that workspace.
+
 Use `aw id team import-request --namespace <domain> --team <team>
---organization-id <org-id>` to produce the signed request body for dashboard or
-API import. Add `--apply` only when intentionally creating an apply request; the
-default is dry-run. This helper refuses hosted `*.aweb.ai` namespaces because
-those belong to the fully hosted flow.
+--organization-id <org-id>` when you are importing into an existing aweb
+organization from the dashboard. Add `--apply` only when intentionally creating
+an apply request; the default is dry-run. This helper refuses hosted `*.aweb.ai`
+namespaces because those belong to the fully hosted flow.
 
 Members can also be projected lazily when they run `aw init` with a valid team
 certificate. Spawn and invites are still useful for creating new aweb-managed

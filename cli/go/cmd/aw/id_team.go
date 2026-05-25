@@ -75,6 +75,28 @@ type teamImportRequestOutput struct {
 	RequestBody         map[string]any `json:"request_body"`
 }
 
+type teamRegisterNextStep struct {
+	Label       string `json:"label,omitempty"`
+	Command     string `json:"command"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+}
+
+type teamRegisterOutput struct {
+	Status              string                 `json:"status"`
+	AWIDTeamID          string                 `json:"awid_team_id"`
+	ServiceURL          string                 `json:"service_url"`
+	DryRun              bool                   `json:"dry_run"`
+	Timestamp           string                 `json:"timestamp"`
+	ControllerDID       string                 `json:"controller_did"`
+	ControllerSignature string                 `json:"controller_signature,omitempty"`
+	CanonicalPayload    string                 `json:"canonical_payload,omitempty"`
+	TeamDIDKey          string                 `json:"team_did_key,omitempty"`
+	DashboardURL        string                 `json:"dashboard_url,omitempty"`
+	NextSteps           []teamRegisterNextStep `json:"next_steps,omitempty"`
+}
+
 type teamCleanupCloudOutput struct {
 	Status                        string `json:"status"`
 	TeamID                        string `json:"team_id"`
@@ -206,6 +228,12 @@ var (
 	teamImportRequestTimestamp      string
 	teamImportRequestApply          bool
 
+	teamRegisterTeam        string
+	teamRegisterServiceURL  string
+	teamRegisterRegistryURL string
+	teamRegisterTimestamp   string
+	teamRegisterDryRun      bool
+
 	teamCleanupCloudTeam                string
 	teamCleanupCloudNamespace           string
 	teamCleanupCloudURL                 string
@@ -315,6 +343,18 @@ var teamImportRequestCmd = &cobra.Command{
 	RunE: runTeamImportRequest,
 }
 
+var teamRegisterCmd = &cobra.Command{
+	Use:   "register",
+	Short: "Register or sync a customer-controlled team with a service",
+	Long: "Register or sync a customer-controlled AWID team with an aw-compatible service.\n\n" +
+		"This command is service-generic: it signs a registration request with the\n" +
+		"local team controller key and sends only public/signed team facts to the\n" +
+		"service. It never uploads namespace or team controller private keys and does\n" +
+		"not initialize any agent workspace. Services may return their own next steps,\n" +
+		"such as `aw service init` or `aw claim-human`.",
+	RunE: runTeamRegister,
+}
+
 var teamCleanupCloudCmd = &cobra.Command{
 	Use:   "cleanup-cloud",
 	Short: "Delete aweb Cloud's BYOT projection after registry team deletion",
@@ -401,6 +441,13 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
 	teamCmd.AddCommand(teamImportRequestCmd)
+
+	teamRegisterCmd.Flags().StringVar(&teamRegisterTeam, "team", "", "Canonical AWID team id (<team>:<namespace>)")
+	teamRegisterCmd.Flags().StringVar(&teamRegisterServiceURL, "service", "", "Service URL to register with")
+	teamRegisterCmd.Flags().StringVar(&teamRegisterRegistryURL, "registry", "", "Registry origin override")
+	teamRegisterCmd.Flags().StringVar(&teamRegisterTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by service)")
+	teamRegisterCmd.Flags().BoolVar(&teamRegisterDryRun, "dry-run", false, "Preview registration without mutating the service projection")
+	teamCmd.AddCommand(teamRegisterCmd)
 
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTeam, "team", "", "Team name")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudNamespace, "namespace", "", "Namespace domain")
@@ -1453,6 +1500,46 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runTeamRegister(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	teamID := strings.TrimSpace(teamRegisterTeam)
+	if teamID == "" {
+		return usageError("--team is required")
+	}
+	domain, teamName, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return fmt.Errorf("invalid --team %q: %w", teamID, err)
+	}
+	if strings.TrimSpace(teamRegisterServiceURL) == "" {
+		return usageError("--service is required")
+	}
+	timestamp := strings.TrimSpace(teamRegisterTimestamp)
+	if timestamp == "" {
+		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	target, err := resolveTeamRegistrationEndpoint(strings.TrimSpace(teamRegisterServiceURL))
+	if err != nil {
+		return err
+	}
+
+	teamKey, err := awconfig.LoadTeamKey(domain, teamName)
+	if err != nil {
+		return teamKeyLoadError(teamID, domain, err)
+	}
+	verificationRegistry := firstNonEmpty(strings.TrimSpace(teamRegisterRegistryURL), target.RegistryURL)
+	if err := verifyTeamRegisterLocalKey(ctx, teamKey, domain, teamName, verificationRegistry); err != nil {
+		return err
+	}
+	out, err := executeTeamRegisterWithTarget(ctx, teamKey, teamID, target, teamRegisterDryRun, timestamp)
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatTeamRegister)
+	return nil
+}
+
 func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1496,6 +1583,207 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	printOutput(out, formatTeamCleanupCloud)
+	return nil
+}
+
+func executeTeamRegister(
+	ctx context.Context,
+	teamKey ed25519.PrivateKey,
+	awidTeamID string,
+	serviceURL string,
+	dryRun bool,
+	timestamp string,
+) (teamRegisterOutput, error) {
+	target, err := resolveTeamRegistrationEndpoint(serviceURL)
+	if err != nil {
+		return teamRegisterOutput{}, err
+	}
+	return executeTeamRegisterWithTarget(ctx, teamKey, awidTeamID, target, dryRun, timestamp)
+}
+
+type teamRegistrationEndpoint struct {
+	ServiceURL  string
+	EndpointURL string
+	RegistryURL string
+}
+
+func executeTeamRegisterWithTarget(
+	ctx context.Context,
+	teamKey ed25519.PrivateKey,
+	awidTeamID string,
+	target teamRegistrationEndpoint,
+	dryRun bool,
+	timestamp string,
+) (teamRegisterOutput, error) {
+	if strings.TrimSpace(awidTeamID) == "" {
+		return teamRegisterOutput{}, usageError("team id is required")
+	}
+	if strings.TrimSpace(target.ServiceURL) == "" {
+		return teamRegisterOutput{}, usageError("service URL is required")
+	}
+	if strings.TrimSpace(target.EndpointURL) == "" {
+		return teamRegisterOutput{}, usageError("service registration endpoint is required")
+	}
+	if strings.TrimSpace(timestamp) == "" {
+		return teamRegisterOutput{}, usageError("timestamp is required")
+	}
+	teamControllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	payload := map[string]any{
+		"operation":    "team_service_register",
+		"awid_team_id": strings.TrimSpace(awidTeamID),
+		"service_url":  strings.TrimSpace(target.ServiceURL),
+		"dry_run":      dryRun,
+		"timestamp":    strings.TrimSpace(timestamp),
+	}
+	canonical, err := awid.CanonicalJSONValue(payload)
+	if err != nil {
+		return teamRegisterOutput{}, err
+	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	body := map[string]any{
+		"awid_team_id":         strings.TrimSpace(awidTeamID),
+		"service_url":          strings.TrimSpace(target.ServiceURL),
+		"dry_run":              dryRun,
+		"timestamp":            strings.TrimSpace(timestamp),
+		"controller_signature": signature,
+	}
+
+	var response struct {
+		DryRun       bool                   `json:"dry_run"`
+		Status       string                 `json:"status"`
+		AWIDTeamID   string                 `json:"awid_team_id"`
+		TeamDIDKey   string                 `json:"team_did_key"`
+		DashboardURL string                 `json:"dashboard_url"`
+		NextSteps    []teamRegisterNextStep `json:"next_steps"`
+	}
+	if err := postTeamRegister(ctx, strings.TrimSpace(target.EndpointURL), body, &response); err != nil {
+		return teamRegisterOutput{}, err
+	}
+	status := strings.TrimSpace(response.Status)
+	if status == "" {
+		if response.DryRun {
+			status = "dry-run"
+		} else {
+			status = "registered"
+		}
+	}
+	return teamRegisterOutput{
+		Status:              status,
+		AWIDTeamID:          firstNonEmpty(strings.TrimSpace(response.AWIDTeamID), strings.TrimSpace(awidTeamID)),
+		ServiceURL:          strings.TrimSpace(target.ServiceURL),
+		DryRun:              response.DryRun,
+		Timestamp:           strings.TrimSpace(timestamp),
+		ControllerDID:       teamControllerDID,
+		ControllerSignature: signature,
+		CanonicalPayload:    canonical,
+		TeamDIDKey:          strings.TrimSpace(response.TeamDIDKey),
+		DashboardURL:        strings.TrimSpace(response.DashboardURL),
+		NextSteps:           response.NextSteps,
+	}, nil
+}
+
+func resolveTeamRegistrationEndpoint(serviceURL string) (teamRegistrationEndpoint, error) {
+	urls, discoverErr := discoverOnboardingServiceURLs(serviceURL)
+	if discoverErr == nil {
+		normalizedServiceURL := strings.TrimSpace(urls.OnboardingURL)
+		if normalizedServiceURL == "" {
+			normalizedServiceURL = strings.TrimSpace(urls.AwebURL)
+		}
+		if strings.TrimSpace(urls.TeamRegistrationURL) != "" {
+			if normalizedServiceURL == "" {
+				var err error
+				normalizedServiceURL, err = cleanBaseURL(serviceURL)
+				if err != nil {
+					return teamRegistrationEndpoint{}, err
+				}
+			}
+			return teamRegistrationEndpoint{
+				ServiceURL:  normalizedServiceURL,
+				EndpointURL: strings.TrimSpace(urls.TeamRegistrationURL),
+				RegistryURL: strings.TrimSpace(urls.RegistryURL),
+			}, nil
+		}
+	}
+	normalizedServiceURL, err := cleanBaseURL(serviceURL)
+	if err != nil {
+		return teamRegistrationEndpoint{}, err
+	}
+	if discoverErr == nil {
+		urls, err = normalizeOnboardingServiceURLs(urls)
+		if err != nil {
+			return teamRegistrationEndpoint{}, err
+		}
+		normalizedServiceURL = firstNonEmpty(strings.TrimSpace(urls.OnboardingURL), strings.TrimSpace(urls.AwebURL), normalizedServiceURL)
+	}
+	base := strings.TrimRight(normalizedServiceURL, "/")
+	path := "/api/v1/teams/service-register"
+	if strings.HasSuffix(base, "/api") {
+		path = strings.TrimPrefix(path, "/api")
+	}
+	return teamRegistrationEndpoint{
+		ServiceURL:  normalizedServiceURL,
+		EndpointURL: base + path,
+		RegistryURL: strings.TrimSpace(urls.RegistryURL),
+	}, nil
+}
+
+func postTeamRegister(ctx context.Context, endpoint string, body map[string]any, out any) error {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var detail struct {
+			Detail any `json:"detail"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		if detail.Detail != nil {
+			encoded, _ := json.Marshal(detail.Detail)
+			return fmt.Errorf("service register: http %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
+		}
+		return fmt.Errorf("service register: http %d", resp.StatusCode)
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyTeamRegisterLocalKey(ctx context.Context, teamKey ed25519.PrivateKey, domain, teamName, registryURL string) error {
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(registryURL) != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid --registry: %w", err)
+		}
+	}
+	team, err := registry.GetTeam(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, teamName)
+	if err != nil {
+		return fmt.Errorf("load AWID team %s: %w", awid.BuildTeamID(domain, teamName), err)
+	}
+	localDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	registryDID := strings.TrimSpace(team.TeamDIDKey)
+	if registryDID == "" {
+		return fmt.Errorf("AWID team %s is missing team_did_key", awid.BuildTeamID(domain, teamName))
+	}
+	if registryDID != localDID {
+		return fmt.Errorf("local team controller key does not match AWID team controller for %s (local=%s, awid=%s)", awid.BuildTeamID(domain, teamName), localDID, registryDID)
+	}
 	return nil
 }
 

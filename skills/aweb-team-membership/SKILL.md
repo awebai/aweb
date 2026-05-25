@@ -226,7 +226,33 @@ aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --
 
 Use the actual `did`/`did_aw` values printed by `aw id create`. Do not guess them.
 
-Import into aweb cloud:
+Register with aweb cloud without using the dashboard:
+
+```bash
+aw id team register --service https://app.aweb.ai --team <team>:<domain>
+```
+
+This signs a service-registration request with the team controller key. It creates or syncs an aweb projection of the AWID team, but it does not upload controller private keys, create identities, or initialize any agent workspace. Read the returned next steps and run the required `aw service init` command from each already-certified agent directory:
+
+```bash
+aw service init --service https://app.aweb.ai --team <team>:<domain>
+```
+
+`aw service init` requires the local `.aw/signing.key`, `.aw/teams.yaml`, and `.aw/team-certs/*.pem` for that agent. If the certificate is not installed yet, fetch it first with the certificate id returned by `aw id team add-member`:
+
+```bash
+aw id team fetch-cert --namespace <domain> --team <team> --cert-id <cert-id>
+```
+
+After at least one workspace is initialized, the service may suggest a human-claim command such as:
+
+```bash
+aw claim-human --email you@example.com
+```
+
+`claim-human` is a service-account/human-login step for billing and dashboard ownership. It is not AWID team-controller authority and it does not add members to the BYOT team.
+
+Import into an existing aweb organization:
 
 1. In app.aweb.ai, create or select the owner organization that should contain the imported team.
 2. Open the BYOT import flow. Prefer the command shown by the dashboard because it contains the correct `--organization-id`.

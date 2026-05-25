@@ -7,8 +7,10 @@
 #   2. Creates a global identity (alice)
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
-#   5. Exercises mail, chat, tasks, locks
-#   6. Revokes bob's membership and verifies rejection
+#   5. Registers an externally controlled AWID team with the aweb service
+#   6. Initializes existing team members through aw service init
+#   7. Exercises mail, chat, tasks, locks
+#   8. Revokes bob's membership and verifies rejection
 #
 # Usage:
 #   ./scripts/e2e-oss-user-journey.sh
@@ -64,10 +66,13 @@ PARTNER_CONTROLLER_DIR="$E2E_CWD/partner-controller"
 PARTNER_BOB_DIR="$E2E_CWD/partner-bob"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
+SERVICE_CONTROLLER_DIR="$E2E_CWD/service-controller"
+SERVICE_ALPHA_DIR="$E2E_CWD/service-alpha"
+SERVICE_BETA_DIR="$E2E_CWD/service-beta"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
@@ -81,6 +86,9 @@ PARTNER_CONTROLLER_DIR="$(canonicalize_dir "$PARTNER_CONTROLLER_DIR")"
 PARTNER_BOB_DIR="$(canonicalize_dir "$PARTNER_BOB_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
+SERVICE_CONTROLLER_DIR="$(canonicalize_dir "$SERVICE_CONTROLLER_DIR")"
+SERVICE_ALPHA_DIR="$(canonicalize_dir "$SERVICE_ALPHA_DIR")"
+SERVICE_BETA_DIR="$(canonicalize_dir "$SERVICE_BETA_DIR")"
 
 pass=0
 fail=0
@@ -420,6 +428,8 @@ AWEB_PORT=$AWEB_PORT
 AWID_PORT=$AWID_PORT
 REDIS_PORT=$REDIS_PORT
 POSTGRES_PORT=$PG_PORT
+AWEB_PUBLIC_ORIGIN=$AWEB_URL
+AWID_PUBLIC_REGISTRY_URL=$AWID_URL
 AWEB_LOG_JSON=true
 AWID_LOG_JSON=true
 AWID_RATE_LIMIT_BACKEND=redis
@@ -811,9 +821,145 @@ assert_contains "wrong did fetch-cert explains auth" "$mallory_fetch_out" "403"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 11c: Cross-identity messaging via contacts
+# Phase 11c: External AWID team registers with aweb service
 # ---------------------------------------------------------------------------
-echo "=== Phase 11c: Cross-identity messaging via contacts ==="
+echo "=== Phase 11c: External AWID team registers with aweb service ==="
+
+service_controller_create="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id create \
+  --name controller \
+  --domain service.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+SERVICE_CONTROLLER_DID="$(echo "$service_controller_create" | jq_field did_key)"
+assert_not_empty "service controller did_key" "$SERVICE_CONTROLLER_DID"
+
+service_team_out="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team create \
+  --name circle \
+  --namespace service.local \
+  --display-name "Circle" \
+  --registry "$AWID_URL" \
+  --json 2>/dev/null)"
+SERVICE_TEAM_ID="$(echo "$service_team_out" | jq_field team_id)"
+SERVICE_TEAM_DID="$(echo "$service_team_out" | jq_field team_did_key)"
+assert_eq "service team id" "circle:service.local" "$SERVICE_TEAM_ID"
+assert_not_empty "service team did_key" "$SERVICE_TEAM_DID"
+
+service_alpha_create="$(run_aw_in "$SERVICE_ALPHA_DIR" id create \
+  --name alpha \
+  --domain service.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+SERVICE_ALPHA_DID="$(echo "$service_alpha_create" | jq_field did_key)"
+SERVICE_ALPHA_DID_AW="$(echo "$service_alpha_create" | jq_field did_aw)"
+SERVICE_ALPHA_ADDRESS="$(echo "$service_alpha_create" | jq_field address)"
+assert_eq "service alpha address" "service.local/alpha" "$SERVICE_ALPHA_ADDRESS"
+
+service_beta_create="$(run_aw_in "$SERVICE_BETA_DIR" id create \
+  --name beta \
+  --domain service.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+SERVICE_BETA_DID="$(echo "$service_beta_create" | jq_field did_key)"
+SERVICE_BETA_DID_AW="$(echo "$service_beta_create" | jq_field did_aw)"
+SERVICE_BETA_ADDRESS="$(echo "$service_beta_create" | jq_field address)"
+assert_eq "service beta address" "service.local/beta" "$SERVICE_BETA_ADDRESS"
+
+service_alpha_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
+  --team circle \
+  --namespace service.local \
+  --did "$SERVICE_ALPHA_DID" \
+  --alias alpha \
+  --global \
+  --did-aw "$SERVICE_ALPHA_DID_AW" \
+  --address "$SERVICE_ALPHA_ADDRESS" \
+  --json 2>/dev/null)"
+SERVICE_ALPHA_CERT_ID="$(echo "$service_alpha_add" | jq_field certificate_id)"
+assert_not_empty "service alpha certificate id" "$SERVICE_ALPHA_CERT_ID"
+run_aw_in "$SERVICE_ALPHA_DIR" id team fetch-cert \
+  --namespace service.local \
+  --team circle \
+  --cert-id "$SERVICE_ALPHA_CERT_ID" \
+  --json >/dev/null 2>&1
+assert_file_exists "service alpha fetched cert" "$(team_cert_path "$SERVICE_ALPHA_DIR" "$SERVICE_TEAM_ID")"
+
+service_beta_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
+  --team circle \
+  --namespace service.local \
+  --did "$SERVICE_BETA_DID" \
+  --alias beta \
+  --global \
+  --did-aw "$SERVICE_BETA_DID_AW" \
+  --address "$SERVICE_BETA_ADDRESS" \
+  --json 2>/dev/null)"
+SERVICE_BETA_CERT_ID="$(echo "$service_beta_add" | jq_field certificate_id)"
+assert_not_empty "service beta certificate id" "$SERVICE_BETA_CERT_ID"
+run_aw_in "$SERVICE_BETA_DIR" id team fetch-cert \
+  --namespace service.local \
+  --team circle \
+  --cert-id "$SERVICE_BETA_CERT_ID" \
+  --json >/dev/null 2>&1
+assert_file_exists "service beta fetched cert" "$(team_cert_path "$SERVICE_BETA_DIR" "$SERVICE_TEAM_ID")"
+
+service_register_dry="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
+  --team "$SERVICE_TEAM_ID" \
+  --service "$AWEB_URL" \
+  --dry-run \
+  --json 2>/dev/null)"
+service_register_dry_status="$(echo "$service_register_dry" | jq_field status)"
+assert_eq "service register dry-run status" "dry-run" "$service_register_dry_status"
+service_team_rows_after_dry="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID';")"
+assert_eq "service dry-run does not create team projection" "0" "$service_team_rows_after_dry"
+
+service_register_apply="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
+  --team "$SERVICE_TEAM_ID" \
+  --service "$AWEB_URL" \
+  --json 2>/dev/null)"
+service_register_status="$(echo "$service_register_apply" | jq_field status)"
+service_register_next_init="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'service init' in s.get('command','')), ''))" 2>/dev/null || echo "")"
+service_register_next_claim="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'claim-human' in s.get('command','')), ''))" 2>/dev/null || echo "")"
+assert_eq "service register apply status" "created" "$service_register_status"
+assert_contains "service register returns service init next step" "$service_register_next_init" "aw service init --service $AWEB_URL --team $SERVICE_TEAM_ID"
+assert_contains "service register returns claim-human next step" "$service_register_next_claim" "aw claim-human --email you@example.com"
+
+service_team_rows="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID' AND team_did_key = '$SERVICE_TEAM_DID';")"
+service_agents_before="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
+service_workspaces_before="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
+assert_eq "service register creates team projection" "1" "$service_team_rows"
+assert_eq "service register creates no agents" "0" "$service_agents_before"
+assert_eq "service register creates no workspaces" "0" "$service_workspaces_before"
+
+run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID" >/dev/null 2>&1
+run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID" >/dev/null 2>&1
+service_alpha_active="$(yaml_field "$SERVICE_ALPHA_DIR/.aw/teams.yaml" active_team)"
+service_beta_active="$(yaml_field "$SERVICE_BETA_DIR/.aw/teams.yaml" active_team)"
+service_alpha_workspace_alias="$(workspace_membership_field "$SERVICE_ALPHA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
+service_beta_workspace_alias="$(workspace_membership_field "$SERVICE_BETA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
+assert_eq "service alpha active team" "$SERVICE_TEAM_ID" "$service_alpha_active"
+assert_eq "service beta active team" "$SERVICE_TEAM_ID" "$service_beta_active"
+assert_eq "service alpha workspace membership" "alpha" "$service_alpha_workspace_alias"
+assert_eq "service beta workspace membership" "beta" "$service_beta_workspace_alias"
+
+service_agents_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
+service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
+assert_eq "service init creates two agents" "2" "$service_agents_after"
+assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
+
+run_aw_in "$SERVICE_ALPHA_DIR" mail send \
+  --to beta \
+  --subject "Service registered team e2e" \
+  --body "service init path works" >/dev/null 2>&1
+service_beta_inbox="$(run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all 2>/dev/null)"
+service_beta_subject="$(echo "$service_beta_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('subject')=='Service registered team e2e'), ''))" 2>/dev/null || echo "")"
+assert_eq "service registered team mail works" "Service registered team e2e" "$service_beta_subject"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 11d: Cross-identity messaging via contacts
+# ---------------------------------------------------------------------------
+echo "=== Phase 11d: Cross-identity messaging via contacts ==="
 
 carol_create="$(run_aw_in "$CAROL_DIR" id create \
   --name carol \

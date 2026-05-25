@@ -1120,6 +1120,8 @@ relies on are:
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
+| `aw id team register --service URL --team X:Y` | Register or sync a customer-controlled AWID team with a service using the team controller signature; no private controller keys are uploaded |
+| `aw service init --service URL --team X:Y` | Connect the current certified worktree to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
 | `aw id team import-request --team X --namespace Y --organization-id ORG` | Produce the customer team-controller-signed BYOT import/sync request body for aweb cloud; no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
