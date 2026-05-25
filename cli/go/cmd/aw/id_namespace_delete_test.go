@@ -172,6 +172,14 @@ func TestIDNamespaceDeletePurgeLocalMovesControllerAndTeamKeys(t *testing.T) {
 	if out.LocalBackupDir == "" {
 		t.Fatal("expected local backup dir")
 	}
+	stateDir, err := awconfig.DefaultUserStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBackupRoot := filepath.Join(stateDir, "deregister-backups") + string(filepath.Separator)
+	if !strings.HasPrefix(out.LocalBackupDir, wantBackupRoot) {
+		t.Fatalf("backup dir %s outside durable aw state backup root %s", out.LocalBackupDir, wantBackupRoot)
+	}
 	for _, path := range out.MovedLocalPaths {
 		if !strings.HasPrefix(path, out.LocalBackupDir+string(filepath.Separator)) {
 			t.Fatalf("moved path %s outside backup dir %s", path, out.LocalBackupDir)

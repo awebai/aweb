@@ -203,6 +203,7 @@ aw id team accept-invite <token>      # Accept hosted aw_inv_ or local-controlle
 aw id team remove-member              # Remove a member from a team
 aw id team delete                     # Delete an AWID team after active certs are revoked
 aw id team cleanup-cloud              # Delete aweb Cloud's imported BYOT projection
+aw id team cleanup-cloud --namespace-controller  # Recover cleanup with namespace authority
 aw id team import-request --namespace <domain> --team <team> --organization-id <org>
 aw id rotate-key                      # Rotate the local signing key
 aw id show                            # Show current identity and registry status

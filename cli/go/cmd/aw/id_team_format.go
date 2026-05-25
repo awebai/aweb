@@ -100,6 +100,9 @@ func formatTeamCleanupCloud(v any) string {
 		sb.WriteString("Status:      deleted\n")
 	}
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
+	if strings.TrimSpace(out.ControllerScope) != "" {
+		sb.WriteString(fmt.Sprintf("Authority:   %s\n", out.ControllerScope))
+	}
 	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.CloudURL))
 	sb.WriteString(fmt.Sprintf("Agents:      %d\n", out.AgentsDeleted))

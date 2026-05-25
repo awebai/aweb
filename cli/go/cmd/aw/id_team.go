@@ -80,6 +80,7 @@ type teamCleanupCloudOutput struct {
 	TeamID                        string `json:"team_id"`
 	DryRun                        bool   `json:"dry_run"`
 	ControllerDID                 string `json:"controller_did"`
+	ControllerScope               string `json:"controller_scope"`
 	CloudURL                      string `json:"cloud_url"`
 	AgentsDeleted                 int    `json:"agents_deleted"`
 	WorkspacesDeleted             int    `json:"workspaces_deleted"`
@@ -205,12 +206,15 @@ var (
 	teamImportRequestTimestamp      string
 	teamImportRequestApply          bool
 
-	teamCleanupCloudTeam        string
-	teamCleanupCloudNamespace   string
-	teamCleanupCloudURL         string
-	teamCleanupCloudTeamKeyPath string
-	teamCleanupCloudTimestamp   string
-	teamCleanupCloudApply       bool
+	teamCleanupCloudTeam                string
+	teamCleanupCloudNamespace           string
+	teamCleanupCloudURL                 string
+	teamCleanupCloudTeamKeyPath         string
+	teamCleanupCloudNamespaceKeyPath    string
+	teamCleanupCloudTimestamp           string
+	teamCleanupCloudApply               bool
+	teamCleanupCloudNamespaceController bool
+	teamCleanupCloudRegistry            string
 )
 
 // --- commands ---
@@ -313,11 +317,14 @@ var teamImportRequestCmd = &cobra.Command{
 var teamCleanupCloudCmd = &cobra.Command{
 	Use:   "cleanup-cloud",
 	Short: "Delete aweb Cloud's BYOT projection after registry team deletion",
-	Long: "Delete aweb Cloud's imported BYOT team projection using the local team controller key.\n\n" +
-		"This command does not mutate AWID. Use it after revoking members and deleting\n" +
-		"the AWID team, and before purging local team keys. It signs the cleanup request\n" +
-		"with ~/.config/aw/team-keys/<namespace>/<team>.key so aweb Cloud can verify\n" +
-		"that the customer-controlled team controller authorized the projection delete.",
+	Long: "Delete aweb Cloud's imported BYOT team projection using customer-held controller authority.\n\n" +
+		"This command does not mutate AWID. In the normal path it signs the cleanup\n" +
+		"request with ~/.config/aw/team-keys/<namespace>/<team>.key so aweb Cloud can\n" +
+		"verify that the customer-controlled team controller authorized the projection\n" +
+		"delete. If the team controller key has already been retired, use\n" +
+		"--namespace-controller to sign with the namespace controller key; aweb Cloud\n" +
+		"will verify that key against the current AWID namespace controller for the\n" +
+		"team's domain.",
 	RunE: runTeamCleanupCloud,
 }
 
@@ -398,6 +405,9 @@ func init() {
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudNamespace, "namespace", "", "Namespace domain")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudURL, "aweb-url", DefaultAwebURL, "aweb Cloud URL")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTeamKeyPath, "team-key", "", "Team controller key path override")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudNamespaceKeyPath, "namespace-key", "", "Namespace controller key path override for --namespace-controller")
+	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudRegistry, "registry", "", "Registry origin override for --namespace-controller key verification")
+	teamCleanupCloudCmd.Flags().BoolVar(&teamCleanupCloudNamespaceController, "namespace-controller", false, "Authorize cleanup with the namespace controller key instead of the team controller key")
 	teamCleanupCloudCmd.Flags().StringVar(&teamCleanupCloudTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamCleanupCloudCmd.Flags().BoolVar(&teamCleanupCloudApply, "apply", false, "Apply the cleanup instead of dry-run")
 	teamCmd.AddCommand(teamCleanupCloudCmd)
@@ -1459,12 +1469,32 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	if timestamp == "" {
 		timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
-	teamID := awid.BuildTeamID(domain, team)
-	teamKey, err := loadTeamCleanupCloudKey(domain, team, teamCleanupCloudTeamKeyPath)
-	if err != nil {
-		return teamKeyLoadError(teamID, domain, err)
+	if !teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudNamespaceKeyPath) != "" {
+		return usageError("--namespace-key requires --namespace-controller")
 	}
-	out, err := executeTeamCleanupCloud(ctx, teamKey, teamID, !teamCleanupCloudApply, timestamp, teamCleanupCloudURL)
+	if !teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudRegistry) != "" {
+		return usageError("--registry is only used with --namespace-controller")
+	}
+	if teamCleanupCloudNamespaceController && strings.TrimSpace(teamCleanupCloudTeamKeyPath) != "" {
+		return usageError("--team-key cannot be combined with --namespace-controller")
+	}
+	teamID := awid.BuildTeamID(domain, team)
+	controllerScope := "team"
+	var controllerKey ed25519.PrivateKey
+	var err error
+	if teamCleanupCloudNamespaceController {
+		controllerScope = "namespace"
+		controllerKey, err = loadTeamCleanupCloudNamespaceKey(ctx, domain, teamCleanupCloudNamespaceKeyPath, teamCleanupCloudRegistry)
+		if err != nil {
+			return fmt.Errorf("load namespace controller key for %s: %w", domain, err)
+		}
+	} else {
+		controllerKey, err = loadTeamCleanupCloudKey(domain, team, teamCleanupCloudTeamKeyPath)
+		if err != nil {
+			return teamKeyLoadError(teamID, domain, err)
+		}
+	}
+	out, err := executeTeamCleanupCloud(ctx, controllerKey, controllerScope, teamID, !teamCleanupCloudApply, timestamp, teamCleanupCloudURL)
 	if err != nil {
 		return err
 	}
@@ -1521,9 +1551,38 @@ func loadTeamCleanupCloudKey(domain, team, path string) (ed25519.PrivateKey, err
 	return awconfig.LoadTeamKey(domain, team)
 }
 
+func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path, registryOverride string) (ed25519.PrivateKey, error) {
+	if strings.TrimSpace(path) == "" {
+		key, _, err := loadVerifiedNamespaceControllerKey(ctx, domain, registryOverride)
+		return key, err
+	}
+	key, err := awid.LoadSigningKey(strings.TrimSpace(path))
+	if err != nil {
+		return nil, err
+	}
+	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	registry, err := newRegistryClientWithPreferredBaseURL(registryOverride)
+	if err != nil {
+		return nil, err
+	}
+	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return nil, fmt.Errorf("discover registry for %s: %w", domain, err)
+	}
+	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, domain)
+	if err != nil {
+		return nil, fmt.Errorf("fetch namespace %s: %w", domain, err)
+	}
+	if strings.TrimSpace(namespace.ControllerDID) != controllerDID {
+		return nil, fmt.Errorf("local namespace controller key for %s does not match registered controller (local=%s, registry=%s)", domain, controllerDID, strings.TrimSpace(namespace.ControllerDID))
+	}
+	return key, nil
+}
+
 func executeTeamCleanupCloud(
 	ctx context.Context,
-	teamKey ed25519.PrivateKey,
+	controllerKey ed25519.PrivateKey,
+	controllerScope string,
 	awidTeamID string,
 	dryRun bool,
 	timestamp string,
@@ -1538,23 +1597,36 @@ func executeTeamCleanupCloud(
 	if strings.TrimSpace(awebURL) == "" {
 		awebURL = DefaultAwebURL
 	}
-	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	controllerScope = strings.ToLower(strings.TrimSpace(controllerScope))
+	if controllerScope == "" {
+		controllerScope = "team"
+	}
+	if controllerScope != "team" && controllerScope != "namespace" {
+		return teamCleanupCloudOutput{}, usageError("controller scope must be team or namespace")
+	}
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	signPayload := map[string]any{
 		"operation":    "byoidt_projection_delete",
 		"awid_team_id": strings.TrimSpace(awidTeamID),
 		"dry_run":      dryRun,
 		"timestamp":    strings.TrimSpace(timestamp),
 	}
+	if controllerScope != "team" {
+		signPayload["controller_scope"] = controllerScope
+	}
 	canonical, err := awid.CanonicalJSONValue(signPayload)
 	if err != nil {
 		return teamCleanupCloudOutput{}, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(controllerKey, []byte(canonical)))
 	body := map[string]any{
 		"awid_team_id":         strings.TrimSpace(awidTeamID),
 		"dry_run":              dryRun,
 		"timestamp":            strings.TrimSpace(timestamp),
 		"controller_signature": signature,
+	}
+	if controllerScope != "team" {
+		body["controller_scope"] = controllerScope
 	}
 	var response struct {
 		DryRun                        bool   `json:"dry_run"`
@@ -1580,6 +1652,7 @@ func executeTeamCleanupCloud(
 		TeamID:                        response.CanonicalTeamID,
 		DryRun:                        response.DryRun,
 		ControllerDID:                 controllerDID,
+		ControllerScope:               controllerScope,
 		CloudURL:                      strings.TrimRight(awebURL, "/"),
 		AgentsDeleted:                 response.AgentsDeleted,
 		WorkspacesDeleted:             response.WorkspacesDeleted,
