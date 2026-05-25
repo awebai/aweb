@@ -36,7 +36,7 @@ var (
 		Short: "Verify the _awid DNS TXT record matches the local namespace controller key",
 		Long: "Verify the _awid DNS TXT record matches the local namespace controller key.\n\n" +
 			"This is read-only. It looks up _awid.<domain>, loads the local namespace\n" +
-			"controller key from ~/.config/aw/controllers/<domain>.key (or --controller-key),\n" +
+			"controller key from ~/.awid/controllers/<domain>.key (or --controller-key),\n" +
 			"and fails if DNS has not propagated or points at a different controller DID.",
 		RunE: runIDNamespaceCheckTXT,
 	}

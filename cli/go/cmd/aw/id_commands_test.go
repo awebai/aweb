@@ -367,11 +367,11 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); did != identity.DID {
 		t.Fatalf("stored signing key did=%q want %q", did, identity.DID)
 	}
-	controllerKeyPath := filepath.Join(tmp, ".config", "aw", "controllers", "acme.com.key")
+	controllerKeyPath := filepath.Join(tmp, ".awid", "controllers", "acme.com.key")
 	if _, err := os.Stat(controllerKeyPath); err != nil {
 		t.Fatalf("controller key missing: %v", err)
 	}
-	metaData, err := os.ReadFile(filepath.Join(tmp, ".config", "aw", "controllers", "acme.com.yaml"))
+	metaData, err := os.ReadFile(filepath.Join(tmp, ".awid", "controllers", "acme.com.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -864,7 +864,7 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 	if aliceIdentity.DID == bobIdentity.DID {
 		t.Fatal("identities should have distinct signing keys")
 	}
-	controllerMetaData, err := os.ReadFile(filepath.Join(home, ".config", "aw", "controllers", "acme.com.yaml"))
+	controllerMetaData, err := os.ReadFile(filepath.Join(home, ".awid", "controllers", "acme.com.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

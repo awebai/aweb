@@ -22,10 +22,10 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// writeControllerKeyForTest writes a controller key to the test HOME's config directory.
+// writeControllerKeyForTest writes a controller key to the test HOME's AWID state directory.
 func writeControllerKeyForTest(t *testing.T, home, domain string, key ed25519.PrivateKey) {
 	t.Helper()
-	dir := filepath.Join(home, ".config", "aw", "controllers")
+	dir := filepath.Join(home, ".awid", "controllers")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -38,10 +38,10 @@ func writeControllerKeyForTest(t *testing.T, home, domain string, key ed25519.Pr
 	}
 }
 
-// writeTeamKeyForTest writes a team key to the test HOME's config directory.
+// writeTeamKeyForTest writes a team key to the test HOME's AWID state directory.
 func writeTeamKeyForTest(t *testing.T, home, domain, name string, key ed25519.PrivateKey) {
 	t.Helper()
-	dir := filepath.Join(home, ".config", "aw", "team-keys", awconfig.NormalizeDomain(domain))
+	dir := filepath.Join(home, ".awid", "team-keys", awconfig.NormalizeDomain(domain))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestTeamKeyLoadErrorByoidtNamespacePointsToLocalControllerKey(t *testing.T)
 	got := err.Error()
 	for _, want := range []string{
 		"BYOIDT/BYOD teams",
-		"~/.config/aw/team-keys/<namespace>/<team>.key",
+		"~/.awid/team-keys/<namespace>/<team>.key",
 		"hosted aweb.ai teams should use the dashboard Add existing agent action",
 	} {
 		if !strings.Contains(got, want) {
@@ -158,7 +158,7 @@ func TestRunTeamImportRequestMissingKeyUsesBYOTGuidance(t *testing.T) {
 	for _, want := range []string{
 		"research:example.com",
 		"BYOIDT/BYOD teams",
-		"~/.config/aw/team-keys/<namespace>/<team>.key",
+		"~/.awid/team-keys/<namespace>/<team>.key",
 		"hosted aweb.ai teams should use the dashboard Add existing agent action",
 	} {
 		if !strings.Contains(got, want) {
@@ -480,7 +480,7 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	}
 
 	// Verify team key was stored on disk
-	teamKeyPath := filepath.Join(tmp, ".config", "aw", "team-keys", "acme.com", "backend.key")
+	teamKeyPath := filepath.Join(tmp, ".awid", "team-keys", "acme.com", "backend.key")
 	if _, err := os.Stat(teamKeyPath); err != nil {
 		t.Fatalf("team key missing: %v", err)
 	}

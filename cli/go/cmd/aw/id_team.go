@@ -320,7 +320,7 @@ var teamCleanupCloudCmd = &cobra.Command{
 	Short: "Delete aweb Cloud's BYOT projection after registry team deletion",
 	Long: "Delete aweb Cloud's imported BYOT team projection using customer-held controller authority.\n\n" +
 		"This command does not mutate AWID. In the normal path it signs the cleanup\n" +
-		"request with ~/.config/aw/team-keys/<namespace>/<team>.key so aweb Cloud can\n" +
+		"request with ~/.awid/team-keys/<namespace>/<team>.key so aweb Cloud can\n" +
 		"verify that the customer-controlled team controller authorized the projection\n" +
 		"delete. If the team controller key has already been retired, use\n" +
 		"--namespace-controller to sign with the namespace controller key; aweb Cloud\n" +
@@ -1076,13 +1076,13 @@ func isAwebHostedNamespace(domain string) bool {
 func teamKeyLoadError(teamID, domain string, err error) error {
 	if isAwebHostedNamespace(domain) {
 		return fmt.Errorf(
-			"local team controller key for %s was not found: %w\n\nThis looks like an aweb.ai hosted namespace. Hosted teams keep the team controller key in cloud, so this raw AWID command cannot sign the add-member operation locally. Use the hosted dashboard Add existing agent action for hosted teams. Use `aw id team add-member` only for BYOIDT/BYOD teams where you hold ~/.config/aw/team-keys/<namespace>/<team>.key",
+			"local team controller key for %s was not found: %w\n\nThis looks like an aweb.ai hosted namespace. Hosted teams keep the team controller key in cloud, so this raw AWID command cannot sign the add-member operation locally. Use the hosted dashboard Add existing agent action for hosted teams. Use `aw id team add-member` only for BYOIDT/BYOD teams where you hold ~/.awid/team-keys/<namespace>/<team>.key",
 			teamID,
 			err,
 		)
 	}
 	return fmt.Errorf(
-		"local team controller key for %s was not found: %w (this command is for BYOIDT/BYOD teams where you hold ~/.config/aw/team-keys/<namespace>/<team>.key; hosted aweb.ai teams should use the dashboard Add existing agent action)",
+		"local team controller key for %s was not found: %w (this command is for BYOIDT/BYOD teams where you hold ~/.awid/team-keys/<namespace>/<team>.key; hosted aweb.ai teams should use the dashboard Add existing agent action)",
 		teamID,
 		err,
 	)

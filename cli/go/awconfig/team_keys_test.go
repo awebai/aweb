@@ -99,4 +99,43 @@ func TestTeamKeyPathLayout(t *testing.T) {
 	if path != filepath.Join(root, "acme.com", "backend.key") {
 		t.Fatalf("path=%q", path)
 	}
+	if root != filepath.Join(tmp, ".awid", "team-keys") {
+		t.Fatalf("team keys root=%q", root)
+	}
+}
+
+func TestLoadTeamKeyFallsBackToLegacyConfigPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir, err := legacyTeamKeysDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir = filepath.Join(legacyDir, "acme.com")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "backend.key"), pemEncodeTestKey(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err := TeamKeyExists("acme.com", "backend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("expected legacy team key to be detected")
+	}
+	loaded, err := LoadTeamKey("acme.com", "backend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := loaded.Seed(), key.Seed(); string(got) != string(want) {
+		t.Fatal("legacy team key seed mismatch")
+	}
 }

@@ -10,11 +10,23 @@ import (
 )
 
 func DefaultTeamKeysDir() (string, error) {
+	return PathInAWIDState("team-keys")
+}
+
+func legacyTeamKeysDir() (string, error) {
 	return PathInUserState("team-keys")
 }
 
 func TeamKeyPath(domain, name string) (string, error) {
 	dir, err := DefaultTeamKeysDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(name))+".key"), nil
+}
+
+func legacyTeamKeyPath(domain, name string) (string, error) {
+	dir, err := legacyTeamKeysDir()
 	if err != nil {
 		return "", err
 	}
@@ -31,7 +43,18 @@ func TeamKeyExists(domain, name string) (bool, error) {
 		return true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		legacyPath, legacyErr := legacyTeamKeyPath(domain, name)
+		if legacyErr != nil {
+			return false, legacyErr
+		}
+		_, legacyErr = os.Stat(legacyPath)
+		if legacyErr == nil {
+			return true, nil
+		}
+		if errors.Is(legacyErr, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, legacyErr
 	}
 	return false, err
 }
@@ -58,7 +81,17 @@ func LoadTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		legacyPath, legacyErr := legacyTeamKeyPath(domain, name)
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {

@@ -13,8 +13,25 @@ func DefaultUserStateDir() (string, error) {
 	return filepath.Join(home, ".config", "aw"), nil
 }
 
+func DefaultAWIDStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".awid"), nil
+}
+
 func PathInUserState(elem ...string) (string, error) {
 	root, err := DefaultUserStateDir()
+	if err != nil {
+		return "", err
+	}
+	parts := append([]string{root}, elem...)
+	return filepath.Join(parts...), nil
+}
+
+func PathInAWIDState(elem ...string) (string, error) {
+	root, err := DefaultAWIDStateDir()
 	if err != nil {
 		return "", err
 	}
@@ -35,6 +52,10 @@ func DefaultLogsDir() (string, error) {
 }
 
 func DefaultControllersDir() (string, error) {
+	return PathInAWIDState("controllers")
+}
+
+func LegacyControllersDir() (string, error) {
 	return PathInUserState("controllers")
 }
 

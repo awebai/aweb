@@ -26,8 +26,24 @@ func ControllerKeyPath(domain string) (string, error) {
 	return filepath.Join(controllersDir, normalizeControllerDomain(domain)+".key"), nil
 }
 
+func legacyControllerKeyPath(domain string) (string, error) {
+	controllersDir, err := LegacyControllersDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(controllersDir, normalizeControllerDomain(domain)+".key"), nil
+}
+
 func ControllerMetaPath(domain string) (string, error) {
 	controllersDir, err := DefaultControllersDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(controllersDir, normalizeControllerDomain(domain)+".yaml"), nil
+}
+
+func legacyControllerMetaPath(domain string) (string, error) {
+	controllersDir, err := LegacyControllersDir()
 	if err != nil {
 		return "", err
 	}
@@ -44,7 +60,18 @@ func ControllerKeyExists(domain string) (bool, error) {
 		return true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		legacyPath, legacyErr := legacyControllerKeyPath(domain)
+		if legacyErr != nil {
+			return false, legacyErr
+		}
+		_, legacyErr = os.Stat(legacyPath)
+		if legacyErr == nil {
+			return true, nil
+		}
+		if errors.Is(legacyErr, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, legacyErr
 	}
 	return false, err
 }
@@ -56,7 +83,17 @@ func LoadControllerKey(domain string) (ed25519.PrivateKey, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		legacyPath, legacyErr := legacyControllerKeyPath(domain)
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
@@ -93,7 +130,17 @@ func LoadControllerMeta(domain string) (*ControllerMeta, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		legacyPath, legacyErr := legacyControllerMetaPath(domain)
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var meta ControllerMeta
 	if err := yaml.Unmarshal(data, &meta); err != nil {

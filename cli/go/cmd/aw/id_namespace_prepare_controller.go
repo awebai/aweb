@@ -36,7 +36,7 @@ var (
 		Short: "Create or show a local namespace controller key and DNS TXT value",
 		Long: "Create or show a local namespace controller key and DNS TXT value.\n\n" +
 			"This command is deliberately local-only: it writes the namespace controller\n" +
-			"key under ~/.config/aw/controllers and prints the _awid TXT record to publish.\n" +
+			"key under ~/.awid/controllers and prints the _awid TXT record to publish.\n" +
 			"It does not call AWID, create a did:aw identity, claim an address, create a\n" +
 			"team, or modify aweb Cloud state.",
 		RunE: runIDNamespacePrepareController,

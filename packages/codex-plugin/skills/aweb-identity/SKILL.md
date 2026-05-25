@@ -32,7 +32,7 @@ A workspace can hold any combination of these. For team-related files (`teams.ya
 
 These two commands look similar and are not interchangeable. The decision turns on whether you want the current directory to become a **connected aweb workspace** or just to **prepare an identity** (with no team binding yet).
 
-- **`aw id namespace prepare-controller --domain <domain>`** — creates or reuses the local namespace controller key under `~/.config/aw/controllers/` and prints the `_awid.<domain>` DNS TXT value. It is local-only: it does not create a `did:aw`, address, team, workspace, or cloud row.
+- **`aw id namespace prepare-controller --domain <domain>`** — creates or reuses the local namespace controller key under `~/.awid/controllers/` and prints the `_awid.<domain>` DNS TXT value. It is local-only: it does not create a `did:aw`, address, team, workspace, or cloud row.
 - **`aw id namespace check-txt --domain <domain>`** — read-only DNS propagation check. It verifies that `_awid.<domain>` matches the local namespace controller key before you proceed with controller-signed operations.
 - **`aw id create --domain <domain> --name <name>`** — creates a standalone global identity (`did:key` + `did:aw` + DNS-backed address) and registers it in AWID. Writes `.aw/identity.yaml` and `.aw/signing.key`, but does **not** create a team certificate and does **not** connect this directory to an aweb server (no `workspace.yaml` server binding, no `teams.yaml` membership entry, no `team-certs/*.pem`). Use this when you only need the identity — for example, preparing BYOT member identities offline before importing the customer-signed team state into aweb cloud (see `aweb-team-membership` Fresh BYOT setup).
 

@@ -2,12 +2,20 @@ package awconfig
 
 import (
 	"crypto/ed25519"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/awebai/aw/awid"
 )
+
+func pemEncodeTestKey(key ed25519.PrivateKey) []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "ED25519 PRIVATE KEY",
+		Bytes: key.Seed(),
+	})
+}
 
 func TestSaveControllerKeyRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
@@ -128,5 +136,44 @@ func TestControllerPathsUseControllersDir(t *testing.T) {
 	}
 	if metaPath != filepath.Join(root, "acme.com.yaml") {
 		t.Fatalf("metaPath=%q", metaPath)
+	}
+	if root != filepath.Join(tmp, ".awid", "controllers") {
+		t.Fatalf("controllers root=%q", root)
+	}
+}
+
+func TestLoadControllerKeyFallsBackToLegacyConfigPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir, err := LegacyControllersDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := pemEncodeTestKey(key)
+	if err := os.WriteFile(filepath.Join(legacyDir, "acme.com.key"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err := ControllerKeyExists("acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("expected legacy controller key to be detected")
+	}
+	loaded, err := LoadControllerKey("acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := loaded.Seed(), key.Seed(); string(got) != string(want) {
+		t.Fatal("legacy controller key seed mismatch")
 	}
 }
