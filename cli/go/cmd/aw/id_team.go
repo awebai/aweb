@@ -544,8 +544,13 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if strings.TrimSpace(awebURL) != "" {
 		inviteID, token, err = createHostedTeamInviteToken(workingDir, awid.BuildTeamID(domain, team), localInvite)
+		if err != nil {
+			return err
+		}
+	} else {
+		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
 		if err != nil {
 			return err
 		}

@@ -1299,6 +1299,75 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 	}
 }
 
+func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
+		"--team", "alpha",
+		"--namespace", "alpha.test.local",
+		"--global",
+		"--json")
+	runInvite.Env = idCreateCommandEnv(tmp)
+	runInvite.Dir = tmp
+	out, err := runInvite.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected invite to fail without local team key")
+	}
+	text := string(out)
+	if !strings.Contains(text, "no team key for alpha.test.local/alpha") {
+		t.Fatalf("expected local-controller key error, got:\n%s", text)
+	}
+	if strings.Contains(text, "--global is not supported for hosted team invites") {
+		t.Fatalf("non-hosted invite without service context used hosted fallback:\n%s", text)
+	}
+}
+
+func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "alpha.test.local", "alpha", teamKey)
+
+	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
+		"--team", "alpha",
+		"--namespace", "alpha.test.local",
+		"--global",
+		"--json")
+	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=http://localhost:8310")
+	runInvite.Dir = tmp
+	out, err := runInvite.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team invite failed: %v\n%s", err, string(out))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "created" {
+		t.Fatalf("status=%v want created", got["status"])
+	}
+	token, _ := got["token"].(string)
+	if token == "" {
+		t.Fatalf("token missing in output: %v", got)
+	}
+}
+
 func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	t.Parallel()
 

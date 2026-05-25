@@ -11,6 +11,7 @@ from pgdbm import AsyncDatabaseManager
 from pydantic import BaseModel, Field
 
 from awid.dns_auth import enforce_timestamp_skew
+from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.config import get_settings
@@ -55,6 +56,8 @@ def _safe_package_version(package_name: str) -> str:
 
 
 def _public_service_url() -> str:
+    if discovery_origin := (os.getenv("AWEB_DISCOVERY_ORIGIN") or "").strip():
+        return canonical_server_origin(discovery_origin).rstrip("/")
     return get_settings().public_origin.rstrip("/")
 
 
