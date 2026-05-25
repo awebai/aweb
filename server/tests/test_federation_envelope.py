@@ -213,6 +213,35 @@ def test_verify_federation_envelope_accepts_stable_signed_to_did():
     assert verified.target_did_aw == "did:aw:target"
 
 
+def test_verify_federation_envelope_accepts_stored_route_stable_binding_without_to_did():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key)
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello",
+            "conversation_id": envelope["conversation_id"],
+            "from": "alpha.example/alice",
+            "from_did": sender_did_key,
+            "from_stable_id": stable_id_from_did_key(sender_did_key),
+            "message_id": envelope["message_id"],
+            "subject": "Federation",
+            "timestamp": envelope["timestamp"],
+            "to": envelope["target_did_aw"],
+            "to_did": "",
+            "to_stable_id": envelope["target_did_aw"],
+            "type": "mail",
+        }
+    ).decode()
+    envelope["signed_payload"] = signed_payload
+    signature = _sign(envelope, signing_key)
+
+    verified = verify_federation_envelope(envelope, signature)
+
+    assert verified.target_current_did_key == "did:key:z6Mktarget"
+    assert verified.target_did_aw == "did:aw:target"
+
+
 def test_verify_federation_envelope_rejects_unbound_signed_to():
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)

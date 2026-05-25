@@ -324,8 +324,8 @@ var teamCleanupCloudCmd = &cobra.Command{
 		"verify that the customer-controlled team controller authorized the projection\n" +
 		"delete. If the team controller key has already been retired, use\n" +
 		"--namespace-controller to sign with the namespace controller key; aweb Cloud\n" +
-		"will verify that key against the current AWID namespace controller for the\n" +
-		"team's domain.",
+		"will verify that key against the _awid.<domain> DNS TXT controller for the\n" +
+		"team's domain, with AWID registry lookup as a fallback when DNS is absent.",
 	RunE: runTeamCleanupCloud,
 }
 

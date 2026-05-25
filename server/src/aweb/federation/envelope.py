@@ -220,13 +220,19 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     # did:aw or the current did:key. Federation must preserve that same signed
     # payload vocabulary while the envelope still carries the resolved current
     # key for routing/freshness checks.
-    _expect_signed_value_in(
-        payload,
-        "to_did",
-        (model.target_current_did_key, model.target_did_aw),
-    )
+    signed_to_did = str(payload.get("to_did") or "").strip()
+    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
+    if signed_to_did:
+        _expect_signed_value_in(
+            payload,
+            "to_did",
+            (model.target_current_did_key, model.target_did_aw),
+        )
+    elif signed_to_stable_id != model.target_did_aw:
+        raise FederationEnvelopeError("Federation signed_payload to_did does not match")
     if model.target_did_aw.startswith("did:aw:"):
-        _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
+        if signed_to_stable_id != model.target_did_aw:
+            raise FederationEnvelopeError("Federation signed_payload to_stable_id does not match")
     elif payload.get("to_stable_id") not in (None, "", model.target_did_aw):
         raise FederationEnvelopeError("Federation signed_payload to_stable_id does not match")
     if model.sender_did_aw.startswith("did:aw:"):
