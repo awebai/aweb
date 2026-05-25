@@ -97,6 +97,7 @@ Bootstrap can be used in three broad modes:
 
 - Use when you cannot or should not auto-provision from this run (for example, non-interactive environments or policy constraints).
 - Bootstrap will print the next `aw init ...` commands to run inside each agent directory.
+- If you are not already in an initialized aweb workspace, add --skip-roles and --skip-instructions so bootstrap does not try to install server-side state before any workspace is connected.
 
 Policy guidance:
 
