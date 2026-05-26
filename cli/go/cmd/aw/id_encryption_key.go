@@ -1,0 +1,332 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
+)
+
+type idEncryptionKeyOutput struct {
+	Status         string   `json:"status"`
+	KeyID          string   `json:"key_id,omitempty"`
+	PublicKey      string   `json:"public_key,omitempty"`
+	PrivateKey     string   `json:"private_key_path,omitempty"`
+	StatePath      string   `json:"state_path,omitempty"`
+	AssertionPath  string   `json:"assertion_path,omitempty"`
+	Published      []string `json:"published,omitempty"`
+	PublishSkipped []string `json:"publish_skipped,omitempty"`
+	Warning        string   `json:"warning,omitempty"`
+}
+
+var idEncryptionKeyCmd = &cobra.Command{
+	Use:   "encryption-key",
+	Short: "Manage local E2E encryption keys for this self-custodial identity",
+}
+
+var idEncryptionKeySetupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Create or publish the local E2E encryption key for this identity",
+	RunE:  runIDEncryptionKeySetup,
+}
+
+var idEncryptionKeyRotateCmd = &cobra.Command{
+	Use:   "rotate",
+	Short: "Rotate the local E2E encryption key while keeping archived keys",
+	RunE:  runIDEncryptionKeyRotate,
+}
+
+var idEncryptionKeyShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show local E2E encryption key state",
+	RunE:  runIDEncryptionKeyShow,
+}
+
+func init() {
+	idEncryptionKeyCmd.AddCommand(idEncryptionKeySetupCmd)
+	idEncryptionKeyCmd.AddCommand(idEncryptionKeyRotateCmd)
+	idEncryptionKeyCmd.AddCommand(idEncryptionKeyShowCmd)
+	identityCmd.AddCommand(idEncryptionKeyCmd)
+}
+
+func runIDEncryptionKeySetup(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := setupOrRotateIdentityEncryptionKey(ctx, false)
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatIDEncryptionKey)
+	return nil
+}
+
+func runIDEncryptionKeyRotate(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := setupOrRotateIdentityEncryptionKey(ctx, true)
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatIDEncryptionKey)
+	return nil
+}
+
+func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
+	identity, err := resolveIdentity()
+	if err != nil {
+		return err
+	}
+	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return usageError("no local E2E encryption key state found; run `aw id encryption-key setup`")
+		}
+		return err
+	}
+	record := state.ActiveRecord()
+	if record == nil {
+		return usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
+	}
+	printOutput(idEncryptionKeyOutput{
+		Status:        "present",
+		KeyID:         record.KeyID,
+		PublicKey:     record.PublicKey,
+		PrivateKey:    resolveWorktreeRelativePath(identity.WorkingDir, record.PrivateKeyPath),
+		StatePath:     statePath,
+		AssertionPath: resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath),
+		Warning:       encryptionKeyBackupWarning(),
+	}, formatIDEncryptionKey)
+	return nil
+}
+
+func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEncryptionKeyOutput, error) {
+	identity, err := resolveIdentity()
+	if err != nil {
+		return idEncryptionKeyOutput{}, err
+	}
+	signingKey, err := resolveIdentitySigningKey(identity)
+	if err != nil {
+		return idEncryptionKeyOutput{}, err
+	}
+	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
+		return idEncryptionKeyOutput{}, usageError("E2E encryption keys are local self-custodial keys; this identity custody is %q", strings.TrimSpace(identity.Custody))
+	}
+	if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != strings.TrimSpace(identity.DID) {
+		return idEncryptionKeyOutput{}, usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), got)
+	}
+
+	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			state = &awconfig.EncryptionKeyState{}
+		} else {
+			return idEncryptionKeyOutput{}, err
+		}
+	}
+
+	previousKeyID := ""
+	if active := state.ActiveRecord(); active != nil {
+		previousKeyID = active.KeyID
+	}
+	if rotate && strings.TrimSpace(previousKeyID) == "" {
+		return idEncryptionKeyOutput{}, usageError("no active E2E encryption key found; run `aw id encryption-key setup` first")
+	}
+
+	record := state.ActiveRecord()
+	assertion := (*awid.EncryptionKeyAssertion)(nil)
+	status := "published"
+	if record == nil || rotate {
+		record, assertion, err = createLocalEncryptionKeyRecord(identity, signingKey, previousKeyID)
+		if err != nil {
+			return idEncryptionKeyOutput{}, err
+		}
+		state.ActiveKeyID = record.KeyID
+		state.UpsertRecord(*record)
+		if err := awconfig.SaveEncryptionKeyStateTo(statePath, state); err != nil {
+			return idEncryptionKeyOutput{}, err
+		}
+		status = "created"
+		if rotate {
+			status = "rotated"
+		}
+	} else {
+		if err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record); err != nil {
+			return idEncryptionKeyOutput{}, err
+		}
+		assertion, err = loadEncryptionAssertion(identity.WorkingDir, record.AssertionPath)
+		if err != nil {
+			return idEncryptionKeyOutput{}, err
+		}
+	}
+
+	published, skipped, publishErr := publishIdentityEncryptionKey(ctx, identity, signingKey, assertion)
+	if publishErr != nil {
+		return idEncryptionKeyOutput{}, publishErr
+	}
+	if len(published) > 0 {
+		record.PublishedAt = time.Now().UTC().Format(time.RFC3339)
+		state.UpsertRecord(*record)
+		_ = awconfig.SaveEncryptionKeyStateTo(statePath, state)
+	}
+
+	return idEncryptionKeyOutput{
+		Status:         status,
+		KeyID:          record.KeyID,
+		PublicKey:      record.PublicKey,
+		PrivateKey:     resolveWorktreeRelativePath(identity.WorkingDir, record.PrivateKeyPath),
+		StatePath:      statePath,
+		AssertionPath:  resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath),
+		Published:      published,
+		PublishSkipped: skipped,
+		Warning:        encryptionKeyBackupWarning(),
+	}, nil
+}
+
+func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, previousKeyID string) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, error) {
+	priv, rawPub, err := awid.GenerateX25519Keypair()
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now().UTC()
+	assertion, err := awid.BuildEncryptionKeyAssertion(signingKey, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), rawPub, previousKeyID, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	privateRel := awconfig.WorktreeEncryptionPrivateKeyRelativePath(assertion.EncryptionKeyID)
+	privatePath := filepath.Join(identity.WorkingDir, privateRel)
+	if err := awid.SaveX25519PrivateKey(privatePath, priv); err != nil {
+		return nil, nil, err
+	}
+	assertionRel := awconfig.WorktreeEncryptionAssertionRelativePath(assertion.EncryptionKeyID)
+	assertionPath := filepath.Join(identity.WorkingDir, assertionRel)
+	if err := saveEncryptionAssertion(assertionPath, assertion); err != nil {
+		return nil, nil, err
+	}
+	return &awconfig.EncryptionKeyRecord{
+		KeyID:          assertion.EncryptionKeyID,
+		PublicKey:      assertion.EncryptionPublicKey,
+		PrivateKeyPath: privateRel,
+		AssertionPath:  assertionRel,
+		CreatedAt:      assertion.CreatedAt,
+		NotBefore:      assertion.NotBefore,
+		ExpiresAt:      assertion.ExpiresAt,
+	}, assertion, nil
+}
+
+func validateEncryptionRecordPrivateKey(root string, record *awconfig.EncryptionKeyRecord) error {
+	if record == nil {
+		return usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
+	}
+	privatePath := resolveWorktreeRelativePath(root, record.PrivateKeyPath)
+	priv, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		return usageError("local E2E encryption private key is missing or unreadable at %s; restore it from backup before publishing this key, or run `aw id encryption-key rotate` to publish a new key", privatePath)
+	}
+	rawPub := priv.PublicKey().Bytes()
+	keyID, err := awid.ComputeEncryptionKeyID(rawPub)
+	if err != nil {
+		return err
+	}
+	if keyID != strings.TrimSpace(record.KeyID) {
+		return usageError("local E2E encryption private key at %s does not match active key %s; restore the matching archived key or rotate", privatePath, strings.TrimSpace(record.KeyID))
+	}
+	return nil
+}
+
+func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, assertion *awid.EncryptionKeyAssertion) ([]string, []string, error) {
+	published := []string{}
+	skipped := []string{}
+
+	if strings.TrimSpace(identity.StableID) != "" {
+		registry, err := resolveIdentityRegistryClient(identity)
+		if err != nil {
+			return nil, nil, err
+		}
+		registryURL, err := currentIdentityRegistryURL(ctx, identity, registry)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := registry.PublishEncryptionKey(ctx, registryURL, identity.StableID, assertion); err != nil {
+			return nil, nil, fmt.Errorf("publish encryption key to awid: %w", err)
+		}
+		published = append(published, "awid:"+registryURL)
+	} else {
+		skipped = append(skipped, "awid: local identity has no did:aw")
+	}
+
+	if hasWorkspaceBinding(identity.WorkingDir) {
+		client, _, err := resolveClientSelectionForDir(identity.WorkingDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err := client.PublishMyEncryptionKey(ctx, assertion); err != nil {
+			return nil, nil, fmt.Errorf("publish encryption key to aweb service: %w", err)
+		}
+		published = append(published, "aweb-service")
+	} else {
+		skipped = append(skipped, "aweb-service: no workspace binding")
+	}
+
+	if len(published) == 0 {
+		skipped = append(skipped, "no public discovery target was available; run this again after joining or registering with a service")
+	}
+	return published, skipped, nil
+}
+
+func hasWorkspaceBinding(workingDir string) bool {
+	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	if err != nil || workspace == nil {
+		return false
+	}
+	return awconfig.ActiveMembershipFor(workspace, teamState) != nil
+}
+
+func saveEncryptionAssertion(path string, assertion *awid.EncryptionKeyAssertion) error {
+	data, err := json.MarshalIndent(assertion, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return awid.AtomicWriteFile(path, data)
+}
+
+func loadEncryptionAssertion(root, relPath string) (*awid.EncryptionKeyAssertion, error) {
+	path := resolveWorktreeRelativePath(root, relPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read encryption key assertion %s: %w", path, err)
+	}
+	var assertion awid.EncryptionKeyAssertion
+	if err := json.Unmarshal(data, &assertion); err != nil {
+		return nil, fmt.Errorf("parse encryption key assertion %s: %w", path, err)
+	}
+	return &assertion, nil
+}
+
+func resolveWorktreeRelativePath(root, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(root, filepath.FromSlash(path))
+}
+
+func encryptionKeyBackupWarning() string {
+	return "Back up .aw/encryption-keys with this workspace. Losing archived E2E encryption keys makes old encrypted messages unrecoverable; AC/aweb cannot recover them."
+}

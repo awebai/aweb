@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"os"
@@ -23,9 +24,13 @@ const (
 	doctorCheckIdentityLocalAddress        = "identity.local.address_expected"
 	doctorCheckIdentityLocalRegistrySource = "identity.local.registry_url_source"
 	doctorCheckIdentityLocalRegistry       = "identity.local.public_registry_not_expected"
+	doctorCheckIdentityEncryptionState     = "identity.e2ee.encryption_state"
+	doctorCheckIdentityEncryptionPrivate   = "identity.e2ee.private_key"
+	doctorCheckIdentityEncryptionAssertion = "identity.e2ee.assertion"
 
 	doctorCheckAWIDDIDResolve            = "awid.did.resolve"
 	doctorCheckAWIDDIDCurrentKey         = "awid.did.current_key_matches_local"
+	doctorCheckAWIDEncryptionKey         = "awid.did.encryption_key_matches_local"
 	doctorCheckAWIDDIDLog                = "awid.did.log_verifies"
 	doctorCheckAWIDAddressResolve        = "awid.address.resolve"
 	doctorCheckAWIDAddressStableID       = "awid.address.matches_local_stable_id"
@@ -58,6 +63,10 @@ type doctorIdentityState struct {
 	signingKey    ed25519.PrivateKey
 	signingKeyDID string
 	signingKeyErr error
+
+	encryptionStatePath string
+	encryptionState     *awconfig.EncryptionKeyState
+	encryptionStateErr  error
 }
 
 type doctorRegistryClient interface {
@@ -101,9 +110,10 @@ func (r *doctorRunner) runRegistryDoctorChecks() {
 
 func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
 	state := &doctorIdentityState{
-		workingDir:     strings.TrimSpace(workingDir),
-		identityPath:   filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-		signingKeyPath: awconfig.WorktreeSigningKeyPath(workingDir),
+		workingDir:          strings.TrimSpace(workingDir),
+		identityPath:        filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
+		signingKeyPath:      awconfig.WorktreeSigningKeyPath(workingDir),
+		encryptionStatePath: awconfig.WorktreeEncryptionStatePath(workingDir),
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(state.identityPath)
@@ -134,6 +144,7 @@ func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
 	}
 
 	state.loadSigningKey()
+	state.loadEncryptionState()
 	return state
 }
 
@@ -195,6 +206,15 @@ func (s *doctorIdentityState) loadSigningKey() {
 	s.signingKeyDID = awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 }
 
+func (s *doctorIdentityState) loadEncryptionState() {
+	state, err := awconfig.LoadEncryptionKeyStateFrom(s.encryptionStatePath)
+	if err != nil {
+		s.encryptionStateErr = err
+		return
+	}
+	s.encryptionState = state
+}
+
 func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 	if state.identityErr != nil {
 		r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusFail, state.identityPath, "Local identity context could not be parsed.", "Repair .aw/identity.yaml before relying on identity diagnostics.", map[string]any{"error": state.identityErr.Error()}))
@@ -211,6 +231,7 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 		r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Identity is local.", "", map[string]any{"identity_scope": awid.IdentityModeLocal, "legacy_lifetime": awid.LifetimeEphemeral}))
 		r.addIdentityDIDFormatCheck(state)
 		r.addIdentitySigningKeyCheck(state)
+		r.addIdentityEncryptionKeyLocalChecks(state)
 		r.add(localCheck(doctorCheckIdentityLocalStableID, doctorStatusInfo, identityTarget(state), "Local identity does not require a did:aw stable_id.", "", map[string]any{"expected": false}))
 		r.add(localCheck(doctorCheckIdentityLocalAddress, doctorStatusInfo, identityTarget(state), "Local identity does not require a public address.", "", map[string]any{"expected": false}))
 		r.add(localCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusInfo, nil, "Local identity does not require an awid registry URL.", "", map[string]any{"expected": false}))
@@ -224,6 +245,7 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 			r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Active team certificate expects global identity.", "", map[string]any{"identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
 			r.addIdentityDIDFormatCheck(state)
 			r.addIdentitySigningKeyCheck(state)
+			r.addIdentityEncryptionKeyLocalChecks(state)
 			r.add(localPathCheck(doctorCheckIdentityLocalStableID, doctorStatusBlocked, state.identityPath, "Stable ID expectation requires global identity.yaml.", "Restore .aw/identity.yaml before using awid registry diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
 			r.add(localPathCheck(doctorCheckIdentityLocalAddress, doctorStatusBlocked, state.identityPath, "Address expectation requires global identity.yaml.", "Restore .aw/identity.yaml before using awid address diagnostics.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
 			r.add(localPathCheck(doctorCheckIdentityLocalRegistrySource, doctorStatusBlocked, state.identityPath, "Registry URL source requires global identity.yaml or AWID_REGISTRY_URL.", "Restore .aw/identity.yaml or set AWID_REGISTRY_URL.", map[string]any{"prerequisite": doctorCheckIdentityLocalContext}))
@@ -250,9 +272,79 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 	}
 	r.addIdentityDIDFormatCheck(state)
 	r.addIdentitySigningKeyCheck(state)
+	r.addIdentityEncryptionKeyLocalChecks(state)
 	r.addGlobalStableIDCheck(state)
 	r.addGlobalAddressCheck(state)
 	r.addRegistryURLSourceCheck(state)
+}
+
+func (r *doctorRunner) addIdentityEncryptionKeyLocalChecks(state *doctorIdentityState) {
+	if state == nil {
+		return
+	}
+	if state.custody != "" && state.custody != awid.CustodySelf {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusBlocked, state.encryptionStatePath, "Local E2E encryption key check is not applicable to non-self-custodial identity.", "", map[string]any{"custody": state.custody}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionPrivate, "Local E2E encryption key is not applicable to non-self-custodial identity.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "Local E2E encryption key is not applicable to non-self-custodial identity.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		return
+	}
+	if state.signingKeyErr != nil || state.signingKeyDID == "" || state.signingKeyDID != strings.TrimSpace(state.did) {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusBlocked, state.encryptionStatePath, "E2E encryption-key diagnostics require a valid local signing key first.", "Resolve signing-key diagnostics before publishing or rotating E2E encryption keys.", map[string]any{"prerequisite": doctorCheckIdentityLocalSigningKey}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionPrivate, "E2E encryption private-key diagnostics require encryption state.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require encryption state.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		return
+	}
+	if state.encryptionStateErr != nil {
+		message := "Local E2E encryption key state could not be loaded."
+		if errors.Is(state.encryptionStateErr, os.ErrNotExist) {
+			message = "Local E2E encryption key state is missing."
+		}
+		r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusFail, state.encryptionStatePath, message, "Run `aw id encryption-key setup` and back up .aw/encryption-keys.", map[string]any{"error": safeLocalKeyError(state.encryptionStateErr)}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionPrivate, "E2E encryption private-key diagnostics require encryption state.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require encryption state.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		return
+	}
+	record := state.encryptionState.ActiveRecord()
+	if record == nil {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusFail, state.encryptionStatePath, "Local E2E encryption key state has no active key.", "Run `aw id encryption-key setup`.", nil))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionPrivate, "E2E encryption private-key diagnostics require an active key.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require an active key.", doctorCheckIdentityEncryptionState, localPathTarget(state.encryptionStatePath)))
+		return
+	}
+	r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusOK, state.encryptionStatePath, "Local E2E encryption key state has an active key.", "", map[string]any{"encryption_key_id": record.KeyID}))
+
+	privatePath := resolveWorktreeRelativePath(state.workingDir, record.PrivateKeyPath)
+	priv, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusFail, privatePath, "Local E2E encryption private key could not be loaded.", "Restore this key from backup or rotate the E2E encryption key; old messages for this key are unrecoverable without it.", map[string]any{"error": safeLocalKeyError(err), "encryption_key_id": record.KeyID}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require the private key.", doctorCheckIdentityEncryptionPrivate, localPathTarget(privatePath)))
+		return
+	}
+	rawPub := priv.PublicKey().Bytes()
+	keyID, err := awid.ComputeEncryptionKeyID(rawPub)
+	if err != nil {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusFail, privatePath, "Local E2E encryption private key is malformed.", "Restore this key from backup or rotate the E2E encryption key.", map[string]any{"error": err.Error()}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require a valid private key.", doctorCheckIdentityEncryptionPrivate, localPathTarget(privatePath)))
+		return
+	}
+	publicKey := base64.RawStdEncoding.EncodeToString(rawPub)
+	if keyID != strings.TrimSpace(record.KeyID) || publicKey != strings.TrimSpace(record.PublicKey) {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusFail, privatePath, "Local E2E encryption private key does not match encryption.yaml.", "Restore the matching archived key or rotate and publish a new E2E encryption key.", map[string]any{"private_key_id": keyID, "state_key_id": strings.TrimSpace(record.KeyID)}))
+		r.add(blockedLocalCheck(doctorCheckIdentityEncryptionAssertion, "E2E encryption assertion diagnostics require private key/state coherence.", doctorCheckIdentityEncryptionPrivate, localPathTarget(privatePath)))
+		return
+	}
+	r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusOK, privatePath, "Local E2E encryption private key matches the active key id.", "", map[string]any{"encryption_key_id": keyID}))
+
+	assertion, err := loadEncryptionAssertion(state.workingDir, record.AssertionPath)
+	if err != nil {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion could not be loaded.", "Run `aw id encryption-key setup` to recreate and publish the identity-signed assertion.", map[string]any{"error": err.Error()}))
+		return
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(state.did), strings.TrimSpace(state.stableID), time.Now().UTC()); err != nil {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion is stale or mismatched.", "Run `aw id encryption-key setup` or `aw id encryption-key rotate`; do not fall back to plaintext.", map[string]any{"error": err.Error()}))
+		return
+	}
+	r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusOK, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion verifies under the identity signing key.", "", map[string]any{"encryption_key_id": assertion.EncryptionKeyID}))
 }
 
 func (r *doctorRunner) addIdentityDIDFormatCheck(state *doctorIdentityState) {
@@ -334,6 +426,7 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 	awidCheckIDs := []string{
 		doctorCheckAWIDDIDResolve,
 		doctorCheckAWIDDIDCurrentKey,
+		doctorCheckAWIDEncryptionKey,
 		doctorCheckAWIDDIDLog,
 		doctorCheckAWIDAddressResolve,
 		doctorCheckAWIDAddressStableID,
@@ -387,11 +480,39 @@ func (r *doctorRunner) runOnlineRegistryChecks(state *doctorIdentityState, clien
 			nextStep = "Resolve awid.did.current_key_matches_local first."
 		}
 		r.add(awidCheck(doctorCheckAWIDDIDLog, doctorStatusBlocked, message, nextStep, map[string]any{"prerequisite": blockedPrerequisite}))
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusBlocked, "Published encryption-key comparison requires resolved did:aw state.", "Resolve awid.did.resolve first.", map[string]any{"prerequisite": blockedPrerequisite}))
 		r.addBlockedAddressChecks(message, blockedPrerequisite)
 		return
 	}
+	r.addAWIDEncryptionKeyCheck(state, resolution)
 	r.addDIDLogCheck(ctx, state, client, resolution)
 	r.addAddressChecks(ctx, state, client)
+}
+
+func (r *doctorRunner) addAWIDEncryptionKeyCheck(state *doctorIdentityState, resolution *awid.DidKeyResolution) {
+	if resolution == nil {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusBlocked, "Published encryption-key comparison requires resolved did:aw state.", "Resolve awid.did.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDDIDResolve}))
+		return
+	}
+	if resolution.EncryptionKey == nil {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid has no published E2E encryption key assertion for this identity.", "Run `aw id encryption-key setup` before expecting to receive E2E messages.", map[string]any{"did_aw": state.stableID}))
+		return
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(resolution.EncryptionKey, strings.TrimSpace(state.did), strings.TrimSpace(state.stableID), time.Now().UTC()); err != nil {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption-key assertion is invalid for the local identity.", "Rotate or republish the E2E encryption key; do not accept substituted keys.", map[string]any{"error": err.Error()}))
+		return
+	}
+	localKeyID := ""
+	if state.encryptionState != nil {
+		if record := state.encryptionState.ActiveRecord(); record != nil {
+			localKeyID = strings.TrimSpace(record.KeyID)
+		}
+	}
+	if localKeyID != "" && strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID) != localKeyID {
+		r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusFail, "awid published E2E encryption key does not match the local active private key.", "Run `aw id encryption-key setup` from the identity home device or restore the matching private key.", map[string]any{"local_encryption_key_id": localKeyID, "published_encryption_key_id": strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID)}))
+		return
+	}
+	r.add(awidCheck(doctorCheckAWIDEncryptionKey, doctorStatusOK, "awid published E2E encryption key matches the local identity.", "", map[string]any{"encryption_key_id": strings.TrimSpace(resolution.EncryptionKey.EncryptionKeyID)}))
 }
 
 func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIdentityState, client doctorRegistryClient) (*awid.DidKeyResolution, bool, string) {

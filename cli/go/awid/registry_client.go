@@ -296,6 +296,22 @@ func (c *RegistryClient) RegisterIdentity(
 	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
 }
 
+func (c *RegistryClient) PublishEncryptionKey(
+	ctx context.Context,
+	registryURL string,
+	didAW string,
+	assertion *EncryptionKeyAssertion,
+) error {
+	didAW = strings.TrimSpace(didAW)
+	if didAW == "" {
+		return fmt.Errorf("did:aw is required")
+	}
+	if assertion == nil {
+		return fmt.Errorf("encryption key assertion is required")
+	}
+	return c.requestJSON(ctx, http.MethodPost, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/encryption-key", nil, assertion, nil)
+}
+
 func (c *RegistryClient) RotateDIDKey(
 	ctx context.Context,
 	registryURL string,

@@ -1,10 +1,14 @@
 package awid
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -65,6 +69,113 @@ func encryptionAssertionSignedPayload(assertion *EncryptionKeyAssertion) (string
 		payload["previous_encryption_key_id"] = strings.TrimSpace(*assertion.PreviousEncryptionKeyID)
 	}
 	return CanonicalJSONValue(payload)
+}
+
+func GenerateX25519Keypair() (*ecdh.PrivateKey, []byte, error) {
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate x25519 keypair: %w", err)
+	}
+	return priv, priv.PublicKey().Bytes(), nil
+}
+
+func SaveX25519PrivateKey(path string, priv *ecdh.PrivateKey) error {
+	if priv == nil {
+		return fmt.Errorf("missing x25519 private key")
+	}
+	data := pem.EncodeToMemory(&pem.Block{
+		Type:  "X25519 PRIVATE KEY",
+		Bytes: priv.Bytes(),
+	})
+	return atomicWriteFile(path, data)
+}
+
+func LoadX25519PrivateKey(path string) (*ecdh.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block in %s", path)
+	}
+	if block.Type != "X25519 PRIVATE KEY" {
+		return nil, fmt.Errorf("unexpected PEM type %q in %s", block.Type, path)
+	}
+	if len(block.Bytes) != 32 {
+		return nil, fmt.Errorf("invalid x25519 private key size %d in %s", len(block.Bytes), path)
+	}
+	priv, err := ecdh.X25519().NewPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse x25519 private key %s: %w", path, err)
+	}
+	return priv, nil
+}
+
+func BuildEncryptionKeyAssertion(
+	signingKey ed25519.PrivateKey,
+	identityDID string,
+	identityStableID string,
+	rawPublicKey []byte,
+	previousEncryptionKeyID string,
+	now time.Time,
+) (*EncryptionKeyAssertion, error) {
+	if signingKey == nil {
+		return nil, fmt.Errorf("signing key is required")
+	}
+	identityDID = strings.TrimSpace(identityDID)
+	if identityDID == "" {
+		return nil, fmt.Errorf("identity did:key is required")
+	}
+	if got := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != identityDID {
+		return nil, fmt.Errorf("identity did:key %s does not match signing key %s", identityDID, got)
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC().Truncate(time.Second)
+	keyID, err := ComputeEncryptionKeyID(rawPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	assertion := &EncryptionKeyAssertion{
+		Operation:           "publish_encryption_key",
+		Version:             EncryptionKeyAssertionVersion,
+		IdentityDID:         identityDID,
+		EncryptionKeyID:     keyID,
+		EncryptionPublicKey: base64.RawStdEncoding.EncodeToString(rawPublicKey),
+		Algorithm:           EncryptionKeyAlgorithmX25519,
+		CreatedAt:           now.Format(time.RFC3339),
+		NotBefore:           now.Format(time.RFC3339),
+		ExpiresAt:           now.Add(90 * 24 * time.Hour).Format(time.RFC3339),
+	}
+	if strings.TrimSpace(identityStableID) != "" {
+		stableID := strings.TrimSpace(identityStableID)
+		assertion.IdentityStableID = &stableID
+	}
+	if strings.TrimSpace(previousEncryptionKeyID) != "" {
+		prev := strings.TrimSpace(previousEncryptionKeyID)
+		assertion.PreviousEncryptionKeyID = &prev
+	}
+	if err := SignEncryptionKeyAssertion(assertion, signingKey); err != nil {
+		return nil, err
+	}
+	return assertion, nil
+}
+
+func SignEncryptionKeyAssertion(assertion *EncryptionKeyAssertion, signingKey ed25519.PrivateKey) error {
+	if assertion == nil {
+		return fmt.Errorf("missing encryption key assertion")
+	}
+	if signingKey == nil {
+		return fmt.Errorf("signing key is required")
+	}
+	payload, err := encryptionAssertionSignedPayload(assertion)
+	if err != nil {
+		return err
+	}
+	assertion.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
+	return nil
 }
 
 // VerifyEncryptionKeyAssertion verifies the identity-authorized encryption key

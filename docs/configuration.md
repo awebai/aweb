@@ -137,6 +137,37 @@ Self-custodial identities store their active Ed25519 private signing key in:
 .aw/signing.key
 ```
 
+## Local E2E Encryption Keyring: `.aw/encryption.yaml`
+
+Self-custodial E2E messaging uses a separate X25519 encryption keyring:
+
+```text
+.aw/encryption.yaml
+.aw/encryption-keys/
+```
+
+`encryption.yaml` records the active encryption key id. `encryption-keys/`
+contains the active private encryption key, archived private encryption keys
+needed for old messages, and the identity-signed public assertions that can be
+published to AWID or an aweb service. These keys are not app configuration and
+are never uploaded to AC/aweb.
+
+Create or publish the active key with:
+
+```bash
+aw id encryption-key setup
+```
+
+Rotate with:
+
+```bash
+aw id encryption-key rotate
+```
+
+Back up `.aw/encryption-keys/` with the workspace. Losing an archived
+encryption private key makes messages encrypted to that key unrecoverable; the
+server cannot repair or decrypt them.
+
 This key is worktree-local.
 
 ## Team Certificates: `.aw/team-certs/`

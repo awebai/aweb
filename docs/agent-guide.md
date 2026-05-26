@@ -525,6 +525,10 @@ Worktree identity and connection state lives in `.aw/` in the working
 directory:
 
 - `.aw/signing.key` — Ed25519 private key (identity).
+- `.aw/encryption.yaml` and `.aw/encryption-keys/` — local E2E
+  encryption keyring. Run `aw id encryption-key setup` to create/publish
+  it and `aw id encryption-key rotate` to rotate. Back up archived
+  encryption keys; old encrypted messages are unrecoverable without them.
 - `.aw/identity.yaml` — global identity metadata (only for
   global identities).
 - `.aw/team-certs/` — team membership certificates.

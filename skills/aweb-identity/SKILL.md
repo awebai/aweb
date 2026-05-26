@@ -27,6 +27,7 @@ Vocabulary used throughout this skill and referenced by sibling skills. Read onc
 A workspace can hold any combination of these. For team-related files (`teams.yaml`, `team-certs/`), see `aweb-team-membership`.
 
 - `signing.key` — Ed25519 private key for self-custodial workspaces. If absent, this directory has no local signing identity. Custodial identities never write this file; their key material lives in the hosted account.
+- `encryption.yaml` and `encryption-keys/` — local E2E message-decryption keyring. `encryption.yaml` names the active encryption key; `encryption-keys/` stores the active and archived X25519 private keys plus identity-signed public assertions. Back these up with the workspace. Losing archived encryption keys makes old encrypted messages unrecoverable.
 - `workspace.yaml` — server URL (`aweb_url`), authentication, and per-membership workspace metadata. Binds this directory to one aweb coordination server. Does NOT hold the active-team selection (that's in `teams.yaml`).
 
 ## `aw init` vs `aw id create` — workspace onboarding vs identity-only
@@ -67,6 +68,16 @@ The normative E2E contract is `docs/e2e-messaging-contract.md`. Do not invent pr
 For local E2E messaging, the self-custodial client needs both identity signing material and local encryption private keys. Back up the active encryption private key and archived encryption private keys with the same seriousness as `.aw/signing.key`: losing archived encryption keys makes historical encrypted messages unrecoverable. AC/aweb cannot recover or decrypt old encrypted messages for support.
 
 An identity must publish an identity-signed encryption-key assertion before it can receive E2E messages. Missing, stale, unsigned, or mismatched encryption-key discovery fails closed; do not retry as plaintext unless the human explicitly chooses the separately named legacy plaintext mode from the final CLI. Service signatures may assert route support, but not recipient encryption-key authority. Local identities omit absent `stable_id`/address fields instead of sending empty strings. In non-interactive runs, stop, report the exact `aw doctor` / command error, and ask the human or coordinator to run the approved key setup, backup, or rotation flow.
+
+Use the CLI keyring commands for self-custodial E2E readiness:
+
+```bash
+aw id encryption-key setup    # create/publish the active key if needed
+aw id encryption-key rotate   # publish a new active key; keep archived keys
+aw id encryption-key show     # inspect local keyring state
+```
+
+`setup` stores the private key locally before publishing the public assertion. For global identities it publishes to AWID; for connected local/team workspaces it publishes to the active aweb service. `rotate` must not delete old private keys. After either command, remind the human to back up `.aw/encryption-keys/`.
 
 Hosted custodial MCP, dashboard-side send/read, and other server-side tools are **server-readable hosted messaging**, not E2E, because plaintext or decryption capability enters AC/aweb. Do not tell users that hosted custodial/server-side messaging is end-to-end encrypted unless a future design keeps plaintext and decryption fully outside AC.
 
@@ -150,7 +161,7 @@ Interpret failures by what's missing (file references assume a self-custodial CL
 
 - **No `.aw/` in this directory** — there is no workspace here at all. Run `aw init` or move to a directory that has been initialized.
 - **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created.
-- **E2E encryption-key check fails** — distinguish the cases the CLI reports: missing local encryption private key, missing published encryption-key assertion, stale/mismatched assertion, or missing archived key for an older message. Do not advise plaintext fallback. Capture the exact error, run `aw doctor` when available, and ask the human to restore keys from backup or run the approved setup/rotation flow.
+- **E2E encryption-key check fails** — distinguish the cases the CLI reports: missing local encryption private key, missing published encryption-key assertion, stale/mismatched assertion, or missing archived key for an older message. Do not advise plaintext fallback. Capture the exact error, run `aw doctor` when available, and ask the human to restore keys from backup or run `aw id encryption-key setup` / `aw id encryption-key rotate` as appropriate.
 - **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to any aweb server, even when `signing.key` is present. Re-run `aw init`.
 - **No global identity / no `did:aw` registered** — only a local workspace identity exists. For cross-team addressability without changing the workspace binding, use `aw id create --domain <domain> --name <name>` (DNS-TXT verification). Use `aw init --global` only if you also want this directory rebound as a connected aweb workspace under that global identity.
 - **Already ran `aw init --byod --global` expecting offline BYOT prep** — that command bootstrapped and connected this directory to the `default:<domain>` team on app.aweb.ai (the team created during BYOD onboarding), leaving `.aw/{identity.yaml,signing.key,teams.yaml,workspace.yaml,team-certs/}` populated. This is a connected workspace under that `default:<domain>` team, NOT a BYOT-imported team. To recover, pick one:

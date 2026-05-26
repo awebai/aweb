@@ -34,6 +34,12 @@ func formatIDCreate(v any) string {
 	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
 	sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.IdentityPath))
 	sb.WriteString(fmt.Sprintf("Key:         %s\n", out.SigningKeyPath))
+	if strings.TrimSpace(out.EncryptionKeyID) != "" {
+		sb.WriteString(fmt.Sprintf("E2E Key:     %s\n", out.EncryptionKeyID))
+	}
+	if strings.TrimSpace(out.EncryptionKeyPath) != "" {
+		sb.WriteString(fmt.Sprintf("E2E Secret:  %s\n", out.EncryptionKeyPath))
+	}
 	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryStatus))
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry URL: %s\n", out.RegistryURL))
@@ -43,6 +49,10 @@ func formatIDCreate(v any) string {
 	}
 	if strings.TrimSpace(out.ControllerDID) != "" {
 		sb.WriteString("\nKeep ~/.awid safe and backed up. It contains namespace controller keys for domains you manage.\n")
+	}
+	if strings.TrimSpace(out.EncryptionKeyID) != "" {
+		sb.WriteString(encryptionKeyBackupWarning())
+		sb.WriteByte('\n')
 	}
 	return sb.String()
 }
@@ -155,6 +165,39 @@ func formatIDRotate(v any) string {
 	}
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
+	}
+	return sb.String()
+}
+
+func formatIDEncryptionKey(v any) string {
+	out := v.(idEncryptionKeyOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	if strings.TrimSpace(out.KeyID) != "" {
+		sb.WriteString(fmt.Sprintf("Key ID:      %s\n", out.KeyID))
+	}
+	if strings.TrimSpace(out.PrivateKey) != "" {
+		sb.WriteString(fmt.Sprintf("Private key: %s\n", out.PrivateKey))
+	}
+	if strings.TrimSpace(out.StatePath) != "" {
+		sb.WriteString(fmt.Sprintf("State:       %s\n", out.StatePath))
+	}
+	if len(out.Published) > 0 {
+		sb.WriteString("Published:\n")
+		for _, target := range out.Published {
+			sb.WriteString(fmt.Sprintf("- %s\n", target))
+		}
+	}
+	if len(out.PublishSkipped) > 0 {
+		sb.WriteString("Skipped:\n")
+		for _, target := range out.PublishSkipped {
+			sb.WriteString(fmt.Sprintf("- %s\n", target))
+		}
+	}
+	if strings.TrimSpace(out.Warning) != "" {
+		sb.WriteByte('\n')
+		sb.WriteString(out.Warning)
+		sb.WriteByte('\n')
 	}
 	return sb.String()
 }

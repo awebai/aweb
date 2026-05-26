@@ -46,6 +46,14 @@ did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
 
 Self-custodial workspaces store the private key locally in `.aw/signing.key`.
 
+E2E message decryption uses a separate local X25519 keyring, not the Ed25519
+signing key. Self-custodial clients store it in `.aw/encryption.yaml` and
+`.aw/encryption-keys/`. Run `aw id encryption-key setup` before expecting the
+identity to receive E2E messages, and `aw id encryption-key rotate` when
+rotating encryption material. The CLI stores the private encryption key before
+publishing the identity-signed public assertion. Back up `.aw/encryption-keys/`;
+losing archived encryption keys makes old encrypted messages unrecoverable.
+
 This guide focuses on local self-custodial CLI workspaces. Hosted/operator
 custody variants are described in the canonical SoT docs rather than repeated
 here.

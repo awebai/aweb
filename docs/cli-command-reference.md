@@ -219,6 +219,7 @@ Subcommands:
 - `addresses` List registry addresses for a did:aw
 - `cert` Team certificate operations
 - `create` Create a standalone global identity with a DNS-backed address in .aw/
+- `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `log` Show an identity log
 - `namespace` Inspect or recover namespace controller state
 - `register` Register the current global identity at the configured registry
@@ -253,6 +254,47 @@ Subcommands:
 
 Flags:
 - `-h, --help help for cert`
+
+## `id encryption-key`
+
+### `id encryption-key`
+
+Manage local E2E encryption keys for this self-custodial identity
+
+Subcommands:
+- `rotate` Rotate the local E2E encryption key while keeping archived keys
+- `setup` Create or publish the local E2E encryption key for this identity
+- `show` Show local E2E encryption key state
+
+Flags:
+- `-h, --help help for encryption-key`
+
+## `id encryption-key rotate`
+
+### `id encryption-key rotate`
+
+Rotate the local E2E encryption key while keeping archived keys
+
+Flags:
+- `-h, --help help for rotate`
+
+## `id encryption-key setup`
+
+### `id encryption-key setup`
+
+Create or publish the local E2E encryption key for this identity
+
+Flags:
+- `-h, --help help for setup`
+
+## `id encryption-key show`
+
+### `id encryption-key show`
+
+Show local E2E encryption key state
+
+Flags:
+- `-h, --help help for show`
 
 ## `id cert show`
 

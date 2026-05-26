@@ -270,6 +270,21 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				"created_at":      "2026-04-04T00:00:00Z",
 				"updated_at":      "2026-04-04T00:00:00Z",
 			})
+		case "/v1/did/" + createdDIDAW + "/encryption-key":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["operation"] != "publish_encryption_key" {
+				t.Fatalf("encryption operation=%v", payload["operation"])
+			}
+			if payload["identity_did"] != createdDIDKey {
+				t.Fatalf("encryption identity_did=%v want %v", payload["identity_did"], createdDIDKey)
+			}
+			if payload["identity_stable_id"] != createdDIDAW {
+				t.Fatalf("encryption identity_stable_id=%v want %v", payload["identity_stable_id"], createdDIDAW)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -309,6 +324,9 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if got["registry_url"] != server.URL {
 		t.Fatalf("registry_url=%v want %v", got["registry_url"], server.URL)
 	}
+	if got["encryption_key_id"] == "" {
+		t.Fatalf("encryption_key_id missing: %#v", got)
+	}
 	if namespaceAuthDID == "" || addressAuthDID == "" {
 		t.Fatalf("missing controller auth DID: namespace=%q address=%q", namespaceAuthDID, addressAuthDID)
 	}
@@ -332,6 +350,12 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.pub")); !os.IsNotExist(err) {
 		t.Fatalf("signing.pub should not exist, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); err != nil {
+		t.Fatalf("encryption.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption-keys")); err != nil {
+		t.Fatalf("encryption-keys dir missing: %v", err)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
@@ -381,6 +405,124 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	}
 	if meta.ControllerDID != namespaceAuthDID {
 		t.Fatalf("controller_did=%q want %q", meta.ControllerDID, namespaceAuthDID)
+	}
+}
+
+func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	var published []*awid.EncryptionKeyAssertion
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+stableID+"/encryption-key":
+			var assertion awid.EncryptionKeyAssertion
+			if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+				t.Fatal(err)
+			}
+			if err := awid.VerifyEncryptionKeyAssertion(&assertion, did, stableID, time.Now().UTC()); err != nil {
+				t.Fatalf("invalid assertion: %v", err)
+			}
+			published = append(published, &assertion)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        "acme.com/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-05-26T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), priv); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+
+	runJSON := func(args ...string) map[string]any {
+		t.Helper()
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = testCommandEnv(tmp)
+		run.Dir = tmp
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+		}
+		var got map[string]any
+		if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+			t.Fatalf("invalid json: %v\n%s", err, string(out))
+		}
+		return got
+	}
+
+	setup := runJSON("id", "encryption-key", "setup", "--json")
+	firstKeyID, _ := setup["key_id"].(string)
+	if firstKeyID == "" {
+		t.Fatalf("setup missing key_id: %#v", setup)
+	}
+	if len(published) != 1 || published[0].EncryptionKeyID != firstKeyID {
+		t.Fatalf("published=%#v want first key %s", published, firstKeyID)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); err != nil {
+		t.Fatalf("encryption.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption-keys")); err != nil {
+		t.Fatalf("encryption-keys dir missing: %v", err)
+	}
+
+	rotate := runJSON("id", "encryption-key", "rotate", "--json")
+	secondKeyID, _ := rotate["key_id"].(string)
+	if secondKeyID == "" || secondKeyID == firstKeyID {
+		t.Fatalf("rotate key_id=%q first=%q", secondKeyID, firstKeyID)
+	}
+	if len(published) != 2 || published[1].EncryptionKeyID != secondKeyID {
+		t.Fatalf("published=%#v want second key %s", published, secondKeyID)
+	}
+	if published[1].PreviousEncryptionKeyID == nil || *published[1].PreviousEncryptionKeyID != firstKeyID {
+		t.Fatalf("previous key=%v want %s", published[1].PreviousEncryptionKeyID, firstKeyID)
+	}
+
+	show := runJSON("id", "encryption-key", "show", "--json")
+	if show["key_id"] != secondKeyID {
+		t.Fatalf("show key_id=%v want %s", show["key_id"], secondKeyID)
+	}
+
+	privatePath, _ := show["private_key_path"].(string)
+	if privatePath == "" {
+		t.Fatalf("show private_key_path missing: %#v", show)
+	}
+	if err := os.Remove(privatePath); err != nil {
+		t.Fatalf("remove private key: %v", err)
+	}
+	run := exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("setup should fail when private key is missing\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "restore it from backup before publishing") {
+		t.Fatalf("missing backup guidance:\n%s", string(out))
+	}
+	if len(published) != 2 {
+		t.Fatalf("missing private key must not republish; published=%d", len(published))
 	}
 }
 
@@ -793,6 +935,27 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 				"created_at":      "2026-04-05T00:00:00Z",
 				"updated_at":      "2026-04-05T00:00:00Z",
 			})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key") && r.Method == http.MethodPost:
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/encryption-key")
+			mapping, ok := didMappings[stableID]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["operation"] != "publish_encryption_key" {
+				t.Fatalf("encryption operation=%v", payload["operation"])
+			}
+			if payload["identity_did"] != mapping.didKey {
+				t.Fatalf("encryption identity_did=%v want %v", payload["identity_did"], mapping.didKey)
+			}
+			if payload["identity_stable_id"] != stableID {
+				t.Fatalf("encryption identity_stable_id=%v want %v", payload["identity_stable_id"], stableID)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
