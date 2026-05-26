@@ -34,6 +34,11 @@ commits are selected. The train should move in this order:
    - Encryption-key assertion publication/discovery.
    - Identity-authorized key facts; service signatures may assert route support
      only, not recipient key authority.
+   - Treat `awid-service` (PyPI package/tag `awid-service-vX.Y.Z`) and `awid`
+     (Docker image/tag `awid-vX.Y.Z`) as independently released artifacts. They
+     may or may not move together. If `awid-service` is unchanged and only the
+     Docker image moves, record that asymmetry in the verified-live mail; never
+     push an `awid-service-v...` tag when there is no diff for that artifact.
    - Release gate: key discovery can distinguish supported, missing assertion,
      stale assertion, unsigned assertion, and mismatched identity.
 3. **aweb server + `aw` CLI**
@@ -51,6 +56,9 @@ commits are selected. The train should move in this order:
    - Hosted custodial MCP, dashboard-side compose/read, and other server-side
      tools remain labeled **server-readable hosted messaging**, not encrypted v2
      local-client messaging.
+   - AC production deployment remains a manual Render step: tag, wait for GHCR
+     image/workflow completion, mail the human operator for the Render deploy,
+     verify `/health` flips to the expected version, then run the smoke probe.
    - Release gate: dashboard/API/support surfaces show metadata-only or a clear
      blocked/unavailable state for v2 plaintext.
 5. **Channel, Pi, `aw run`, skills, and package docs**
@@ -120,7 +128,11 @@ compatible versions for:
 The fixture at
 [`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json)
 contains the machine-checkable version of this matrix. Every row is a release
-blocker for the relevant component before broad enablement.
+blocker for the relevant component before broad enablement. Run the matrix
+against the exact release artifacts or a staged deployment. For federation, use
+and extend the existing two-server/multi-client harness
+[`../scripts/e2e-oss-federation.sh`](../scripts/e2e-oss-federation.sh) rather
+than building a parallel version-skew stack.
 
 | Case | Expected behavior | Release-blocking assertion |
 | --- | --- | --- |
@@ -185,6 +197,11 @@ Release blockers:
 - billing and abuse dashboards do not include content-derived categories for v2,
 - dashboard/conversation lists do not generate server-side plaintext previews.
 
+If a slice introduces background reconciliation such as encryption-key assertion
+staleness checks, document the cron ownership and expiry. Cron jobs created with
+`CronCreate` expire after seven days; the weekly operations check must recreate
+or confirm them rather than assuming an indefinite background job.
+
 ## Rollout phases
 
 1. **Dark launch**
@@ -208,6 +225,11 @@ Release blockers:
    - Release owner records exact versions, flags, test evidence, Hestia release
      mechanics review, Mia implementation/support review, Athena metadata
      allowance, and any AC/dashboard approvals.
+
+Run a rollback rehearsal before advancing out of each phase, not only once at
+the end of the rollout. The rehearsal should prove the phase's disabled behavior
+and confirm that already-stored encrypted history stays ciphertext/metadata with
+local-client decryption only.
 
 ## Rollback posture
 
@@ -237,6 +259,26 @@ If a release must roll back after users have sent v2 messages, keep a forward-fi
 plan for read/decrypt compatibility. Message history remains encrypted content
 plus metadata; rollback cannot make it server-readable.
 
+## Release mechanics review bar
+
+Hestia release-mechanics review for each train component checks:
+
+- the full component release chain is green (`make release-ready`, `make ship`,
+  or the component's equivalent), not only focused tests,
+- verified-live mail has four explicit points: what fixed, what did not fix,
+  evidence, and live check,
+- published tarballs/images/artifacts are content-verified, not only version
+  bumped; for packaged skills, the published `SKILL.md` body must match the
+  canonical source,
+- CLI-only slices use the tag-only-at-target-sha pattern when no in-tree server
+  bump is required,
+- `awid-service` is listed explicitly iff its diff is non-zero; otherwise the
+  verified-live mail says `awid-service` was unchanged and not released.
+
+Tags are pushed individually. Never batch tag pushes for the E2E train. Use one
+`git push origin <tag>` per tag, watch the workflow complete, verify the
+published artifact, then push the next tag.
+
 ## Release evidence checklist
 
 Before tags or production enablement, collect and link:
@@ -244,11 +286,15 @@ Before tags or production enablement, collect and link:
 - exact commits and package versions for every release train component,
 - migration list and confirmation no existing migration baseline was edited for
   additive schema changes,
-- mixed-version matrix results from the release artifacts,
+- mixed-version matrix results from the exact release artifacts or staged
+  deployment,
 - no-plaintext scan results for DB rows, logs, SSE events, dashboard/API
   responses, support bundles, DB dumps, and release artifacts,
+- PyPI artifact checks use the per-version endpoint
+  `/pypi/<package>/<version>/json`; top-level `info.version` may lag behind
+  because of cache propagation,
 - metadata-only billing/usage/support fixture validation,
-- rollback rehearsal notes,
+- rollback rehearsal notes for every rollout phase,
 - Hestia release-mechanics review,
 - Mia implementation/support review,
 - Athena metadata allowance review,
@@ -258,7 +304,8 @@ Before tags or production enablement, collect and link:
 ## Ownership
 
 - Release owner / Hestia: tags, package publish, deploy sequencing, rollback
-  decision, final version table.
+  decision, final version table, individual tag pushes, artifact verification,
+  verified-live mail, and manual AC Render deploy coordination.
 - Grace: `aweb-aapv` epic sequencing and cross-slice contract integrity.
 - Mia: implementation-readiness and support/admin wording review.
 - Athena: cryptographic/metadata allowance review.
