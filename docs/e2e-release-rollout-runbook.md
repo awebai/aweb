@@ -222,7 +222,9 @@ Allowed rollback actions:
 - stop federation v2 egress to a peer whose route support is failing,
 - show clear “encrypted send unavailable” diagnostics.
 
-Forbidden rollback actions:
+Forbidden rollback actions apply across server rollback, clients, and agents
+participating in the release response. Servers cannot ask for these actions, and
+clients/agents must not perform them during a panic rollback:
 
 - rewrite encrypted messages into plaintext,
 - ask the server/support to decrypt,
