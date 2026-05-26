@@ -7,11 +7,13 @@ import pytest
 import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import (
+    MessageDeliveredEvent,
     ReservationAcquiredEvent,
     TaskClaimedEvent,
     TaskCreatedEvent,
     TaskUnclaimedEvent,
     TeamChatMessageSentEvent,
+    TeamMessageSentEvent,
     TeamMessageAcknowledgedEvent,
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
@@ -232,6 +234,39 @@ def test_translate_uses_workspace_ids_for_workspace_oriented_events():
     assert task_event.workspace_id == actor_workspace_id
     assert isinstance(reservation_event, ReservationAcquiredEvent)
     assert reservation_event.workspace_id == holder_workspace_id
+
+
+def test_translate_redacts_encrypted_mail_subjects():
+    delivered = mutation_hooks._translate(
+        "message.sent",
+        {
+            "to_agent_id": str(uuid4()),
+            "from_agent_id": str(uuid4()),
+            "message_id": str(uuid4()),
+            "subject": "secret subject",
+            "content_mode": "encrypted_v2",
+        },
+    )
+    assert isinstance(delivered, MessageDeliveredEvent)
+    assert delivered.subject == ""
+    assert delivered.encrypted is True
+    assert delivered.content_mode == "encrypted_v2"
+
+    team_event = mutation_hooks._translate_team_event(
+        "message.sent",
+        {
+            "team_id": "backend:acme.com",
+            "from_alias": "alice",
+            "to_alias": "bob",
+            "message_id": str(uuid4()),
+            "subject": "secret subject",
+            "content_mode": "encrypted_v2",
+        },
+    )
+    assert isinstance(team_event, TeamMessageSentEvent)
+    assert team_event.subject == ""
+    assert team_event.encrypted is True
+    assert team_event.content_mode == "encrypted_v2"
 
 
 @pytest.mark.asyncio

@@ -89,6 +89,8 @@ class MessageDeliveredEvent(Event):
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
+    content_mode: str = "legacy_plaintext_v1"
+    encrypted: bool = False
 
 
 @dataclass
@@ -99,6 +101,8 @@ class MessageAcknowledgedEvent(Event):
     message_id: str = ""
     from_alias: str = ""
     subject: str = ""
+    content_mode: str = "legacy_plaintext_v1"
+    encrypted: bool = False
 
 
 @dataclass
@@ -215,6 +219,8 @@ class TeamMessageSentEvent(TeamEvent):
     to_alias: str = ""
     subject: str = ""
     priority: str = "normal"
+    content_mode: str = "legacy_plaintext_v1"
+    encrypted: bool = False
 
 
 @dataclass
@@ -223,6 +229,8 @@ class TeamMessageAcknowledgedEvent(TeamEvent):
     alias: str = ""
     from_alias: str = ""
     subject: str = ""
+    content_mode: str = "legacy_plaintext_v1"
+    encrypted: bool = False
 
 
 @dataclass

@@ -871,6 +871,7 @@ async def _deliver_remote_mail_and_project_locally(
             "to_alias": to_alias,
             "subject": payload.subject,
             "priority": payload.priority,
+            "content_mode": payload.content_mode or "legacy_plaintext_v1",
             "federated": True,
         },
     )
@@ -1043,6 +1044,7 @@ async def _send_mail_conversation_continuation(
             "to_alias": recipient_participant.get("alias"),
             "subject": payload.subject,
             "priority": payload.priority,
+            "content_mode": payload.content_mode or "legacy_plaintext_v1",
         },
     )
 
@@ -1592,6 +1594,7 @@ async def send_message(
             "to_alias": to_alias,
             "subject": payload.subject,
             "priority": payload.priority,
+            "content_mode": payload.content_mode or "legacy_plaintext_v1",
         },
     )
 
@@ -1670,7 +1673,7 @@ async def ack_message(
         SET read_at = $1
         WHERE message_id = $2 AND to_did = ANY($3::text[])
           AND read_at IS NULL
-        RETURNING message_id, from_alias, subject
+        RETURNING message_id, from_alias, subject, content_mode
         """,
         now,
         msg_uuid,
@@ -1701,6 +1704,7 @@ async def ack_message(
                 "message_id": str(msg_uuid),
                 "from_alias": result["from_alias"],
                 "subject": result["subject"] or "",
+                "content_mode": result["content_mode"] or "legacy_plaintext_v1",
             },
         )
 

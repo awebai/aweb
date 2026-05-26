@@ -395,6 +395,41 @@ async def test_current_actionable_mail_prefers_stored_sender_address_without_loc
 
 
 @pytest.mark.asyncio
+async def test_current_actionable_mail_redacts_encrypted_subject(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, subject, body, created_at,
+            content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+            encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+            encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+            encrypted_signing_key_id, signed_envelope_hash
+        )
+        VALUES (
+            $1, 'did:aw:alice', 'did:aw:bob', 'alice', '', '', now(),
+            'encrypted_v2', 2, '{}'::jsonb, 'ciphertext-bytes',
+            '[]'::jsonb, 'sha256:ciphertext', 16,
+            'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
+            'did:key:z6MkAlice', 'sha256:envelope'
+        )
+        """,
+        uuid4(),
+    )
+
+    actionable = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob"],
+    )
+
+    assert len(actionable) == 1
+    assert actionable[0]["subject"] == ""
+    assert actionable[0]["content_mode"] == "encrypted_v2"
+    assert actionable[0]["message_version"] == 2
+    assert actionable[0]["encrypted"] is True
+    assert "ciphertext-bytes" not in str(actionable[0])
+
+
+@pytest.mark.asyncio
 async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()

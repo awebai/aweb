@@ -45,6 +45,9 @@ type AgentEvent struct {
 	FromAddress    string          `json:"from_address,omitempty"`
 	SessionID      string          `json:"session_id,omitempty"`
 	Subject        string          `json:"subject,omitempty"`
+	ContentMode    string          `json:"content_mode,omitempty"`
+	MessageVersion int             `json:"message_version,omitempty"`
+	Encrypted      bool            `json:"encrypted,omitempty"`
 	UnreadCount    int             `json:"unread_count,omitempty"`
 	SenderWaiting  bool            `json:"sender_waiting,omitempty"`
 	TaskID         string          `json:"task_id,omitempty"`
@@ -185,6 +188,9 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			FromDID        string `json:"from_did"`
 			FromAddress    string `json:"from_address"`
 			Subject        string `json:"subject"`
+			ContentMode    string `json:"content_mode"`
+			MessageVersion int    `json:"message_version"`
+			Encrypted      bool   `json:"encrypted"`
 			WakeMode       string `json:"wake_mode"`
 			Channel        string `json:"channel"`
 			UnreadCount    int    `json:"unread_count"`
@@ -204,6 +210,9 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			FromDID:        payload.FromDID,
 			FromAddress:    payload.FromAddress,
 			Subject:        payload.Subject,
+			ContentMode:    payload.ContentMode,
+			MessageVersion: payload.MessageVersion,
+			Encrypted:      payload.Encrypted,
 			UnreadCount:    payload.UnreadCount,
 		}, true, nil
 

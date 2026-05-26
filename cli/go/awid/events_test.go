@@ -35,11 +35,14 @@ func TestParseAgentEvent(t *testing.T) {
 		{
 			name:      "actionable mail",
 			eventName: "actionable_mail",
-			data:      `{"type":"actionable_mail","message_id":"m2","conversation_id":"c-mail-1","from_alias":"alice","from_did":"did:aw:alice","from_address":"acme.com/alice","subject":"hello","wake_mode":"prompt","unread_count":3}`,
+			data:      `{"type":"actionable_mail","message_id":"m2","conversation_id":"c-mail-1","from_alias":"alice","from_did":"did:aw:alice","from_address":"acme.com/alice","subject":"hello","content_mode":"legacy_plaintext_v1","message_version":1,"encrypted":false,"wake_mode":"prompt","unread_count":3}`,
 			check: func(t *testing.T, evt AgentEvent) {
 				t.Helper()
 				if evt.Type != AgentEventActionableMail || evt.MessageID != "m2" || evt.FromAlias != "alice" || evt.Subject != "hello" {
 					t.Fatalf("unexpected actionable mail event: %#v", evt)
+				}
+				if evt.ContentMode != "legacy_plaintext_v1" || evt.MessageVersion != 1 || evt.Encrypted {
+					t.Fatalf("unexpected actionable mail content metadata: %#v", evt)
 				}
 				if evt.FromDID != "did:aw:alice" {
 					t.Fatalf("unexpected actionable mail stable identity: %#v", evt)
@@ -52,6 +55,20 @@ func TestParseAgentEvent(t *testing.T) {
 				}
 				if evt.ConversationID != "c-mail-1" {
 					t.Fatalf("unexpected actionable mail conversation_id: %#v", evt)
+				}
+			},
+		},
+		{
+			name:      "actionable encrypted mail",
+			eventName: "actionable_mail",
+			data:      `{"type":"actionable_mail","message_id":"m2","conversation_id":"c-mail-1","from_alias":"alice","from_did":"did:aw:alice","from_address":"acme.com/alice","content_mode":"encrypted_v2","message_version":2,"encrypted":true,"wake_mode":"prompt","unread_count":3}`,
+			check: func(t *testing.T, evt AgentEvent) {
+				t.Helper()
+				if evt.Type != AgentEventActionableMail || evt.MessageID != "m2" || evt.Subject != "" {
+					t.Fatalf("unexpected actionable encrypted mail event: %#v", evt)
+				}
+				if evt.ContentMode != "encrypted_v2" || evt.MessageVersion != 2 || !evt.Encrypted {
+					t.Fatalf("unexpected actionable encrypted mail content metadata: %#v", evt)
 				}
 			},
 		},

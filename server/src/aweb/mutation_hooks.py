@@ -54,6 +54,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _event_is_encrypted(ctx: dict) -> bool:
+    return str(ctx.get("content_mode") or "").strip() == "encrypted_v2"
+
+
+def _event_subject(ctx: dict) -> str:
+    if _event_is_encrypted(ctx):
+        return ""
+    return str(ctx.get("subject", "") or "")
+
+
 async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> dict:
     ctx = dict(context)
     identity_fields = (
@@ -430,12 +440,14 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
         if event.message_id:
             aweb_db = db_infra.get_manager("aweb")
             row = await aweb_db.fetch_one(
-                "SELECT from_alias, subject FROM {{tables.messages}} WHERE message_id = $1",
+                "SELECT from_alias, subject, content_mode FROM {{tables.messages}} WHERE message_id = $1",
                 UUID(event.message_id),
             )
             if row:
                 event.from_alias = row["from_alias"]
-                event.subject = row["subject"] or ""
+                event.content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
+                event.encrypted = event.content_mode == "encrypted_v2"
+                event.subject = "" if event.encrypted else (row["subject"] or "")
 
     elif isinstance(event, ChatMessageEvent):
         event.from_alias = await _alias_for(redis, event.workspace_id)
@@ -479,17 +491,24 @@ def _translate(event_type: str, ctx: dict):
     """Map an aweb mutation event to a aweb Event dataclass."""
 
     if event_type == "message.sent":
+        encrypted = _event_is_encrypted(ctx)
         return MessageDeliveredEvent(
             workspace_id=ctx.get("to_agent_id", ""),
             message_id=ctx.get("message_id", ""),
             from_workspace=ctx.get("from_agent_id", ""),
-            subject=ctx.get("subject", ""),
+            subject=_event_subject(ctx),
+            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+            encrypted=encrypted,
         )
 
     if event_type == "message.acknowledged":
+        encrypted = _event_is_encrypted(ctx)
         return MessageAcknowledgedEvent(
             workspace_id=ctx.get("agent_id", ""),
             message_id=ctx.get("message_id", ""),
+            subject=_event_subject(ctx),
+            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+            encrypted=encrypted,
         )
 
     if event_type == "chat.message_sent":
@@ -563,24 +582,30 @@ def _translate_team_event(event_type: str, ctx: dict):
         team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
+        encrypted = _event_is_encrypted(ctx)
         return TeamMessageSentEvent(
             team_id=team_id,
             message_id=str(ctx.get("message_id", "")).strip(),
             from_alias=str(ctx.get("from_alias", "")).strip(),
             to_alias=str(ctx.get("to_alias", "")).strip(),
-            subject=str(ctx.get("subject", "") or ""),
+            subject=_event_subject(ctx),
             priority=str(ctx.get("priority", "normal") or "normal"),
+            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+            encrypted=encrypted,
         )
 
     if event_type == "message.acknowledged":
         team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
+        encrypted = _event_is_encrypted(ctx)
         return TeamMessageAcknowledgedEvent(
             team_id=team_id,
             alias=str(ctx.get("alias", "")).strip(),
             from_alias=str(ctx.get("from_alias", "")).strip(),
-            subject=str(ctx.get("subject", "") or ""),
+            subject=_event_subject(ctx),
+            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+            encrypted=encrypted,
         )
 
     if event_type == "chat.message_sent":
