@@ -129,6 +129,26 @@ current working directory (refusing to clone into an existing git
 worktree). Pass `--fork` to fork via `gh` first and clone the fork.
 Pass `--refresh-template` to re-clone over an existing copy.
 
+### Customize before applying
+
+A template is just files. If you want different roles,
+responsibility directories, default names, aliases, or shared
+instructions, clone or fork the template first, edit it locally, run
+a dry run, then bootstrap the local directory:
+
+```bash
+git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
+cd my-team-template
+# edit team.yaml, roles/*.md, docs/team.md, agents/<responsibility>/AGENTS.md
+aw team bootstrap . --dry-run --work-directory /path/to/work
+aw team bootstrap . --work-directory /path/to/work
+```
+
+Bootstrap reads `team.yaml`, `roles/`, `docs/`, and `agents/` from
+the local template directory at run time. Default agent names are
+used automatically; pass `--ask-for-agent-names` only when you want
+to rename generated agents interactively during bootstrap.
+
 ## Existing templates
 
 Two canonical templates are maintained in the `awebai`
@@ -200,8 +220,9 @@ What each block means:
 - `agents` — one entry per agent the template wants to provision.
   The key (`implementation`, `review`) is the directory name under
   `agents/`. `role_name` must match a key in `roles`.
-  `default_name` and `default_alias` are pre-filled at the
-  interactive prompt; bypass the prompt with `--yes`.
+  `default_name` and `default_alias` are used automatically. Pass
+  `--ask-for-agent-names` when you want an interactive prompt to
+  rename generated agents before provisioning.
 - `instructions.file` — optional shared team-instructions document
   installed via the team's instructions endpoint. Skip with
   `--skip-instructions`.
@@ -489,7 +510,7 @@ from caller cwd" flow is intentionally gone.
 
 | Flag | What it does |
 |---|---|
-| `--yes` | Accept default agent names without prompting. |
+| `--ask-for-agent-names` | In an interactive terminal, prompt for generated agent names instead of using template defaults. |
 | `--dry-run` | Validate the template and print the plan; do not write files or call the server. |
 | `--fork` | Fork the template via `gh` and clone the fork (rather than cloning the upstream). |
 | `--refresh-template` | Re-clone the template over the existing local copy. |

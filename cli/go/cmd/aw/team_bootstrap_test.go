@@ -63,7 +63,7 @@ func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 		t.Fatalf("validateTeamBootstrapSpec: %v", err)
 	}
 
-	plans, err := buildTeamBootstrapPlans(strings.NewReader(""), &bytes.Buffer{}, templateDir, filepath.Join(templateDir, "homes"), spec, true)
+	plans, err := buildTeamBootstrapPlans(strings.NewReader(""), &bytes.Buffer{}, templateDir, filepath.Join(templateDir, "homes"), spec, false)
 	if err != nil {
 		t.Fatalf("buildTeamBootstrapPlans: %v", err)
 	}
@@ -75,6 +75,29 @@ func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 	}
 	if plans[1].Responsibility != "review" || plans[1].RoleName != "reviewer" || plans[1].Name != "reviewer" {
 		t.Fatalf("review plan mismatch: %+v", plans[1])
+	}
+}
+
+func TestTeamBootstrapAskForAgentNamesRequiresTTY(t *testing.T) {
+	prevStdin := os.Stdin
+	nonTTY, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = nonTTY
+	t.Cleanup(func() {
+		os.Stdin = prevStdin
+		_ = nonTTY.Close()
+	})
+
+	templateDir := writeTeamBootstrapFixture(t)
+	spec, err := loadTeamBootstrapSpec(templateDir)
+	if err != nil {
+		t.Fatalf("loadTeamBootstrapSpec: %v", err)
+	}
+	_, err = buildTeamBootstrapPlans(strings.NewReader(""), &bytes.Buffer{}, templateDir, filepath.Join(templateDir, "homes"), spec, true)
+	if err == nil || !strings.Contains(err.Error(), "requires an interactive terminal") {
+		t.Fatalf("expected interactive terminal error, got %v", err)
 	}
 }
 
@@ -344,36 +367,6 @@ func TestTeamBootstrapResolveSourceErrorsWithoutSourceNonInteractive(t *testing.
 
 	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "requires a team source") {
 		t.Fatalf("expected missing source error, got %v", err)
-	}
-}
-
-func TestTeamBootstrapResolveSourceYesWithoutExplicitSourceNeedsSource(t *testing.T) {
-	prevInvite := teamBootstrapInviteToken
-	prevUsername := teamBootstrapUsername
-	prevNamespace := teamBootstrapNamespace
-	prevTeam := teamBootstrapTeamName
-	prevYes := teamBootstrapYes
-	prevCwd, _ := os.Getwd()
-	t.Cleanup(func() {
-		teamBootstrapInviteToken = prevInvite
-		teamBootstrapUsername = prevUsername
-		teamBootstrapNamespace = prevNamespace
-		teamBootstrapTeamName = prevTeam
-		teamBootstrapYes = prevYes
-		_ = os.Chdir(prevCwd)
-	})
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AWEB_API_KEY", "")
-	teamBootstrapInviteToken = ""
-	teamBootstrapUsername = ""
-	teamBootstrapNamespace = ""
-	teamBootstrapTeamName = ""
-	teamBootstrapYes = true
-
-	if _, err := resolveTeamBootstrapSource(); err == nil || !strings.Contains(err.Error(), "omit --yes") {
-		t.Fatalf("expected --yes source guidance, got %v", err)
 	}
 }
 

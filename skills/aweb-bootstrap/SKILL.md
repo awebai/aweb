@@ -76,10 +76,36 @@ Canonical templates:
 - awebai/aweb-team-company-surfaces (6 agents)
   Use when you want a cross-functional team: direction/engineering/operations/support/outreach/analytics.
 
-Fork vs use-as-is:
+Fork/edit vs use-as-is:
 
 - Use as-is to learn the flow or to run a standard team.
-- Fork when you want to customize roles, responsibilities, or instructions.
+- Clone or fork when you want to customize roles, responsibilities, or instructions before provisioning.
+- It is safe to edit the template checkout before applying it; `aw team bootstrap` reads `team.yaml`, `roles/`, `docs/`, and `agents/` from the local template directory at run time.
+
+## Customizing a template before applying it
+
+When the human wants different agents, role playbooks, names, or instructions, do not try to patch the generated workspaces after bootstrap. Clone/edit the template first, then bootstrap the edited local directory.
+
+Typical safe flow:
+
+```bash
+git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
+cd my-team-template
+# edit team.yaml, roles/*.md, docs/team.md, agents/<responsibility>/AGENTS.md
+aw team bootstrap . --dry-run --work-directory /path/to/work
+aw team bootstrap . --work-directory /path/to/work
+```
+
+What to edit:
+
+- `team.yaml` roles: add/remove role names and point each to a role file.
+- `team.yaml` agents: add/remove responsibility workspaces and set each `role_name`, `default_name`, and `default_alias`.
+- `team.yaml` worktrees: add/remove local git-worktree agents for code work.
+- `roles/*.md`: change operational playbooks installed with `aw roles`.
+- `docs/team.md`: change shared team instructions installed after the anchor connects.
+- `agents/<responsibility>/AGENTS.md`: change per-workspace startup context.
+
+Default agent names are accepted automatically. Only use `--ask-for-agent-names` when a human specifically wants an interactive rename prompt during bootstrap.
 
 ## Before running bootstrap (safety checks)
 
@@ -159,7 +185,7 @@ Supported sources:
 
 Decision recipe:
 
-- Human says “make me a new team” and has no existing aw context: use hosted (`--username` or interactive prompt). If using `--yes`, include `--username`; otherwise omit `--yes` so hosted onboarding can prompt.
+- Human says “make me a new team” and has no existing aw context: use hosted (`--username` or interactive prompt).
 - Human has a dashboard/API key: use `AWEB_API_KEY=... aw team bootstrap ...`; do not ask for `AWEB_URL` unless they are using a non-default stack.
 - Human pasted an invite: use `--invite-token`.
 - Human is already inside the team workspace that should own the new agents: use current workspace forwarding (no explicit source).

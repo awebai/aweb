@@ -30,13 +30,13 @@ Checklist:
   - awebai/aweb-team-dev-review for a minimal 2-agent setup.
   - awebai/aweb-team-company-surfaces for a 6-agent cross-functional setup.
 
-Example (using an existing local work directory, with an explicit hosted username so --yes does not need prompts):
+Example (using an existing local work directory):
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username alice --work-directory /path/to/work
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username alice --work-directory /path/to/work
 
 Example (clone the work repo into the template checkout):
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username alice --work-repo-url https://github.com/ORG/REPO.git
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username alice --work-repo-url https://github.com/ORG/REPO.git
 
 Notes:
 
@@ -46,6 +46,25 @@ Notes:
   <template-checkout>/worktrees/<derived-name>/
 
   where derived-name is the git-style repo directory name (basename with .git stripped).
+
+## Scenario: customize the template before applying it
+
+Goal: change roles, agent responsibilities, names, aliases, or instructions before any team state is created.
+
+Checklist:
+
+- Clone or fork the template first.
+- Edit `team.yaml`, `roles/*.md`, `docs/team.md`, and `agents/<responsibility>/AGENTS.md` as needed.
+- Run `aw team bootstrap . --dry-run ...` from the template checkout to validate.
+- Bootstrap the local directory only after the plan looks right.
+
+Example:
+
+  git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
+  cd my-team-template
+  # edit team.yaml / roles / docs / agents
+  aw team bootstrap . --dry-run --work-directory /path/to/work
+  aw team bootstrap . --username alice --work-directory /path/to/work
 
 ## Scenario: BYOT (bring your own team)
 
@@ -60,7 +79,6 @@ Checklist:
 Example shape (values are placeholders):
 
   aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git \
-    --yes \
     --namespace example.com \
     --team dev \
     --work-directory /path/to/work

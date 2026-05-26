@@ -41,8 +41,9 @@ The template repository is convention-first:
 team.yaml supplies the parts that cannot be inferred safely: role bundle
 metadata, each agent responsibility's role_name, and default identity names.
 Agent directory names are responsibilities (for example implementation or
-review), not fixed human/agent names; bootstrap prompts for the actual name
-unless --yes is used.`,
+review), not fixed human/agent names. By default bootstrap uses the template's
+default identity names; pass --ask-for-agent-names when you want an interactive
+prompt to rename generated agents before provisioning.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamBootstrap,
 }
@@ -63,7 +64,8 @@ var (
 	teamBootstrapRegistryURL      string
 	teamBootstrapAwebURL          string
 	teamBootstrapDryRun           bool
-	teamBootstrapYes              bool
+	teamBootstrapYes              bool // deprecated no-op; defaults are used unless --ask-for-agent-names is set
+	teamBootstrapAskAgentNames    bool
 	teamBootstrapSkipRoles        bool
 	teamBootstrapSkipInstructions bool
 )
@@ -140,7 +142,9 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
-	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Accept default agent names without prompting")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Deprecated no-op; default agent names are used unless --ask-for-agent-names is set")
+	_ = teamBootstrapCmd.Flags().MarkHidden("yes")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapAskAgentNames, "ask-for-agent-names", false, "Prompt for generated agent names instead of using template defaults")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipInstructions, "skip-instructions", false, "Do not install shared team instructions")
 
@@ -177,7 +181,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	plans, err := buildTeamBootstrapPlans(cmd.InOrStdin(), cmd.ErrOrStderr(), resolved.TemplateDir, homeRoot, spec, teamBootstrapYes)
+	plans, err := buildTeamBootstrapPlans(cmd.InOrStdin(), cmd.ErrOrStderr(), resolved.TemplateDir, homeRoot, spec, teamBootstrapAskAgentNames)
 	if err != nil {
 		return err
 	}
@@ -850,10 +854,10 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	if currentHasTeamWorkspace() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceCurrent}, nil
 	}
-	if isTTY() && !teamBootstrapYes {
+	if isTTY() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
 	}
-	return teamBootstrapSource{}, usageError("team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team; in an interactive terminal, omit --yes to use hosted onboarding prompts")
+	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
 }
 
 func currentHasTeamWorkspace() bool {
@@ -908,7 +912,7 @@ func initTeamBootstrapPrimaryAgent(cmd *cobra.Command, source teamBootstrapSourc
 			InjectAgentDocs:    false,
 			DoNotTouchAgentsMD: true,
 			AskPostCreateSetup: false,
-			NonInteractive:     !isTTY() || teamBootstrapYes,
+			NonInteractive:     !isTTY(),
 		})
 		return err
 	default:
@@ -1204,7 +1208,10 @@ func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) erro
 	return nil
 }
 
-func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot string, spec *teamBootstrapSpec, acceptDefaults bool) ([]teamBootstrapAgentPlan, error) {
+func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot string, spec *teamBootstrapSpec, askForAgentNames bool) ([]teamBootstrapAgentPlan, error) {
+	if askForAgentNames && !isTTY() {
+		return nil, usageError("--ask-for-agent-names requires an interactive terminal")
+	}
 	responsibilities := make([]string, 0, len(spec.Agents))
 	for responsibility := range spec.Agents {
 		responsibilities = append(responsibilities, responsibility)
@@ -1218,7 +1225,7 @@ func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot 
 		if name == "" {
 			name = responsibility
 		}
-		if !acceptDefaults && isTTY() {
+		if askForAgentNames && isTTY() {
 			prompted, err := promptRequiredStringWithIO("Agent name for "+responsibility, name, in, out)
 			if err != nil {
 				return nil, err
