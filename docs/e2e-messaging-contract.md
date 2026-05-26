@@ -339,6 +339,11 @@ The HPKE info uses this canonical key-wrap binding object:
 
 `sha256:` plus SHA-256 over canonical JSON bytes of the binding object.
 
+`wrap_id` is deterministic for identical binding inputs. Test fixtures and
+idempotency checks may assert the same `wrap_id` when message id,
+conversation id, sender identity/key id, recipient identity/key id, and suite
+are unchanged.
+
 The recipient must choose the wrap whose `recipient_encryption_key_id` matches a
 local private key and whose recipient identity fields match the local identity.
 If no matching wrap exists, decryption fails with a structured "not a recipient"
