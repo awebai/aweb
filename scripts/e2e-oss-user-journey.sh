@@ -652,8 +652,18 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 9a: E2E encryption key setup ==="
 
-alice_e2ee_setup="$(run_aw_in "$ALICE_DIR" id encryption-key setup --json 2>/dev/null)"
-alice_e2ee_key="$(echo "$alice_e2ee_setup" | jq_field key_id)"
+if alice_e2ee_setup="$(run_aw_in "$ALICE_DIR" id encryption-key setup --json 2>&1)"; then
+  alice_e2ee_setup_exit=0
+else
+  alice_e2ee_setup_exit=$?
+fi
+assert_eq "alice e2ee key setup exit" "0" "$alice_e2ee_setup_exit"
+alice_e2ee_key=""
+if [[ "$alice_e2ee_setup_exit" == "0" ]]; then
+  alice_e2ee_key="$(echo "$alice_e2ee_setup" | jq_field key_id)"
+elif [[ -n "$alice_e2ee_setup" ]]; then
+  echo "  alice e2ee key setup output: ${alice_e2ee_setup:0:240}"
+fi
 assert_not_empty "alice e2ee key id" "$alice_e2ee_key"
 
 if missing_key_out="$(run_aw_in "$ALICE_DIR" mail send \
@@ -670,8 +680,18 @@ assert_contains "missing recipient key message" "$missing_key_out" "E2E encrypti
 missing_key_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.messages WHERE subject = 'E2EE_MISSING_KEY_SUBJECT' OR body = 'E2EE_MISSING_KEY_BODY';")"
 assert_eq "missing-key e2ee attempt stores no plaintext row" "0" "$missing_key_plaintext_count"
 
-bob_e2ee_setup="$(run_aw_in "$BOB_DIR" id encryption-key setup --json 2>/dev/null)"
-bob_e2ee_key="$(echo "$bob_e2ee_setup" | jq_field key_id)"
+if bob_e2ee_setup="$(run_aw_in "$BOB_DIR" id encryption-key setup --json 2>&1)"; then
+  bob_e2ee_setup_exit=0
+else
+  bob_e2ee_setup_exit=$?
+fi
+assert_eq "bob e2ee key setup exit" "0" "$bob_e2ee_setup_exit"
+bob_e2ee_key=""
+if [[ "$bob_e2ee_setup_exit" == "0" ]]; then
+  bob_e2ee_key="$(echo "$bob_e2ee_setup" | jq_field key_id)"
+elif [[ -n "$bob_e2ee_setup" ]]; then
+  echo "  bob e2ee key setup output: ${bob_e2ee_setup:0:240}"
+fi
 assert_not_empty "bob e2ee key id" "$bob_e2ee_key"
 echo ""
 
