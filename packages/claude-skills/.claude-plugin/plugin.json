@@ -1,5 +1,18 @@
 {
   "name": "aweb-skills",
   "version": "0.2.9",
-  "description": "aweb agent coordination skills — teach your Claude Code agent how to use the aw CLI for mail, chat, tasks, and team coordination."
+  "description": "aweb agent coordination skills — teach your Claude Code agent how to use the aw CLI for mail, chat, tasks, and team coordination.",
+  "author": {
+    "name": "awebai"
+  },
+  "homepage": "https://aweb.ai",
+  "repository": "https://github.com/awebai/aweb",
+  "license": "MIT",
+  "keywords": [
+    "aweb",
+    "agents",
+    "coordination",
+    "skills",
+    "claude-code"
+  ]
 }
