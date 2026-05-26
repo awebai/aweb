@@ -495,6 +495,13 @@ implementation. Removing a participant means future sends omit that
 participant's key wrap; it cannot make already-delivered ciphertext unreadable
 to a participant who kept the old `cek` or plaintext.
 
+Participant removal is durable membership state, not chat turn-completion.
+`sender_leaving=true` means the sender ended its current wait/turn and remains
+eligible for future wraps. A group member is removed only by an explicit
+participant-removal operation recorded on the session participant state, such as
+`chat_participants.left_at`; future send validation and continuation target
+discovery must use that active participant set.
+
 Federated group chat is not enabled in the first implementation. A v2 chat
 envelope that would require delivery to more than one remote federation target,
 or to a mixed local/remote group, must be rejected before delivery. One-to-one

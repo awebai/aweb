@@ -226,8 +226,9 @@ or confirm them rather than assuming an indefinite background job.
      display, sender sent-history, and unread/wait metadata all decrypt only
      locally and keep server responses metadata-only.
    - Verify small group chat with per-message content keys and per-recipient
-     wraps: new members can read future messages only, and removed members
-     cannot decrypt future messages.
+     wraps: new members can read future messages only, and explicitly removed
+     members cannot decrypt future messages. Do not treat ordinary
+     `sender_leaving` / `send-and-leave` turn completion as group removal.
 5. **Federation canary**
    - Enable only peers that advertise v2 route support and have passed the
      matrix cases.

@@ -2037,6 +2037,40 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         left = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "leaving", "leaving": True})
     assert left.status_code == 200, left.text
 
+    turn_message_id = "33333333-3333-4333-8333-333333333331"
+    turn_envelope = _encrypted_chat_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did,
+        sender_stable_id="did:aw:alice",
+        recipients=[
+            {"did": bob_did, "stable_id": "did:aw:bob", "address": "acme.com/bob"},
+            {"did": carol_did, "stable_id": "did:aw:carol", "address": "acme.com/carol"},
+        ],
+        message_id=turn_message_id,
+        conversation_id=session_id,
+    )
+    turn_payload = {
+        "body": "",
+        "message_id": turn_message_id,
+        "timestamp": turn_envelope["created_at"],
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": turn_envelope,
+    }
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        turn = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=turn_payload)
+    assert turn.status_code == 200, turn.text
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.chat_participants}}
+        SET left_at = NOW()
+        WHERE session_id = $1 AND did = 'did:aw:carol'
+        """,
+        UUID(session_id),
+    )
+
     stale_message_id = "33333333-3333-4333-8333-333333333332"
     stale_envelope = _encrypted_chat_envelope(
         sender_sk=alice_sk,

@@ -783,19 +783,16 @@ async def _left_dids_by_session(db, session_ids: list[UUID]) -> dict[str, set[st
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT DISTINCT ON (session_id, from_did)
-               session_id, from_did, sender_leaving
-        FROM {{tables.chat_messages}}
+        SELECT session_id, did
+        FROM {{tables.chat_participants}}
         WHERE session_id = ANY($1::uuid[])
-          AND from_did IS NOT NULL
-        ORDER BY session_id, from_did, created_at DESC, message_id DESC
+          AND left_at IS NOT NULL
         """,
         session_ids,
     )
     left: dict[str, set[str]] = defaultdict(set)
     for row in rows:
-        if row.get("sender_leaving"):
-            left[str(row["session_id"])].add(str(row["from_did"]))
+        left[str(row["session_id"])].add(str(row["did"]))
     return left
 
 
