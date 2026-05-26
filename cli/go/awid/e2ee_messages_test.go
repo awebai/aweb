@@ -115,6 +115,127 @@ func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 	}
 }
 
+func TestE2EEChatEncryptDecryptGroupAndSenderCopy(t *testing.T) {
+	alice := newE2EETestIdentity(t, "example.com/alice")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+	carol := newE2EETestIdentity(t, "example.com/carol")
+
+	env, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender: E2EESenderKey{
+			Address:       alice.address,
+			DID:           alice.did,
+			StableID:      alice.stableID,
+			EncryptionKey: alice.assertion,
+			SigningKey:    alice.priv,
+		},
+		Recipients: []E2EERecipientKey{
+			{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion},
+			{Address: carol.address, DID: carol.did, StableID: carol.stableID, EncryptionKey: carol.assertion},
+		},
+		Body:           "group secret body",
+		MessageID:      "33333333-3333-4333-8333-333333333333",
+		ConversationID: "44444444-4444-4444-8444-444444444444",
+		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("EncryptE2EEChat: %v", err)
+	}
+	if env.Kind != "chat" || len(env.Recipients) != 2 || len(env.KeyWraps) != 3 {
+		t.Fatalf("unexpected chat envelope shape: kind=%s recipients=%d wraps=%d", env.Kind, len(env.Recipients), len(env.KeyWraps))
+	}
+	for _, recipient := range []e2eeTestIdentity{bob, carol, alice} {
+		plain, err := DecryptE2EEMessage(env, E2EEDecryptIdentity{
+			Address:         recipient.address,
+			DID:             recipient.did,
+			StableID:        recipient.stableID,
+			EncryptionKeyID: recipient.assertion.EncryptionKeyID,
+			PrivateKey:      recipient.xPriv,
+		})
+		if err != nil {
+			t.Fatalf("%s decrypt: %v", recipient.address, err)
+		}
+		if plain.Kind != "chat" || plain.Body != "group secret body" || plain.Subject != "" {
+			t.Fatalf("%s plaintext mismatch: %#v", recipient.address, plain)
+		}
+	}
+}
+
+func TestE2EEChatMembershipChangesAreFutureOnly(t *testing.T) {
+	alice := newE2EETestIdentity(t, "example.com/alice")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+	carol := newE2EETestIdentity(t, "example.com/carol")
+	dave := newE2EETestIdentity(t, "example.com/dave")
+	createdAt := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	conversationID := "99999999-9999-4999-8999-999999999999"
+
+	encrypt := func(messageID, body string, recipients ...e2eeTestIdentity) *E2EEMessageEnvelope {
+		t.Helper()
+		recipientKeys := make([]E2EERecipientKey, 0, len(recipients))
+		for _, recipient := range recipients {
+			recipientKeys = append(recipientKeys, E2EERecipientKey{
+				Address:       recipient.address,
+				DID:           recipient.did,
+				StableID:      recipient.stableID,
+				EncryptionKey: recipient.assertion,
+			})
+		}
+		env, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+			Sender: E2EESenderKey{
+				Address:       alice.address,
+				DID:           alice.did,
+				StableID:      alice.stableID,
+				EncryptionKey: alice.assertion,
+				SigningKey:    alice.priv,
+			},
+			Recipients:     recipientKeys,
+			Body:           body,
+			MessageID:      messageID,
+			ConversationID: conversationID,
+			CreatedAt:      createdAt,
+		})
+		if err != nil {
+			t.Fatalf("EncryptE2EEChat: %v", err)
+		}
+		return env
+	}
+	decrypt := func(env *E2EEMessageEnvelope, identity e2eeTestIdentity) (*E2EEInnerPayload, error) {
+		t.Helper()
+		return DecryptE2EEMessage(env, E2EEDecryptIdentity{
+			Address:         identity.address,
+			DID:             identity.did,
+			StableID:        identity.stableID,
+			EncryptionKeyID: identity.assertion.EncryptionKeyID,
+			PrivateKey:      identity.xPriv,
+		})
+	}
+
+	beforeDave := encrypt("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "before dave joined", bob, carol)
+	if _, err := decrypt(beforeDave, dave); err == nil || !strings.Contains(err.Error(), "not a recipient") {
+		t.Fatalf("new member decrypted old history: %v", err)
+	}
+
+	afterDave := encrypt("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "after dave joined", bob, carol, dave)
+	davePlain, err := decrypt(afterDave, dave)
+	if err != nil {
+		t.Fatalf("new member future decrypt: %v", err)
+	}
+	if davePlain.Body != "after dave joined" {
+		t.Fatalf("new member plaintext mismatch: %#v", davePlain)
+	}
+
+	afterCarolRemoved := encrypt("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "after carol removed", bob, dave)
+	if _, err := decrypt(afterCarolRemoved, carol); err == nil || !strings.Contains(err.Error(), "not a recipient") {
+		t.Fatalf("removed member decrypted future message: %v", err)
+	}
+	alicePlain, err := decrypt(afterCarolRemoved, alice)
+	if err != nil {
+		t.Fatalf("sender self-copy decrypt after removal: %v", err)
+	}
+	if alicePlain.Body != "after carol removed" {
+		t.Fatalf("sender self-copy plaintext mismatch: %#v", alicePlain)
+	}
+}
+
 func TestE2EEMailDecryptRejectsNonRecipientAndTamper(t *testing.T) {
 	alice := newE2EETestIdentity(t, "example.com/alice")
 	bob := newE2EETestIdentity(t, "example.com/bob")
@@ -343,6 +464,67 @@ func TestClientSendMessageE2EEPostsOpaqueEnvelopeOnly(t *testing.T) {
 		t.Fatalf("missing encrypted envelope: %#v", posted.Encrypted)
 	}
 	if strings.Contains(mustJSON(t, posted.Encrypted), "plain subject") || strings.Contains(mustJSON(t, posted.Encrypted), "plain body") {
+		t.Fatalf("encrypted envelope contains plaintext")
+	}
+}
+
+func TestClientChatCreateSessionE2EEPostsOpaqueEnvelopeOnly(t *testing.T) {
+	alice := newE2EETestIdentity(t, "example.com/alice")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+
+	var posted ChatCreateSessionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{Agents: []AgentView{{
+				Alias:         "bob",
+				DIDKey:        bob.did,
+				DIDAW:         bob.stableID,
+				Address:       bob.address,
+				InboundMode:   "open",
+				EncryptionKey: bob.assertion,
+			}}})
+		case "/v1/chat/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatCreateSessionResponse{
+				SessionID: posted.SessionID,
+				MessageID: posted.MessageID,
+				SSEURL:    "/v1/chat/sessions/" + posted.SessionID + "/stream",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, alice.priv, alice.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(alice.stableID)
+	c.SetAddress(alice.address)
+	c.SetE2EEKey(alice.assertion, alice.xPriv)
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAliases:   []string{"bob"},
+		Message:     "chat secret",
+		EncryptE2EE: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted.ContentMode != ContentModeEncryptedV2 || posted.MessageVersion != E2EEMessageVersion {
+		t.Fatalf("posted mode/version = %q/%d", posted.ContentMode, posted.MessageVersion)
+	}
+	if posted.Message != "" {
+		t.Fatalf("plaintext leaked in request: message=%q", posted.Message)
+	}
+	if posted.Encrypted == nil || posted.Encrypted.Kind != "chat" || posted.Encrypted.Ciphertext == "" {
+		t.Fatalf("missing encrypted chat envelope: %#v", posted.Encrypted)
+	}
+	if strings.Contains(mustJSON(t, posted.Encrypted), "chat secret") {
 		t.Fatalf("encrypted envelope contains plaintext")
 	}
 }

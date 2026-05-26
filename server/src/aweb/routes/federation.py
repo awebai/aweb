@@ -249,17 +249,42 @@ async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tupl
 
 async def _idempotent_existing_chat_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
     aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT message_id, session_id, from_did, from_address, body, sender_leaving,
-               hang_on, reply_to, created_at
-        FROM {{tables.chat_messages}}
-        WHERE message_id = $1
-        """,
-        UUID(envelope.message_id),
-    )
+    if _envelope_is_encrypted_v2(envelope):
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, session_id, from_did, from_address, content_mode,
+                   signed_envelope_hash, sender_leaving, hang_on, reply_to, created_at
+            FROM {{tables.chat_messages}}
+            WHERE message_id = $1
+            """,
+            UUID(envelope.message_id),
+        )
+    else:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, session_id, from_did, from_address, body, sender_leaving,
+                   hang_on, reply_to, created_at
+            FROM {{tables.chat_messages}}
+            WHERE message_id = $1
+            """,
+            UUID(envelope.message_id),
+        )
     if row is None:
         return None
+    if _envelope_is_encrypted_v2(envelope):
+        expected = encrypted_message_storage_metadata(envelope.encrypted_envelope or {}).get("signed_envelope_hash")
+        if (
+            str(row["session_id"]) != str(envelope.conversation_id)
+            or row["from_did"] != envelope.sender_did_aw
+            or (row.get("from_address") or "") != (envelope.sender_address or "")
+            or row["content_mode"] != "encrypted_v2"
+            or row["signed_envelope_hash"] != expected
+            or bool(row["sender_leaving"]) != envelope.sender_leaving
+            or bool(row["hang_on"]) != envelope.hang_on
+            or (str(row["reply_to"]) if row.get("reply_to") else None) != envelope.reply_to
+        ):
+            raise HTTPException(status_code=409, detail="Federation message_id already exists with different encrypted envelope")
+        return str(row["session_id"]), row["created_at"]
     if (
         str(row["session_id"]) != str(envelope.conversation_id)
         or row["from_did"] != envelope.sender_did_aw
@@ -611,18 +636,27 @@ async def receive_federated_message(
             await touch_conversation_activity(db, conversation_id=conversation_id)
         else:
             conversation_id = await _ensure_federated_chat_session(db, envelope, recipient)
+            encrypted_metadata = (
+                encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
+                if _envelope_is_encrypted_v2(envelope)
+                else None
+            )
             msg_row = await send_in_session(
                 db,
                 session_id=UUID(conversation_id),
                 sender_did=envelope.sender_did_aw,
                 sender_agent_id=None,
                 sender_address=envelope.sender_address,
-                body=envelope.body,
+                body="" if encrypted_metadata is not None else envelope.body,
                 reply_to=UUID(envelope.reply_to) if envelope.reply_to else None,
                 leaving=envelope.sender_leaving,
                 hang_on=envelope.hang_on,
-                signature=payload.signature,
-                signed_payload=envelope.signed_payload,
+                signature=None if encrypted_metadata is not None else payload.signature,
+                signed_payload=None if encrypted_metadata is not None else envelope.signed_payload,
+                content_mode=envelope.content_mode or "legacy_plaintext_v1",
+                message_version=envelope.message_version or 1,
+                encrypted_envelope=envelope.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
                 created_at=_parse_timestamp(envelope.timestamp),
                 message_id=UUID(envelope.message_id),
             )

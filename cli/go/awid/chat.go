@@ -78,7 +78,7 @@ func removeOneSelfIdentifier(values []string, selfIDs ...string) []string {
 	return filtered
 }
 
-func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (string, error) {
+func (c *Client) toAddressForSession(ctx context.Context, sessionID string, preferAddress bool) (string, error) {
 	if sessionID == "" {
 		return "", nil
 	}
@@ -97,6 +97,11 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 			c.did,
 			c.address,
 		)
+		if preferAddress {
+			if toAddr := c.toAddressForAliases(otherAddresses); toAddr != "" {
+				return toAddr, nil
+			}
+		}
 		if len(otherDIDs) == 1 {
 			return otherDIDs[0], nil
 		}
@@ -175,19 +180,23 @@ func OtherConversationParticipants(participantDIDs, participantAddresses []strin
 }
 
 type ChatCreateSessionRequest struct {
-	SessionID     string   `json:"session_id,omitempty"`
-	ToAliases     []string `json:"to_aliases,omitempty"`
-	ToDIDs        []string `json:"to_dids,omitempty"`
-	ToAddresses   []string `json:"to_addresses,omitempty"`
-	Message       string   `json:"message"`
-	Leaving       bool     `json:"leaving,omitempty"`
-	WaitSeconds   *int     `json:"wait_seconds,omitempty"`
-	ReplyTo       string   `json:"reply_to,omitempty"`
-	FromDID       string   `json:"from_did,omitempty"`
-	Signature     string   `json:"signature,omitempty"`
-	Timestamp     string   `json:"timestamp,omitempty"`
-	MessageID     string   `json:"message_id,omitempty"`
-	SignedPayload string   `json:"signed_payload,omitempty"`
+	SessionID      string               `json:"session_id,omitempty"`
+	ToAliases      []string             `json:"to_aliases,omitempty"`
+	ToDIDs         []string             `json:"to_dids,omitempty"`
+	ToAddresses    []string             `json:"to_addresses,omitempty"`
+	Message        string               `json:"message"`
+	ContentMode    string               `json:"content_mode,omitempty"`
+	MessageVersion int                  `json:"message_version,omitempty"`
+	Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
+	Leaving        bool                 `json:"leaving,omitempty"`
+	WaitSeconds    *int                 `json:"wait_seconds,omitempty"`
+	ReplyTo        string               `json:"reply_to,omitempty"`
+	FromDID        string               `json:"from_did,omitempty"`
+	Signature      string               `json:"signature,omitempty"`
+	Timestamp      string               `json:"timestamp,omitempty"`
+	MessageID      string               `json:"message_id,omitempty"`
+	SignedPayload  string               `json:"signed_payload,omitempty"`
+	EncryptE2EE    bool                 `json:"-"`
 }
 
 type ChatCreateSessionResponse struct {
@@ -217,6 +226,16 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 			return nil, err
 		}
 		payload.SessionID = sessionID
+	}
+	if payload.EncryptE2EE {
+		if err := c.prepareE2EEChatCreate(ctx, &payload); err != nil {
+			return nil, err
+		}
+		var out ChatCreateSessionResponse
+		if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
 	}
 
 	to := strings.Join(payload.ToAliases, ",")
@@ -274,32 +293,236 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	return &out, nil
 }
 
+func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateSessionRequest) error {
+	if c == nil || payload == nil {
+		return errors.New("aweb: request is required")
+	}
+	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
+		return errors.New("E2E chat requires a local self-custodial signing key")
+	}
+	if c.e2eeEncryptionKey == nil {
+		return errors.New("E2E chat requires a local encryption key; run `aw id encryption-key setup`")
+	}
+	recipients, err := c.e2eeChatRecipients(ctx, payload.ToAliases, payload.ToDIDs, payload.ToAddresses)
+	if err != nil {
+		return err
+	}
+	messageID, err := GenerateUUID4()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(payload.MessageID) != "" {
+		messageID = strings.TrimSpace(payload.MessageID)
+	}
+	sessionID := strings.TrimSpace(payload.SessionID)
+	if sessionID == "" {
+		sessionID, err = GenerateUUID4()
+		if err != nil {
+			return err
+		}
+		payload.SessionID = sessionID
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	envelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender: E2EESenderKey{
+			Address:       c.address,
+			DID:           c.did,
+			StableID:      c.stableID,
+			TeamID:        c.teamID,
+			EncryptionKey: c.e2eeEncryptionKey,
+			SigningKey:    c.signingKey,
+		},
+		Recipients:       recipients,
+		Body:             payload.Message,
+		MessageID:        messageID,
+		ConversationID:   sessionID,
+		ReplyToMessageID: payload.ReplyTo,
+		CreatedAt:        now,
+	})
+	if err != nil {
+		return err
+	}
+	payload.MessageID = envelope.MessageID
+	payload.Timestamp = envelope.CreatedAt
+	payload.FromDID = c.did
+	payload.ContentMode = ContentModeEncryptedV2
+	payload.MessageVersion = E2EEMessageVersion
+	payload.Encrypted = envelope
+	payload.Message = ""
+	payload.Signature = ""
+	payload.SignedPayload = ""
+	return nil
+}
+
+func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payload *ChatSendMessageRequest) error {
+	if c == nil || payload == nil {
+		return errors.New("aweb: request is required")
+	}
+	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
+		return errors.New("E2E chat requires a local self-custodial signing key")
+	}
+	if c.e2eeEncryptionKey == nil {
+		return errors.New("E2E chat requires a local encryption key; run `aw id encryption-key setup`")
+	}
+	to, err := c.toAddressForSession(ctx, sessionID, true)
+	if err != nil {
+		return err
+	}
+	aliases, dids, addresses := classifyE2EEChatTargets(to)
+	recipients, err := c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+	if err != nil {
+		return err
+	}
+	messageID, err := GenerateUUID4()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(payload.MessageID) != "" {
+		messageID = strings.TrimSpace(payload.MessageID)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	envelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender: E2EESenderKey{
+			Address:       c.address,
+			DID:           c.did,
+			StableID:      c.stableID,
+			TeamID:        c.teamID,
+			EncryptionKey: c.e2eeEncryptionKey,
+			SigningKey:    c.signingKey,
+		},
+		Recipients:       recipients,
+		Body:             payload.Body,
+		MessageID:        messageID,
+		ConversationID:   strings.TrimSpace(sessionID),
+		ReplyToMessageID: payload.ReplyTo,
+		CreatedAt:        now,
+	})
+	if err != nil {
+		return err
+	}
+	payload.MessageID = envelope.MessageID
+	payload.Timestamp = envelope.CreatedAt
+	payload.FromDID = c.did
+	payload.ContentMode = ContentModeEncryptedV2
+	payload.MessageVersion = E2EEMessageVersion
+	payload.Encrypted = envelope
+	payload.Body = ""
+	payload.Signature = ""
+	payload.SignedPayload = ""
+	return nil
+}
+
+func classifyE2EEChatTargets(targetList string) (aliases []string, dids []string, addresses []string) {
+	for _, raw := range strings.Split(targetList, ",") {
+		target := strings.TrimSpace(raw)
+		if target == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(target, "did:"):
+			dids = append(dids, target)
+		case strings.Contains(target, "/"):
+			addresses = append(addresses, target)
+		default:
+			aliases = append(aliases, target)
+		}
+	}
+	return aliases, dids, addresses
+}
+
+func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids []string, addresses []string) ([]E2EERecipientKey, error) {
+	recipients := make([]E2EERecipientKey, 0, len(aliases)+len(dids)+len(addresses))
+	if len(aliases) > 0 {
+		resp, err := c.ListAgents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		agentsByAlias := map[string]AgentView{}
+		for _, agent := range resp.Agents {
+			agentsByAlias[strings.TrimSpace(agent.Alias)] = agent
+		}
+		for _, alias := range aliases {
+			agent, ok := agentsByAlias[strings.TrimSpace(alias)]
+			if !ok {
+				return nil, fmt.Errorf("recipient agent not found: %s", alias)
+			}
+			assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			recipients = append(recipients, E2EERecipientKey{
+				Address:       strings.TrimSpace(agent.Address),
+				DID:           strings.TrimSpace(agent.DIDKey),
+				StableID:      strings.TrimSpace(agent.DIDAW),
+				EncryptionKey: assertion,
+				InboundMode:   strings.TrimSpace(agent.InboundMode),
+			})
+		}
+	}
+	for _, target := range append(append([]string{}, addresses...), dids...) {
+		identity, err := c.ResolveIdentity(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		if identity.EncryptionKey == nil {
+			return nil, errors.New("recipient has no published E2E encryption key; ask it to run `aw id encryption-key setup`")
+		}
+		recipients = append(recipients, E2EERecipientKey{
+			Address:        strings.TrimSpace(identity.Address),
+			DID:            strings.TrimSpace(identity.DID),
+			StableID:       strings.TrimSpace(identity.StableID),
+			EncryptionKey:  identity.EncryptionKey,
+			DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+		})
+	}
+	if len(recipients) == 0 {
+		return nil, errors.New("E2E chat requires at least one recipient")
+	}
+	return recipients, nil
+}
+
 type ChatPendingResponse struct {
 	Pending         []ChatPendingItem `json:"pending"`
 	MessagesWaiting int               `json:"messages_waiting"`
 }
 
 type ChatPendingItem struct {
-	SessionID            string   `json:"session_id"`
-	TeamID               string   `json:"team_id,omitempty"`
-	Participants         []string `json:"participants"`
-	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
-	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
-	LastMessage          string   `json:"last_message"`
-	LastFrom             string   `json:"last_from"`
-	LastFromStableID     string   `json:"last_from_stable_id,omitempty"`
-	LastFromDID          string   `json:"last_from_did,omitempty"`
-	LastFromAddress      string   `json:"last_from_address,omitempty"`
-	UnreadCount          int      `json:"unread_count"`
-	LastActivity         string   `json:"last_activity"`
-	SenderWaiting        bool     `json:"sender_waiting"`
-	TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
+	SessionID              string               `json:"session_id"`
+	TeamID                 string               `json:"team_id,omitempty"`
+	Participants           []string             `json:"participants"`
+	ParticipantDIDs        []string             `json:"participant_dids,omitempty"`
+	ParticipantAddresses   []string             `json:"participant_addresses,omitempty"`
+	LastMessage            string               `json:"last_message"`
+	LastMessageContentMode string               `json:"last_message_content_mode,omitempty"`
+	LastMessageVersion     int                  `json:"last_message_version,omitempty"`
+	LastEncrypted          *E2EEMessageEnvelope `json:"last_encrypted_envelope,omitempty"`
+	LastFrom               string               `json:"last_from"`
+	LastFromStableID       string               `json:"last_from_stable_id,omitempty"`
+	LastFromDID            string               `json:"last_from_did,omitempty"`
+	LastFromAddress        string               `json:"last_from_address,omitempty"`
+	UnreadCount            int                  `json:"unread_count"`
+	LastActivity           string               `json:"last_activity"`
+	SenderWaiting          bool                 `json:"sender_waiting"`
+	TimeRemainingSeconds   *int                 `json:"time_remaining_seconds"`
 }
 
 func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
 	var out ChatPendingResponse
 	if err := c.Get(ctx, "/v1/chat/pending", &out); err != nil {
 		return nil, err
+	}
+	for i := range out.Pending {
+		item := &out.Pending[i]
+		if item.LastMessageContentMode == ContentModeEncryptedV2 || item.LastMessageVersion == E2EEMessageVersion || item.LastEncrypted != nil {
+			if item.LastEncrypted == nil {
+				return nil, errors.New("encrypted chat pending response is missing encrypted envelope")
+			}
+			plain, err := c.DecryptE2EEEnvelope(item.LastEncrypted)
+			if err != nil {
+				return nil, err
+			}
+			item.LastMessage = plain.Body
+		}
 	}
 	return &out, nil
 }
@@ -315,6 +538,9 @@ type ChatMessage struct {
 	FromAddress             string                   `json:"from_address,omitempty"`
 	ToAddress               string                   `json:"to_address,omitempty"`
 	Body                    string                   `json:"body"`
+	ContentMode             string                   `json:"content_mode,omitempty"`
+	MessageVersion          int                      `json:"message_version,omitempty"`
+	Encrypted               *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
 	Timestamp               string                   `json:"timestamp"`
 	SenderLeaving           bool                     `json:"sender_leaving"`
 	ReplyToMessageID        string                   `json:"reply_to_message_id,omitempty"`
@@ -354,6 +580,17 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
+			if m.Encrypted == nil {
+				return nil, errors.New("encrypted chat response is missing encrypted envelope")
+			}
+			plain, err := c.DecryptE2EEEnvelope(m.Encrypted)
+			if err != nil {
+				return nil, err
+			}
+			m.Body = plain.Body
+			m.VerificationStatus = Verified
+		}
 		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
 			if meta.FromDID != "" {
 				m.FromDID = meta.FromDID
@@ -378,7 +615,9 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 		if m.FromAddress != "" {
 			from = m.FromAddress
 		}
-		if m.SignedPayload != "" {
+		if m.ContentMode == ContentModeEncryptedV2 {
+			// The v2 envelope signature was verified before decrypting above.
+		} else if m.SignedPayload != "" {
 			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
 			if m.VerificationStatus == Verified {
 				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
@@ -495,15 +734,19 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 
 // ChatSendMessage sends a message in an existing chat session.
 type ChatSendMessageRequest struct {
-	Body          string `json:"body"`
-	Leaving       bool   `json:"leaving,omitempty"`
-	ExtendWait    bool   `json:"hang_on,omitempty"`
-	ReplyTo       string `json:"reply_to,omitempty"`
-	FromDID       string `json:"from_did,omitempty"`
-	Signature     string `json:"signature,omitempty"`
-	Timestamp     string `json:"timestamp,omitempty"`
-	MessageID     string `json:"message_id,omitempty"`
-	SignedPayload string `json:"signed_payload,omitempty"`
+	Body           string               `json:"body"`
+	ContentMode    string               `json:"content_mode,omitempty"`
+	MessageVersion int                  `json:"message_version,omitempty"`
+	Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
+	Leaving        bool                 `json:"leaving,omitempty"`
+	ExtendWait     bool                 `json:"hang_on,omitempty"`
+	ReplyTo        string               `json:"reply_to,omitempty"`
+	FromDID        string               `json:"from_did,omitempty"`
+	Signature      string               `json:"signature,omitempty"`
+	Timestamp      string               `json:"timestamp,omitempty"`
+	MessageID      string               `json:"message_id,omitempty"`
+	SignedPayload  string               `json:"signed_payload,omitempty"`
+	EncryptE2EE    bool                 `json:"-"`
 }
 
 type ChatSendMessageResponse struct {
@@ -517,6 +760,16 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
+	if payload.EncryptE2EE {
+		if err := c.prepareE2EEChatSend(ctx, sessionID, &payload); err != nil {
+			return nil, err
+		}
+		var out ChatSendMessageResponse
+		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
+	}
 
 	// In-session messages: include deterministic To for signature verification.
 	// (aweb returns to_address for reconstruction; we sign the same value.)
@@ -524,7 +777,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	from := c.address
 	targetIsAddress := false
 	if c.signingKey != nil {
-		if toAddr, err := c.toAddressForSession(ctx, sessionID); err == nil {
+		if toAddr, err := c.toAddressForSession(ctx, sessionID, false); err == nil {
 			to = toAddr
 		}
 		targetIsAddress = isRoutableAddressTarget(to) && !strings.Contains(to, ",")

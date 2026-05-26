@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid as uuid_mod
 from datetime import datetime, timezone
+import json
 from typing import Any
 from uuid import UUID
 
@@ -26,6 +27,15 @@ def _uuid_or_none(value: str | UUID | None) -> UUID | None:
     if not text:
         return None
     return UUID(text)
+
+
+def _json_object(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
 
 
 def _participant_did(row: dict[str, Any]) -> str:
@@ -363,6 +373,10 @@ async def send_in_session(
     hang_on: bool = False,
     signature: str | None = None,
     signed_payload: str | None = None,
+    content_mode: str = "legacy_plaintext_v1",
+    message_version: int = 1,
+    encrypted_envelope: dict[str, Any] | None = None,
+    encrypted_metadata: dict[str, Any] | None = None,
     created_at: datetime | None = None,
     message_id: UUID | None = None,
 ) -> dict[str, Any] | None:
@@ -382,13 +396,20 @@ async def send_in_session(
     effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
     effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
     sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
+    encrypted_metadata = encrypted_metadata or {}
 
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
-             body, sender_leaving, hang_on, reply_to, signature, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             body, sender_leaving, hang_on, reply_to, signature, signed_payload,
+             content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+             encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+             encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+             encrypted_signing_key_id, signed_envelope_hash, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -403,6 +424,18 @@ async def send_in_session(
         reply_to,
         signature,
         signed_payload,
+        content_mode,
+        int(message_version or 1),
+        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":")) if encrypted_envelope is not None else None,
+        encrypted_metadata.get("encrypted_ciphertext"),
+        json.dumps(encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if encrypted_metadata.get("encrypted_key_wraps") is not None else None,
+        encrypted_metadata.get("encrypted_ciphertext_hash"),
+        encrypted_metadata.get("encrypted_ciphertext_size"),
+        encrypted_metadata.get("encrypted_key_wraps_hash"),
+        encrypted_metadata.get("encrypted_inner_header_hash"),
+        encrypted_metadata.get("encrypted_suite"),
+        encrypted_metadata.get("encrypted_signing_key_id"),
+        encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
     )
 
@@ -444,7 +477,10 @@ async def get_pending_conversations(
             array_agg(p2.alias ORDER BY p2.alias) AS participants,
             array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
             array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
-            lm.body AS last_message,
+            CASE WHEN lm.content_mode = 'encrypted_v2' THEN '' ELSE lm.body END AS last_message,
+            COALESCE(lm.content_mode, 'legacy_plaintext_v1') AS last_message_content_mode,
+            COALESCE(lm.message_version, 1) AS last_message_version,
+            lm.encrypted_envelope AS last_encrypted_envelope,
             lm.from_alias AS last_from,
             lm.from_address AS last_from_address,
             lm.from_did AS last_from_did,
@@ -462,7 +498,8 @@ async def get_pending_conversations(
         JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
-            SELECT body, from_alias, from_address, from_did, from_agent_id, hang_on, created_at
+            SELECT body, content_mode, message_version, encrypted_envelope,
+                   from_alias, from_address, from_did, from_agent_id, hang_on, created_at
             FROM {{tables.chat_messages}}
             WHERE session_id = s.session_id
             ORDER BY created_at DESC
@@ -490,6 +527,9 @@ async def get_pending_conversations(
             s.session_id,
             s.team_id,
             lm.body,
+            lm.content_mode,
+            lm.message_version,
+            lm.encrypted_envelope,
             lm.from_alias,
             lm.from_address,
             lm.from_did,
@@ -534,6 +574,9 @@ async def get_pending_conversations(
             "participant_dids": list(row["participant_dids"] or []),
             "participant_addresses": list(row["participant_addresses"] or []),
             "last_message": row["last_message"] or "",
+            "last_message_content_mode": row.get("last_message_content_mode") or "legacy_plaintext_v1",
+            "last_message_version": int(row.get("last_message_version") or 1),
+            "last_encrypted_envelope": _json_object(row.get("last_encrypted_envelope")),
             "last_from": row["last_from"] or "",
             "last_from_address": row["last_from_address"] or "",
             "last_from_did": row.get("last_from_did"),
@@ -594,8 +637,11 @@ async def get_message_history(
     if message_uuid is not None:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, from_address, body, created_at, sender_leaving,
-                   from_agent_id, reply_to, from_did, signature, signed_payload
+            SELECT message_id, from_alias, from_address,
+                   CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                   created_at, sender_leaving, from_agent_id, reply_to, from_did,
+                   signature, signed_payload, content_mode, message_version,
+                   encrypted_envelope
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
               AND message_id = $2
@@ -608,8 +654,11 @@ async def get_message_history(
     else:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, from_address, body, created_at, sender_leaving,
-                   from_agent_id, reply_to, from_did, signature, signed_payload
+            SELECT message_id, from_alias, from_address,
+                   CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                   created_at, sender_leaving, from_agent_id, reply_to, from_did,
+                   signature, signed_payload, content_mode, message_version,
+                   encrypted_envelope
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
               AND (
@@ -645,6 +694,9 @@ async def get_message_history(
             "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
+            "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+            "message_version": int(row.get("message_version") or 1),
+            "encrypted_envelope": _json_object(row.get("encrypted_envelope")),
         }
         for row in rows
     ]

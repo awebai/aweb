@@ -141,6 +141,21 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	if v, ok := data["body"].(string); ok {
 		ev.Body = v
 	}
+	if v, ok := data["content_mode"].(string); ok {
+		ev.ContentMode = v
+	}
+	if v, ok := data["message_version"].(float64); ok {
+		ev.MessageVersion = int(v)
+	}
+	if encryptedData, ok := data["encrypted_envelope"].(map[string]any); ok {
+		raw, err := json.Marshal(encryptedData)
+		if err == nil {
+			var encrypted awid.E2EEMessageEnvelope
+			if json.Unmarshal(raw, &encrypted) == nil {
+				ev.Encrypted = &encrypted
+			}
+		}
+	}
 	if v, ok := data["by"].(string); ok {
 		ev.By = v
 	}
@@ -282,6 +297,22 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 
 	return ev
+}
+
+func decryptChatEvent(client *awid.Client, ev *Event) error {
+	if ev == nil || (ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil) {
+		return nil
+	}
+	if ev.Encrypted == nil {
+		return fmt.Errorf("encrypted chat event is missing encrypted envelope")
+	}
+	plain, err := client.DecryptE2EEEnvelope(ev.Encrypted)
+	if err != nil {
+		return err
+	}
+	ev.Body = plain.Body
+	ev.VerificationStatus = awid.Verified
+	return nil
 }
 
 func addressHandle(value string) string {
@@ -888,6 +919,9 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			FromAddress:             m.FromAddress,
 			ToAddress:               m.ToAddress,
 			Body:                    m.Body,
+			ContentMode:             m.ContentMode,
+			MessageVersion:          m.MessageVersion,
+			Encrypted:               m.Encrypted,
 			Timestamp:               m.Timestamp,
 			SenderLeaving:           m.SenderLeaving,
 			ReplyToMessageID:        m.ReplyToMessageID,
@@ -1038,6 +1072,9 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			}
 
 			chatEvent := parseSSEEvent(sr.event)
+			if err := decryptChatEvent(client, &chatEvent); err != nil {
+				return nil, err
+			}
 			tofuFrom := chatEventTrustAddress(chatEvent, participants)
 			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeSenderTrust(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
 			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID, chatEvent.ToStableID)
@@ -1135,6 +1172,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		ToAddresses: addresses,
 		Message:     message,
 		Leaving:     opts.Leaving,
+		EncryptE2EE: opts.EncryptE2EE,
 	}
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
@@ -1142,8 +1180,9 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-				Body:    message,
-				Leaving: opts.Leaving,
+				Body:        message,
+				Leaving:     opts.Leaving,
+				EncryptE2EE: opts.EncryptE2EE,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
@@ -1420,15 +1459,16 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 }
 
 // ExtendWait sends an extend-wait message requesting more time to reply.
-func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string) (*ExtendWaitResult, error) {
+func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
 	sessionID, _, err := findSession(ctx, client, targetAlias)
 	if err != nil {
 		return nil, err
 	}
 
 	msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-		Body:       message,
-		ExtendWait: true,
+		Body:        message,
+		ExtendWait:  true,
+		EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0],
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sending extend-wait message: %w", err)

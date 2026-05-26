@@ -528,6 +528,63 @@ assert_eq "federated e2ee plaintext absent from alpha DB" "0" "$fed_e2ee_alpha_p
 assert_eq "federated e2ee plaintext absent from beta DB" "0" "$fed_e2ee_beta_plaintext_count"
 echo ""
 
+echo "=== Phase 4c: E2E cross-server chat routes ciphertext and clients decrypt ==="
+fed_e2ee_chat_body="FED_E2EE_CHAT_BODY_SENTINEL_260526"
+if fed_e2ee_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave beta.test.local/bob \
+  "$fed_e2ee_chat_body" \
+  --start-conversation \
+  --e2ee 2>&1)"; then
+  fed_e2ee_chat_exit=0
+else
+  fed_e2ee_chat_exit=$?
+fi
+assert_eq "federated e2ee chat send exit" "0" "$fed_e2ee_chat_exit"
+if [[ "$fed_e2ee_chat_exit" != "0" ]]; then
+  echo "$fed_e2ee_chat_out"
+fi
+if bob_e2ee_chat="$(run_aw_in "$BOB_DIR" chat history alpha.test.local/alice --json 2>&1)"; then
+  bob_e2ee_chat_exit=0
+else
+  bob_e2ee_chat_exit=$?
+fi
+assert_eq "bob federated e2ee chat history exit" "0" "$bob_e2ee_chat_exit"
+if [[ "$bob_e2ee_chat_exit" != "0" ]]; then
+  echo "$bob_e2ee_chat"
+fi
+bob_e2ee_chat_body="$(echo "$bob_e2ee_chat" | json_count_matching body "$fed_e2ee_chat_body")"
+assert_eq "bob decrypts federated e2ee chat" "1" "$bob_e2ee_chat_body"
+if alice_e2ee_chat="$(run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json 2>&1)"; then
+  alice_e2ee_chat_exit=0
+else
+  alice_e2ee_chat_exit=$?
+fi
+assert_eq "alice federated e2ee chat sent-history exit" "0" "$alice_e2ee_chat_exit"
+if [[ "$alice_e2ee_chat_exit" != "0" ]]; then
+  echo "$alice_e2ee_chat"
+fi
+alice_e2ee_chat_body="$(echo "$alice_e2ee_chat" | json_count_matching body "$fed_e2ee_chat_body")"
+assert_eq "alice decrypts federated e2ee chat sender self-copy" "1" "$alice_e2ee_chat_body"
+fed_e2ee_chat_reply_body="FED_E2EE_CHAT_REPLY_SENTINEL_260526"
+if fed_e2ee_chat_reply_out="$(run_aw_in "$BOB_DIR" chat send-and-leave alpha.test.local/alice \
+  "$fed_e2ee_chat_reply_body" \
+  --e2ee 2>&1)"; then
+  fed_e2ee_chat_reply_exit=0
+else
+  fed_e2ee_chat_reply_exit=$?
+fi
+assert_eq "federated e2ee chat reply send exit" "0" "$fed_e2ee_chat_reply_exit"
+if [[ "$fed_e2ee_chat_reply_exit" != "0" ]]; then
+  echo "$fed_e2ee_chat_reply_out"
+fi
+alice_e2ee_chat_reply="$(run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json 2>/dev/null)"
+alice_e2ee_chat_reply_count="$(echo "$alice_e2ee_chat_reply" | json_count_matching body "$fed_e2ee_chat_reply_body")"
+assert_eq "alice decrypts federated e2ee chat reply" "1" "$alice_e2ee_chat_reply_count"
+fed_e2ee_chat_alpha_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_CHAT_%';")"
+fed_e2ee_chat_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_CHAT_%';")"
+assert_eq "federated e2ee chat plaintext absent from alpha DB" "0" "$fed_e2ee_chat_alpha_plaintext_count"
+assert_eq "federated e2ee chat plaintext absent from beta DB" "0" "$fed_e2ee_chat_beta_plaintext_count"
+echo ""
+
 echo "=== Phase 4: Public cross-server first contact and replies ==="
 run_aw_in "$ALICE_DIR" mail send --to-address beta.test.local/bob --subject "Public federated mail" --body "hello beta bob" >/dev/null
 bob_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"

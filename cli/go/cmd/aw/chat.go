@@ -26,6 +26,11 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 	if err != nil {
 		return nil, nil, err
 	}
+	if opts.EncryptE2EE {
+		if err := configureClientE2EEForMail(c, sel, true); err != nil {
+			return nil, nil, err
+		}
+	}
 	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{toAlias}, message, opts, chatStderrCallback)
 	return r, sel, err
 }
@@ -103,6 +108,9 @@ var (
 	chatSendAndWaitWait               int
 	chatSendAndWaitStartConversation  bool
 	chatSendAndLeaveStartConversation bool
+	chatSendAndWaitE2EE               bool
+	chatSendAndLeaveE2EE              bool
+	chatExtendWaitE2EE                bool
 	chatListenWait                    int
 )
 
@@ -118,6 +126,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Wait:              chatSendAndWaitWait,
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
+			EncryptE2EE:       chatSendAndWaitE2EE,
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -163,6 +172,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Wait:              0,
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
+			EncryptE2EE:       chatSendAndLeaveE2EE,
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -198,10 +208,11 @@ var chatPendingCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		c, err := resolveClient()
+		c, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}
+		_ = configureClientE2EEForMail(c, sel, false)
 		result, err := chat.Pending(ctx, c.Client)
 		if err != nil {
 			return err
@@ -225,6 +236,7 @@ var chatOpenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		_ = configureClientE2EEForMail(c, sel, false)
 		result, err := chat.Open(ctx, c.Client, args[0])
 		if err != nil {
 			return err
@@ -249,10 +261,11 @@ var chatHistoryCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		c, _, err := resolveClientSelection()
+		c, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}
+		_ = configureClientE2EEForMail(c, sel, false)
 		result, err := chat.History(ctx, c.Client, args[0])
 		if err != nil {
 			return err
@@ -277,7 +290,12 @@ var chatExtendWaitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := chat.ExtendWait(ctx, c.Client, args[0], args[1])
+		if chatExtendWaitE2EE {
+			if err := configureClientE2EEForMail(c, sel, true); err != nil {
+				return err
+			}
+		}
+		result, err := chat.ExtendWait(ctx, c.Client, args[0], args[1], chatExtendWaitE2EE)
 		if err != nil {
 			return err
 		}
@@ -318,6 +336,7 @@ var chatListenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		_ = configureClientE2EEForMail(c, sel, false)
 		result, err := chat.Listen(ctx, c.Client, args[0], chatListenWait, chatStderrCallback)
 		if err != nil {
 			return err
@@ -344,6 +363,7 @@ var chatShowPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		_ = configureClientE2EEForMail(c, sel, false)
 		result, err := chat.ShowPending(ctx, c.Client, args[0])
 		if err != nil {
 			return err
@@ -359,7 +379,10 @@ var chatShowPendingCmd = &cobra.Command{
 func init() {
 	chatSendAndWaitCmd.Flags().IntVar(&chatSendAndWaitWait, "wait", chat.DefaultWait, "Seconds to wait for reply")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
+	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
+	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing")
+	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing")
 
 	chatListenCmd.Flags().IntVar(&chatListenWait, "wait", chat.DefaultWait, "Seconds to wait for a message (0 = no wait)")
 

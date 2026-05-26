@@ -133,7 +133,8 @@ type E2EESenderKey struct {
 	SigningKey    ed25519.PrivateKey
 }
 
-type E2EEEncryptMailParams struct {
+type E2EEEncryptMessageParams struct {
+	Kind                string
 	Sender              E2EESenderKey
 	Recipients          []E2EERecipientKey
 	Subject             string
@@ -146,6 +147,8 @@ type E2EEEncryptMailParams struct {
 	ObservedInboundMode string
 }
 
+type E2EEEncryptMailParams = E2EEEncryptMessageParams
+
 type E2EEDecryptIdentity struct {
 	Address         string
 	DID             string
@@ -154,7 +157,46 @@ type E2EEDecryptIdentity struct {
 	PrivateKey      *ecdh.PrivateKey
 }
 
+func (c *Client) DecryptE2EEEnvelope(envelope *E2EEMessageEnvelope) (*E2EEInnerPayload, error) {
+	if c == nil {
+		return nil, fmt.Errorf("missing client")
+	}
+	if c.e2eePrivateKey == nil {
+		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
+	}
+	return DecryptE2EEMessage(envelope, E2EEDecryptIdentity{
+		Address:    c.address,
+		DID:        c.did,
+		StableID:   c.stableID,
+		PrivateKey: c.e2eePrivateKey,
+	})
+}
+
 func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error) {
+	params.Kind = "mail"
+	if len(params.Recipients) != 1 {
+		return nil, fmt.Errorf("E2E mail requires exactly one delivery recipient")
+	}
+	return EncryptE2EEMessage(params)
+}
+
+func EncryptE2EEChat(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, error) {
+	params.Kind = "chat"
+	params.Subject = ""
+	if len(params.Recipients) == 0 {
+		return nil, fmt.Errorf("E2E chat requires at least one delivery recipient")
+	}
+	return EncryptE2EEMessage(params)
+}
+
+func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, error) {
+	kind := strings.TrimSpace(params.Kind)
+	if kind == "" {
+		kind = "mail"
+	}
+	if kind != "mail" && kind != "chat" {
+		return nil, fmt.Errorf("unsupported E2E message kind %q", kind)
+	}
 	if strings.TrimSpace(params.MessageID) == "" {
 		return nil, fmt.Errorf("message_id is required")
 	}
@@ -167,8 +209,8 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 	if params.Sender.EncryptionKey == nil {
 		return nil, fmt.Errorf("sender encryption key is required")
 	}
-	if len(params.Recipients) != 1 {
-		return nil, fmt.Errorf("first E2E mail implementation requires exactly one delivery recipient")
+	if len(params.Recipients) == 0 {
+		return nil, fmt.Errorf("at least one delivery recipient is required")
 	}
 	createdAt := params.CreatedAt.UTC().Truncate(time.Second)
 	if createdAt.IsZero() {
@@ -192,31 +234,36 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 		return nil, fmt.Errorf("sender encryption key assertion: %w", err)
 	}
 
-	recipient := params.Recipients[0]
-	recipientRef := E2EERecipientRef{
-		Address:         strings.TrimSpace(recipient.Address),
-		DID:             strings.TrimSpace(recipient.DID),
-		StableID:        strings.TrimSpace(recipient.StableID),
-		TeamID:          strings.TrimSpace(recipient.TeamID),
-		EncryptionKeyID: strings.TrimSpace(recipient.EncryptionKey.EncryptionKeyID),
+	recipients := make([]E2EERecipientRef, 0, len(params.Recipients))
+	innerRecipients := make([]E2EEIdentityRef, 0, len(params.Recipients))
+	for i, recipient := range params.Recipients {
+		if recipient.EncryptionKey == nil {
+			return nil, fmt.Errorf("recipient %d encryption key is required", i)
+		}
+		recipientRef := E2EERecipientRef{
+			Address:         strings.TrimSpace(recipient.Address),
+			DID:             strings.TrimSpace(recipient.DID),
+			StableID:        strings.TrimSpace(recipient.StableID),
+			TeamID:          strings.TrimSpace(recipient.TeamID),
+			EncryptionKeyID: strings.TrimSpace(recipient.EncryptionKey.EncryptionKeyID),
+		}
+		if recipientRef.DID == "" || recipientRef.EncryptionKeyID == "" {
+			return nil, fmt.Errorf("recipient %d did and encryption key are required", i)
+		}
+		if err := VerifyEncryptionKeyAssertion(recipient.EncryptionKey, recipientRef.DID, recipientRef.StableID, createdAt); err != nil {
+			return nil, fmt.Errorf("recipient encryption key assertion %d: %w", i, err)
+		}
+		recipients = append(recipients, recipientRef)
+		innerRecipients = append(innerRecipients, E2EEIdentityRef{
+			Address:  recipientRef.Address,
+			DID:      recipientRef.DID,
+			StableID: recipientRef.StableID,
+			TeamID:   recipientRef.TeamID,
+		})
 	}
-	if recipient.EncryptionKey == nil || recipientRef.DID == "" || recipientRef.EncryptionKeyID == "" {
-		return nil, fmt.Errorf("recipient did and encryption key are required")
-	}
-	if err := VerifyEncryptionKeyAssertion(recipient.EncryptionKey, recipientRef.DID, recipientRef.StableID, createdAt); err != nil {
-		return nil, fmt.Errorf("recipient encryption key assertion: %w", err)
-	}
-
-	recipients := []E2EERecipientRef{recipientRef}
-	innerRecipients := []E2EEIdentityRef{{
-		Address:  recipientRef.Address,
-		DID:      recipientRef.DID,
-		StableID: recipientRef.StableID,
-		TeamID:   recipientRef.TeamID,
-	}}
 	inner := E2EEInnerPayload{
 		InnerVersion:     E2EEMessageVersion,
-		Kind:             "mail",
+		Kind:             kind,
 		MessageID:        strings.TrimSpace(params.MessageID),
 		ConversationID:   strings.TrimSpace(params.ConversationID),
 		ReplyToMessageID: strings.TrimSpace(params.ReplyToMessageID),
@@ -243,12 +290,15 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 		return nil, fmt.Errorf("generated all-zero content nonce")
 	}
 
-	keyWraps := make([]E2EEKeyWrap, 0, 2)
-	deliveryWrap, err := buildE2EEKeyWrap(cek, params.MessageID, params.ConversationID, from, recipientRef, "delivery", recipient.EncryptionKey)
-	if err != nil {
-		return nil, err
+	keyWraps := make([]E2EEKeyWrap, 0, len(params.Recipients)+1)
+	for i, recipient := range params.Recipients {
+		deliveryWrap, err := buildE2EEKeyWrap(cek, params.MessageID, params.ConversationID, from, recipients[i], "delivery", recipient.EncryptionKey)
+		if err != nil {
+			return nil, err
+		}
+		keyWraps = append(keyWraps, *deliveryWrap)
+		recipients[i].WrapID = deliveryWrap.WrapID
 	}
-	keyWraps = append(keyWraps, *deliveryWrap)
 	senderAsRecipient := E2EERecipientRef{
 		Address:         from.Address,
 		DID:             from.DID,
@@ -261,7 +311,6 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 		return nil, err
 	}
 	keyWraps = append(keyWraps, *selfWrap)
-	recipients[0].WrapID = deliveryWrap.WrapID
 
 	keyWrapsHash, err := e2eeHashCanonical("key_wraps", e2eeKeyWrapsJSONValue(keyWraps))
 	if err != nil {
@@ -275,7 +324,7 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 	envelope := &E2EEMessageEnvelope{
 		MessageVersion:   E2EEMessageVersion,
 		EnvelopeType:     E2EEEnvelopeType,
-		Kind:             "mail",
+		Kind:             kind,
 		MessageID:        strings.TrimSpace(params.MessageID),
 		ConversationID:   strings.TrimSpace(params.ConversationID),
 		ReplyToMessageID: strings.TrimSpace(params.ReplyToMessageID),
@@ -284,9 +333,9 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 		From:             from,
 		Recipients:       recipients,
 		Routing: E2EERouting{
-			To:                        firstNonEmptyString(recipientRef.Address, recipientRef.StableID, recipientRef.DID),
-			ToDID:                     recipientRef.DID,
-			ToStableID:                recipientRef.StableID,
+			To:                        e2eeRoutingTo(recipients),
+			ToDID:                     e2eeSingleRecipientField(recipients, "did"),
+			ToStableID:                e2eeSingleRecipientField(recipients, "stable_id"),
 			DeliveryOrigin:            strings.TrimSpace(params.DeliveryOrigin),
 			SenderObservedInboundMode: strings.TrimSpace(params.ObservedInboundMode),
 		},
@@ -317,6 +366,31 @@ func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error)
 	}
 	envelope.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(params.Sender.SigningKey, []byte(signedPayload)))
 	return envelope, nil
+}
+
+func e2eeRoutingTo(recipients []E2EERecipientRef) string {
+	values := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		value := firstNonEmptyString(recipient.Address, recipient.StableID, recipient.DID)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return strings.Join(values, ",")
+}
+
+func e2eeSingleRecipientField(recipients []E2EERecipientRef, field string) string {
+	if len(recipients) != 1 {
+		return ""
+	}
+	switch field {
+	case "did":
+		return strings.TrimSpace(recipients[0].DID)
+	case "stable_id":
+		return strings.TrimSpace(recipients[0].StableID)
+	default:
+		return ""
+	}
 }
 
 func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {

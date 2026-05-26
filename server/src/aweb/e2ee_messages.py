@@ -227,26 +227,28 @@ def _validate_key_wrap_structure(wrap: dict[str, Any], *, index: int) -> None:
         raise E2EEEnvelopeError("encrypted envelope key wrap wrapped CEK is too short")
 
 
-def validate_e2ee_mail_envelope(
+def validate_e2ee_message_envelope(
     envelope: dict[str, Any],
     *,
+    kind: str,
     message_id: str,
     conversation_id: str,
     sender_did: str,
     sender_stable_id: str | None,
-    recipient_did: str,
-    recipient_stable_id: str | None,
-    recipient_address: str | None,
+    recipients: list[dict[str, str | None]],
     now: datetime | None = None,
 ) -> None:
     if not isinstance(envelope, dict):
         raise E2EEEnvelopeError("encrypted_envelope must be an object")
+    kind = _non_empty(kind)
+    if kind not in {"mail", "chat"}:
+        raise E2EEEnvelopeError("unsupported encrypted envelope kind")
     if int(envelope.get("message_version") or 0) != E2EE_MESSAGE_VERSION:
         raise E2EEEnvelopeError("unsupported encrypted message_version")
     if _non_empty(envelope.get("envelope_type")) != E2EE_ENVELOPE_TYPE:
         raise E2EEEnvelopeError("unsupported encrypted envelope_type")
-    if _non_empty(envelope.get("kind")) != "mail":
-        raise E2EEEnvelopeError("encrypted envelope kind must be mail")
+    if _non_empty(envelope.get("kind")) != kind:
+        raise E2EEEnvelopeError(f"encrypted envelope kind must be {kind}")
     if _non_empty(envelope.get("message_id")) != str(message_id):
         raise E2EEEnvelopeError("encrypted envelope message_id mismatch")
     if _non_empty(envelope.get("conversation_id")) != str(conversation_id):
@@ -270,22 +272,38 @@ def validate_e2ee_mail_envelope(
     if not sender_key_id:
         raise E2EEEnvelopeError("encrypted envelope sender missing key binding")
 
-    recipients = envelope.get("recipients") or []
-    if len(recipients) != 1:
-        raise E2EEEnvelopeError("encrypted mail requires exactly one delivery recipient")
-    recipient = recipients[0]
-    if not isinstance(recipient, dict):
-        raise E2EEEnvelopeError("encrypted envelope recipient must be an object")
-    if _non_empty(recipient.get("did")) != recipient_did:
+    if not recipients:
+        raise E2EEEnvelopeError("encrypted envelope requires at least one delivery recipient")
+    envelope_recipients = envelope.get("recipients") or []
+    if len(envelope_recipients) != len(recipients):
+        raise E2EEEnvelopeError("encrypted envelope recipient count mismatch")
+    expected_by_did = {_non_empty(item.get("did")): item for item in recipients if _non_empty(item.get("did"))}
+    if len(expected_by_did) != len(recipients):
+        raise E2EEEnvelopeError("encrypted envelope expected recipients must have unique dids")
+    envelope_recipients_by_did: dict[str, dict[str, Any]] = {}
+    for recipient in envelope_recipients:
+        if not isinstance(recipient, dict):
+            raise E2EEEnvelopeError("encrypted envelope recipient must be an object")
+        recipient_did = _non_empty(recipient.get("did"))
+        if not recipient_did:
+            raise E2EEEnvelopeError("encrypted envelope recipient did is required")
+        if recipient_did in envelope_recipients_by_did:
+            raise E2EEEnvelopeError("encrypted envelope duplicate recipient did")
+        envelope_recipients_by_did[recipient_did] = recipient
+    if set(envelope_recipients_by_did) != set(expected_by_did):
         raise E2EEEnvelopeError("encrypted envelope recipient did mismatch")
-    if recipient_stable_id and _non_empty(recipient.get("stable_id")) != recipient_stable_id:
-        raise E2EEEnvelopeError("encrypted envelope recipient stable id mismatch")
-    if recipient_address and _non_empty(recipient.get("address")) != recipient_address:
-        raise E2EEEnvelopeError("encrypted envelope recipient address mismatch")
-    recipient_key_id = _non_empty(recipient.get("encryption_key_id"))
-    recipient_wrap_id = _non_empty(recipient.get("wrap_id"))
-    if not recipient_key_id or not recipient_wrap_id:
-        raise E2EEEnvelopeError("encrypted envelope recipient missing key binding")
+    for recipient_did, expected in expected_by_did.items():
+        recipient = envelope_recipients_by_did[recipient_did]
+        expected_stable_id = _non_empty(expected.get("stable_id"))
+        expected_address = _non_empty(expected.get("address"))
+        if expected_stable_id and _non_empty(recipient.get("stable_id")) != expected_stable_id:
+            raise E2EEEnvelopeError("encrypted envelope recipient stable id mismatch")
+        if expected_address and _non_empty(recipient.get("address")) != expected_address:
+            raise E2EEEnvelopeError("encrypted envelope recipient address mismatch")
+        recipient_key_id = _non_empty(recipient.get("encryption_key_id"))
+        recipient_wrap_id = _non_empty(recipient.get("wrap_id"))
+        if not recipient_key_id or not recipient_wrap_id:
+            raise E2EEEnvelopeError("encrypted envelope recipient missing key binding")
 
     crypto = envelope.get("crypto") or {}
     if _non_empty(crypto.get("suite")) != E2EE_SUITE:
@@ -314,21 +332,33 @@ def validate_e2ee_mail_envelope(
         wrap for wrap in key_wraps
         if isinstance(wrap, dict) and _non_empty(wrap.get("wrap_purpose")) == "sender_copy"
     ]
-    if len(delivery_wraps) != 1:
-        raise E2EEEnvelopeError("encrypted envelope requires exactly one delivery key wrap")
+    if len(delivery_wraps) != len(envelope_recipients_by_did):
+        raise E2EEEnvelopeError("encrypted envelope delivery key wrap count mismatch")
     if len(sender_copy_wraps) != 1:
         raise E2EEEnvelopeError("encrypted envelope requires exactly one sender_copy key wrap")
-    delivery_wrap = delivery_wraps[0]
-    if _non_empty(delivery_wrap.get("recipient_did")) != recipient_did:
+    delivery_wraps_by_did: dict[str, dict[str, Any]] = {}
+    for wrap in delivery_wraps:
+        wrap_recipient_did = _non_empty(wrap.get("recipient_did"))
+        if wrap_recipient_did in delivery_wraps_by_did:
+            raise E2EEEnvelopeError("encrypted envelope duplicate delivery wrap recipient")
+        delivery_wraps_by_did[wrap_recipient_did] = wrap
+    if set(delivery_wraps_by_did) != set(envelope_recipients_by_did):
         raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient did mismatch")
-    if recipient_stable_id and _non_empty(delivery_wrap.get("recipient_stable_id")) != recipient_stable_id:
-        raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient stable id mismatch")
-    if recipient_address and _non_empty(delivery_wrap.get("recipient_address")) != recipient_address:
-        raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient address mismatch")
-    if _non_empty(delivery_wrap.get("recipient_encryption_key_id")) != recipient_key_id:
-        raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient key mismatch")
-    if _non_empty(delivery_wrap.get("wrap_id")) != recipient_wrap_id:
-        raise E2EEEnvelopeError("encrypted envelope delivery wrap id mismatch")
+    for recipient_did, recipient in envelope_recipients_by_did.items():
+        expected = expected_by_did[recipient_did]
+        delivery_wrap = delivery_wraps_by_did[recipient_did]
+        expected_stable_id = _non_empty(expected.get("stable_id"))
+        expected_address = _non_empty(expected.get("address"))
+        recipient_key_id = _non_empty(recipient.get("encryption_key_id"))
+        recipient_wrap_id = _non_empty(recipient.get("wrap_id"))
+        if expected_stable_id and _non_empty(delivery_wrap.get("recipient_stable_id")) != expected_stable_id:
+            raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient stable id mismatch")
+        if expected_address and _non_empty(delivery_wrap.get("recipient_address")) != expected_address:
+            raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient address mismatch")
+        if _non_empty(delivery_wrap.get("recipient_encryption_key_id")) != recipient_key_id:
+            raise E2EEEnvelopeError("encrypted envelope delivery wrap recipient key mismatch")
+        if _non_empty(delivery_wrap.get("wrap_id")) != recipient_wrap_id:
+            raise E2EEEnvelopeError("encrypted envelope delivery wrap id mismatch")
     sender_copy_wrap = sender_copy_wraps[0]
     if _non_empty(sender_copy_wrap.get("sender_did")) != sender_did:
         raise E2EEEnvelopeError("encrypted envelope sender_copy sender did mismatch")
@@ -357,6 +387,36 @@ def validate_e2ee_mail_envelope(
     )
     if verify_signature(sender_did, payload, _non_empty(envelope.get("signature"))) != VerifyResult.VERIFIED:
         raise E2EEEnvelopeError("invalid encrypted envelope signature")
+
+
+def validate_e2ee_mail_envelope(
+    envelope: dict[str, Any],
+    *,
+    message_id: str,
+    conversation_id: str,
+    sender_did: str,
+    sender_stable_id: str | None,
+    recipient_did: str,
+    recipient_stable_id: str | None,
+    recipient_address: str | None,
+    now: datetime | None = None,
+) -> None:
+    validate_e2ee_message_envelope(
+        envelope,
+        kind="mail",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        sender_did=sender_did,
+        sender_stable_id=sender_stable_id,
+        recipients=[
+            {
+                "did": recipient_did,
+                "stable_id": recipient_stable_id,
+                "address": recipient_address,
+            }
+        ],
+        now=now,
+    )
 
 
 def encrypted_message_storage_metadata(envelope: dict[str, Any]) -> dict[str, Any]:

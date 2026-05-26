@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
-from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_mail_envelope
+from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_message_envelope
 
 FEDERATION_ENVELOPE_VERSION = 1
 FEDERATION_TIMESTAMP_SKEW_SECONDS = 300
@@ -284,8 +284,6 @@ def _enforce_encrypted_payload_binding(
     *,
     now: datetime | None,
 ) -> None:
-    if model.type != "mail":
-        raise FederationEnvelopeError("Federated encrypted delivery is only defined for mail")
     if model.content_mode != "encrypted_v2":
         raise FederationEnvelopeError("Federation encrypted content_mode must be encrypted_v2")
     if model.message_version != 2:
@@ -295,15 +293,20 @@ def _enforce_encrypted_payload_binding(
     if model.encrypted_envelope.get("signature") != signature:
         raise FederationEnvelopeError("Federation encrypted signature does not match envelope signature")
     try:
-        validate_e2ee_mail_envelope(
+        validate_e2ee_message_envelope(
             model.encrypted_envelope,
+            kind=model.type,
             message_id=model.message_id,
             conversation_id=model.conversation_id or "",
             sender_did=model.sender_current_did_key,
             sender_stable_id=model.sender_did_aw if model.sender_did_aw.startswith("did:aw:") else None,
-            recipient_did=model.target_current_did_key,
-            recipient_stable_id=model.target_did_aw if model.target_did_aw.startswith("did:aw:") else None,
-            recipient_address=model.target_address,
+            recipients=[
+                {
+                    "did": model.target_current_did_key,
+                    "stable_id": model.target_did_aw if model.target_did_aw.startswith("did:aw:") else None,
+                    "address": model.target_address,
+                }
+            ],
             now=now,
         )
     except E2EEEnvelopeError as exc:

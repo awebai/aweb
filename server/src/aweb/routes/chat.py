@@ -21,6 +21,11 @@ from redis.exceptions import RedisError
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.e2ee_messages import (
+    E2EEEnvelopeError,
+    encrypted_message_storage_metadata,
+    validate_e2ee_message_envelope,
+)
 from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError, verify_federation_envelope
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
@@ -312,6 +317,76 @@ def _require_remote_chat_signature(payload: CreateSessionRequest | SendMessageRe
         )
 
 
+def _payload_is_encrypted(payload: CreateSessionRequest | SendMessageRequest) -> bool:
+    return (
+        getattr(payload, "content_mode", "legacy_plaintext_v1") == "encrypted_v2"
+        or getattr(payload, "message_version", 1) == 2
+        or getattr(payload, "encrypted_envelope", None) is not None
+    )
+
+
+def _chat_envelope_recipients(rows: list[dict[str, Any]]) -> list[dict[str, str | None]]:
+    recipients: list[dict[str, str | None]] = []
+    for row in rows:
+        recipient_did = str(row.get("did_key") or row.get("current_did_key") or row.get("did") or "").strip()
+        if not recipient_did:
+            recipient_did = _target_did(row)
+        recipients.append(
+            {
+                "did": recipient_did,
+                "stable_id": str(row.get("did_aw") or "").strip() or None,
+                "address": str(row.get("address") or "").strip() or None,
+            }
+        )
+    return recipients
+
+
+def _validate_encrypted_chat_payload(
+    payload: CreateSessionRequest | SendMessageRequest,
+    *,
+    auth: MessagingAuth,
+    actor_did: str,
+    session_id: str,
+    recipient_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not _payload_is_encrypted(payload):
+        return None
+    if payload.content_mode != "encrypted_v2":
+        raise HTTPException(status_code=422, detail="content_mode must be encrypted_v2 for encrypted chat")
+    if payload.message_version != 2:
+        raise HTTPException(status_code=422, detail="message_version must be 2 for encrypted chat")
+    if not isinstance(payload.encrypted_envelope, dict):
+        raise HTTPException(status_code=422, detail="encrypted_envelope is required for encrypted chat")
+    if _chat_payload_body(payload):
+        raise HTTPException(status_code=422, detail="Encrypted chat payload body must be empty")
+    if payload.signature or payload.signed_payload:
+        raise HTTPException(status_code=422, detail="Encrypted chat must not include legacy signature fields")
+    if payload.message_id is None or payload.timestamp is None:
+        raise HTTPException(status_code=422, detail="message_id and timestamp are required for encrypted chat")
+    envelope = payload.encrypted_envelope or {}
+    try:
+        validate_e2ee_message_envelope(
+            envelope,
+            kind="chat",
+            message_id=payload.message_id,
+            conversation_id=session_id,
+            sender_did=(auth.did_key or actor_did).strip(),
+            sender_stable_id=(auth.did_aw or "").strip() or None,
+            recipients=_chat_envelope_recipients(recipient_rows),
+        )
+    except E2EEEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if str(envelope.get("signature") or "").strip() == "":
+        raise HTTPException(status_code=422, detail="encrypted envelope signature is required")
+    return encrypted_message_storage_metadata(envelope)
+
+
+def _chat_federation_signature(payload: CreateSessionRequest | SendMessageRequest) -> str:
+    if _payload_is_encrypted(payload):
+        return str(((payload.encrypted_envelope or {}).get("signature")) or "").strip()
+    return str(payload.signature or "").strip()
+
+
 def _federation_transport(request: Request):
     return (
         getattr(request.app.state, "federation_chat_transport", None)
@@ -483,13 +558,20 @@ async def _deliver_federated_chat(
     route: dict[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
-    _require_remote_chat_signature(payload, session_id=session_id)
+    if not _payload_is_encrypted(payload):
+        _require_remote_chat_signature(payload, session_id=session_id)
     sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
     if not sender_routing_did:
         raise HTTPException(status_code=422, detail="Federated chat delivery requires a sender identity")
-    sender_current_did = str(payload.from_did or "").strip()
+    sender_current_did = (
+        ((payload.encrypted_envelope or {}).get("from") or {}).get("did")
+        if _payload_is_encrypted(payload)
+        else payload.from_did
+    )
+    sender_current_did = str(sender_current_did or "").strip()
     if sender_current_did not in set(_actor_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+    federation_signature = _chat_federation_signature(payload)
 
     try:
         envelope = FederationEnvelope(
@@ -502,11 +584,14 @@ async def _deliver_federated_chat(
             target_did_aw=route["did_aw"],
             target_current_did_key=route["current_did_key"],
             target_delivery_origin=route["delivery_origin"],
-            body=_chat_payload_body(payload),
+            body="" if _payload_is_encrypted(payload) else _chat_payload_body(payload),
             message_id=str(payload.message_id),
             timestamp=str(payload.timestamp),
-            signed_payload=str(payload.signed_payload),
+            signed_payload=None if _payload_is_encrypted(payload) else str(payload.signed_payload),
             conversation_id=session_id,
+            content_mode=getattr(payload, "content_mode", None),
+            message_version=getattr(payload, "message_version", None),
+            encrypted_envelope=getattr(payload, "encrypted_envelope", None),
             wait_seconds=getattr(payload, "wait_seconds", None),
             reply_to=payload.reply_to,
             sender_leaving=_chat_payload_leaving(payload),
@@ -514,7 +599,7 @@ async def _deliver_federated_chat(
         )
         verify_federation_envelope(
             envelope,
-            str(payload.signature),
+            federation_signature,
             expected={
                 "type": "chat",
                 "target_address": route["address"],
@@ -532,7 +617,7 @@ async def _deliver_federated_chat(
         return await deliver_federated_message(
             delivery_origin=route["delivery_origin"],
             envelope=envelope,
-            signature=str(payload.signature),
+            signature=federation_signature,
             transport=_federation_transport(request),
         )
     except FederatedMailDeliveryError as exc:
@@ -879,6 +964,9 @@ class CreateSessionRequest(BaseModel):
     to_dids: list[str] = Field(default_factory=list)
     to_addresses: list[str] = Field(default_factory=list)
     message: str
+    content_mode: str = "legacy_plaintext_v1"
+    message_version: int = 1
+    encrypted_envelope: dict[str, Any] | None = None
     leaving: bool = False
     wait_seconds: int | None = None
     message_id: str | None = None
@@ -946,6 +1034,24 @@ class CreateSessionRequest(BaseModel):
             raise ValueError("to_dids contains duplicates")
         if len(self.to_addresses) != len(set(self.to_addresses)):
             raise ValueError("to_addresses contains duplicates")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_content_mode(self) -> "CreateSessionRequest":
+        encrypted = (
+            self.content_mode == "encrypted_v2"
+            or self.message_version == 2
+            or self.encrypted_envelope is not None
+        )
+        if encrypted:
+            if self.content_mode != "encrypted_v2":
+                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
+            if self.message_version != 2:
+                raise ValueError("message_version must be 2 for encrypted chat")
+            if self.encrypted_envelope is None:
+                raise ValueError("encrypted_envelope is required for encrypted chat")
+        elif self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
+            raise ValueError("unsupported chat content mode")
         return self
 
     @field_validator("session_id", "message_id", "reply_to")
@@ -1085,26 +1191,34 @@ async def create_or_send(
             raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
         if requested_session_id is None:
             raise HTTPException(status_code=422, detail="Federated chat delivery requires session_id")
-        _require_remote_chat_signature(payload, session_id=str(requested_session_id))
-        from_did = str(payload.from_did or "").strip()
-        if from_did not in set(_actor_dids(auth)):
-            raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
-        _validate_signed_chat_payload(
-            signed_payload=payload.signed_payload,
+        encrypted_metadata = _validate_encrypted_chat_payload(
+            payload,
+            auth=auth,
+            actor_did=actor_did,
+            session_id=str(requested_session_id),
             recipient_rows=target_rows,
-            requested_to_aliases=payload.to_aliases,
-            from_alias=auth.alias,
-            from_address=sender_address,
-            from_stable_id=auth.did_aw,
-            body=payload.message,
-            from_did=from_did,
-            message_id=str(payload.message_id),
-            timestamp=str(payload.timestamp),
-            wait_seconds=payload.wait_seconds,
-            reply_to=payload.reply_to,
-            conversation_id=str(requested_session_id),
-            sender_leaving=payload.leaving,
         )
+        if encrypted_metadata is None:
+            _require_remote_chat_signature(payload, session_id=str(requested_session_id))
+            from_did = str(payload.from_did or "").strip()
+            if from_did not in set(_actor_dids(auth)):
+                raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+            _validate_signed_chat_payload(
+                signed_payload=payload.signed_payload,
+                recipient_rows=target_rows,
+                requested_to_aliases=payload.to_aliases,
+                from_alias=auth.alias,
+                from_address=sender_address,
+                from_stable_id=auth.did_aw,
+                body=payload.message,
+                from_did=from_did,
+                message_id=str(payload.message_id),
+                timestamp=str(payload.timestamp),
+                wait_seconds=payload.wait_seconds,
+                reply_to=payload.reply_to,
+                conversation_id=str(requested_session_id),
+                sender_leaving=payload.leaving,
+            )
         msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
         route = await _resolve_remote_chat_route(
@@ -1147,6 +1261,10 @@ async def create_or_send(
             leaving=payload.leaving,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -1171,7 +1289,8 @@ async def create_or_send(
                 "from_did": actor_did,
                 "from_did_aw": (auth.did_aw or "").strip() or None,
                 "to_aliases": [row["alias"] for row in target_rows],
-                "preview": payload.message[:80],
+                "preview": "" if encrypted_metadata is not None else payload.message[:80],
+                "content_mode": payload.content_mode,
                 "federated": True,
             },
         )
@@ -1212,7 +1331,18 @@ async def create_or_send(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
-    if payload.signature is not None:
+    encrypted_metadata = _validate_encrypted_chat_payload(
+        payload,
+        auth=auth,
+        actor_did=actor_did,
+        session_id=str(session_id),
+        recipient_rows=target_rows,
+    )
+
+    if encrypted_metadata is not None:
+        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        pre_message_id = uuid_mod.UUID(str(payload.message_id))
+    elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
         from_did = payload.from_did.strip()
@@ -1266,6 +1396,10 @@ async def create_or_send(
             leaving=payload.leaving,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -1338,7 +1472,8 @@ async def create_or_send(
                 for row in participants_rows
                 if (row.get("did") or "").strip() != actor_did
             ],
-            "preview": payload.message[:80],
+            "preview": "" if encrypted_metadata is not None else payload.message[:80],
+            "content_mode": payload.content_mode,
         },
     )
 
@@ -1481,6 +1616,9 @@ async def pending(
                 ],
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
+                "last_message_content_mode": item.get("last_message_content_mode") or "legacy_plaintext_v1",
+                "last_message_version": item.get("last_message_version") or 1,
+                "last_encrypted_envelope": item.get("last_encrypted_envelope"),
                 "last_from": item["last_from"],
                 "last_from_stable_id": identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
@@ -1574,6 +1712,9 @@ async def history(
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
                 "body": msg["body"],
+                "content_mode": msg.get("content_mode") or "legacy_plaintext_v1",
+                "message_version": msg.get("message_version") or 1,
+                "encrypted_envelope": msg.get("encrypted_envelope"),
                 "timestamp": _utc_iso(msg["created_at"]),
                 "sender_leaving": msg["sender_leaving"],
                 "reply_to": msg.get("reply_to"),
@@ -1722,7 +1863,9 @@ async def _sse_events(
         if after is not None:
             recent = await aweb_db.fetch_all(
                 """
-                SELECT message_id, from_agent_id, from_alias, from_address, body, created_at,
+                SELECT message_id, from_agent_id, from_alias, from_address,
+                       CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                       content_mode, message_version, encrypted_envelope, created_at,
                        sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
@@ -1753,6 +1896,9 @@ async def _sse_events(
                     "from_address": from_address,
                     "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                     "body": row["body"],
+                    "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+                    "message_version": row.get("message_version") or 1,
+                    "encrypted_envelope": row.get("encrypted_envelope"),
                     "sender_leaving": bool(row["sender_leaving"]),
                     "sender_waiting": from_did in waiting,
                     "hang_on": is_hang_on,
@@ -1817,7 +1963,9 @@ async def _sse_events(
             if should_poll:
                 new_msgs = await aweb_db.fetch_all(
                     """
-                    SELECT message_id, from_agent_id, from_alias, from_address, body, created_at,
+                    SELECT message_id, from_agent_id, from_alias, from_address,
+                           CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                           content_mode, message_version, encrypted_envelope, created_at,
                            sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
@@ -1848,6 +1996,9 @@ async def _sse_events(
                         "from_address": from_address,
                         "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                         "body": row["body"],
+                        "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+                        "message_version": row.get("message_version") or 1,
+                        "encrypted_envelope": row.get("encrypted_envelope"),
                         "sender_leaving": bool(row["sender_leaving"]),
                         "sender_waiting": from_did in sender_waiting,
                         "hang_on": is_hang_on,
@@ -1969,7 +2120,10 @@ async def stream(
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    body: str = Field(..., min_length=1)
+    body: str = ""
+    content_mode: str = "legacy_plaintext_v1"
+    message_version: int = 1
+    encrypted_envelope: dict[str, Any] | None = None
     leaving: bool = False
     hang_on: bool = False
     wait_seconds: int | None = Field(default=None, ge=0, le=600)
@@ -1979,6 +2133,27 @@ class SendMessageRequest(BaseModel):
     from_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_content_mode(self) -> "SendMessageRequest":
+        encrypted = (
+            self.content_mode == "encrypted_v2"
+            or self.message_version == 2
+            or self.encrypted_envelope is not None
+        )
+        if encrypted:
+            if self.content_mode != "encrypted_v2":
+                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
+            if self.message_version != 2:
+                raise ValueError("message_version must be 2 for encrypted chat")
+            if self.encrypted_envelope is None:
+                raise ValueError("encrypted_envelope is required for encrypted chat")
+            return self
+        if self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
+            raise ValueError("unsupported chat content mode")
+        if not self.body:
+            raise ValueError("body is required")
+        return self
 
     @field_validator("message_id", "reply_to")
     @classmethod
@@ -2070,7 +2245,17 @@ async def send_message(
 
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
-    if payload.signature is not None:
+    encrypted_metadata = _validate_encrypted_chat_payload(
+        payload,
+        auth=auth,
+        actor_did=actor_did,
+        session_id=str(session_uuid),
+        recipient_rows=recipient_rows,
+    )
+    if encrypted_metadata is not None:
+        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        pre_message_id = uuid_mod.UUID(str(payload.message_id))
+    elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
         from_did = payload.from_did.strip()
@@ -2159,6 +2344,10 @@ async def send_message(
                 hang_on=payload.hang_on,
                 signature=payload.signature,
                 signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode,
+                message_version=payload.message_version,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
                 created_at=msg_created_at,
                 message_id=pre_message_id,
             )
@@ -2187,7 +2376,8 @@ async def send_message(
                 "from_did": actor_did,
                 "from_did_aw": (auth.did_aw or "").strip() or None,
                 "to_aliases": [row["alias"] for row in recipient_rows],
-                "preview": payload.body[:80],
+                "preview": "" if encrypted_metadata is not None else payload.body[:80],
+                "content_mode": payload.content_mode,
                 "federated": True,
             },
         )
@@ -2211,6 +2401,10 @@ async def send_message(
             hang_on=payload.hang_on,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -2234,7 +2428,8 @@ async def send_message(
             "from_did": actor_did,
             "from_did_aw": (auth.did_aw or "").strip() or None,
             "to_aliases": [row["alias"] for row in recipient_rows],
-            "preview": payload.body[:80],
+            "preview": "" if encrypted_metadata is not None else payload.body[:80],
+            "content_mode": payload.content_mode,
         },
     )
 

@@ -537,16 +537,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 			if m.Encrypted == nil {
 				return nil, errors.New("encrypted mail response is missing encrypted envelope")
 			}
-			if c.e2eePrivateKey == nil {
-				return nil, errors.New("encrypted mail requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
-			}
-			plain, err := DecryptE2EEMessage(m.Encrypted, E2EEDecryptIdentity{
-				Address:         c.address,
-				DID:             c.did,
-				StableID:        c.stableID,
-				EncryptionKeyID: "",
-				PrivateKey:      c.e2eePrivateKey,
-			})
+			plain, err := c.DecryptE2EEEnvelope(m.Encrypted)
 			if err != nil {
 				return nil, err
 			}

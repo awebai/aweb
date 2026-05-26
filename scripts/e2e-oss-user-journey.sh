@@ -732,6 +732,66 @@ assert_not_empty "e2ee SSE emitted encrypted metadata" "$e2ee_sse_mode"
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 9c: E2E chat — server routes ciphertext, clients read plaintext
+# ---------------------------------------------------------------------------
+echo "=== Phase 9c: E2E chat ciphertext-at-rest ==="
+
+E2EE_CHAT_BODY="E2EE_CHAT_BODY_SENTINEL_260526"
+e2ee_chat_sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-chat-sse.XXXXXX")"
+run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$e2ee_chat_sse_capture_file" 2>/dev/null &
+e2ee_chat_sse_pid=$!
+sleep 2
+if e2ee_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "$E2EE_CHAT_BODY" \
+  --start-conversation \
+  --e2ee \
+  --json 2>&1)"; then
+  e2ee_chat_exit=0
+else
+  e2ee_chat_exit=$?
+fi
+assert_eq "e2ee local chat send exit" "0" "$e2ee_chat_exit"
+if [[ "$e2ee_chat_exit" != "0" ]]; then
+  echo "$e2ee_chat_out"
+fi
+wait "$e2ee_chat_sse_pid" 2>/dev/null || true
+
+if bob_e2ee_chat_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>&1)"; then
+  bob_e2ee_chat_pending_exit=0
+else
+  bob_e2ee_chat_pending_exit=$?
+fi
+assert_eq "bob e2ee chat pending exit" "0" "$bob_e2ee_chat_pending_exit"
+if [[ "$bob_e2ee_chat_pending_exit" != "0" ]]; then
+  echo "$bob_e2ee_chat_pending"
+fi
+bob_e2ee_chat_body="$(echo "$bob_e2ee_chat_pending" | python3 -c "import sys,json; body=sys.argv[1]; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_message','') for p in pending if p.get('last_message')==body), ''))" "$E2EE_CHAT_BODY" 2>/dev/null || echo "")"
+assert_eq "bob decrypts e2ee chat pending" "$E2EE_CHAT_BODY" "$bob_e2ee_chat_body"
+
+if alice_e2ee_chat_history="$(run_aw_in "$ALICE_DIR" chat history bob --json 2>&1)"; then
+  alice_e2ee_chat_history_exit=0
+else
+  alice_e2ee_chat_history_exit=$?
+fi
+assert_eq "alice e2ee chat sent-history exit" "0" "$alice_e2ee_chat_history_exit"
+if [[ "$alice_e2ee_chat_history_exit" != "0" ]]; then
+  echo "$alice_e2ee_chat_history"
+fi
+alice_e2ee_chat_self_copy="$(echo "$alice_e2ee_chat_history" | python3 -c "import sys,json; body=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')==body), ''))" "$E2EE_CHAT_BODY" 2>/dev/null || echo "")"
+assert_eq "alice decrypts e2ee chat sender self-copy" "$E2EE_CHAT_BODY" "$alice_e2ee_chat_self_copy"
+
+e2ee_chat_encrypted_rows="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_messages WHERE content_mode = 'encrypted_v2' AND body = '' AND encrypted_envelope IS NOT NULL;")"
+assert_eq "e2ee chat encrypted row exists" "1" "$e2ee_chat_encrypted_rows"
+e2ee_chat_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(signature, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(signed_payload, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_envelope::text, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_ciphertext, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%$E2EE_CHAT_BODY%';")"
+assert_eq "e2ee chat plaintext absent from chat storage" "0" "$e2ee_chat_plaintext_count"
+assert_file_not_contains "e2ee chat plaintext absent from SSE capture" "$e2ee_chat_sse_capture_file" "$E2EE_CHAT_BODY"
+assert_file_not_contains "e2ee chat plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs --no-color aweb 2>/dev/null || true) "$E2EE_CHAT_BODY"
+e2ee_chat_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-chat-db-dump.XXXXXX")"
+(cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_chat_dump_file" 2>/dev/null || true)
+assert_file_not_contains "e2ee chat plaintext absent from db dump" "$e2ee_chat_dump_file" "$E2EE_CHAT_BODY"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 10: Alice sends mail to bob
 # ---------------------------------------------------------------------------
 echo "=== Phase 10: Alice sends mail to bob ==="

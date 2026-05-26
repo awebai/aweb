@@ -15,6 +15,8 @@ type Event struct {
 	FromAddress        string `json:"from_address,omitempty"`
 	ToAddress          string `json:"to_address,omitempty"`
 	Body               string `json:"body,omitempty"`
+	ContentMode        string `json:"content_mode,omitempty"`
+	MessageVersion     int    `json:"message_version,omitempty"`
 	By                 string `json:"by,omitempty"`
 	Reason             string `json:"reason,omitempty"`
 	Timestamp          string `json:"timestamp,omitempty"`
@@ -26,16 +28,17 @@ type Event struct {
 	ReplyToMessageID   string `json:"reply_to_message_id,omitempty"`
 
 	// Identity fields for message verification.
-	FromDID            string `json:"from_did,omitempty"`
-	ToDID              string `json:"to_did,omitempty"`
-	FromStableID       string `json:"from_stable_id,omitempty"`
-	ToStableID         string `json:"to_stable_id,omitempty"`
-	Signature              string                    `json:"signature,omitempty"`
-	SigningKeyID           string                    `json:"signing_key_id,omitempty"`
-	RotationAnnouncement   *awid.RotationAnnouncement `json:"rotation_announcement,omitempty"`
+	FromDID                 string                        `json:"from_did,omitempty"`
+	ToDID                   string                        `json:"to_did,omitempty"`
+	FromStableID            string                        `json:"from_stable_id,omitempty"`
+	ToStableID              string                        `json:"to_stable_id,omitempty"`
+	Signature               string                        `json:"signature,omitempty"`
+	SigningKeyID            string                        `json:"signing_key_id,omitempty"`
+	Encrypted               *awid.E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
+	RotationAnnouncement    *awid.RotationAnnouncement    `json:"rotation_announcement,omitempty"`
 	ReplacementAnnouncement *awid.ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
-	VerificationStatus     awid.VerificationStatus    `json:"verification_status,omitempty"`
-	IsContact              *bool                      `json:"is_contact,omitempty"`
+	VerificationStatus      awid.VerificationStatus       `json:"verification_status,omitempty"`
+	IsContact               *bool                         `json:"is_contact,omitempty"`
 }
 
 // SendResult is the result of sending a message and optionally waiting for a reply.
@@ -104,6 +107,7 @@ type SendOptions struct {
 	WaitExplicit      bool // true if caller explicitly set Wait
 	Leaving           bool // Sender is leaving the conversation
 	StartConversation bool // Ignore targets_left, use 5min default wait
+	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
 }
 
 // StatusCallback receives protocol status updates.

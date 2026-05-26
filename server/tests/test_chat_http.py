@@ -16,6 +16,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.e2ee_messages import E2EE_SUITE, _envelope_map, _hash_canonical, _key_wrap_map
 from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.identity_metadata import routable_chat_address
@@ -68,6 +69,119 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
 
 def _encode_certificate(cert):
     return base64.b64encode(json.dumps(cert).encode()).decode()
+
+
+def _raw_b64(data: bytes) -> str:
+    return base64.b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _sha256_b64(data: bytes) -> str:
+    return "sha256:" + _raw_b64(hashlib.sha256(data).digest())
+
+
+def _encrypted_chat_envelope(
+    *,
+    sender_sk: bytes,
+    sender_did: str,
+    sender_stable_id: str,
+    recipients: list[dict[str, str]],
+    message_id: str,
+    conversation_id: str,
+    sender_address: str = "acme.com/alice",
+    ciphertext: bytes = b"opaque-chat-ciphertext-with-tag",
+):
+    signing_key = SigningKey(sender_sk)
+    delivery_wraps = []
+    envelope_recipients = []
+    for index, recipient in enumerate(recipients):
+        key_byte = bytes([ord("r") + index])
+        key_id = "sha256:" + _raw_b64(key_byte * 32)
+        wrap = {
+            "wrap_id": _sha256_b64(f"wrap-binding-{index}".encode()),
+            "recipient_stable_id": recipient["stable_id"],
+            "recipient_did": recipient["did"],
+            "recipient_address": recipient["address"],
+            "recipient_encryption_key_id": key_id,
+            "sender_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+            "sender_did": sender_did,
+            "sender_stable_id": sender_stable_id,
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": _raw_b64(bytes([ord("e") + index]) * 32),
+            "wrapped_cek": _raw_b64(bytes([ord("w") + index]) * 48),
+        }
+        delivery_wraps.append(wrap)
+        envelope_recipients.append(
+            {
+                "address": recipient["address"],
+                "did": recipient["did"],
+                "stable_id": recipient["stable_id"],
+                "encryption_key_id": key_id,
+                "wrap_id": wrap["wrap_id"],
+            }
+        )
+    sender_copy_wrap = {
+        "wrap_id": _sha256_b64(b"sender-copy-wrap-binding"),
+        "recipient_stable_id": sender_stable_id,
+        "recipient_did": sender_did,
+        "recipient_address": sender_address,
+        "recipient_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+        "sender_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+        "sender_did": sender_did,
+        "sender_stable_id": sender_stable_id,
+        "wrap_purpose": "sender_copy",
+        "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+        "encapsulated_key": _raw_b64(b"E" * 32),
+        "wrapped_cek": _raw_b64(b"W" * 48),
+    }
+    created_at = datetime.now(timezone.utc).replace(microsecond=0)
+    expires_at = created_at + timedelta(minutes=5)
+    key_wraps = [*delivery_wraps, sender_copy_wrap]
+    envelope = {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        "from": {
+            "address": sender_address,
+            "did": sender_did,
+            "stable_id": sender_stable_id,
+            "encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+        },
+        "recipients": envelope_recipients,
+        "routing": {
+            "to": ",".join(recipient["address"] for recipient in recipients),
+            "sender_observed_inbound_mode": "open",
+        },
+        "policy": {"requires_e2ee": True, "legacy_plaintext_allowed": False},
+        "crypto": {
+            "suite": E2EE_SUITE,
+            "content_nonce": _raw_b64(b"n" * 12),
+            "ciphertext_hash": _sha256_b64(ciphertext),
+            "ciphertext_size": len(ciphertext),
+            "inner_header_hash": _sha256_b64(b"inner-header"),
+            "key_wraps_hash": _hash_canonical(
+                "key_wraps",
+                [_key_wrap_map(item) for item in key_wraps],
+            ),
+        },
+        "key_wraps": key_wraps,
+        "ciphertext": _raw_b64(ciphertext),
+        "signing_key_id": sender_did,
+    }
+    payload = canonical_json_bytes(
+        _envelope_map(
+            envelope,
+            include_signature=False,
+            include_ciphertext=True,
+            include_ciphertext_hash=True,
+        )
+    )
+    envelope["signature"] = _raw_b64(signing_key.sign(payload).signature)
+    return envelope
 
 
 def _signed_team_headers(agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""):
@@ -1703,6 +1817,136 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
     assert payload["session_id"]
     assert {participant["did"] for participant in payload["participants"]} == {"did:aw:alice", "did:aw:bob"}
     assert {participant["address"] for participant in payload["participants"]} == {"acme.com/alice", "otherco.com/bob"}
+
+
+@pytest.mark.asyncio
+async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_cloud_db):
+    alice_sk, _, alice_did = _make_keypair()
+    _, _, bob_did = _make_keypair()
+    _, _, carol_did = _make_keypair()
+    team_id = "backend:acme.com"
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'backend', $2)
+        """,
+        team_id,
+        "did:key:zTeam",
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode)
+        VALUES ($1, 'alice', $2, 'did:aw:alice', 'acme.com/alice', 'global', 'dev', 'open')
+        RETURNING agent_id
+        """,
+        team_id,
+        alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode)
+        VALUES
+          ($1, 'bob', $2, 'did:aw:bob', 'acme.com/bob', 'global', 'dev', 'open'),
+          ($1, 'carol', $3, 'did:aw:carol', 'acme.com/carol', 'global', 'dev', 'open')
+        """,
+        team_id,
+        bob_did,
+        carol_did,
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id=team_id,
+            alias="alice",
+            agent_id=str(alice_agent_id),
+        )
+
+    session_id = "11111111-1111-4111-8111-111111111111"
+    message_id = "22222222-2222-4222-8222-222222222222"
+    envelope = _encrypted_chat_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did,
+        sender_stable_id="did:aw:alice",
+        recipients=[
+            {"did": bob_did, "stable_id": "did:aw:bob", "address": "acme.com/bob"},
+            {"did": carol_did, "stable_id": "did:aw:carol", "address": "acme.com/carol"},
+        ],
+        message_id=message_id,
+        conversation_id=session_id,
+    )
+    payload = {
+        "session_id": session_id,
+        "to_aliases": ["bob", "carol"],
+        "message": "",
+        "message_id": message_id,
+        "timestamp": envelope["created_at"],
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": envelope,
+    }
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body_bytes, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT body, signature, signed_payload, content_mode, message_version, encrypted_envelope,
+               encrypted_ciphertext_hash, encrypted_ciphertext_size, encrypted_key_wraps_hash,
+               encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
+               signed_envelope_hash
+        FROM {{tables.chat_messages}}
+        WHERE message_id = $1
+        """,
+        UUID(message_id),
+    )
+    assert row["body"] == ""
+    assert row["signature"] is None
+    assert row["signed_payload"] is None
+    assert row["content_mode"] == "encrypted_v2"
+    assert row["message_version"] == 2
+    assert "group secret" not in json.dumps(row["encrypted_envelope"])
+    assert row["encrypted_ciphertext_hash"] == envelope["crypto"]["ciphertext_hash"]
+    assert row["encrypted_ciphertext_size"] == envelope["crypto"]["ciphertext_size"]
+    assert row["encrypted_key_wraps_hash"] == envelope["crypto"]["key_wraps_hash"]
+    assert row["encrypted_inner_header_hash"] == envelope["crypto"]["inner_header_hash"]
+    assert row["encrypted_suite"] == envelope["crypto"]["suite"]
+    assert row["encrypted_signing_key_id"] == envelope["signing_key_id"]
+    assert str(row["signed_envelope_hash"]).startswith("sha256:")
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id=team_id,
+            alias="bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history_resp = await client.get(f"/v1/chat/sessions/{session_id}/messages")
+        pending_resp = await client.get("/v1/chat/pending")
+    assert history_resp.status_code == 200, history_resp.text
+    history_message = history_resp.json()["messages"][0]
+    assert history_message["body"] == ""
+    assert history_message["content_mode"] == "encrypted_v2"
+    assert history_message["message_version"] == 2
+    assert "encrypted_envelope" in history_message
+    assert pending_resp.status_code == 200, pending_resp.text
+    pending_item = pending_resp.json()["pending"][0]
+    assert pending_item["last_message"] == ""
+    assert pending_item["last_message_content_mode"] == "encrypted_v2"
+    assert "last_encrypted_envelope" in pending_item
 
 
 @pytest.mark.asyncio
