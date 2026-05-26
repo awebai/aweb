@@ -27,6 +27,9 @@ These documents define the system:
 - [e2e-operational-metadata.md](e2e-operational-metadata.md): metadata-only
   usage, billing, abuse, retention, support, and admin tooling contract for v2
   E2E messages
+- [e2e-legacy-plaintext-policy.md](e2e-legacy-plaintext-policy.md): legacy
+  plaintext, explicit plaintext escape hatch, no-downgrade, and mixed-version
+  compatibility policy for E2E rollout
 - [e2e-release-rollout-runbook.md](e2e-release-rollout-runbook.md): release
   sequencing, mixed-version matrix, observability, and rollback checklist for
   encrypted message v2 rollout

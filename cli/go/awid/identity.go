@@ -17,6 +17,7 @@ type ResolvedIdentity struct {
 	ControllerDID  string
 	Handle         string
 	PublicKey      ed25519.PublicKey
+	EncryptionKey  *EncryptionKeyAssertion
 	RegistryURL    string
 	DeliveryOrigin string
 	Custody        string // "self" or "custodial"

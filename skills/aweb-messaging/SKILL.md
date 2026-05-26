@@ -12,6 +12,8 @@ It also covers explicit user requests to send mail or chat through aweb.
 
 E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not describe hosted custodial/server-side messaging as end-to-end encrypted.
 
+Legacy plaintext boundary: existing plaintext mail/chat remains legacy/server-readable while retained and must not be described as retroactively E2E. If an intended E2E send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not resend as plaintext unless the human explicitly chooses the approved legacy plaintext command/flag.
+
 If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient addressability, inbound-mode policy, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
 ## Read the event first

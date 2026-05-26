@@ -128,6 +128,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "did_register": (10, 3600),
     "did_update": (30, 3600),
     "did_key": (60, 60),
+    "did_encryption_key_publish": (30, 3600),
     "did_addresses": (60, 60),
     "did_log": (30, 60),
     "did_head": (120, 60),
