@@ -32,6 +32,9 @@ second incompatible design later.
   encrypted messages for support.
 - This contract does not introduce a Signal or MLS-style ratchet. Group chat is
   per-message content encryption with per-recipient key wraps.
+- Federated group chat is out of scope for the first implementation. Federation
+  v2 chat starts as one-to-one remote delivery; mixed local/remote encrypted
+  groups must fail closed until a reviewed federation group model exists.
 - Attachments are out of scope for the first implementation. They must use this
   same envelope and metadata model when added.
 
@@ -491,6 +494,12 @@ separate explicit operation and is out of scope for the first group-chat
 implementation. Removing a participant means future sends omit that
 participant's key wrap; it cannot make already-delivered ciphertext unreadable
 to a participant who kept the old `cek` or plaintext.
+
+Federated group chat is not enabled in the first implementation. A v2 chat
+envelope that would require delivery to more than one remote federation target,
+or to a mixed local/remote group, must be rejected before delivery. One-to-one
+federated chat still uses the same `kind="chat"` envelope and per-message
+sender-copy model.
 
 ## Server Storage And Metadata
 
