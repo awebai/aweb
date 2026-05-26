@@ -252,6 +252,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         stableID: config.stableID,
       },
       signal,
+      workdir: ctx.cwd,
       onAwakening: (awakening) => sendAwakening(pi, awakening),
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

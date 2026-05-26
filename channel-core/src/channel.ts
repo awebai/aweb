@@ -10,6 +10,7 @@ import { PinStore } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
+import { createLocalAWDecryptProvider, type LocalDecryptProvider } from "./local_aw.js";
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
@@ -45,6 +46,9 @@ export interface ChannelLoopOptions {
   signal: AbortSignal;
   onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
   deliveryStore?: DeliveryStore;
+  localDecrypt?: LocalDecryptProvider;
+  workdir?: string;
+  awCommand?: string;
   log?: (message: string) => void;
 }
 
@@ -150,11 +154,14 @@ export function createChannelClient(config: {
 export async function startChannelLoop(options: ChannelLoopOptions): Promise<void> {
   const dispatched = new Set<string>();
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
+  const localDecrypt = options.localDecrypt || (
+    options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
+  );
   const log = options.log || (() => {});
 
   for await (const event of streamAgentEvents(options.client, options.signal)) {
     try {
-      await dispatchAgentEvent({ ...options, deliveryStore }, dispatched, event);
+      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err) {
       log(`[aw-channel] dispatch error: ${err}`);
@@ -245,6 +252,16 @@ async function dispatchMailEvent(
     }
 
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const decrypt = await resolveMailForDelivery(options, msg);
+    if (!decrypt.ok) {
+      await options.onAwakening({
+        kind: "mail",
+        content: "",
+        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        deliveryIntent: "wake",
+      });
+      continue;
+    }
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status as InboxMessage["verification_status"];
     if (trust.stored) pinsDirty = true;
@@ -295,6 +312,16 @@ async function dispatchChatEvent(
     }
 
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
+    if (!decrypt.ok) {
+      await options.onAwakening({
+        kind: "chat",
+        content: "",
+        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        deliveryIntent: event.sender_waiting ? "steer" : "wake",
+      });
+      continue;
+    }
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status as ChatMessage["verification_status"];
     if (trust.stored) pinsDirty = true;
@@ -348,6 +375,72 @@ async function normalizeMessageTrust(
     msg.replacement_announcement,
     msg.signed_from || fromAddress || fromAlias || "",
   );
+}
+
+async function resolveMailForDelivery(
+  options: Pick<ChannelLoopOptions, "localDecrypt">,
+  msg: InboxMessage,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isEncryptedMessage(msg)) return { ok: true };
+  if (!options.localDecrypt?.mailMessage) {
+    return { ok: false, error: "local aw decrypt provider is not configured" };
+  }
+  try {
+    const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
+    if (!decrypted || typeof decrypted.body !== "string") {
+      return { ok: false, error: "local aw did not return decrypted mail body" };
+    }
+    Object.assign(msg, decrypted);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function resolveChatForDelivery(
+  options: Pick<ChannelLoopOptions, "localDecrypt">,
+  sessionID: string,
+  msg: ChatMessage,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isEncryptedMessage(msg)) return { ok: true };
+  if (!options.localDecrypt?.chatMessage) {
+    return { ok: false, error: "local aw decrypt provider is not configured" };
+  }
+  try {
+    const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
+    if (!decrypted || typeof decrypted.body !== "string") {
+      return { ok: false, error: "local aw did not return decrypted chat body" };
+    }
+    Object.assign(msg, decrypted);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function isEncryptedMessage(msg: Pick<InboxMessage | ChatMessage, "content_mode" | "message_version" | "encrypted_envelope">): boolean {
+  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope !== undefined;
+}
+
+function encryptedDeliveryFailureMeta(
+  type: "mail" | "chat",
+  from: string,
+  messageID: string,
+  conversationID: string | undefined,
+  error: string,
+  sessionID?: string,
+): Record<string, string> {
+  const meta: Record<string, string> = {
+    type,
+    from,
+    message_id: messageID,
+    encrypted: "true",
+    decrypted: "false",
+    decrypt_error: error,
+  };
+  if (conversationID) meta.conversation_id = conversationID;
+  if (sessionID) meta.session_id = sessionID;
+  return meta;
 }
 
 export function isTrustedVerificationStatus(status: VerificationStatus | undefined): boolean {

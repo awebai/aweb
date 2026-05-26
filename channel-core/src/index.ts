@@ -10,6 +10,7 @@ export { computeDIDKey, extractPublicKey } from "./identity/did.js";
 export { loadSigningKey } from "./identity/keys.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
+export { createLocalAWDecryptProvider, type LocalAWDecryptOptions, type LocalDecryptProvider } from "./local_aw.js";
 export {
   DEFAULT_DELIVERY_STORE_PATH,
   DEFAULT_PIN_STORE_PATH,

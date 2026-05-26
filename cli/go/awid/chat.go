@@ -559,6 +559,7 @@ type ChatMessage struct {
 
 type ChatHistoryParams struct {
 	SessionID  string
+	MessageID  string
 	UnreadOnly bool
 	Limit      int
 }
@@ -573,6 +574,9 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	if p.Limit > 0 {
 		path += sep + "limit=" + itoa(p.Limit)
 		sep = "&"
+	}
+	if strings.TrimSpace(p.MessageID) != "" {
+		path += sep + "message_id=" + urlQueryEscape(strings.TrimSpace(p.MessageID))
 	}
 	var out ChatHistoryResponse
 	if err := c.Get(ctx, path, &out); err != nil {

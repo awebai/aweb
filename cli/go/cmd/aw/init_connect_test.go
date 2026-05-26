@@ -65,6 +65,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 				"repo_id":      "",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			_ = json.NewEncoder(w).Encode(awid.PublishAgentEncryptionKeyResponse{
+				AgentID: "agent-uuid-1",
+				TeamID:  "backend:acme.com",
+				Alias:   "alice",
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -231,6 +237,12 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 				"workspace_id": "ws-uuid-1",
 				"repo_id":      "",
 				"team_did_key": teamDIDKey,
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/agents/me/encryption-key":
+			_ = json.NewEncoder(w).Encode(awid.PublishAgentEncryptionKeyResponse{
+				AgentID: "agent-uuid-1",
+				TeamID:  "backend:acme.com",
+				Alias:   "alice",
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)

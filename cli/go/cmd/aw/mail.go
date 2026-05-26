@@ -735,7 +735,9 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	}
 	identity := e2eeAssertionIdentityForSelection(sel)
 	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
-		return err
+		if required || !shouldRefreshEncryptionKeyForIdentityBinding(err) {
+			return err
+		}
 	}
 	privatePath := resolveWorktreeRelativePath(sel.WorkingDir, record.PrivateKeyPath)
 	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
@@ -772,7 +774,7 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 		identityDID := strings.TrimSpace(identity.DID)
 		if identityDID != "" && (did == "" || identityDID == did) {
 			did = identityDID
-			if stableID == "" {
+			if stableID == "" && (strings.TrimSpace(sel.Lifetime) == "" || awid.NormalizeIdentityScope(sel.Lifetime) != awid.IdentityModeLocal) {
 				stableID = strings.TrimSpace(identity.StableID)
 			}
 		}

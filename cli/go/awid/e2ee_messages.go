@@ -164,11 +164,20 @@ func (c *Client) DecryptE2EEEnvelope(envelope *E2EEMessageEnvelope) (*E2EEInnerP
 	if c.e2eePrivateKey == nil {
 		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
 	}
+	stableID := c.stableID
+	encryptionKeyID := ""
+	if c.e2eeEncryptionKey != nil {
+		encryptionKeyID = strings.TrimSpace(c.e2eeEncryptionKey.EncryptionKeyID)
+		if c.e2eeEncryptionKey.IdentityStableID != nil && strings.TrimSpace(*c.e2eeEncryptionKey.IdentityStableID) != "" {
+			stableID = strings.TrimSpace(*c.e2eeEncryptionKey.IdentityStableID)
+		}
+	}
 	return DecryptE2EEMessage(envelope, E2EEDecryptIdentity{
-		Address:    c.address,
-		DID:        c.did,
-		StableID:   c.stableID,
-		PrivateKey: c.e2eePrivateKey,
+		Address:         c.address,
+		DID:             c.did,
+		StableID:        stableID,
+		EncryptionKeyID: encryptionKeyID,
+		PrivateKey:      c.e2eePrivateKey,
 	})
 }
 

@@ -4,6 +4,7 @@ import { PinStore } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
+import { type LocalDecryptProvider } from "./local_aw.js";
 export declare const DEFAULT_PIN_STORE_PATH: string;
 export declare const DEFAULT_DELIVERY_STORE_PATH: string;
 export interface SelfIdentity {
@@ -29,6 +30,9 @@ export interface ChannelLoopOptions {
     signal: AbortSignal;
     onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
     deliveryStore?: DeliveryStore;
+    localDecrypt?: LocalDecryptProvider;
+    workdir?: string;
+    awCommand?: string;
     log?: (message: string) => void;
 }
 export declare function loadPinStore(path?: string): Promise<PinStore>;

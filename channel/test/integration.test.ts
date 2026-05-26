@@ -135,11 +135,13 @@ describe.sequential("channel integration", () => {
     const aliceInvite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, team);
     await acceptInvite(homeDir, aliceDir, server.awidURL, aliceInvite.token, "alice");
     await initWorkspace(homeDir, aliceDir, server.awidURL, server.awebURL);
+    await publishEncryptionKey(homeDir, aliceDir, server.awidURL);
 
     bob = await createIdentity(homeDir, bobDir, server.awidURL, "bob", domain);
     const bobInvite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, team);
     await acceptInvite(homeDir, bobDir, server.awidURL, bobInvite.token, "bob");
     await initWorkspace(homeDir, bobDir, server.awidURL, server.awebURL);
+    await publishEncryptionKey(homeDir, bobDir, server.awidURL);
 
     notifications = new NotificationQueue();
   }, 300_000);
@@ -161,7 +163,7 @@ describe.sequential("channel integration", () => {
     const mailNotification = await notifications.waitFor(
       (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
     );
-    expect(mailNotification.content).toBe(mailBody);
+    expect(mailNotification.content, JSON.stringify(mailNotification)).toBe(mailBody);
     expect(mailNotification.meta.from).toBe(alice.address);
     expect(mailNotification.meta.conversation_id).toBe(mail.conversation_id);
     expect(mailNotification.meta.verified).toBe("true");
@@ -191,6 +193,7 @@ describe.sequential("channel integration", () => {
       env: {
         ...stringEnv(process.env),
         HOME: homeDir,
+        AW_BIN: awBinary,
         AWID_REGISTRY_URL: server.awidURL,
         AWID_SKIP_DNS_VERIFY: "1",
       },
@@ -246,6 +249,9 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     `REDIS_PORT=${redisPort}`,
     `AWEB_PORT=${awebPort}`,
     `AWID_PORT=${awidPort}`,
+    `AWEB_PUBLIC_ORIGIN=http://127.0.0.1:${awebPort}`,
+    `AWEB_DISCOVERY_ORIGIN=http://127.0.0.1:${awebPort}`,
+    `AWID_PUBLIC_REGISTRY_URL=http://127.0.0.1:${awidPort}`,
     "AWID_LOG_JSON=true",
     "AWEB_LOG_JSON=true",
     "AWID_RATE_LIMIT_BACKEND=redis",
@@ -413,6 +419,19 @@ async function initWorkspace(
     "--json",
     "init",
     "--url", awebURL,
+  ]);
+}
+
+async function publishEncryptionKey(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+): Promise<void> {
+  await runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "id",
+    "encryption-key",
+    "setup",
   ]);
 }
 

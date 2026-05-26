@@ -5904,6 +5904,42 @@ function escapeJSON3(s) {
   return result;
 }
 
+// ../channel-core/dist/local_aw.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+function createLocalAWDecryptProvider(options) {
+  const awCommand = options.awCommand || process.env.AW_BIN || "aw";
+  return {
+    async mailMessage(messageID) {
+      const id = messageID.trim();
+      if (!id)
+        return null;
+      const { stdout } = await execFileAsync(awCommand, ["mail", "show", "--message-id", id, "--json"], { cwd: options.workdir, timeout: 15e3, maxBuffer: 1024 * 1024 });
+      const payload = parseJSONOutput(stdout);
+      return (payload.messages || []).find((msg) => msg.message_id === id) || null;
+    },
+    async chatMessage(sessionID, messageID) {
+      const session = sessionID.trim();
+      const id = messageID.trim();
+      if (!session || !id)
+        return null;
+      const { stdout } = await execFileAsync(awCommand, ["chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"], { cwd: options.workdir, timeout: 15e3, maxBuffer: 1024 * 1024 });
+      const payload = parseJSONOutput(stdout);
+      return (payload.messages || []).find((msg) => msg.message_id === id) || null;
+    }
+  };
+}
+function parseJSONOutput(stdout) {
+  const trimmed = stdout.trim();
+  if (!trimmed)
+    throw new Error("aw returned empty JSON output");
+  const start = trimmed.indexOf("{");
+  if (start < 0)
+    throw new Error("aw JSON output did not contain an object");
+  return JSON.parse(trimmed.slice(start));
+}
+
 // ../channel-core/dist/channel.js
 import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
@@ -6003,11 +6039,12 @@ function createChannelClient(config) {
 async function startChannelLoop(options) {
   const dispatched = /* @__PURE__ */ new Set();
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
+  const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : void 0);
   const log = options.log || (() => {
   });
   for await (const event of streamAgentEvents(options.client, options.signal)) {
     try {
-      await dispatchAgentEvent({ ...options, deliveryStore }, dispatched, event);
+      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err2) {
       log(`[aw-channel] dispatch error: ${err2}`);
@@ -6089,6 +6126,16 @@ async function dispatchMailEvent(options, dispatched, event) {
       continue;
     }
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const decrypt = await resolveMailForDelivery(options, msg);
+    if (!decrypt.ok) {
+      await options.onAwakening({
+        kind: "mail",
+        content: "",
+        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        deliveryIntent: "wake"
+      });
+      continue;
+    }
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;
     if (trust.stored)
@@ -6138,6 +6185,16 @@ async function dispatchChatEvent(options, dispatched, event) {
       continue;
     }
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
+    if (!decrypt.ok) {
+      await options.onAwakening({
+        kind: "chat",
+        content: "",
+        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        deliveryIntent: event.sender_waiting ? "steer" : "wake"
+      });
+      continue;
+    }
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status;
     if (trust.stored)
@@ -6176,6 +6233,58 @@ async function dispatchChatEvent(options, dispatched, event) {
 }
 async function normalizeMessageTrust(options, msg, fromAlias, fromAddress, toDID, toStableID) {
   return options.trust.normalizeTrust(options.pinStore, msg.verification_status, senderTrustAddress(fromAlias, fromAddress), msg.from_did, msg.from_stable_id, toDID, toStableID, msg.rotation_announcement, msg.replacement_announcement, msg.signed_from || fromAddress || fromAlias || "");
+}
+async function resolveMailForDelivery(options, msg) {
+  if (!isEncryptedMessage(msg))
+    return { ok: true };
+  if (!options.localDecrypt?.mailMessage) {
+    return { ok: false, error: "local aw decrypt provider is not configured" };
+  }
+  try {
+    const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
+    if (!decrypted || typeof decrypted.body !== "string") {
+      return { ok: false, error: "local aw did not return decrypted mail body" };
+    }
+    Object.assign(msg, decrypted);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+async function resolveChatForDelivery(options, sessionID, msg) {
+  if (!isEncryptedMessage(msg))
+    return { ok: true };
+  if (!options.localDecrypt?.chatMessage) {
+    return { ok: false, error: "local aw decrypt provider is not configured" };
+  }
+  try {
+    const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
+    if (!decrypted || typeof decrypted.body !== "string") {
+      return { ok: false, error: "local aw did not return decrypted chat body" };
+    }
+    Object.assign(msg, decrypted);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+function isEncryptedMessage(msg) {
+  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope !== void 0;
+}
+function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
+  const meta = {
+    type: type2,
+    from,
+    message_id: messageID,
+    encrypted: "true",
+    decrypted: "false",
+    decrypt_error: error
+  };
+  if (conversationID)
+    meta.conversation_id = conversationID;
+  if (sessionID)
+    meta.session_id = sessionID;
+  return meta;
 }
 function isTrustedVerificationStatus(status) {
   return status === "verified" || status === "verified_custodial";
@@ -6486,6 +6595,7 @@ ${message}`),
         stableID: config.stableID
       },
       signal,
+      workdir: ctx.cwd,
       onAwakening: (awakening) => sendAwakening(pi, awakening),
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

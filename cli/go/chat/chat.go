@@ -1410,6 +1410,33 @@ func History(ctx context.Context, client *awid.Client, targetAlias string) (*His
 	}, nil
 }
 
+// HistoryBySession fetches messages by explicit session id. It is used by local
+// notification clients that already received an event with the canonical session
+// and message ids and must not resolve by alias.
+func HistoryBySession(ctx context.Context, client *awid.Client, sessionID string, messageID string, unreadOnly bool, limit int) (*HistoryResult, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, errors.New("session id is required")
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	messagesResp, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
+		SessionID:  sessionID,
+		MessageID:  strings.TrimSpace(messageID),
+		UnreadOnly: unreadOnly,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting messages: %w", err)
+	}
+
+	return &HistoryResult{
+		SessionID: sessionID,
+		Messages:  buildMessages(messagesResp.Messages),
+	}, nil
+}
+
 // Pending lists conversations with unread messages.
 func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 	resp, err := client.ChatPending(ctx)

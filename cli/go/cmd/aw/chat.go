@@ -114,6 +114,10 @@ var (
 	chatSendAndWaitPlaintext          bool
 	chatSendAndLeavePlaintext         bool
 	chatExtendWaitPlaintext           bool
+	chatHistorySessionID              string
+	chatHistoryMessageID              string
+	chatHistoryLimit                  int
+	chatHistoryUnreadOnly             bool
 	chatListenWait                    int
 )
 
@@ -265,7 +269,18 @@ var chatOpenCmd = &cobra.Command{
 var chatHistoryCmd = &cobra.Command{
 	Use:   "history <alias>",
 	Short: "Show chat history with alias",
-	Args:  cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(chatHistorySessionID) != "" {
+			if len(args) != 0 {
+				return usageError("chat history with --session-id does not accept an alias")
+			}
+			return nil
+		}
+		if len(args) != 1 {
+			return usageError("chat history requires an alias, or use --session-id")
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -275,7 +290,12 @@ var chatHistoryCmd = &cobra.Command{
 			return err
 		}
 		_ = configureClientE2EE(ctx, c, sel, false)
-		result, err := chat.History(ctx, c.Client, args[0])
+		var result *chat.HistoryResult
+		if strings.TrimSpace(chatHistorySessionID) != "" {
+			result, err = chat.HistoryBySession(ctx, c.Client, chatHistorySessionID, chatHistoryMessageID, chatHistoryUnreadOnly, chatHistoryLimit)
+		} else {
+			result, err = chat.History(ctx, c.Client, args[0])
+		}
 		if err != nil {
 			return err
 		}
@@ -402,6 +422,11 @@ func init() {
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension instead of the default E2E encrypted message")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Deprecated no-op; chat is E2E encrypted by default")
 	_ = chatExtendWaitCmd.Flags().MarkHidden("e2ee")
+
+	chatHistoryCmd.Flags().StringVar(&chatHistorySessionID, "session-id", "", "Fetch chat history by session id instead of alias")
+	chatHistoryCmd.Flags().StringVar(&chatHistoryMessageID, "message-id", "", "Fetch one message by id when using --session-id")
+	chatHistoryCmd.Flags().IntVar(&chatHistoryLimit, "limit", 1000, "Maximum messages to fetch")
+	chatHistoryCmd.Flags().BoolVar(&chatHistoryUnreadOnly, "unread-only", false, "Fetch unread messages only")
 
 	chatListenCmd.Flags().IntVar(&chatListenWait, "wait", chat.DefaultWait, "Seconds to wait for a message (0 = no wait)")
 

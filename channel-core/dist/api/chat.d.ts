@@ -17,6 +17,9 @@ export interface ChatMessage {
     signature?: string;
     signing_key_id?: string;
     signed_payload?: string;
+    content_mode?: string;
+    message_version?: number;
+    encrypted_envelope?: unknown;
     signed_from?: string;
     rotation_announcement?: RotationAnnouncement;
     replacement_announcement?: ReplacementAnnouncement;

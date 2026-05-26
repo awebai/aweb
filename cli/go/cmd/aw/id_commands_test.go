@@ -555,6 +555,145 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	}
 }
 
+func TestEncryptionKeySetupUsesActiveLocalCertificateIdentity(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	tmp := t.TempDir()
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     "https://app.example.test/api",
+		TeamID:      "backend:demo",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  priv,
+		CreatedAt:   "2026-05-26T00:00:00Z",
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        "demo/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    "https://api.awid.ai",
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-05-26T00:00:00Z",
+	})
+
+	identity, err := resolveIdentityForEncryptionKeyForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.StableID != "" {
+		t.Fatalf("local active certificate identity stable_id=%q, want empty", identity.StableID)
+	}
+	record, assertion, err := createLocalEncryptionKeyRecord(identity, priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.KeyID == "" {
+		t.Fatal("missing key id")
+	}
+	if assertion.IdentityStableID != nil {
+		t.Fatalf("local active certificate assertion identity_stable_id=%v, want nil", *assertion.IdentityStableID)
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, did, "", time.Now().UTC()); err != nil {
+		t.Fatalf("local assertion should verify without stable id: %v", err)
+	}
+}
+
+func TestEncryptionKeyEnsureRefreshesGlobalAssertionForActiveLocalCertificate(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	tmp := t.TempDir()
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        "demo/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    "https://api.awid.ai",
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-05-26T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), priv); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	globalIdentity, err := awconfig.ResolveIdentity(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRecord, oldAssertion, err := createLocalEncryptionKeyRecord(globalIdentity, priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldAssertion.IdentityStableID == nil {
+		t.Fatal("global setup should include identity_stable_id")
+	}
+	if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(tmp), &awconfig.EncryptionKeyState{
+		ActiveKeyID: oldRecord.KeyID,
+		Keys:        []awconfig.EncryptionKeyRecord{*oldRecord},
+	}); err != nil {
+		t.Fatalf("save encryption state: %v", err)
+	}
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     "https://app.example.test/api",
+		TeamID:      "backend:demo",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  priv,
+		CreatedAt:   "2026-05-26T00:00:00Z",
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        "demo/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    "https://api.awid.ai",
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-05-26T00:00:00Z",
+	})
+
+	if err := ensureLocalIdentityEncryptionKeyForDir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := state.ActiveRecord()
+	if active == nil {
+		t.Fatal("missing active encryption key")
+	}
+	if active.KeyID == oldRecord.KeyID {
+		t.Fatal("active local-certificate key was not refreshed")
+	}
+	assertion, err := loadEncryptionAssertion(tmp, active.AssertionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assertion.IdentityStableID != nil {
+		t.Fatalf("refreshed local assertion identity_stable_id=%v, want nil", *assertion.IdentityStableID)
+	}
+}
+
 func idCreateCommandEnv(home string) []string {
 	return append(os.Environ(), "HOME="+home, "AW_CONFIG_PATH=")
 }

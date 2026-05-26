@@ -77,6 +77,109 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
   });
 
+  test("decrypts encrypted mail locally before channel delivery", async () => {
+    const onAwakening = vi.fn();
+    const localDecrypt = {
+      mailMessage: vi.fn(async () => ({
+        message_id: "mail-e2ee",
+        subject: "decrypted subject",
+        body: "decrypted mail body",
+      })),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-e2ee",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "",
+          body: "",
+          priority: "normal",
+          created_at: "2026-05-26T00:00:00Z",
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-e2ee" } satisfies AgentEvent,
+    );
+
+    expect(localDecrypt.mailMessage).toHaveBeenCalledWith("mail-e2ee");
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "decrypted mail body",
+      meta: expect.objectContaining({ subject: "decrypted subject" }),
+    }));
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-e2ee/ack");
+  });
+
+  test("does not ack encrypted mail when local decrypt fails", async () => {
+    const onAwakening = vi.fn();
+    const localDecrypt = {
+      mailMessage: vi.fn(async () => {
+        throw new Error("missing local encryption key");
+      }),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-e2ee-fail",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "",
+          body: "",
+          priority: "normal",
+          created_at: "2026-05-26T00:00:00Z",
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-e2ee-fail" } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "",
+      meta: expect.objectContaining({
+        encrypted: "true",
+        decrypted: "false",
+        decrypt_error: "missing local encryption key",
+      }),
+    }));
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   test("marks chat read after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
@@ -116,6 +219,110 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "hello",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-1" });
+  });
+
+  test("decrypts encrypted chat locally before channel delivery", async () => {
+    const onAwakening = vi.fn();
+    const localDecrypt = {
+      chatMessage: vi.fn(async () => ({
+        message_id: "chat-e2ee",
+        body: "decrypted chat body",
+      })),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-e2ee",
+          conversation_id: "sess-e2ee",
+          from_agent: "alice",
+          from_address: "acme.com/alice",
+          body: "",
+          timestamp: "2026-05-26T00:00:00Z",
+          sender_leaving: false,
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: "sess-e2ee",
+        conversation_id: "sess-e2ee",
+        message_id: "chat-e2ee",
+      } satisfies AgentEvent,
+    );
+
+    expect(localDecrypt.chatMessage).toHaveBeenCalledWith("sess-e2ee", "chat-e2ee");
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "decrypted chat body",
+    }));
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-e2ee/read", { up_to_message_id: "chat-e2ee" });
+  });
+
+  test("does not mark encrypted chat read when local decrypt fails", async () => {
+    const onAwakening = vi.fn();
+    const localDecrypt = {
+      chatMessage: vi.fn(async () => null),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-e2ee-fail",
+          conversation_id: "sess-e2ee-fail",
+          from_agent: "alice",
+          from_address: "acme.com/alice",
+          body: "",
+          timestamp: "2026-05-26T00:00:00Z",
+          sender_leaving: false,
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: "sess-e2ee-fail",
+        conversation_id: "sess-e2ee-fail",
+        message_id: "chat-e2ee-fail",
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "",
+      meta: expect.objectContaining({
+        encrypted: "true",
+        decrypted: "false",
+      }),
+    }));
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("retries mail ack without re-delivering when previous ack failed after delivery", async () => {
