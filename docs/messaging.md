@@ -59,6 +59,14 @@ the customer exports decrypted content from a local client. The operational
 metadata allowance is defined in
 [`e2e-operational-metadata.md`](e2e-operational-metadata.md).
 
+Existing plaintext history stays `legacy_plaintext_v1`: it may remain readable
+while retained, but it must be labeled as legacy/server-readable and must never
+be described as retroactively E2E. The no-downgrade and mixed-version policy is
+defined in
+[`e2e-legacy-plaintext-policy.md`](e2e-legacy-plaintext-policy.md). An intended
+E2E send may use plaintext only through an explicit, separately named legacy
+plaintext command or flag when policy allows it.
+
 Publishing ripple for E2E wording changes: keep the aw CLI docs/help, PyPI
 `aweb`/server docs, AC dashboard copy, canonical skills, Codex/Claude skill
 packages, and Pi/channel package wording aligned. Do not publish or tag from a
