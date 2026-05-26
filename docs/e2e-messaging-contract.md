@@ -58,7 +58,8 @@ second incompatible design later.
   identity-authorized key assertion or sender signature.
 - A relay cannot downgrade a v2-capable sender/recipient pair to plaintext
   unless the user explicitly chooses a named legacy plaintext mode.
-- A replayed envelope outside the accepted timestamp window is rejected.
+- A relay cannot replay a fresh delivery outside the server/federation ingestion
+  window. Already-accepted stored mail remains readable later.
 - A ciphertext or key-wrap mutation is rejected by the AEAD tag, signed
   ciphertext hash, signed key-wrap hash, or inner-header check.
 
@@ -211,7 +212,7 @@ The server-visible v2 envelope has this shape:
     "to_did": "did:key:z...",
     "to_stable_id": "did:aw:...",
     "delivery_origin": "https://example-service.invalid",
-    "inbound_mode": "team_and_contacts"
+    "sender_observed_inbound_mode": "team_and_contacts"
   },
   "policy": {
     "requires_e2ee": true,
@@ -233,6 +234,7 @@ The server-visible v2 envelope has this shape:
       "recipient_address": "example.com/bob",
       "recipient_encryption_key_id": "sha256:...",
       "sender_encryption_key_id": "sha256:...",
+      "wrap_purpose": "delivery",
       "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
       "encapsulated_key": "base64...",
       "wrapped_cek": "base64..."
@@ -258,10 +260,44 @@ Rules:
   `signature` omitted.
 - The server must verify the signature before storage, routing, or event
   emission.
+- The server must recompute `crypto.ciphertext_hash` from transmitted
+  ciphertext bytes, `crypto.ciphertext_size` from transmitted ciphertext bytes,
+  and `crypto.key_wraps_hash` from transmitted `key_wraps` before accepting the
+  envelope. It must reject any mismatch even if the signature verifies.
 - The server must reject unknown `message_version`, unknown `suite`, missing
   required fields, stale timestamps, duplicate `message_id` replay outside an
   idempotent same-envelope retry, malformed key wraps, and `policy.requires_e2ee`
   false for an E2E route.
+- Routing fields in the envelope are not delivery-policy authority. In
+  particular, `routing.sender_observed_inbound_mode` is only a sender-observed
+  snapshot for debugging and signed-context binding. The server must recompute
+  delivery authorization from trusted server, auth, database, AWID, team,
+  contact, and recipient policy state. A sender-declared policy field must never
+  widen authorization.
+
+## Local Identity Field Optionality
+
+Global identities may have `stable_id` (`did:aw`) and address fields. Local or
+team-scoped identities may have only `did:key` plus team/workspace context.
+
+Omission rules:
+
+- Optional identity fields are omitted when absent. They are never encoded as
+  empty strings.
+- In encryption-key assertions, `identity_stable_id` is omitted for local
+  identities without a `did:aw`.
+- In outer envelope `from`, `recipients`, routing objects, inner headers, and
+  key-wrap binding objects, `stable_id` fields are omitted for local identities.
+- Address fields are omitted when the identity has no address or when the route
+  is a stored local/team route that is not address-based.
+- `team_id` is included only when it is part of the sender or recipient routing
+  context.
+- For local recipients, `routing.to_did` and recipient `did` carry the recipient
+  binding; `routing.to_stable_id`, address, and recipient stable id are omitted.
+
+The inner-header mirror check compares only fields present in the signed outer
+metadata. A field omitted in the outer metadata must also be omitted in the
+inner header for that identity.
 
 ## Inner Encrypted Payload
 
@@ -311,11 +347,15 @@ payload that fails the inner-header check.
 `inner_header_hash` is `sha256:` plus SHA-256 over the canonical JSON bytes of
 the inner payload with `subject` and `body` omitted.
 
+After decrypting, the recipient must recompute `inner_header_hash` from the
+decrypted inner payload and compare it to `crypto.inner_header_hash`. It must
+reject any mismatch before displaying plaintext.
+
 ## Key-Wrap Binding
 
-Each recipient, including the sender self-copy, gets one key wrap. The sender
-self-copy is mandatory so sent mail can be read from the sender's local archive
-and so tests can assert sender/recipient plaintext equality.
+Each delivery recipient gets one key wrap. The sender self-copy also gets one
+key wrap and is mandatory so sent mail can be read from the sender's local
+archive and so tests can assert sender/recipient plaintext equality.
 
 The HPKE info uses this canonical key-wrap binding object:
 
@@ -331,6 +371,7 @@ The HPKE info uses this canonical key-wrap binding object:
   "sender_did": "did:key:z...",
   "sender_stable_id": "did:aw:...",
   "sender_encryption_key_id": "sha256:...",
+  "wrap_purpose": "delivery",
   "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519"
 }
 ```
@@ -351,6 +392,18 @@ error and no information about other wraps beyond visible metadata.
 
 `key_wraps_hash` is `sha256:` plus SHA-256 over the canonical JSON bytes of the
 `key_wraps` array exactly as transmitted, excluding no fields.
+
+The `recipients` array lists delivery recipients. The mandatory sender self-copy
+wrap is included in `key_wraps` even when the sender is not a delivery recipient
+and is therefore absent from `recipients`. A sender self-copy wrap has
+`wrap_purpose` set to `sender_copy`, recipient identity fields matching the
+sender identity, and `recipient_encryption_key_id` set to the sender encryption
+key id used for local archive decryption. Clients identify the self-copy wrap by
+`wrap_purpose = "sender_copy"` plus matching local sender identity and key id.
+
+Delivery wraps have `wrap_purpose = "delivery"` and must correspond to one
+delivery recipient entry. Sender-copy wraps must not be used to route or deliver
+the message to another participant.
 
 ## Associated Data
 
@@ -377,9 +430,13 @@ Before sending v2 E2E, the sender must know the recipient supports:
 - v2 encrypted mail or chat for the requested `kind`,
 - a server route that accepts `message_version = 2`.
 
-The sender obtains this capability from trusted identity/service discovery. The
-capability source and encryption key assertion must be covered by identity or
-service signatures defined in the implementation task that publishes them.
+Recipient encryption keys and recipient E2E capability must be anchored in an
+identity-authorized assertion, such as the identity-signed encryption-key
+assertion in this contract or an equivalent identity-authorized capability. A
+service signature may assert only service route support, such as "this route
+accepts `message_version = 2`." A service signature must not substitute for
+recipient E2E capability and must not replace recipient encryption-key
+authority.
 
 If capability or key discovery is missing, stale, contradictory, or unsigned,
 the send fails closed with a diagnostic naming the missing capability. The
@@ -404,16 +461,21 @@ Mixed-version behavior:
 ## Replay And Idempotency
 
 `created_at` must be RFC3339 or RFC3339Nano UTC. First implementation accepts a
-five-minute skew window. `expires_at` must be inside that window.
+five-minute skew window for server/federation ingestion. `expires_at` must be
+inside that ingestion window.
 
 The server stores `message_id` and the signed envelope hash. A repeated delivery
 of the exact same signed envelope may be treated as idempotent. A repeated
 `message_id` with any different signed payload is rejected as replay or
 mutation.
 
-Clients must reject decrypted messages whose `created_at` is outside the skew
-window unless they are reading already-stored local history that was previously
-accepted.
+Clients must not reject already-accepted stored mail solely because its
+`created_at` is old. Async mail may be first read hours or days after server
+delivery. Clients should de-duplicate by `message_id` and signed envelope hash,
+verify signatures, recompute hashes, decrypt, display the original timestamp,
+and reject only actual mutation, duplicate-with-different-envelope, failed
+verification, or policy errors. The freshness window is an ingestion rule, not a
+history-read/display rule.
 
 ## Group Chat Model
 
