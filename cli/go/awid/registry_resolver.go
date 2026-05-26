@@ -61,9 +61,10 @@ type didKeyEvidenceWire struct {
 }
 
 type didKeyResolutionWire struct {
-	DIDAW         string              `json:"did_aw"`
-	CurrentDIDKey string              `json:"current_did_key"`
-	LogHead       *didKeyEvidenceWire `json:"log_head"`
+	DIDAW         string                  `json:"did_aw"`
+	CurrentDIDKey string                  `json:"current_did_key"`
+	LogHead       *didKeyEvidenceWire     `json:"log_head"`
+	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
 }
 
 type registryAddressCacheValue struct {
@@ -168,6 +169,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 				Address:        address,
 				Handle:         member.response.Alias,
 				PublicKey:      ed25519.PublicKey(pub),
+				EncryptionKey:  keyRes.EncryptionKey,
 				RegistryURL:    member.authority.RegistryURL,
 				DeliveryOrigin: deliveryOrigin,
 				Custody:        CustodySelf,
@@ -238,6 +240,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 		Handle:         name,
 		ControllerDID:  address.authority.ControllerDID,
 		PublicKey:      ed25519.PublicKey(pub),
+		EncryptionKey:  keyRes.EncryptionKey,
 		RegistryURL:    address.authority.RegistryURL,
 		DeliveryOrigin: deliveryOrigin,
 		Custody:        CustodySelf,
@@ -419,6 +422,7 @@ func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW st
 	res := &DidKeyResolution{
 		DIDAW:         wire.DIDAW,
 		CurrentDIDKey: wire.CurrentDIDKey,
+		EncryptionKey: wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{
@@ -432,6 +436,11 @@ func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW st
 			AuthorizedBy:   wire.LogHead.AuthorizedBy,
 			Signature:      wire.LogHead.Signature,
 			Timestamp:      wire.LogHead.Timestamp,
+		}
+	}
+	if res.EncryptionKey != nil {
+		if err := VerifyEncryptionKeyAssertion(res.EncryptionKey, res.CurrentDIDKey, res.DIDAW, r.now()); err != nil {
+			return nil, fmt.Errorf("RegistryResolver: invalid encryption key assertion for %s: %w", didAW, err)
 		}
 	}
 	r.storeKeyCache(didAW, res, registryKeyTTL)

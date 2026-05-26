@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from awid.e2ee_keys import validate_encryption_key_assertion
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.deps import get_db, get_redis
@@ -41,6 +43,7 @@ class AgentView(BaseModel):
     online: bool = False
     identity_scope: str = "local"
     inbound_mode: Optional[str] = None
+    encryption_key: Optional["EncryptionKeyAssertion"] = None
 
 
 class ListAgentsResponse(BaseModel):
@@ -61,6 +64,30 @@ class AgentInboundModeResponse(BaseModel):
     identity_scope: str
     inbound_mode: str
     configurable: bool
+
+
+class EncryptionKeyAssertion(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    operation: Literal["publish_encryption_key"]
+    version: Literal["aweb-e2ee-key-v1"]
+    identity_did: str = Field(..., max_length=256)
+    identity_stable_id: Optional[str] = Field(default=None, max_length=256)
+    encryption_key_id: str = Field(..., max_length=128)
+    encryption_public_key: str = Field(..., max_length=128)
+    algorithm: Literal["x25519"]
+    created_at: str = Field(..., max_length=64)
+    not_before: str = Field(..., max_length=64)
+    expires_at: str = Field(..., max_length=64)
+    previous_encryption_key_id: Optional[str] = Field(default=None, max_length=128)
+    signature: str = Field(..., max_length=2048)
+
+
+class PublishEncryptionKeyResponse(BaseModel):
+    agent_id: str
+    team_id: str
+    alias: str
+    encryption_key: EncryptionKeyAssertion
 
 
 class UpdateAgentInboundModeRequest(BaseModel):
@@ -167,7 +194,7 @@ async def suggest_alias_prefix(
     )
 
 
-@router.get("", response_model=ListAgentsResponse)
+@router.get("", response_model=ListAgentsResponse, response_model_exclude_none=True)
 async def list_agents(
     request: Request,
     db=Depends(get_db),
@@ -179,12 +206,43 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, did_key, did_aw, address,
-               human_name, agent_type, role, identity_scope, inbound_mode, status
-        FROM {{tables.agents}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND COALESCE(agent_type, 'agent') != 'human'
-        ORDER BY alias
+        SELECT a.agent_id, a.alias, a.did_key, a.did_aw, a.address,
+               a.human_name, a.agent_type, a.role, a.identity_scope,
+               a.inbound_mode, a.status,
+               e.encryption_key_id,
+               e.encryption_public_key,
+               e.algorithm AS encryption_key_algorithm,
+               e.identity_did AS encryption_key_identity_did,
+               e.identity_stable_id AS encryption_key_identity_stable_id,
+               e.created_at_text AS encryption_key_created_at,
+               e.not_before_text AS encryption_key_not_before,
+               e.expires_at_text AS encryption_key_expires_at,
+               e.previous_encryption_key_id,
+               e.assertion_signature AS encryption_key_signature
+        FROM {{tables.agents}} a
+        LEFT JOIN LATERAL (
+            SELECT encryption_key_id, encryption_public_key, algorithm,
+                   identity_did, identity_stable_id, created_at_text,
+                   not_before_text, expires_at_text,
+                   previous_encryption_key_id, assertion_signature
+            FROM {{tables.agent_encryption_keys}}
+            WHERE agent_id = a.agent_id
+              AND team_id = a.team_id
+              AND identity_did = a.did_key
+              AND (
+                  (NULLIF(BTRIM(COALESCE(a.did_aw, '')), '') IS NULL
+                   AND identity_stable_id IS NULL)
+                  OR identity_stable_id = a.did_aw
+              )
+              AND revoked_at IS NULL
+              AND not_before_at <= NOW()
+              AND expires_at > NOW()
+            ORDER BY published_at DESC
+            LIMIT 1
+        ) e ON TRUE
+        WHERE a.team_id = $1 AND a.deleted_at IS NULL
+          AND COALESCE(a.agent_type, 'agent') != 'human'
+        ORDER BY a.alias
         """,
         identity.team_id,
     )
@@ -208,7 +266,7 @@ async def list_agents(
 
     # Presence from Redis
     agent_ids = [str(r["agent_id"]) for r in rows]
-    presences = await list_agent_presences_by_workspace_ids(redis, agent_ids) if agent_ids else []
+    presences = await list_agent_presences_by_workspace_ids(redis, agent_ids) if redis and agent_ids else []
     presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
 
     agents: list[AgentView] = []
@@ -248,10 +306,30 @@ async def list_agents(
                 online=online,
                 identity_scope=str(r.get("identity_scope") or "local"),
                 inbound_mode=r.get("inbound_mode") or None,
+                encryption_key=_encryption_assertion_from_row(r),
             )
         )
 
     return ListAgentsResponse(team_id=identity.team_id, agents=agents)
+
+
+def _encryption_assertion_from_row(row) -> EncryptionKeyAssertion | None:
+    if not row.get("encryption_key_id"):
+        return None
+    return EncryptionKeyAssertion(
+        operation="publish_encryption_key",
+        version="aweb-e2ee-key-v1",
+        identity_did=row["encryption_key_identity_did"],
+        identity_stable_id=row.get("encryption_key_identity_stable_id") or None,
+        encryption_key_id=row["encryption_key_id"],
+        encryption_public_key=row["encryption_public_key"],
+        algorithm=row["encryption_key_algorithm"],
+        created_at=row["encryption_key_created_at"],
+        not_before=row["encryption_key_not_before"],
+        expires_at=row["encryption_key_expires_at"],
+        previous_encryption_key_id=row.get("previous_encryption_key_id") or None,
+        signature=row["encryption_key_signature"],
+    )
 
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
@@ -366,6 +444,120 @@ async def update_my_inbound_mode(
     if row is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return await _load_current_agent_inbound_mode(db, identity)
+
+
+@router.put(
+    "/me/encryption-key",
+    response_model=PublishEncryptionKeyResponse,
+    response_model_exclude_none=True,
+)
+async def publish_my_encryption_key(
+    request: Request,
+    payload: EncryptionKeyAssertion,
+    db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> PublishEncryptionKeyResponse:
+    """Publish the calling agent's identity-signed E2E encryption key."""
+    aweb_db = db.get_manager("aweb")
+    expected_stable_id = identity.did_aw.strip() or None
+    try:
+        canonical_payload, created_at, not_before, expires_at = validate_encryption_key_assertion(
+            payload.model_dump(exclude_none=True),
+            current_did_key=identity.did_key,
+            stable_id=expected_stable_id,
+            now=datetime.now(timezone.utc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_encryption_key_assertion",
+                "message": str(exc),
+            },
+        )
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, team_id, alias
+        FROM {{tables.agents}}
+        WHERE team_id = $1
+          AND agent_id = $2::UUID
+          AND did_key = $3
+          AND deleted_at IS NULL
+        """,
+        identity.team_id,
+        identity.agent_id,
+        identity.did_key,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_encryption_keys}} (
+            agent_id,
+            team_id,
+            encryption_key_id,
+            encryption_public_key,
+            algorithm,
+            identity_did,
+            identity_stable_id,
+            assertion_signature,
+            assertion_canonical,
+            created_at_text,
+            not_before_text,
+            expires_at_text,
+            assertion_created_at,
+            not_before_at,
+            expires_at,
+            previous_encryption_key_id,
+            revoked_at
+        )
+        VALUES (
+            $1::UUID, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15, $16, NULL
+        )
+        ON CONFLICT (agent_id, encryption_key_id) DO UPDATE SET
+            team_id = EXCLUDED.team_id,
+            encryption_public_key = EXCLUDED.encryption_public_key,
+            algorithm = EXCLUDED.algorithm,
+            identity_did = EXCLUDED.identity_did,
+            identity_stable_id = EXCLUDED.identity_stable_id,
+            assertion_signature = EXCLUDED.assertion_signature,
+            assertion_canonical = EXCLUDED.assertion_canonical,
+            created_at_text = EXCLUDED.created_at_text,
+            not_before_text = EXCLUDED.not_before_text,
+            expires_at_text = EXCLUDED.expires_at_text,
+            assertion_created_at = EXCLUDED.assertion_created_at,
+            not_before_at = EXCLUDED.not_before_at,
+            expires_at = EXCLUDED.expires_at,
+            previous_encryption_key_id = EXCLUDED.previous_encryption_key_id,
+            published_at = NOW(),
+            revoked_at = NULL
+        """,
+        identity.agent_id,
+        identity.team_id,
+        payload.encryption_key_id,
+        payload.encryption_public_key,
+        payload.algorithm,
+        payload.identity_did,
+        payload.identity_stable_id,
+        payload.signature,
+        canonical_payload.decode("utf-8"),
+        payload.created_at,
+        payload.not_before,
+        payload.expires_at,
+        created_at,
+        not_before,
+        expires_at,
+        payload.previous_encryption_key_id,
+    )
+    return PublishEncryptionKeyResponse(
+        agent_id=str(row["agent_id"]),
+        team_id=str(row["team_id"]),
+        alias=str(row["alias"]),
+        encryption_key=payload,
+    )
 
 
 @router.patch("/me", response_model=PatchWorkspaceResponse)

@@ -18,6 +18,7 @@ from awid.log import (
     log_entry_payload as awid_log_entry_payload,
     sha256_hex as awid_sha256_hex,
 )
+from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.signing import canonical_json_bytes
@@ -80,10 +81,28 @@ class DidKeyEvidence(BaseModel):
     timestamp: str
 
 
+class EncryptionKeyAssertion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["publish_encryption_key"]
+    version: Literal["aweb-e2ee-key-v1"]
+    identity_did: str = Field(..., max_length=256)
+    identity_stable_id: str | None = Field(default=None, max_length=256)
+    encryption_key_id: str = Field(..., max_length=128)
+    encryption_public_key: str = Field(..., max_length=128)
+    algorithm: Literal["x25519"]
+    created_at: str = Field(..., max_length=64)
+    not_before: str = Field(..., max_length=64)
+    expires_at: str = Field(..., max_length=64)
+    previous_encryption_key_id: str | None = Field(default=None, max_length=128)
+    signature: str = Field(..., max_length=2048)
+
+
 class DidKeyResponse(BaseModel):
     did_aw: str
     current_did_key: str
     log_head: DidKeyEvidence | None = None
+    encryption_key: EncryptionKeyAssertion | None = None
 
 
 class DidHeadResponse(BaseModel):
@@ -137,6 +156,69 @@ def _db(request: Request):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _validate_encryption_assertion(
+    assertion: EncryptionKeyAssertion,
+    *,
+    did_aw: str,
+    current_did_key: str,
+    now: datetime,
+) -> tuple[bytes, datetime, datetime, datetime]:
+    return validate_encryption_key_assertion(
+        assertion.model_dump(exclude_none=True),
+        current_did_key=current_did_key,
+        stable_id=did_aw,
+        now=now,
+    )
+
+
+def _assertion_from_row(row) -> EncryptionKeyAssertion | None:
+    if row is None:
+        return None
+    return EncryptionKeyAssertion(
+        operation="publish_encryption_key",
+        version="aweb-e2ee-key-v1",
+        identity_did=row["identity_did"],
+        identity_stable_id=row["identity_stable_id"],
+        encryption_key_id=row["encryption_key_id"],
+        encryption_public_key=row["encryption_public_key"],
+        algorithm=row["algorithm"],
+        created_at=row["created_at_text"],
+        not_before=row["not_before_text"],
+        expires_at=row["expires_at_text"],
+        previous_encryption_key_id=row["previous_encryption_key_id"],
+        signature=row["assertion_signature"],
+    )
+
+
+async def _fetch_current_encryption_assertion(
+    db,
+    *,
+    did_aw: str,
+    current_did_key: str,
+    now: datetime,
+):
+    return await db.fetch_one(
+        """
+        SELECT did_aw, encryption_key_id, encryption_public_key, algorithm,
+               identity_did, identity_stable_id, assertion_signature,
+               created_at_text, not_before_text, expires_at_text,
+               previous_encryption_key_id, published_at
+        FROM {{tables.identity_encryption_keys}}
+        WHERE did_aw = $1
+          AND identity_did = $3
+          AND identity_stable_id = $1
+          AND revoked_at IS NULL
+          AND not_before_at <= $2
+          AND expires_at > $2
+        ORDER BY published_at DESC
+        LIMIT 1
+        """,
+        did_aw,
+        now,
+        current_did_key,
+    )
 
 
 @router.post("", dependencies=[Depends(rate_limit_dep("did_register"))])
@@ -278,6 +360,12 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
         raise HTTPException(status_code=500, detail="log missing for did_aw")
     if head["new_did_key"] != row["current_did_key"]:
         raise HTTPException(status_code=500, detail="mapping/log inconsistency")
+    encryption_row = await _fetch_current_encryption_assertion(
+        db,
+        did_aw=did_aw,
+        current_did_key=row["current_did_key"],
+        now=_now(),
+    )
 
     return DidKeyResponse(
         did_aw=row["did_aw"],
@@ -294,7 +382,93 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             signature=head["signature"],
             timestamp=head["timestamp"],
         ),
+        encryption_key=_assertion_from_row(encryption_row),
     )
+
+
+@router.post(
+    "/{did_aw}/encryption-key",
+    response_model=EncryptionKeyAssertion,
+    response_model_exclude_none=True,
+    dependencies=[Depends(rate_limit_dep("did_encryption_key_publish"))],
+)
+async def publish_encryption_key(
+    request: Request,
+    did_aw: str,
+    assertion: EncryptionKeyAssertion,
+) -> EncryptionKeyAssertion:
+    try:
+        did_aw = validate_stable_id(did_aw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db = _db(request)
+    async with db.transaction() as tx:
+        row = await tx.fetch_one(
+            """
+            SELECT did_aw, current_did_key
+            FROM {{tables.did_aw_mappings}}
+            WHERE did_aw = $1
+            """,
+            did_aw,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="did_aw not found")
+
+        try:
+            canonical, assertion_created_at, not_before_at, expires_at = _validate_encryption_assertion(
+                assertion,
+                did_aw=did_aw,
+                current_did_key=row["current_did_key"],
+                now=_now(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        await tx.execute(
+            """
+            INSERT INTO {{tables.identity_encryption_keys}}
+                (did_aw, encryption_key_id, encryption_public_key, algorithm,
+                 identity_did, identity_stable_id, assertion_signature,
+                 assertion_canonical, created_at_text, not_before_text,
+                 expires_at_text, assertion_created_at, not_before_at,
+                 expires_at, previous_encryption_key_id, published_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+            ON CONFLICT (did_aw, encryption_key_id) DO UPDATE SET
+                encryption_public_key = EXCLUDED.encryption_public_key,
+                algorithm = EXCLUDED.algorithm,
+                identity_did = EXCLUDED.identity_did,
+                identity_stable_id = EXCLUDED.identity_stable_id,
+                assertion_signature = EXCLUDED.assertion_signature,
+                assertion_canonical = EXCLUDED.assertion_canonical,
+                created_at_text = EXCLUDED.created_at_text,
+                not_before_text = EXCLUDED.not_before_text,
+                expires_at_text = EXCLUDED.expires_at_text,
+                assertion_created_at = EXCLUDED.assertion_created_at,
+                not_before_at = EXCLUDED.not_before_at,
+                expires_at = EXCLUDED.expires_at,
+                previous_encryption_key_id = EXCLUDED.previous_encryption_key_id,
+                published_at = NOW(),
+                revoked_at = NULL
+            """,
+            did_aw,
+            assertion.encryption_key_id,
+            assertion.encryption_public_key,
+            assertion.algorithm,
+            assertion.identity_did,
+            assertion.identity_stable_id,
+            assertion.signature,
+            canonical.decode("utf-8"),
+            assertion.created_at,
+            assertion.not_before,
+            assertion.expires_at,
+            assertion_created_at,
+            not_before_at,
+            expires_at,
+            assertion.previous_encryption_key_id,
+        )
+
+    return assertion
 
 
 @router.get(

@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from awid.log import identity_state_hash, log_entry_payload
-from awid.signing import sign_message
+from awid.e2ee_keys import encryption_key_id
+from awid.signing import canonical_json_bytes, sign_message
 from awid_service.routes import did as did_routes
 
 
@@ -19,6 +20,11 @@ _IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"
 @pytest.fixture(autouse=True)
 def _allow_static_vector_timestamps(monkeypatch):
     monkeypatch.setattr(did_routes, "enforce_timestamp_skew", lambda _timestamp: None)
+    monkeypatch.setattr(
+        did_routes,
+        "_now",
+        lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
+    )
 
 
 @pytest.fixture
@@ -44,6 +50,31 @@ def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:
         "Authorization": f"DIDKey {did_key} {sign_message(seed, payload)}",
         "X-AWEB-Timestamp": timestamp,
     }
+
+
+def _encryption_assertion_body(identity_vectors: dict, *, expired: bool = False) -> dict:
+    seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
+    did_aw = identity_vectors["mapping"]["did_aw"]
+    did_key = identity_vectors["mapping"]["initial_did_key"]
+    public_key = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+    body = {
+        "operation": "publish_encryption_key",
+        "version": "aweb-e2ee-key-v1",
+        "identity_did": did_key,
+        "identity_stable_id": did_aw,
+        "encryption_key_id": encryption_key_id(public_key),
+        "encryption_public_key": public_key,
+        "algorithm": "x25519",
+        "created_at": "2026-05-26T00:00:00Z",
+        "not_before": "2026-05-26T00:00:00Z",
+        "expires_at": "2026-05-27T00:00:00Z",
+    }
+    if expired:
+        body["created_at"] = "2020-01-01T00:00:00Z"
+        body["not_before"] = "2020-01-01T00:00:00Z"
+        body["expires_at"] = "2020-01-02T00:00:00Z"
+    body["signature"] = sign_message(seed, canonical_json_bytes(body))
+    return body
 
 
 @pytest.mark.asyncio
@@ -229,3 +260,79 @@ async def test_did_delivery_origin_endpoint_is_not_exposed(client, register_vect
     key_response = await client.get(f"/v1/did/{body['did_aw']}/key")
     assert key_response.status_code == 200, key_response.text
     assert "delivery_origin" not in key_response.json()
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_and_resolve_from_key_endpoint(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors)
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 200, publish.text
+    assert publish.json() == body
+
+    key_response = await client.get(f"/v1/did/{body['identity_stable_id']}/key")
+    assert key_response.status_code == 200, key_response.text
+    key_payload = key_response.json()
+    assert key_payload["encryption_key"]["encryption_key_id"] == body["encryption_key_id"]
+    assert key_payload["encryption_key"]["identity_did"] == body["identity_did"]
+    assert key_payload["encryption_key"]["signature"] == body["signature"]
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_rejects_controller_substitution(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors)
+    body["identity_did"] = identity_vectors["mapping"]["rotated_did_key"]
+    body["signature"] = "invalid"
+
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 422, publish.text
+    assert "identity_did must match current did:key" in publish.text
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_rejects_key_id_mismatch(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors)
+    body["encryption_key_id"] = "sha256:wrong"
+    body["signature"] = sign_message(
+        bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"]),
+        canonical_json_bytes({k: v for k, v in body.items() if k != "signature"}),
+    )
+
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 422, publish.text
+    assert "encryption_key_id does not match" in publish.text
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_rejects_expired_assertion(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors, expired=True)
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 422, publish.text
+    assert "expired" in publish.text

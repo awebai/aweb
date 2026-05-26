@@ -2,7 +2,9 @@ package awid
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // HeartbeatResponse is returned by POST /v1/agents/heartbeat.
@@ -13,24 +15,47 @@ type HeartbeatResponse struct {
 }
 
 type AgentView struct {
-	AgentID       string `json:"agent_id"`
-	Alias         string `json:"alias"`
-	DIDKey        string `json:"did_key"`
-	DIDAW         string `json:"did_aw,omitempty"`
-	Address       string `json:"address,omitempty"`
-	HumanName     string `json:"human_name,omitempty"`
-	AgentType     string `json:"agent_type,omitempty"`
-	WorkspaceType string `json:"workspace_type,omitempty"`
-	Role          string `json:"role,omitempty"`
-	Hostname      string `json:"hostname,omitempty"`
-	WorkspacePath string `json:"workspace_path,omitempty"`
-	Repo          string `json:"repo,omitempty"`
-	Status        string `json:"status,omitempty"`
-	LastSeen      string `json:"last_seen,omitempty"`
-	Online        bool   `json:"online,omitempty"`
-	IdentityScope string `json:"identity_scope,omitempty"`
-	InboundMode   string `json:"inbound_mode,omitempty"`
-	Lifetime      string `json:"lifetime,omitempty"`
+	AgentID       string                  `json:"agent_id"`
+	Alias         string                  `json:"alias"`
+	DIDKey        string                  `json:"did_key"`
+	DIDAW         string                  `json:"did_aw,omitempty"`
+	Address       string                  `json:"address,omitempty"`
+	HumanName     string                  `json:"human_name,omitempty"`
+	AgentType     string                  `json:"agent_type,omitempty"`
+	WorkspaceType string                  `json:"workspace_type,omitempty"`
+	Role          string                  `json:"role,omitempty"`
+	Hostname      string                  `json:"hostname,omitempty"`
+	WorkspacePath string                  `json:"workspace_path,omitempty"`
+	Repo          string                  `json:"repo,omitempty"`
+	Status        string                  `json:"status,omitempty"`
+	LastSeen      string                  `json:"last_seen,omitempty"`
+	Online        bool                    `json:"online,omitempty"`
+	IdentityScope string                  `json:"identity_scope,omitempty"`
+	InboundMode   string                  `json:"inbound_mode,omitempty"`
+	Lifetime      string                  `json:"lifetime,omitempty"`
+	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+}
+
+func (a AgentView) VerifyEncryptionKey(now time.Time) error {
+	if a.EncryptionKey == nil {
+		return nil
+	}
+	return VerifyEncryptionKeyAssertion(
+		a.EncryptionKey,
+		strings.TrimSpace(a.DIDKey),
+		strings.TrimSpace(a.DIDAW),
+		now,
+	)
+}
+
+func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion, error) {
+	if a.EncryptionKey == nil {
+		return nil, fmt.Errorf("agent %s has no E2E encryption key; ask it to publish one before sending encrypted mail", a.Alias)
+	}
+	if err := a.VerifyEncryptionKey(now); err != nil {
+		return nil, err
+	}
+	return a.EncryptionKey, nil
 }
 
 type ListAgentsResponse struct {
@@ -51,6 +76,13 @@ type UpdateAgentInboundModeRequest struct {
 	InboundMode string `json:"inbound_mode"`
 }
 
+type PublishAgentEncryptionKeyResponse struct {
+	AgentID       string                  `json:"agent_id"`
+	TeamID        string                  `json:"team_id"`
+	Alias         string                  `json:"alias"`
+	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+}
+
 // Heartbeat reports agent liveness to the aweb server.
 func (c *Client) Heartbeat(ctx context.Context) (*HeartbeatResponse, error) {
 	var out HeartbeatResponse
@@ -65,6 +97,14 @@ func (c *Client) ListAgents(ctx context.Context) (*ListAgentsResponse, error) {
 	var out ListAgentsResponse
 	if err := c.Get(ctx, "/v1/agents", &out); err != nil {
 		return nil, err
+	}
+	for _, agent := range out.Agents {
+		if agent.EncryptionKey == nil {
+			continue
+		}
+		if err := agent.VerifyEncryptionKey(time.Now().UTC()); err != nil {
+			return nil, fmt.Errorf("ListAgents: invalid encryption key assertion for %s: %w", agent.Alias, err)
+		}
 	}
 	return &out, nil
 }
@@ -81,6 +121,14 @@ func (c *Client) UpdateMyInboundMode(ctx context.Context, mode string) (*AgentIn
 	var out AgentInboundModeResponse
 	req := UpdateAgentInboundModeRequest{InboundMode: strings.TrimSpace(mode)}
 	if err := c.Patch(ctx, "/v1/agents/me/inbound-mode", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) PublishMyEncryptionKey(ctx context.Context, assertion *EncryptionKeyAssertion) (*PublishAgentEncryptionKeyResponse, error) {
+	var out PublishAgentEncryptionKeyResponse
+	if err := c.Put(ctx, "/v1/agents/me/encryption-key", assertion, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
