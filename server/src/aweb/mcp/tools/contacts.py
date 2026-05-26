@@ -8,7 +8,7 @@ from uuid import UUID
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
-from aweb.mcp.tools.mail import send_mail
+from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -423,9 +423,10 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
               )
               AND ca.did <> cb.did
         )
-        SELECT m.message_id, m.conversation_id, m.from_did, m.to_did, m.from_alias,
-               m.from_address, m.to_alias, m.subject, m.body, m.priority,
-               m.read_at, m.created_at
+        SELECT m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
+               m.from_alias, m.from_address, m.to_alias, m.subject, m.body, m.priority,
+               m.read_at, m.created_at, m.signature, m.signed_payload, m.content_mode,
+               m.message_version
         FROM {{tables.messages}} m
         WHERE m.conversation_id IN (SELECT conversation_id FROM matching_conversations)
         ORDER BY m.created_at DESC, m.message_id DESC
@@ -437,23 +438,7 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
         target_addresses,
         limit,
     )
-    return [
-        {
-            "message_id": str(row["message_id"]),
-            "conversation_id": str(row["conversation_id"]) if row.get("conversation_id") else None,
-            "from_did": row["from_did"],
-            "to_did": row["to_did"],
-            "from_alias": row["from_alias"],
-            "from_address": row["from_address"],
-            "to_alias": row["to_alias"],
-            "subject": row["subject"],
-            "body": row["body"],
-            "priority": row["priority"],
-            "read": row["read_at"] is not None,
-            "created_at": row["created_at"].isoformat(),
-        }
-        for row in rows
-    ]
+    return [mcp_mail_message_from_row(dict(row), include_bodies=True) for row in rows]
 
 
 async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:

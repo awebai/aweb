@@ -167,7 +167,11 @@ def register_tools(
 
     @mcp.tool(
         name="send_mail",
-        description="Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id.",
+        description=(
+            "Send hosted server-readable async mail with a required body by recipient, "
+            "or continue an existing mail conversation by conversation_id. This hosted "
+            "MCP tool is not E2E; use local aw clients for E2E mail."
+        ),
     )
     async def send_mail(
         to: str = "",
@@ -191,7 +195,10 @@ def register_tools(
 
     @mcp.tool(
         name="check_mail",
-        description="Check the agent's mail inbox for messages from other agents.",
+        description=(
+            "Check hosted mail metadata and legacy plaintext messages. Encrypted E2E "
+            "message contents are not decrypted by hosted MCP; read them in a local aw client."
+        ),
     )
     async def check_mail(
         unread_only: bool = True, limit: int = 50, include_bodies: bool = True
@@ -517,7 +524,10 @@ def register_tools(
 
     @mcp.tool(
         name="read_contact_messages",
-        description="Read mail or chat messages exchanged with a saved contact.",
+        description=(
+            "Read hosted mail or chat messages exchanged with a saved contact. "
+            "Encrypted E2E mail content is returned as metadata only; read it in a local aw client."
+        ),
     )
     async def read_contact_messages(
         contact_id: str,
@@ -540,7 +550,10 @@ def register_tools(
 
     @mcp.tool(
         name="check_inbox",
-        description="Legacy compatibility alias for check_mail. Prefer check_mail.",
+        description=(
+            "Legacy compatibility alias for check_mail. Prefer check_mail. "
+            "Hosted MCP cannot decrypt E2E contents."
+        ),
     )
     async def check_inbox(
         unread_only: bool = True, limit: int = 50, include_bodies: bool = True
@@ -644,7 +657,10 @@ def register_tools(
 
     @mcp.tool(
         name="send_message_to_contact",
-        description="Legacy compatibility alias for sending mail or chat to a saved contact.",
+        description=(
+            "Legacy compatibility alias for hosted server-readable mail or chat to a saved contact. "
+            "This hosted MCP tool is not E2E; use local aw clients for E2E messaging."
+        ),
     )
     async def send_message_to_contact(
         contact_id: str,
@@ -676,7 +692,7 @@ def register_tools(
         name="read_messages_from_contact",
         description=(
             "Legacy compatibility alias for read_contact_messages. "
-            "Prefer read_contact_messages."
+            "Prefer read_contact_messages. Hosted MCP cannot decrypt E2E contents."
         ),
     )
     async def read_messages_from_contact(

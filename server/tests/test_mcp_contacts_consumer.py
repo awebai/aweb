@@ -692,3 +692,84 @@ async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(aw
     )
 
     assert [message["body"] for message in result["messages"]] == ["from bob"]
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_metadata_only(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob')
+        RETURNING contact_id
+        """
+    )
+    conversation_id = str(uuid4())
+    message_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', 'ops:acme.com', 'did:aw:alice', NOW(), NOW())
+        """,
+        conversation_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', 'to_address', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, from_address,
+            to_alias, subject, body, priority, content_mode, message_version,
+            encrypted_envelope, encrypted_ciphertext, encrypted_key_wraps,
+            encrypted_ciphertext_hash, encrypted_ciphertext_size, encrypted_key_wraps_hash,
+            encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
+            signed_envelope_hash
+        )
+        VALUES (
+            $1, $2, 'did:aw:bob', 'did:aw:alice', 'bob', 'acme.com/bob',
+            'alice', '', '', 'normal', 'encrypted_v2', 2,
+            '{}'::jsonb, 'ciphertext-bytes', '[]'::jsonb,
+            'sha256:ciphertext', 16, 'sha256:wraps',
+            'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519', 'did:key:z6MkBob',
+            'sha256:envelope'
+        )
+        """,
+        message_id,
+        conversation_id,
+    )
+
+    result = json.loads(
+        await contacts_tools.read_messages_from_contact(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            contact_id=str(contact["contact_id"]),
+            channel="mail",
+        )
+    )
+
+    assert len(result["messages"]) == 1
+    message = result["messages"][0]
+    assert message["message_id"] == str(message_id)
+    assert message["encrypted"] is True
+    assert message["content_mode"] == "encrypted_v2"
+    assert message["subject"] == ""
+    assert message["body"] == ""
+    assert "content_notice" in message
+    assert "ciphertext-bytes" not in json.dumps(message)

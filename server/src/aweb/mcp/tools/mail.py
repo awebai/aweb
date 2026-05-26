@@ -54,6 +54,44 @@ from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, Val
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
 
+def mcp_mail_message_from_row(row: dict, *, include_bodies: bool = True) -> dict:
+    content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
+    encrypted = content_mode == "encrypted_v2"
+    read_at = _utc_iso(row["read_at"]) if row.get("read_at") is not None else None
+    msg: dict = {
+        "message_id": str(row["message_id"]),
+        "conversation_id": str(row["conversation_id"]) if row.get("conversation_id") else None,
+        "from_agent_id": (str(row["from_agent_id"]) if row.get("from_agent_id") else None),
+        "from_alias": row["from_alias"],
+        "from_address": row["from_address"] or "",
+        "to_alias": row["to_alias"],
+        "subject": "" if encrypted else row["subject"],
+        "priority": row["priority"],
+        "read": read_at is not None,
+        "read_at": read_at,
+        "created_at": _utc_iso(row["created_at"]),
+        "to_did": row.get("to_did"),
+        "content_mode": content_mode,
+        "message_version": int(row.get("message_version") or (2 if encrypted else 1)),
+        "encrypted": encrypted,
+    }
+    if include_bodies:
+        msg["body"] = "" if encrypted else row["body"]
+    if encrypted:
+        msg["content_notice"] = (
+            "Encrypted message content is not available through hosted MCP; "
+            "read it in a local client that holds the identity encryption key."
+        )
+    if row.get("from_did"):
+        msg["from_did"] = row["from_did"]
+    if row.get("signature"):
+        msg["signature"] = row["signature"]
+    if row.get("signed_payload"):
+        msg["signed_payload"] = row["signed_payload"]
+    msg["verification_status"] = message_verification_status(dict(row))
+    return msg
+
+
 def _external_recipient_from_address(address: str, resolution) -> dict:
     _, name = address.split("/", 1)
     delivery_origin = registry_delivery_origin(resolution)
@@ -493,7 +531,7 @@ async def check_inbox(
         """
         SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
-               from_did, to_did, signature, signed_payload
+               from_did, to_did, signature, signed_payload, content_mode, message_version
         FROM {{tables.messages}}
         WHERE to_did = ANY($1::text[])
           AND ($2::bool IS FALSE OR read_at IS NULL)
@@ -521,30 +559,9 @@ async def check_inbox(
 
     messages = []
     for r in rows:
-        read_at = _utc_iso(r["read_at"]) if r["read_at"] is not None else None
-        msg: dict = {
-            "message_id": str(r["message_id"]),
-            "conversation_id": str(r["conversation_id"]) if r.get("conversation_id") else None,
-            "from_agent_id": (str(r["from_agent_id"]) if r.get("from_agent_id") else None),
-            "from_alias": r["from_alias"],
-            "from_address": r["from_address"] or "",
-            "to_alias": r["to_alias"],
-            "subject": r["subject"],
-            "priority": r["priority"],
-            "read": read_at is not None or r["message_id"] in unread_message_ids,
-            "read_at": read_at,
-            "created_at": _utc_iso(r["created_at"]),
-            "to_did": r.get("to_did"),
-        }
-        if include_bodies:
-            msg["body"] = r["body"]
-        if r["from_did"]:
-            msg["from_did"] = r["from_did"]
-        if r["signature"]:
-            msg["signature"] = r["signature"]
-        if r["signed_payload"]:
-            msg["signed_payload"] = r["signed_payload"]
-        msg["verification_status"] = message_verification_status(dict(r))
+        msg = mcp_mail_message_from_row(dict(r), include_bodies=include_bodies)
+        if r["message_id"] in unread_message_ids:
+            msg["read"] = True
         messages.append(msg)
 
     return json.dumps({"messages": messages})

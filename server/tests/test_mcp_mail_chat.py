@@ -2009,6 +2009,61 @@ async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
+async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_db, monkeypatch):
+    encrypted_message_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at,
+            content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+            encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+            encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+            encrypted_signing_key_id, signed_envelope_hash
+        )
+        VALUES (
+            $1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice', '', '', 'normal', now(),
+            'encrypted_v2', 2, '{}'::jsonb, 'ciphertext-bytes',
+            '[]'::jsonb, 'sha256:ciphertext', 16,
+            'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
+            'did:key:z6MkBob', 'sha256:envelope'
+        )
+        """,
+        encrypted_message_id,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(uuid4()),
+            alias="alice",
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        ),
+    )
+
+    data = json.loads(
+        await mail_tools.check_inbox(
+            DBInfra(aweb_cloud_db.aweb_db),
+            unread_only=False,
+        )
+    )
+
+    assert len(data["messages"]) == 1
+    message = data["messages"][0]
+    assert message["message_id"] == str(encrypted_message_id)
+    assert message["encrypted"] is True
+    assert message["content_mode"] == "encrypted_v2"
+    assert message["message_version"] == 2
+    assert message["subject"] == ""
+    assert message["body"] == ""
+    assert "content_notice" in message
+    assert "ciphertext-bytes" not in json.dumps(message)
+
+
+@pytest.mark.asyncio
 async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
