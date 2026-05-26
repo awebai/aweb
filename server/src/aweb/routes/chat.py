@@ -777,6 +777,28 @@ async def _targets_left(db, *, session_id: UUID, target_dids: list[str]) -> list
     return [row["alias"] for row in part_rows]
 
 
+async def _left_dids_by_session(db, session_ids: list[UUID]) -> dict[str, set[str]]:
+    if not session_ids:
+        return {}
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT DISTINCT ON (session_id, from_did)
+               session_id, from_did, sender_leaving
+        FROM {{tables.chat_messages}}
+        WHERE session_id = ANY($1::uuid[])
+          AND from_did IS NOT NULL
+        ORDER BY session_id, from_did, created_at DESC, message_id DESC
+        """,
+        session_ids,
+    )
+    left: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        if row.get("sender_leaving"):
+            left[str(row["session_id"])].add(str(row["from_did"]))
+    return left
+
+
 async def _resolve_chat_targets(
     db,
     *,
@@ -914,6 +936,7 @@ async def _resolve_session_recipient_rows(
     actor_dids: list[str],
 ) -> list[dict[str, Any]]:
     aweb_db = db.get_manager("aweb")
+    left_dids = (await _left_dids_by_session(db, [session_id])).get(str(session_id), set())
     rows = await aweb_db.fetch_all(
         """
         SELECT did, alias, address, delivery_origin, current_did_key
@@ -930,6 +953,8 @@ async def _resolve_session_recipient_rows(
         participant = dict(row)
         resolved = await resolve_agent_by_did(db, participant.get("did") or "")
         participant_did = (participant.get("did") or "").strip()
+        if participant_did in left_dids:
+            continue
         participant_alias = (participant.get("alias") or "").strip()
         participant_address = (participant.get("address") or "").strip()
         recipient_rows.append(
@@ -1552,6 +1577,7 @@ async def pending(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
+    left_dids_by_session = await _left_dids_by_session(db, session_ids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [
@@ -1576,11 +1602,13 @@ async def pending(
     pending_items = []
     for item in conversations:
         session_participants = participants_by_session.get(item["session_id"], [])
+        left_dids = left_dids_by_session.get(item["session_id"], set())
+        hidden_dids = set(actor_dids) | left_dids
         waiting = waiting_by_session.get(item["session_id"], [])
         participants = [
             row["alias"]
             for row in session_participants
-            if (row.get("did") or "").strip() not in set(actor_dids)
+            if (row.get("did") or "").strip() not in hidden_dids
         ]
         participant_addresses = [
             (row.get("address") or "").strip() or routable_chat_address(
@@ -1589,7 +1617,7 @@ async def pending(
                 row["alias"],
             )
             for row in session_participants
-            if (row.get("did") or "").strip() not in set(actor_dids)
+            if (row.get("did") or "").strip() not in hidden_dids
         ]
         time_remaining_seconds = (
             max(
@@ -1612,7 +1640,7 @@ async def pending(
                 "participant_dids": [
                     (row.get("did") or "").strip()
                     for row in session_participants
-                    if (row.get("did") or "").strip() not in set(actor_dids)
+                    if (row.get("did") or "").strip() not in hidden_dids
                 ],
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
@@ -2510,6 +2538,7 @@ async def list_sessions(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
+    left_dids_by_session = await _left_dids_by_session(db, session_ids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [(row.get("did") or "").strip() for row in participant_rows if (row.get("did") or "").strip()],
@@ -2525,6 +2554,7 @@ async def list_sessions(
     sessions = []
     for row in rows:
         session_participants = participants_by_session.get(str(row["session_id"]), [])
+        hidden_dids = set(actor_dids) | left_dids_by_session.get(str(row["session_id"]), set())
         waiting = waiting_by_session.get(str(row["session_id"]), [])
         sessions.append(
             SessionListItem(
@@ -2534,12 +2564,12 @@ async def list_sessions(
                 participants=[
                     participant["alias"]
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in set(actor_dids)
+                    if (participant.get("did") or "").strip() not in hidden_dids
                 ],
                 participant_dids=[
                     (participant.get("did") or "").strip()
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in set(actor_dids)
+                    if (participant.get("did") or "").strip() not in hidden_dids
                 ],
                 participant_addresses=[
                     (participant.get("address") or "").strip() or routable_chat_address(
@@ -2548,7 +2578,7 @@ async def list_sessions(
                         participant["alias"],
                     )
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() not in set(actor_dids)
+                    if (participant.get("did") or "").strip() not in hidden_dids
                 ],
                 created_at=_utc_iso(row["created_at"]),
                 last_activity=_utc_iso(row["last_activity"]),

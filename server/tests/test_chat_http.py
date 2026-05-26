@@ -1950,6 +1950,162 @@ async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_clou
 
 
 @pytest.mark.asyncio
+async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(aweb_cloud_db):
+    alice_sk, _, alice_did = _make_keypair()
+    _, _, bob_did = _make_keypair()
+    _, _, carol_did = _make_keypair()
+    team_id = "backend:acme.com"
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'backend', $2)
+        """,
+        team_id,
+        "did:key:zTeam",
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode)
+        VALUES ($1, 'alice', $2, 'did:aw:alice', 'acme.com/alice', 'global', 'dev', 'open')
+        RETURNING agent_id
+        """,
+        team_id,
+        alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode)
+        VALUES
+          ($1, 'bob', $2, 'did:aw:bob', 'acme.com/bob', 'global', 'dev', 'open'),
+          ($1, 'carol', $3, 'did:aw:carol', 'acme.com/carol', 'global', 'dev', 'open')
+        """,
+        team_id,
+        bob_did,
+        carol_did,
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id=team_id,
+            alias="alice",
+            agent_id=str(alice_agent_id),
+        )
+
+    session_id = "11111111-1111-4111-8111-111111111112"
+    first_message_id = "22222222-2222-4222-8222-222222222223"
+    first_envelope = _encrypted_chat_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did,
+        sender_stable_id="did:aw:alice",
+        recipients=[
+            {"did": bob_did, "stable_id": "did:aw:bob", "address": "acme.com/bob"},
+            {"did": carol_did, "stable_id": "did:aw:carol", "address": "acme.com/carol"},
+        ],
+        message_id=first_message_id,
+        conversation_id=session_id,
+    )
+    create_payload = {
+        "session_id": session_id,
+        "to_aliases": ["bob", "carol"],
+        "message": "",
+        "message_id": first_message_id,
+        "timestamp": first_envelope["created_at"],
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": first_envelope,
+    }
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post("/v1/chat/sessions", json=create_payload)
+    assert created.status_code == 200, created.text
+
+    async def _carol_auth():
+        return MessagingAuth(
+            did_key=carol_did,
+            did_aw="did:aw:carol",
+            address="acme.com/carol",
+            team_id=team_id,
+            alias="carol",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _carol_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        left = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "leaving", "leaving": True})
+    assert left.status_code == 200, left.text
+
+    stale_message_id = "33333333-3333-4333-8333-333333333332"
+    stale_envelope = _encrypted_chat_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did,
+        sender_stable_id="did:aw:alice",
+        recipients=[
+            {"did": bob_did, "stable_id": "did:aw:bob", "address": "acme.com/bob"},
+            {"did": carol_did, "stable_id": "did:aw:carol", "address": "acme.com/carol"},
+        ],
+        message_id=stale_message_id,
+        conversation_id=session_id,
+    )
+    stale_payload = {
+        "body": "",
+        "message_id": stale_message_id,
+        "timestamp": stale_envelope["created_at"],
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": stale_envelope,
+    }
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stale = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=stale_payload)
+    assert stale.status_code == 422, stale.text
+    assert "recipient" in stale.text
+
+    future_message_id = "33333333-3333-4333-8333-333333333333"
+    future_envelope = _encrypted_chat_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did,
+        sender_stable_id="did:aw:alice",
+        recipients=[
+            {"did": bob_did, "stable_id": "did:aw:bob", "address": "acme.com/bob"},
+        ],
+        message_id=future_message_id,
+        conversation_id=session_id,
+    )
+    future_payload = {
+        "body": "",
+        "message_id": future_message_id,
+        "timestamp": future_envelope["created_at"],
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": future_envelope,
+    }
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        sessions = await client.get("/v1/chat/sessions")
+        sent = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=future_payload)
+    assert sessions.status_code == 200, sessions.text
+    listed = sessions.json()["sessions"][0]
+    assert listed["participant_dids"] == ["did:aw:bob"]
+    assert listed["participant_addresses"] == ["acme.com/bob"]
+    assert sent.status_code == 200, sent.text
+
+    stored = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(future_message_id),
+    )
+    stored = json.loads(stored)
+    delivery_wraps = [wrap for wrap in stored["key_wraps"] if wrap["wrap_purpose"] == "delivery"]
+    sender_copy_wraps = [wrap for wrap in stored["key_wraps"] if wrap["wrap_purpose"] == "sender_copy"]
+    assert [recipient["stable_id"] for recipient in stored["recipients"]] == ["did:aw:bob"]
+    assert [wrap["recipient_stable_id"] for wrap in delivery_wraps] == ["did:aw:bob"]
+    assert [wrap["recipient_stable_id"] for wrap in sender_copy_wraps] == ["did:aw:alice"]
+    assert "did:aw:carol" not in json.dumps(stored)
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
