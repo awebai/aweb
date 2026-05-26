@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 from awid.e2ee_keys import validate_encryption_key_assertion
 from aweb.alias_allocator import suggest_next_name_prefix
@@ -81,6 +81,10 @@ class EncryptionKeyAssertion(BaseModel):
     expires_at: str = Field(..., max_length=64)
     previous_encryption_key_id: Optional[str] = Field(default=None, max_length=128)
     signature: str = Field(..., max_length=2048)
+
+    @model_serializer(mode="wrap")
+    def serialize_without_null_optional_fields(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 class PublishEncryptionKeyResponse(BaseModel):
@@ -194,7 +198,7 @@ async def suggest_alias_prefix(
     )
 
 
-@router.get("", response_model=ListAgentsResponse, response_model_exclude_none=True)
+@router.get("", response_model=ListAgentsResponse)
 async def list_agents(
     request: Request,
     db=Depends(get_db),

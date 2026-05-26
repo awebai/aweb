@@ -545,6 +545,7 @@ async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verifi
     assert listed.status_code == 200, listed.text
     [agent] = listed.json()["agents"]
     assert agent["agent_id"] == str(agent_id)
+    assert agent["repo"] is None
     assert agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
     assert "identity_stable_id" not in agent["encryption_key"]
 
