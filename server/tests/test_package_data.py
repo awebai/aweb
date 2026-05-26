@@ -6,6 +6,8 @@ The single baseline is intentional for the pre-distribution hosted reset;
 normal future product migrations must be added as ordered forward files.
 """
 from importlib.resources import files
+from pathlib import Path
+import tomllib
 
 import pytest
 from pgdbm.errors import QueryError
@@ -20,6 +22,13 @@ def test_defaults_and_migrations_are_packaged():
     assert (package_root / "defaults" / "team_instructions.md").is_file()
     assert (package_root / "defaults" / "roles" / "backend.md").is_file()
     assert (AWEB_MIGRATIONS / "001_initial.sql").is_file()
+
+
+def test_awid_service_floor_covers_encryption_key_api():
+    """aapv requires awid.e2ee_keys, introduced with awid-service 0.5.9."""
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    dependencies = pyproject["project"]["dependencies"]
+    assert "awid-service>=0.5.9" in dependencies
 
 
 def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
