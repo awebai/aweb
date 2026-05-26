@@ -55,7 +55,9 @@ delivery/read/ack state, and error state. Local/team identities may omit
 routing or policy fields are signed context/debugging data, not delivery-policy
 authority; the server recomputes delivery authorization from trusted state.
 Support, billing, abuse, and retention workflows use metadata-only signals unless
-the customer exports decrypted content from a local client.
+the customer exports decrypted content from a local client. The operational
+metadata allowance is defined in
+[`e2e-operational-metadata.md`](e2e-operational-metadata.md).
 
 Publishing ripple for E2E wording changes: keep the aw CLI docs/help, PyPI
 `aweb`/server docs, AC dashboard copy, canonical skills, Codex/Claude skill

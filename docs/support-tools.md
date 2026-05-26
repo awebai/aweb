@@ -189,6 +189,26 @@ reissue. The team controller private key must remain on the controller machine;
 support should ask the controller owner to reissue rather than requesting or
 moving controller key material.
 
+## E2E encrypted message support boundary
+
+For encrypted message v2, support tools follow the metadata-only operational
+contract in [`e2e-operational-metadata.md`](e2e-operational-metadata.md). Support
+may inspect message ids, conversation ids, sender/recipient identity metadata,
+routes, key ids, ciphertext hashes/sizes, delivery/read/ack state, and
+verification/decryption error categories. Support must not inspect or request
+server-side plaintext subject/body/chat text for E2E messages.
+
+If content debugging is required, the customer or agent must export decrypted
+content from a local client and provide it intentionally as a support attachment.
+Do not request private encryption keys or archived encryption keys. Losing
+archived local encryption keys makes historical encrypted messages
+unrecoverable; AC/aweb cannot recover them.
+
+Hosted custodial MCP, dashboard-side compose/read, and other server-side tools
+are server-readable hosted messaging, not E2E. Keep support runbooks and user
+copy explicit about which mode produced a message before discussing recovery or
+content visibility.
+
 ## Support Bundles
 
 `aw doctor support-bundle --output <file> --json` writes a redacted JSON bundle
@@ -201,14 +221,21 @@ The bundle may include:
 - non-secret platform metadata
 - non-secret `.aw` metadata such as team IDs, aliases, DID/address fields,
   lifetime, custody, and parsed certificate metadata
+- E2E operational metadata such as message ids, conversation ids, key ids,
+  ciphertext hashes/sizes, delivery state, and verification/decryption error
+  categories
 - redaction paths and reasons
 - narrow request IDs from structured error details when available
 
 The bundle must not include:
 
-- private keys or signing key contents
+- private keys, signing key contents, encryption private keys, or archived
+  encryption keys
 - API keys, bearer tokens, cookies, or auth headers
-- raw team certificate blobs, signatures, or encrypted private key material
+- raw team certificate blobs, signatures, or hosted encrypted private key
+  material
+- E2E plaintext subject/body/chat text, previews, summaries, embeddings, or
+  content-derived support notes
 - URL userinfo, query secrets, fragments, request bodies, or arbitrary registry
   response bodies
 

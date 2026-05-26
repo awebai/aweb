@@ -554,7 +554,8 @@ not by trying every key silently.
 
 Usage, billing, abuse detection, retention, and support for v2 E2E must use
 metadata-only signals unless the customer explicitly exports decrypted content
-from a local client and supplies it to support.
+from a local client and supplies it to support. The operational allowance is
+specified in [`e2e-operational-metadata.md`](e2e-operational-metadata.md).
 
 Any support endpoint that returns v2 content must return ciphertext and metadata
 only, or be removed/blocked. Support tooling must not ask AC/aweb to decrypt.

@@ -1,0 +1,74 @@
+{
+  "schema": "aweb.e2ee.operational_metadata.v1",
+  "message": {
+    "message_version": 2,
+    "content_mode": "encrypted",
+    "kind": "mail",
+    "message_id": "00000000-0000-4000-8000-000000000001",
+    "conversation_id": "00000000-0000-4000-8000-000000000002",
+    "created_at": "2026-05-26T00:00:00Z",
+    "ingested_at": "2026-05-26T00:00:02Z",
+    "ciphertext_hash": "sha256:metadataOnlyCiphertextHashExample",
+    "ciphertext_size": 2048,
+    "envelope_size": 4096,
+    "key_wraps_hash": "sha256:metadataOnlyKeyWrapsHashExample",
+    "inner_header_hash": "sha256:metadataOnlyInnerHeaderHashExample",
+    "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519"
+  },
+  "sender": {
+    "did": "did:key:z6MkSenderExample",
+    "stable_id": "did:aw:sender-example",
+    "team_id": "aweb:example.com",
+    "encryption_key_id": "sha256:senderEncryptionKeyExample"
+  },
+  "recipients": [
+    {
+      "did": "did:key:z6MkRecipientExample",
+      "stable_id": "did:aw:recipient-example",
+      "team_id": "aweb:example.com",
+      "encryption_key_id": "sha256:recipientEncryptionKeyExample",
+      "delivery_state": "delivered",
+      "read_state": "unread"
+    }
+  ],
+  "routing": {
+    "route_kind": "team_alias",
+    "delivery_origin": "https://app.example.invalid",
+    "federation_peer": null
+  },
+  "usage_counters": {
+    "message_count": 1,
+    "ciphertext_bytes": 2048,
+    "envelope_bytes": 4096,
+    "key_wrap_count": 2,
+    "recipient_count": 1,
+    "delivery_attempts": 1,
+    "delivery_failures": 0
+  },
+  "billing_inputs": {
+    "billable_message_count": 1,
+    "billable_ciphertext_bytes": 2048,
+    "billable_storage_bytes": 4096
+  },
+  "abuse_signals": {
+    "sender_burst_count_1m": 1,
+    "recipient_fanout": 1,
+    "invalid_signature_count": 0,
+    "malformed_key_wrap_count": 0,
+    "downgrade_refusal_count": 0
+  },
+  "support_view": {
+    "verification_state": "signature_verified",
+    "delivery_error_code": null,
+    "decrypt_error_category": null,
+    "customer_decrypted_export_attached": false
+  },
+  "forbidden_plaintext_fields": [
+    "subject",
+    "body",
+    "preview",
+    "summary",
+    "embedding",
+    "decrypted_content"
+  ]
+}

@@ -21,6 +21,12 @@ These documents define the system:
 - [identity-messaging-contract.md](identity-messaging-contract.md): the
   cross-service contract for identity-scoped mail/chat, address-route first
   contact, recipient binding, and local fallback rules
+- [e2e-messaging-contract.md](e2e-messaging-contract.md): the normative
+  encrypted message v2 envelope, cryptographic binding, no-downgrade, and
+  metadata-leakage contract
+- [e2e-operational-metadata.md](e2e-operational-metadata.md): metadata-only
+  usage, billing, abuse, retention, support, and admin tooling contract for v2
+  E2E messages
 - [global-local-identity-routing.md](global-local-identity-routing.md):
   supporting SOT for the shipped route-level global/local messaging contract
   and the legacy reachability/conversation-auth cleanup path
@@ -49,7 +55,8 @@ These documents define the system:
 - [trust-model.md](trust-model.md): trust boundaries, key authority, custody,
   and recovery semantics
 - [support-tools.md](support-tools.md): OSS `aw doctor`, registry read,
-  support bundle, lifecycle, and high-impact handoff semantics
+  support bundle, lifecycle, E2E support boundary, and high-impact handoff
+  semantics
 - [configuration.md](configuration.md): `.aw/` files, global config, and docs
   injection
 - [channel.md](channel.md): Claude Code channel — real-time push events,
