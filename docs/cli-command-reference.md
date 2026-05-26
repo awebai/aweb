@@ -255,6 +255,28 @@ Subcommands:
 Flags:
 - `-h, --help help for cert`
 
+## `id cert show`
+
+### `id cert show`
+
+Show the current team certificate
+
+Flags:
+- `-h, --help help for show`
+
+## `id create`
+
+### `id create`
+
+Create a standalone global identity with a DNS-backed address in .aw/
+
+Flags:
+- `--domain string Global identity domain`
+- `-h, --help help for create`
+- `--name string Global identity name`
+- `--registry string Registry origin override (default: api.awid.ai)`
+- `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
+
 ## `id encryption-key`
 
 ### `id encryption-key`
@@ -295,28 +317,6 @@ Show local E2E encryption key state
 
 Flags:
 - `-h, --help help for show`
-
-## `id cert show`
-
-### `id cert show`
-
-Show the current team certificate
-
-Flags:
-- `-h, --help help for show`
-
-## `id create`
-
-### `id create`
-
-Create a standalone global identity with a DNS-backed address in .aw/
-
-Flags:
-- `--domain string Global identity domain`
-- `-h, --help help for create`
-- `--name string Global identity name`
-- `--registry string Registry origin override (default: api.awid.ai)`
-- `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 
 ## `id log`
 
@@ -834,12 +834,6 @@ Flags:
 - `-h, --help help for chat`
 - `--team string Override the selected team_id for this command`
 
-E2E note: encrypted v2 chat content is decrypted by the local client before
-display. Server-side chat surfaces and events must stay metadata-only for E2E
-content; hosted/server-side messaging is server-readable hosted messaging, not
-E2E. Missing encryption capability or keys fail closed rather than silently
-falling back to plaintext.
-
 ## `chat extend-wait`
 
 ### `chat extend-wait`
@@ -847,6 +841,7 @@ falling back to plaintext.
 Ask the other party to wait longer
 
 Flags:
+- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for extend-wait`
 
 ## `chat history`
@@ -893,6 +888,7 @@ Flags:
 Send a message and leave the conversation
 
 Flags:
+- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send-and-leave`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
@@ -903,6 +899,7 @@ Flags:
 Send a message and wait for a reply
 
 Flags:
+- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send-and-wait`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
@@ -1090,12 +1087,6 @@ Flags:
 - `-h, --help help for mail`
 - `--team string Override the selected team_id for this command`
 
-E2E note: encrypted v2 mail keeps subject/body out of AC/aweb servers; local
-clients decrypt before display. Legacy plaintext remains separately labeled, and
-an intended E2E send must fail closed when recipient encryption capability or
-keys are missing unless the user explicitly selects the approved legacy
-plaintext mode.
-
 ## `mail inbox`
 
 ### `mail inbox`
@@ -1116,7 +1107,9 @@ Reply to an existing mail conversation
 Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file`
+- `--e2ee Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for reply`
+- `--legacy-plaintext Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 
@@ -1130,7 +1123,9 @@ Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file (use this for markdown with backticks; bypasses shell interpolation)`
 - `--conversation-id string Existing mail conversation to continue`
+- `--e2ee Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send`
+- `--legacy-plaintext Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`

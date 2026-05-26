@@ -96,7 +96,9 @@ Feature gates should be independently disableable:
 | `e2ee_key_publish` | clients may publish identity encryption-key assertions | receive/send v2 is unavailable; diagnostics name missing key setup |
 | `e2ee_key_discovery` | senders may discover recipient encryption keys/capability | intended encrypted sends fail closed before message creation |
 | `e2ee_send_mail` | clients may create v2 mail envelopes | intended encrypted sends fail closed; no plaintext retry |
+| `e2ee_send_chat` | clients may create v2 chat envelopes | intended encrypted sends fail closed; no plaintext retry |
 | `e2ee_server_accept_mail` | server accepts v2 mail envelopes | server rejects v2 clearly; sender does not downgrade automatically |
+| `e2ee_server_accept_chat` | server accepts v2 chat envelopes | server rejects v2 clearly; sender does not downgrade automatically |
 | `e2ee_events_metadata_only` | server emits metadata-only v2 events | keep v2 production send disabled until this is true |
 | `e2ee_dashboard_metadata_only` | dashboard/support surfaces avoid v2 plaintext | keep v2 production send disabled until this is true |
 | `legacy_plaintext_escape_hatch` | explicit user-selected legacy mode remains available where policy allows | no implicit fallback; old senders follow legacy policy |
@@ -136,7 +138,7 @@ than building a parallel version-skew stack.
 
 | Case | Expected behavior | Release-blocking assertion |
 | --- | --- | --- |
-| new sender, new recipient, new server | v2 encrypted send succeeds | recipient decrypts locally; sender self-copy decrypts; server stores no plaintext |
+| new sender, new recipient, new server | v2 encrypted mail/chat send succeeds | recipient decrypts locally; sender self-copy decrypts; server stores no plaintext |
 | new sender, old recipient or missing recipient key assertion | send fails before storage | failure names missing/stale/unsupported key capability; no plaintext row/event |
 | old sender, new recipient | legacy plaintext may arrive only if recipient/team policy still allows it | message is labeled legacy plaintext and never claimed as v2 |
 | new client, old server | v2 send fails clearly | client does not retry plaintext silently |
@@ -217,11 +219,23 @@ or confirm them rather than assuming an indefinite background job.
    - Enable one-to-one mail for a named internal team or allowlist.
    - Monitor metadata-only delivery, decrypt error categories, no-plaintext
      scans, support bundle output, and rollback rehearsals.
-4. **Federation canary**
+4. **Limited encrypted chat canary**
+   - Enable one-to-one chat for the same internal team or allowlist after the
+     mail canary is stable.
+   - Verify `aw chat pending`, `aw chat history`, channel/Pi/local-client
+     display, sender sent-history, and unread/wait metadata all decrypt only
+     locally and keep server responses metadata-only.
+   - Verify small group chat with per-message content keys and per-recipient
+     wraps: new members can read future messages only, and removed members
+     cannot decrypt future messages.
+5. **Federation canary**
    - Enable only peers that advertise v2 route support and have passed the
      matrix cases.
    - Treat route support as separate from recipient key authority.
-5. **Broader enablement**
+   - Record evidence for federated encrypted mail and federated encrypted chat:
+     recipient decrypt, sender self-copy decrypt, reply decrypt, and plaintext
+     absence in every peer database/log/dump inspected.
+6. **Broader enablement**
    - Release owner records exact versions, flags, test evidence, Hestia release
      mechanics review, Mia implementation/support review, Athena metadata
      allowance, and any AC/dashboard approvals.
@@ -238,7 +252,7 @@ enabling unsafe downgrade.
 
 Allowed rollback actions:
 
-- disable `e2ee_send_mail` or equivalent send gate,
+- disable `e2ee_send_mail`, `e2ee_send_chat`, or equivalent send gates,
 - keep read paths for already-stored v2 ciphertext/metadata available,
 - keep local decryption available in clients that already have keys,
 - stop federation v2 egress to a peer whose route support is failing,

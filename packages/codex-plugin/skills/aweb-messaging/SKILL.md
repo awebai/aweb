@@ -77,6 +77,16 @@ aw chat extend-wait <from> "working on it, 2 minutes"
 
 Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
 
+Encrypted chat is explicit. Use `--e2ee` only when the human or policy asks for E2E chat and every participant has identity-authorized encryption capability:
+
+```bash
+aw chat send-and-wait <alias-or-address> "..." --start-conversation --e2ee
+aw chat send-and-leave <alias-or-address> "..." --e2ee
+aw chat extend-wait <from> "working on it" --e2ee
+```
+
+Read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If `--e2ee` fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses the approved legacy plaintext path.
+
 ## Harness surfaces
 
 Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat, but those hosted/server-side tool calls are server-readable hosted messaging unless plaintext and decryption stay fully outside AC/aweb. For Claude Code, do not use deprecated `aw run claude`; install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
