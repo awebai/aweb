@@ -225,6 +225,43 @@ run_aw_in() {
   run_aw_with_home_in "$E2E_HOME" "$workdir" "$@"
 }
 
+capture_success() {
+  local output_var="$1" label="$2"
+  shift 2
+  local output status
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label exit" "0" "$status"
+  if [[ "$status" == "0" ]]; then
+    printf -v "$output_var" "%s" "$output"
+  else
+    printf -v "$output_var" "%s" ""
+    if [[ -n "$output" ]]; then
+      echo "  $label output: ${output:0:240}"
+    fi
+  fi
+  return 0
+}
+
+run_success() {
+  local label="$1"
+  shift
+  local output status
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label exit" "0" "$status"
+  if [[ "$status" != "0" && -n "$output" ]]; then
+    echo "  $label output: ${output:0:240}"
+  fi
+  return 0
+}
+
 # Like run_aw_in but strips AWID_REGISTRY_URL from the env so the CLI must
 # fall back to identity.yaml's registry_url. Used by the aako-pattern
 # reproducer to exercise the env-unset-with-identity-fallback code path
@@ -488,12 +525,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 2: Create alice's identity ==="
 
-create_out="$(run_aw_in "$ALICE_DIR" id create \
+capture_success create_out "create_out" run_aw_in "$ALICE_DIR" id create \
   --name alice \
   --domain test.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 
 ALICE_DID_KEY="$(echo "$create_out" | jq_field did_key)"
 ALICE_DID_AW="$(echo "$create_out" | jq_field did_aw)"
@@ -509,11 +546,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 3: Create team under test.local ==="
 
-team_out="$(run_aw_in "$ALICE_DIR" id team create \
+capture_success team_out "team_out" run_aw_in "$ALICE_DIR" id team create \
   --name devteam \
   --namespace test.local \
   --registry "$AWID_URL" \
-  --json 2>/dev/null)"
+  --json
 
 TEAM_ID="$(echo "$team_out" | jq_field team_id)"
 TEAM_DID_KEY="$(echo "$team_out" | jq_field team_did_key)"
@@ -527,18 +564,18 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 4: Alice joins team ==="
 
-alice_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
   --global \
-  --json 2>/dev/null)"
+  --json
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
 assert_not_empty "alice invite token" "$ALICE_INVITE_TOKEN"
 
-alice_accept_out="$(run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" \
+capture_success alice_accept_out "alice_accept_out" run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" \
   --alias alice \
-  --json 2>/dev/null)"
+  --json
 
 ALICE_ACCEPT_STATUS="$(echo "$alice_accept_out" | jq_field status)"
 assert_eq "alice accepted" "accepted" "$ALICE_ACCEPT_STATUS"
@@ -559,7 +596,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 5: Verify alice's certificate ==="
 
-cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
+capture_success cert_out "cert_out" run_aw_in "$ALICE_DIR" id cert show --json
 CERT_TEAM="$(echo "$cert_out" | jq_field team_id)"
 CERT_ALIAS="$(echo "$cert_out" | jq_field alias)"
 
@@ -572,7 +609,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 6: Alice connects to aweb (POST /v1/connect) ==="
 
-run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" 2>/dev/null
+run_success "alice init" run_aw_in "$ALICE_DIR" init --url "$AWEB_URL"
 init_exit=$?
 assert_eq "alice init exit" "0" "$init_exit"
 
@@ -590,7 +627,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 7: Alice whoami ==="
 
-whoami_out="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+capture_success whoami_out "whoami_out" run_aw_in "$ALICE_DIR" whoami --json
 whoami_alias="$(echo "$whoami_out" | jq_field alias)"
 assert_eq "whoami alias" "alice" "$whoami_alias"
 echo ""
@@ -600,7 +637,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 8: Workspace status ==="
 
-ws_out="$(run_aw_in "$ALICE_DIR" workspace status 2>/dev/null)"
+capture_success ws_out "ws_out" run_aw_in "$ALICE_DIR" workspace status
 ws_exit=$?
 assert_eq "workspace status exit" "0" "$ws_exit"
 assert_contains "workspace status shows alice" "$ws_out" "alice"
@@ -611,12 +648,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 9: Create bob and join team ==="
 
-bob_create="$(run_aw_in "$BOB_DIR" id create \
+capture_success bob_create "bob_create" run_aw_in "$BOB_DIR" id create \
   --name bob \
   --domain test.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 
 BOB_DID_KEY="$(echo "$bob_create" | jq_field did_key)"
 BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
@@ -624,25 +661,25 @@ assert_not_empty "bob did_key" "$BOB_DID_KEY"
 assert_not_empty "bob did_aw" "$BOB_DID_AW"
 
 # Alice creates invite for bob
-bob_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
   --global \
-  --json 2>/dev/null)"
+  --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
 # Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
-bob_accept="$(run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" \
+capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" \
   --alias bob \
-  --json 2>/dev/null)"
+  --json
 
 BOB_ACCEPT_STATUS="$(echo "$bob_accept" | jq_field status)"
 assert_eq "bob accepted" "accepted" "$BOB_ACCEPT_STATUS"
 
 # Bob connects to aweb
-run_aw_in "$BOB_DIR" init --url "$AWEB_URL" 2>/dev/null
+run_success "bob init" run_aw_in "$BOB_DIR" init --url "$AWEB_URL"
 bob_init_exit=$?
 assert_eq "bob init exit" "0" "$bob_init_exit"
 echo ""
@@ -726,13 +763,13 @@ assert_not_empty "e2ee local message id" "$e2ee_message_id"
 assert_not_empty "e2ee local conversation id" "$e2ee_conversation_id"
 wait "$e2ee_sse_pid" 2>/dev/null || true
 
-bob_e2ee_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_e2ee_inbox "bob_e2ee_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 bob_e2ee_body="$(echo "$bob_e2ee_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid), ''))" "$e2ee_conversation_id" 2>/dev/null || echo "")"
 bob_e2ee_subject="$(echo "$bob_e2ee_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('conversation_id')==cid), ''))" "$e2ee_conversation_id" 2>/dev/null || echo "")"
 assert_eq "bob decrypts e2ee local body" "$E2EE_LOCAL_BODY" "$bob_e2ee_body"
 assert_eq "bob decrypts e2ee local subject" "$E2EE_LOCAL_SUBJECT" "$bob_e2ee_subject"
 
-alice_e2ee_sent="$(run_aw_in "$ALICE_DIR" mail show --conversation-id "$e2ee_conversation_id" --json 2>/dev/null)"
+capture_success alice_e2ee_sent "alice_e2ee_sent" run_aw_in "$ALICE_DIR" mail show --conversation-id "$e2ee_conversation_id" --json
 alice_e2ee_self_copy="$(echo "$alice_e2ee_sent" | python3 -c "import sys,json; body=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')==body), ''))" "$E2EE_LOCAL_BODY" 2>/dev/null || echo "")"
 assert_eq "alice decrypts sender self-copy" "$E2EE_LOCAL_BODY" "$alice_e2ee_self_copy"
 
@@ -835,7 +872,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11: Bob reads inbox ==="
 
-bob_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json 2>/dev/null)"
+capture_success bob_inbox "bob_inbox" run_aw_in "$BOB_DIR" mail inbox --json
 bob_msg_count="$(echo "$bob_inbox" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('messages',[])))" 2>/dev/null || echo "0")"
 bob_msg_body="$(echo "$bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(msgs[0].get('body','') if msgs else '')" 2>/dev/null || echo "")"
 
@@ -848,29 +885,29 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11a: Bare alias to registered local member ==="
 
-eve_create="$(run_aw_in "$EVE_DIR" id create \
+capture_success eve_create "eve_create" run_aw_in "$EVE_DIR" id create \
   --name eve \
   --domain test.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 EVE_DID_AW="$(echo "$eve_create" | jq_field did_aw)"
 assert_not_empty "eve did_aw" "$EVE_DID_AW"
 
-eve_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+capture_success eve_invite_out "eve_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --json 2>/dev/null)"
+  --json
 EVE_INVITE_TOKEN="$(echo "$eve_invite_out" | jq_field token)"
 assert_not_empty "eve local invite token" "$EVE_INVITE_TOKEN"
 
-eve_accept="$(run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
+capture_success eve_accept "eve_accept" run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
   --alias eve \
-  --json 2>/dev/null)"
+  --json
 EVE_ACCEPT_STATUS="$(echo "$eve_accept" | jq_field status)"
 assert_eq "eve accepted default local invite" "accepted" "$EVE_ACCEPT_STATUS"
 
-run_aw_in "$EVE_DIR" init --url "$AWEB_URL" 2>/dev/null
+run_success "eve init" run_aw_in "$EVE_DIR" init --url "$AWEB_URL"
 eve_init_exit=$?
 assert_eq "eve init exit" "0" "$eve_init_exit"
 
@@ -905,12 +942,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11b: Cross-machine request/add-member/fetch-cert ==="
 
-erin_create="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id create \
+capture_success erin_create "erin_create" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id create \
   --name erin \
   --domain erin.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 ERIN_DID_KEY="$(echo "$erin_create" | jq_field did_key)"
 ERIN_DID_AW="$(echo "$erin_create" | jq_field did_aw)"
 ERIN_ADDRESS="$(echo "$erin_create" | jq_field address)"
@@ -918,16 +955,16 @@ assert_not_empty "remote erin did_key" "$ERIN_DID_KEY"
 assert_not_empty "remote erin did_aw" "$ERIN_DID_AW"
 assert_eq "remote erin address" "erin.local/erin" "$ERIN_ADDRESS"
 
-erin_request="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team request \
+capture_success erin_request "erin_request" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team request \
   --team devteam:test.local \
   --alias erin \
-  --json 2>/dev/null)"
+  --json
 erin_add_command="$(echo "$erin_request" | jq_field command)"
 assert_contains "erin request prints add-member" "$erin_add_command" "aw id team add-member"
 assert_contains "erin request includes did" "$erin_add_command" "$ERIN_DID_KEY"
 assert_contains "erin request includes address" "$erin_add_command" "--address erin.local/erin"
 
-erin_add="$(run_aw_in "$ALICE_DIR" id team add-member \
+capture_success erin_add "erin_add" run_aw_in "$ALICE_DIR" id team add-member \
   --team devteam \
   --namespace test.local \
   --did "$ERIN_DID_KEY" \
@@ -935,17 +972,17 @@ erin_add="$(run_aw_in "$ALICE_DIR" id team add-member \
   --global \
   --did-aw "$ERIN_DID_AW" \
   --address "$ERIN_ADDRESS" \
-  --json 2>/dev/null)"
+  --json
 ERIN_CERT_ID="$(echo "$erin_add" | jq_field certificate_id)"
 ERIN_FETCH_COMMAND="$(echo "$erin_add" | jq_field fetch_command)"
 assert_not_empty "erin certificate id" "$ERIN_CERT_ID"
 assert_contains "erin add-member prints fetch-cert" "$ERIN_FETCH_COMMAND" "aw id team fetch-cert"
 
-erin_fetch="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team fetch-cert \
+capture_success erin_fetch "erin_fetch" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team fetch-cert \
   --namespace test.local \
   --team devteam \
   --cert-id "$ERIN_CERT_ID" \
-  --json 2>/dev/null)"
+  --json
 ERIN_FETCH_STATUS="$(echo "$erin_fetch" | jq_field status)"
 assert_eq "erin fetch-cert installed" "installed" "$ERIN_FETCH_STATUS"
 erin_cert_path="$(team_cert_path "$REMOTE_ERIN_DIR" "devteam:test.local")"
@@ -961,34 +998,34 @@ else
   fail=$((fail + 1))
 fi
 
-run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "erin init" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" init --url "$AWEB_URL"
 erin_init_exit=$?
 assert_eq "erin init after fetch-cert" "0" "$erin_init_exit"
 
-run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" mail send \
+run_success "erin mail send" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" mail send \
   --to alice \
   --subject "Remote fetch-cert mail" \
-  --body "Remote fetch-cert path works" >/dev/null 2>&1
+  --body "Remote fetch-cert path works"
 erin_mail_exit=$?
 assert_eq "erin mail after fetch-cert" "0" "$erin_mail_exit"
-alice_erin_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_erin_inbox "alice_erin_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_erin_from_address="$(echo "$alice_erin_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Remote fetch-cert mail'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees erin remote from_address" "erin.local/erin" "$alice_erin_from_address"
 
-run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" chat send-and-leave alice \
-  "Remote fetch-cert chat" >/dev/null 2>&1
+run_success "erin chat send" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" chat send-and-leave alice \
+  "Remote fetch-cert chat"
 erin_chat_exit=$?
 assert_eq "erin chat after fetch-cert" "0" "$erin_chat_exit"
-alice_erin_pending="$(run_aw_in "$ALICE_DIR" chat pending --json 2>/dev/null)"
+capture_success alice_erin_pending "alice_erin_pending" run_aw_in "$ALICE_DIR" chat pending --json
 alice_erin_chat_from_address="$(echo "$alice_erin_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Remote fetch-cert chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees erin remote chat from_address" "erin.local/erin" "$alice_erin_chat_from_address"
 
-mallory_create="$(run_aw_with_home_in "$WRONG_DID_HOME" "$WRONG_DID_DIR" id create \
+capture_success mallory_create "mallory_create" run_aw_with_home_in "$WRONG_DID_HOME" "$WRONG_DID_DIR" id create \
   --name mallory \
   --domain mallory.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 MALLORY_DID_KEY="$(echo "$mallory_create" | jq_field did_key)"
 assert_not_empty "wrong did identity created" "$MALLORY_DID_KEY"
 if mallory_fetch_out="$(run_aw_with_home_in "$WRONG_DID_HOME" "$WRONG_DID_DIR" id team fetch-cert \
@@ -1008,49 +1045,49 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11c: External AWID team registers with aweb service ==="
 
-service_controller_create="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id create \
+capture_success service_controller_create "service_controller_create" run_aw_in "$SERVICE_CONTROLLER_DIR" id create \
   --name controller \
   --domain service.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 SERVICE_CONTROLLER_DID="$(echo "$service_controller_create" | jq_field did_key)"
 assert_not_empty "service controller did_key" "$SERVICE_CONTROLLER_DID"
 
-service_team_out="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team create \
+capture_success service_team_out "service_team_out" run_aw_in "$SERVICE_CONTROLLER_DIR" id team create \
   --name circle \
   --namespace service.local \
   --display-name "Circle" \
   --registry "$AWID_URL" \
-  --json 2>/dev/null)"
+  --json
 SERVICE_TEAM_ID="$(echo "$service_team_out" | jq_field team_id)"
 SERVICE_TEAM_DID="$(echo "$service_team_out" | jq_field team_did_key)"
 assert_eq "service team id" "circle:service.local" "$SERVICE_TEAM_ID"
 assert_not_empty "service team did_key" "$SERVICE_TEAM_DID"
 
-service_alpha_create="$(run_aw_in "$SERVICE_ALPHA_DIR" id create \
+capture_success service_alpha_create "service_alpha_create" run_aw_in "$SERVICE_ALPHA_DIR" id create \
   --name alpha \
   --domain service.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 SERVICE_ALPHA_DID="$(echo "$service_alpha_create" | jq_field did_key)"
 SERVICE_ALPHA_DID_AW="$(echo "$service_alpha_create" | jq_field did_aw)"
 SERVICE_ALPHA_ADDRESS="$(echo "$service_alpha_create" | jq_field address)"
 assert_eq "service alpha address" "service.local/alpha" "$SERVICE_ALPHA_ADDRESS"
 
-service_beta_create="$(run_aw_in "$SERVICE_BETA_DIR" id create \
+capture_success service_beta_create "service_beta_create" run_aw_in "$SERVICE_BETA_DIR" id create \
   --name beta \
   --domain service.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 SERVICE_BETA_DID="$(echo "$service_beta_create" | jq_field did_key)"
 SERVICE_BETA_DID_AW="$(echo "$service_beta_create" | jq_field did_aw)"
 SERVICE_BETA_ADDRESS="$(echo "$service_beta_create" | jq_field address)"
 assert_eq "service beta address" "service.local/beta" "$SERVICE_BETA_ADDRESS"
 
-service_alpha_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
+capture_success service_alpha_add "service_alpha_add" run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
   --team circle \
   --namespace service.local \
   --did "$SERVICE_ALPHA_DID" \
@@ -1058,17 +1095,17 @@ service_alpha_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
   --global \
   --did-aw "$SERVICE_ALPHA_DID_AW" \
   --address "$SERVICE_ALPHA_ADDRESS" \
-  --json 2>/dev/null)"
+  --json
 SERVICE_ALPHA_CERT_ID="$(echo "$service_alpha_add" | jq_field certificate_id)"
 assert_not_empty "service alpha certificate id" "$SERVICE_ALPHA_CERT_ID"
-run_aw_in "$SERVICE_ALPHA_DIR" id team fetch-cert \
+run_success "service alpha fetch cert" run_aw_in "$SERVICE_ALPHA_DIR" id team fetch-cert \
   --namespace service.local \
   --team circle \
   --cert-id "$SERVICE_ALPHA_CERT_ID" \
-  --json >/dev/null 2>&1
+  --json
 assert_file_exists "service alpha fetched cert" "$(team_cert_path "$SERVICE_ALPHA_DIR" "$SERVICE_TEAM_ID")"
 
-service_beta_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
+capture_success service_beta_add "service_beta_add" run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
   --team circle \
   --namespace service.local \
   --did "$SERVICE_BETA_DID" \
@@ -1076,30 +1113,30 @@ service_beta_add="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team add-member \
   --global \
   --did-aw "$SERVICE_BETA_DID_AW" \
   --address "$SERVICE_BETA_ADDRESS" \
-  --json 2>/dev/null)"
+  --json
 SERVICE_BETA_CERT_ID="$(echo "$service_beta_add" | jq_field certificate_id)"
 assert_not_empty "service beta certificate id" "$SERVICE_BETA_CERT_ID"
-run_aw_in "$SERVICE_BETA_DIR" id team fetch-cert \
+run_success "service beta fetch cert" run_aw_in "$SERVICE_BETA_DIR" id team fetch-cert \
   --namespace service.local \
   --team circle \
   --cert-id "$SERVICE_BETA_CERT_ID" \
-  --json >/dev/null 2>&1
+  --json
 assert_file_exists "service beta fetched cert" "$(team_cert_path "$SERVICE_BETA_DIR" "$SERVICE_TEAM_ID")"
 
-service_register_dry="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
+capture_success service_register_dry "service_register_dry" run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
   --team "$SERVICE_TEAM_ID" \
   --service "$AWEB_URL" \
   --dry-run \
-  --json 2>/dev/null)"
+  --json
 service_register_dry_status="$(echo "$service_register_dry" | jq_field status)"
 assert_eq "service register dry-run status" "dry-run" "$service_register_dry_status"
 service_team_rows_after_dry="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID';")"
 assert_eq "service dry-run does not create team projection" "0" "$service_team_rows_after_dry"
 
-service_register_apply="$(run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
+capture_success service_register_apply "service_register_apply" run_aw_in "$SERVICE_CONTROLLER_DIR" id team register \
   --team "$SERVICE_TEAM_ID" \
   --service "$AWEB_URL" \
-  --json 2>/dev/null)"
+  --json
 service_register_status="$(echo "$service_register_apply" | jq_field status)"
 service_register_next_init="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'service init' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 service_register_next_claim="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'claim-human' in s.get('command','')), ''))" 2>/dev/null || echo "")"
@@ -1114,8 +1151,8 @@ assert_eq "service register creates team projection" "1" "$service_team_rows"
 assert_eq "service register creates no agents" "0" "$service_agents_before"
 assert_eq "service register creates no workspaces" "0" "$service_workspaces_before"
 
-run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID" >/dev/null 2>&1
-run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID" >/dev/null 2>&1
+run_success "service alpha init" run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service beta init" run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
 service_alpha_active="$(yaml_field "$SERVICE_ALPHA_DIR/.aw/teams.yaml" active_team)"
 service_beta_active="$(yaml_field "$SERVICE_BETA_DIR/.aw/teams.yaml" active_team)"
 service_alpha_workspace_alias="$(workspace_membership_field "$SERVICE_ALPHA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
@@ -1130,11 +1167,11 @@ service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WH
 assert_eq "service init creates two agents" "2" "$service_agents_after"
 assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
 
-run_aw_in "$SERVICE_ALPHA_DIR" mail send \
+run_success "service registered team mail send" run_aw_in "$SERVICE_ALPHA_DIR" mail send \
   --to beta \
   --subject "Service registered team e2e" \
-  --body "service init path works" >/dev/null 2>&1
-service_beta_inbox="$(run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all 2>/dev/null)"
+  --body "service init path works"
+capture_success service_beta_inbox "service_beta_inbox" run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all
 service_beta_subject="$(echo "$service_beta_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('subject')=='Service registered team e2e'), ''))" 2>/dev/null || echo "")"
 assert_eq "service registered team mail works" "Service registered team e2e" "$service_beta_subject"
 echo ""
@@ -1144,65 +1181,65 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11d: Cross-identity messaging via contacts ==="
 
-carol_create="$(run_aw_in "$CAROL_DIR" id create \
+capture_success carol_create "carol_create" run_aw_in "$CAROL_DIR" id create \
   --name carol \
   --domain test.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 CAROL_DID_AW="$(echo "$carol_create" | jq_field did_aw)"
 assert_not_empty "carol did_aw" "$CAROL_DID_AW"
 
-run_aw_in "$ALICE_DIR" id team create \
+run_success "ops team create" run_aw_in "$ALICE_DIR" id team create \
   --name ops \
   --namespace test.local \
   --registry "$AWID_URL" \
-  --json 2>/dev/null >/dev/null
-ops_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+  --json
+capture_success ops_invite_out "ops_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team ops \
   --namespace test.local \
-  --json 2>/dev/null)"
+  --json
 OPS_INVITE_TOKEN="$(echo "$ops_invite_out" | jq_field token)"
 assert_not_empty "ops invite token" "$OPS_INVITE_TOKEN"
 
-carol_accept="$(run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" \
+capture_success carol_accept "carol_accept" run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" \
   --alias carol \
-  --json 2>/dev/null)"
+  --json
 CAROL_ACCEPT_STATUS="$(echo "$carol_accept" | jq_field status)"
 assert_eq "carol accepted" "accepted" "$CAROL_ACCEPT_STATUS"
 
-run_aw_in "$CAROL_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "carol init" run_aw_in "$CAROL_DIR" init --url "$AWEB_URL"
 carol_init_exit=$?
 assert_eq "carol init exit" "0" "$carol_init_exit"
 
-dave_create="$(run_aw_in "$DAVE_DIR" id create \
+capture_success dave_create "dave_create" run_aw_in "$DAVE_DIR" id create \
   --name dave \
   --domain test.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 DAVE_DID_KEY="$(echo "$dave_create" | jq_field did_key)"
 assert_not_empty "dave did_key" "$DAVE_DID_KEY"
 
-dave_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+capture_success dave_invite_out "dave_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team ops \
   --namespace test.local \
-  --json 2>/dev/null)"
+  --json
 DAVE_INVITE_TOKEN="$(echo "$dave_invite_out" | jq_field token)"
 assert_not_empty "dave ops invite token" "$DAVE_INVITE_TOKEN"
 
-dave_accept="$(run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" \
+capture_success dave_accept "dave_accept" run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" \
   --alias dave \
-  --json 2>/dev/null)"
+  --json
 DAVE_ACCEPT_STATUS="$(echo "$dave_accept" | jq_field status)"
 assert_eq "dave accepted to ops" "accepted" "$DAVE_ACCEPT_STATUS"
 
-run_aw_in "$DAVE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "dave init" run_aw_in "$DAVE_DIR" init --url "$AWEB_URL"
 dave_init_exit=$?
 assert_eq "dave init exit" "0" "$dave_init_exit"
 
 set_inbound_mode "$ALICE_DID_AW" "team_and_contacts"
-run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>&1
+run_success "alice contacts add bob" run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob"
 contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
 
@@ -1218,7 +1255,7 @@ if [[ "$bob_direct_exit" != "0" ]]; then
   echo "$bob_direct_out"
 fi
 
-alice_contacts_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json 2>/dev/null)"
+capture_success alice_contacts_inbox "alice_contacts_inbox" run_aw_in "$ALICE_DIR" mail inbox --json
 alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Address hello from bob'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives bob address message" "Address hello from bob" "$alice_bob_message"
 
@@ -1238,13 +1275,13 @@ else
 fi
 
 set_inbound_mode "$ALICE_DID_AW" "open"
-run_aw_in "$CAROL_DIR" mail send \
+run_success "carol retry mail send" run_aw_in "$CAROL_DIR" mail send \
   --to-address "test.local/alice" \
-  --body "Address hello from carol" >/dev/null 2>&1
+  --body "Address hello from carol"
 carol_retry_exit=$?
 assert_eq "carol direct mail succeeds after inbound mode change" "0" "$carol_retry_exit"
 
-alice_all_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_all_inbox "alice_all_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_carol_message="$(echo "$alice_all_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Address hello from carol'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives carol address message" "Address hello from carol" "$alice_carol_message"
 echo ""
@@ -1254,20 +1291,20 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12: Chat ==="
 
-run_aw_in "$ALICE_DIR" chat send-and-wait bob \
-  "E2E chat from alice" --start-conversation --wait 3 2>/dev/null
+run_success "alice bob chat send-and-wait" run_aw_in "$ALICE_DIR" chat send-and-wait bob \
+  "E2E chat from alice" --start-conversation --wait 3
 chat_send_exit=$?
 assert_eq "alice→bob chat send exit" "0" "$chat_send_exit"
 
-bob_pending="$(run_aw_in "$BOB_DIR" chat pending 2>/dev/null)"
+capture_success bob_pending "bob_pending" run_aw_in "$BOB_DIR" chat pending
 assert_contains "bob sees pending from alice" "$bob_pending" "alice"
 
-run_aw_in "$BOB_DIR" chat send-and-leave alice \
-  "Chat reply from bob" 2>/dev/null
+run_success "bob chat reply" run_aw_in "$BOB_DIR" chat send-and-leave alice \
+  "Chat reply from bob"
 chat_reply_exit=$?
 assert_eq "bob→alice chat reply exit" "0" "$chat_reply_exit"
 
-alice_history="$(run_aw_in "$ALICE_DIR" chat history bob 2>/dev/null)"
+capture_success alice_history "alice_history" run_aw_in "$ALICE_DIR" chat history bob
 assert_contains "alice sees bob's reply" "$alice_history" "Chat reply from bob"
 echo ""
 
@@ -1289,7 +1326,7 @@ if [[ "$tilde_mail_exit" != "0" ]]; then
   echo "  tilde mail output: ${tilde_mail_out:0:240}"
 fi
 
-alice_tilde_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_tilde_inbox "alice_tilde_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_dave_message="$(echo "$alice_tilde_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Cross-team hello from dave'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives dave cross-team mail" "Cross-team hello from dave" "$alice_dave_message"
 
@@ -1304,7 +1341,7 @@ if [[ "$tilde_chat_exit" != "0" ]]; then
   echo "  tilde chat output: ${tilde_chat_out:0:240}"
 fi
 
-dave_pending="$(run_aw_in "$DAVE_DIR" chat pending 2>/dev/null)"
+capture_success dave_pending "dave_pending" run_aw_in "$DAVE_DIR" chat pending
 assert_contains "dave sees cross-team chat from alice" "$dave_pending" "alice"
 echo ""
 
@@ -1313,21 +1350,21 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12c: Local server-projected addresses ==="
 
-gsk_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+capture_success gsk_invite_out "gsk_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
   --local \
-  --json 2>/dev/null)"
+  --json
 GSK_INVITE_TOKEN="$(echo "$gsk_invite_out" | jq_field token)"
 assert_not_empty "gsk local invite token" "$GSK_INVITE_TOKEN"
 
-gsk_accept="$(run_aw_in "$GSK_DIR" id team accept-invite "$GSK_INVITE_TOKEN" \
+capture_success gsk_accept "gsk_accept" run_aw_in "$GSK_DIR" id team accept-invite "$GSK_INVITE_TOKEN" \
   --alias gsk \
-  --json 2>/dev/null)"
+  --json
 GSK_ACCEPT_STATUS="$(echo "$gsk_accept" | jq_field status)"
 assert_eq "gsk accepted local invite" "accepted" "$GSK_ACCEPT_STATUS"
 
-run_aw_in "$GSK_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "gsk init" run_aw_in "$GSK_DIR" init --url "$AWEB_URL"
 gsk_init_exit=$?
 assert_eq "gsk init exit" "0" "$gsk_init_exit"
 if [[ ! -f "$GSK_DIR/.aw/identity.yaml" ]]; then
@@ -1351,7 +1388,7 @@ if [[ "$gsk_mail_exit" != "0" ]]; then
   echo "  gsk mail output: ${gsk_mail_out:0:240}"
 fi
 
-alice_local_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_local_inbox "alice_local_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_gsk_from_address="$(echo "$alice_local_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
 
@@ -1368,7 +1405,7 @@ if [[ "$gsk_identity_mail_exit" != "0" ]]; then
   echo "  gsk identity-auth mail output: ${gsk_identity_mail_out:0:240}"
 fi
 
-alice_identity_mail_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_identity_mail_inbox "alice_identity_mail_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local identity-auth sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk identity-auth mail address" "test.local/gsk" "$alice_gsk_identity_from_address"
 
@@ -1385,7 +1422,7 @@ if [[ "$alice_gsk_reply_exit" != "0" ]]; then
   echo "  alice→gsk mail output: ${alice_gsk_reply_out:0:240}"
 fi
 
-gsk_inbox="$(run_aw_in "$GSK_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success gsk_inbox "gsk_inbox" run_aw_in "$GSK_DIR" mail inbox --json --show-all
 gsk_reply_body="$(echo "$gsk_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply to local address'), ''))" 2>/dev/null || echo "")"
 assert_eq "gsk receives address-routed mail reply" "Reply to gsk by local address" "$gsk_reply_body"
 
@@ -1400,7 +1437,7 @@ if [[ "$gsk_chat_exit" != "0" ]]; then
   echo "  gsk chat output: ${gsk_chat_out:0:240}"
 fi
 
-alice_gsk_pending="$(run_aw_in "$ALICE_DIR" chat pending 2>/dev/null)"
+capture_success alice_gsk_pending "alice_gsk_pending" run_aw_in "$ALICE_DIR" chat pending
 assert_contains "alice sees gsk server-local chat address" "$alice_gsk_pending" "test.local/gsk"
 
 if alice_gsk_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/gsk \
@@ -1414,7 +1451,7 @@ if [[ "$alice_gsk_chat_reply_exit" != "0" ]]; then
   echo "  alice→gsk chat output: ${alice_gsk_chat_reply_out:0:240}"
 fi
 
-gsk_chat_history="$(run_aw_in "$GSK_DIR" chat history alice 2>/dev/null)"
+capture_success gsk_chat_history "gsk_chat_history" run_aw_in "$GSK_DIR" chat history alice
 assert_contains "gsk receives address-routed chat reply" "$gsk_chat_history" "Reply to local chat address"
 echo ""
 
@@ -1423,110 +1460,110 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12d: Per-membership addresses ==="
 
-partner_controller_create="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id create \
+capture_success partner_controller_create "partner_controller_create" run_aw_in "$PARTNER_CONTROLLER_DIR" id create \
   --name controller \
   --domain partner.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 PARTNER_CONTROLLER_DID="$(echo "$partner_controller_create" | jq_field did_key)"
 assert_not_empty "partner namespace controller did_key" "$PARTNER_CONTROLLER_DID"
 
-partner_address_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id namespace assign-address \
+capture_success partner_address_out "partner_address_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id namespace assign-address \
   --domain partner.local \
   --name alice \
   --did-aw "$ALICE_DID_AW" \
-  --json 2>/dev/null)"
+  --json
 PARTNER_ALICE_ADDRESS="$(echo "$partner_address_out" | jq_field address)"
 assert_eq "partner address assigned to alice" "partner.local/alice" "$PARTNER_ALICE_ADDRESS"
 
-partner_team_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team create \
+capture_success partner_team_out "partner_team_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team create \
   --name main \
   --namespace partner.local \
   --registry "$AWID_URL" \
-  --json 2>/dev/null)"
+  --json
 PARTNER_TEAM_ID="$(echo "$partner_team_out" | jq_field team_id)"
 assert_eq "partner team id" "main:partner.local" "$PARTNER_TEAM_ID"
 
-partner_bob_create="$(run_aw_in "$PARTNER_BOB_DIR" id create \
+capture_success partner_bob_create "partner_bob_create" run_aw_in "$PARTNER_BOB_DIR" id create \
   --name bob \
   --domain partner.local \
   --registry "$AWID_URL" \
   --skip-dns-verify \
-  --json 2>/dev/null)"
+  --json
 PARTNER_BOB_ADDRESS="$(echo "$partner_bob_create" | jq_field address)"
 assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 
-partner_bob_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
+capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
   --global \
-  --json 2>/dev/null)"
+  --json
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
 
-partner_bob_accept="$(run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" \
+capture_success partner_bob_accept "partner_bob_accept" run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" \
   --alias bob \
-  --json 2>/dev/null)"
+  --json
 PARTNER_BOB_ACCEPT_STATUS="$(echo "$partner_bob_accept" | jq_field status)"
 assert_eq "partner bob accepted" "accepted" "$PARTNER_BOB_ACCEPT_STATUS"
 
-run_aw_in "$PARTNER_BOB_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "partner bob init" run_aw_in "$PARTNER_BOB_DIR" init --url "$AWEB_URL"
 partner_bob_init_exit=$?
 assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 
-partner_alice_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
+capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
   --global \
-  --json 2>/dev/null)"
+  --json
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
 
-partner_alice_accept="$(run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" \
+capture_success partner_alice_accept "partner_alice_accept" run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" \
   --alias alice \
   --address partner.local/alice \
-  --json 2>/dev/null)"
+  --json
 PARTNER_ALICE_ACCEPT_STATUS="$(echo "$partner_alice_accept" | jq_field status)"
 assert_eq "alice accepted partner team with address" "accepted" "$PARTNER_ALICE_ACCEPT_STATUS"
 
-partner_alice_cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
+capture_success partner_alice_cert_out "partner_alice_cert_out" run_aw_in "$ALICE_DIR" id cert show --json
 partner_alice_cert_team="$(echo "$partner_alice_cert_out" | jq_field team_id)"
 partner_alice_cert_address="$(echo "$partner_alice_cert_out" | jq_field member_address)"
 assert_eq "alice partner cert team" "main:partner.local" "$partner_alice_cert_team"
 assert_eq "alice partner cert member_address" "partner.local/alice" "$partner_alice_cert_address"
 
-run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+run_success "alice switch devteam" run_aw_in "$ALICE_DIR" id team switch devteam:test.local
 alice_switch_primary_exit=$?
 assert_eq "alice switches to primary team without re-init" "0" "$alice_switch_primary_exit"
 
-alice_primary_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+capture_success alice_primary_whoami "alice_primary_whoami" run_aw_in "$ALICE_DIR" whoami --json
 alice_primary_whoami_domain="$(echo "$alice_primary_whoami" | jq_field domain)"
 alice_primary_whoami_address="$(echo "$alice_primary_whoami" | jq_field address)"
 assert_eq "alice primary whoami domain after switch" "test.local" "$alice_primary_whoami_domain"
 assert_eq "alice primary whoami address after switch" "test.local/alice" "$alice_primary_whoami_address"
 
-alice_primary_cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
+capture_success alice_primary_cert_out "alice_primary_cert_out" run_aw_in "$ALICE_DIR" id cert show --json
 alice_primary_cert_address="$(echo "$alice_primary_cert_out" | jq_field member_address)"
 assert_eq "alice primary cert member_address" "test.local/alice" "$alice_primary_cert_address"
 
-run_aw_in "$ALICE_DIR" mail send \
+run_success "alice primary mail send" run_aw_in "$ALICE_DIR" mail send \
   --to bob \
   --subject "Per-membership primary" \
-  --body "Primary address hello" >/dev/null 2>&1
+  --body "Primary address hello"
 alice_primary_mail_exit=$?
 assert_eq "alice primary-team mail exit" "0" "$alice_primary_mail_exit"
 
-bob_per_membership_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_per_membership_inbox "bob_per_membership_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 bob_primary_from_address="$(echo "$bob_per_membership_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership primary'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice primary from_address" "test.local/alice" "$bob_primary_from_address"
 
-run_aw_in "$ALICE_DIR" chat send-and-leave bob \
-  "Per-membership primary chat" >/dev/null 2>&1
+run_success "alice primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership primary chat"
 alice_primary_chat_exit=$?
 assert_eq "alice primary-team chat exit" "0" "$alice_primary_chat_exit"
 
-bob_primary_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+capture_success bob_primary_pending "bob_primary_pending" run_aw_in "$BOB_DIR" chat pending --json
 bob_primary_chat_from_address="$(echo "$bob_primary_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice primary chat from_address" "test.local/alice" "$bob_primary_chat_from_address"
 
@@ -1543,47 +1580,47 @@ if [[ "$bob_primary_reply_exit" != "0" ]]; then
   echo "  bob primary reply output: ${bob_primary_reply_out:0:240}"
 fi
 
-alice_primary_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_primary_reply_inbox "alice_primary_reply_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_primary_reply_body="$(echo "$alice_primary_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply primary address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives primary address reply" "Reply to alice primary address" "$alice_primary_reply_body"
 
-run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+run_success "alice switch partner" run_aw_in "$ALICE_DIR" id team switch main:partner.local
 alice_partner_setup_switch_exit=$?
 assert_eq "alice switches to partner team for initial connect" "0" "$alice_partner_setup_switch_exit"
-run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+run_success "alice partner init" run_aw_in "$ALICE_DIR" init --url "$AWEB_URL"
 alice_partner_initial_connect_exit=$?
 assert_eq "alice initially connects partner team" "0" "$alice_partner_initial_connect_exit"
-run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+run_success "alice switch devteam" run_aw_in "$ALICE_DIR" id team switch devteam:test.local
 alice_primary_setup_restore_exit=$?
 assert_eq "alice returns to primary after partner setup" "0" "$alice_primary_setup_restore_exit"
 
-run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+run_success "alice switch partner" run_aw_in "$ALICE_DIR" id team switch main:partner.local
 alice_switch_partner_exit=$?
 assert_eq "alice switches to partner team without re-init" "0" "$alice_switch_partner_exit"
 
-alice_partner_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+capture_success alice_partner_whoami "alice_partner_whoami" run_aw_in "$ALICE_DIR" whoami --json
 alice_partner_whoami_domain="$(echo "$alice_partner_whoami" | jq_field domain)"
 alice_partner_whoami_address="$(echo "$alice_partner_whoami" | jq_field address)"
 assert_eq "alice partner whoami domain after switch" "partner.local" "$alice_partner_whoami_domain"
 assert_eq "alice partner whoami address after switch" "partner.local/alice" "$alice_partner_whoami_address"
 
-run_aw_in "$ALICE_DIR" mail send \
+run_success "alice partner mail send" run_aw_in "$ALICE_DIR" mail send \
   --to bob \
   --subject "Per-membership partner" \
-  --body "Partner address hello" >/dev/null 2>&1
+  --body "Partner address hello"
 alice_partner_mail_exit=$?
 assert_eq "alice partner-team mail exit" "0" "$alice_partner_mail_exit"
 
-partner_bob_inbox="$(run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success partner_bob_inbox "partner_bob_inbox" run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all
 partner_bob_from_address="$(echo "$partner_bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership partner'), ''))" 2>/dev/null || echo "")"
 assert_eq "partner bob sees alice partner from_address" "partner.local/alice" "$partner_bob_from_address"
 
-run_aw_in "$ALICE_DIR" chat send-and-leave bob \
-  "Per-membership partner chat" >/dev/null 2>&1
+run_success "alice partner chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership partner chat"
 alice_partner_chat_exit=$?
 assert_eq "alice partner-team chat exit" "0" "$alice_partner_chat_exit"
 
-partner_bob_pending="$(run_aw_in "$PARTNER_BOB_DIR" chat pending --json 2>/dev/null)"
+capture_success partner_bob_pending "partner_bob_pending" run_aw_in "$PARTNER_BOB_DIR" chat pending --json
 partner_bob_chat_from_address="$(echo "$partner_bob_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership partner chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "partner bob sees alice partner chat from_address" "partner.local/alice" "$partner_bob_chat_from_address"
 if [[ "$partner_bob_chat_from_address" != "partner.local/alice" ]]; then
@@ -1615,33 +1652,33 @@ fi
 alice_partner_reply_body="$(echo "$alice_partner_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply partner address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives partner address reply" "Reply to alice partner address" "$alice_partner_reply_body"
 
-run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+run_success "alice switch devteam" run_aw_in "$ALICE_DIR" id team switch devteam:test.local
 alice_restore_primary_exit=$?
 assert_eq "alice restores primary team without re-init" "0" "$alice_restore_primary_exit"
 
-alice_restored_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+capture_success alice_restored_whoami "alice_restored_whoami" run_aw_in "$ALICE_DIR" whoami --json
 alice_restored_whoami_domain="$(echo "$alice_restored_whoami" | jq_field domain)"
 alice_restored_whoami_address="$(echo "$alice_restored_whoami" | jq_field address)"
 assert_eq "alice restored whoami domain after switch" "test.local" "$alice_restored_whoami_domain"
 assert_eq "alice restored whoami address after switch" "test.local/alice" "$alice_restored_whoami_address"
 
-run_aw_in "$ALICE_DIR" mail send \
+run_success "alice restored primary mail send" run_aw_in "$ALICE_DIR" mail send \
   --to bob \
   --subject "Per-membership restored primary" \
-  --body "Restored primary address hello" >/dev/null 2>&1
+  --body "Restored primary address hello"
 alice_restored_mail_exit=$?
 assert_eq "alice restored primary-team mail exit" "0" "$alice_restored_mail_exit"
 
-bob_restored_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_restored_inbox "bob_restored_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 bob_restored_from_address="$(echo "$bob_restored_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership restored primary'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary from_address" "test.local/alice" "$bob_restored_from_address"
 
-run_aw_in "$ALICE_DIR" chat send-and-leave bob \
-  "Per-membership restored primary chat" >/dev/null 2>&1
+run_success "alice restored primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership restored primary chat"
 alice_restored_chat_exit=$?
 assert_eq "alice restored primary-team chat exit" "0" "$alice_restored_chat_exit"
 
-bob_restored_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+capture_success bob_restored_pending "bob_restored_pending" run_aw_in "$BOB_DIR" chat pending --json
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 
@@ -1726,7 +1763,7 @@ fi
 cross_ns_reply_conversation_id="$(echo "$cross_ns_reply_out" | jq_field conversation_id)"
 assert_eq "cross-namespace global reply stays in conversation" "$cross_ns_conversation_id" "$cross_ns_reply_conversation_id"
 
-alice_cross_ns_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_cross_ns_inbox "alice_cross_ns_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_cross_ns_reply_body="$(echo "$alice_cross_ns_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$cross_ns_conversation_id' and m.get('subject')=='Cross namespace reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "cross-namespace global reply delivered" "Cross namespace response" "$alice_cross_ns_reply_body"
 echo ""
@@ -1736,11 +1773,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12e: Messaging global/local routing contract ==="
 
-seed_bob_address_out="$(run_aw_in "$ALICE_DIR" id namespace assign-address \
+capture_success seed_bob_address_out "seed_bob_address_out" run_aw_in "$ALICE_DIR" id namespace assign-address \
   --domain test.local \
   --name bob \
   --did-aw "$BOB_DID_AW" \
-  --json 2>/dev/null)"
+  --json
 seed_bob_address_status="$(echo "$seed_bob_address_out" | jq_field status)"
 if [[ "$seed_bob_address_status" == "assigned" || "$seed_bob_address_status" == "already_assigned" ]]; then
   echo "  PASS: global bob registry address seeded"
@@ -1763,7 +1800,7 @@ if [[ "$alice_global_addr_mail_exit" != "0" ]]; then
   echo "  global direct-address mail output: ${alice_global_addr_mail_out:0:240}"
 fi
 
-bob_matrix_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_matrix_inbox "bob_matrix_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 bob_global_addr_vs="$(echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Global direct address'), ''))" 2>/dev/null || echo "")"
 assert_eq "global direct-address mail verified" "verified" "$bob_global_addr_vs"
 if [[ "$bob_global_addr_vs" != "verified" ]]; then
@@ -1780,7 +1817,7 @@ assert_eq "global direct-address chat exit" "0" "$alice_global_addr_chat_exit"
 if [[ "$alice_global_addr_chat_exit" != "0" ]]; then
   echo "  global direct-address chat output: ${alice_global_addr_chat_out:0:240}"
 fi
-bob_global_addr_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
+capture_success bob_global_addr_history "bob_global_addr_history" run_aw_in "$BOB_DIR" chat history test.local/alice --json
 bob_global_addr_chat_vs="$(echo "$bob_global_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Global direct address chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "global direct-address chat verified" "verified" "$bob_global_addr_chat_vs"
 if [[ "$bob_global_addr_chat_vs" != "verified" ]]; then
@@ -1803,7 +1840,7 @@ fi
 bob_hidden_conversation_id="$(echo "$bob_hidden_start_out" | jq_field conversation_id)"
 assert_not_empty "global conversation initial mail returns conversation_id" "$bob_hidden_conversation_id"
 
-alice_hidden_start_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_hidden_start_inbox "alice_hidden_start_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_hidden_start_body="$(echo "$alice_hidden_start_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation alice receives bob initiation" "Bob starts a global conversation" "$alice_hidden_start_body"
 
@@ -1823,7 +1860,7 @@ fi
 alice_hidden_reply_conversation_id="$(echo "$alice_hidden_reply_out" | jq_field conversation_id)"
 assert_eq "global conversation reply stays in same conversation" "$bob_hidden_conversation_id" "$alice_hidden_reply_conversation_id"
 
-bob_hidden_reply_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_hidden_reply_inbox "bob_hidden_reply_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Global conversation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation bob receives stored-route reply" "Reply through stored participant route" "$bob_hidden_reply_body"
 
@@ -2013,7 +2050,7 @@ fi
 rotation_reply_conversation_id="$(echo "$rotation_reply_out" | jq_field conversation_id)"
 assert_eq "conversation rotated reply stays in conversation" "$rotation_conversation_id" "$rotation_reply_conversation_id"
 
-alice_rotation_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success alice_rotation_inbox "alice_rotation_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "conversation rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
 
@@ -2053,12 +2090,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 13: Tasks ==="
 
-task_create_out="$(run_aw_in "$ALICE_DIR" task create \
-  --title "E2E test task" --json 2>/dev/null)"
+capture_success task_create_out "task_create_out" run_aw_in "$ALICE_DIR" task create \
+  --title "E2E test task" --json
 TASK_REF="$(echo "$task_create_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_ref') or d.get('task_id',''))" 2>/dev/null || echo "")"
 assert_not_empty "task created" "$TASK_REF"
 
-task_list_out="$(run_aw_in "$ALICE_DIR" task list 2>/dev/null)"
+capture_success task_list_out "task_list_out" run_aw_in "$ALICE_DIR" task list
 assert_contains "task list shows our task" "$task_list_out" "E2E test task"
 echo ""
 
@@ -2067,14 +2104,14 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 14: Locks ==="
 
-run_aw_in "$ALICE_DIR" lock acquire --resource-key test-file 2>/dev/null
+run_success "lock acquire" run_aw_in "$ALICE_DIR" lock acquire --resource-key test-file
 lock_exit=$?
 assert_eq "lock acquire exit" "0" "$lock_exit"
 
-lock_list="$(run_aw_in "$ALICE_DIR" lock list 2>/dev/null)"
+capture_success lock_list "lock_list" run_aw_in "$ALICE_DIR" lock list
 assert_contains "lock list shows test-file" "$lock_list" "test-file"
 
-run_aw_in "$ALICE_DIR" lock release --resource-key test-file 2>/dev/null
+run_success "lock release" run_aw_in "$ALICE_DIR" lock release --resource-key test-file
 pass=$((pass + 1))
 echo "  PASS: lock released"
 echo ""
@@ -2084,7 +2121,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 15: Roles ==="
 
-roles_out="$(run_aw_in "$ALICE_DIR" roles show 2>/dev/null)"
+capture_success roles_out "roles_out" run_aw_in "$ALICE_DIR" roles show
 roles_exit=$?
 assert_eq "roles show exit" "0" "$roles_exit"
 echo ""
@@ -2108,11 +2145,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 17: Revoke bob's membership ==="
 
-revoke_out="$(run_aw_in "$ALICE_DIR" id team remove-member \
+capture_success revoke_out "revoke_out" run_aw_in "$ALICE_DIR" id team remove-member \
   --team devteam \
   --namespace test.local \
   --member test.local/bob \
-  --json 2>/dev/null)"
+  --json
 
 REVOKE_STATUS="$(echo "$revoke_out" | jq_field status)"
 assert_eq "bob revoked" "removed" "$REVOKE_STATUS"
@@ -2137,7 +2174,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 19: Alice still works ==="
 
-alice_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+capture_success alice_whoami "alice_whoami" run_aw_in "$ALICE_DIR" whoami --json
 alice_alias_check="$(echo "$alice_whoami" | jq_field alias)"
 assert_eq "alice still connected" "alice" "$alice_alias_check"
 echo ""
@@ -2189,9 +2226,15 @@ phase_aw_init_reconnect() {
   cp "$alice_primary_cert_path" "$RECONNECT_DIR/.aw/team-certs/"
   RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 
-  reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --url "$AWEB_URL" </dev/null 2>&1)"
-  reconnect_exit=$?
+  if reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --url "$AWEB_URL" </dev/null 2>&1)"; then
+    reconnect_exit=0
+  else
+    reconnect_exit=$?
+  fi
   assert_eq "reconnect init exit" "0" "$reconnect_exit"
+  if [[ "$reconnect_exit" != "0" ]]; then
+    echo "  reconnect init output: ${reconnect_out:0:480}"
+  fi
   assert_not_contains "reconnect skipped onboarding path prompt" "$reconnect_out" "How should this agent get its identity?"
   assert_not_contains "reconnect skipped post-init prompts" "$reconnect_out" "Inject agent docs into this repo?"
   assert_file_exists "reconnect workspace.yaml written" "$RECONNECT_DIR/.aw/workspace.yaml"
@@ -2257,7 +2300,7 @@ phase_aw_init_local_quickstart() {
   assert_eq "wizard workspace team" "$local_team" "$wizard_workspace_team"
   assert_eq "wizard workspace alias" "$local_alias" "$wizard_workspace_alias"
 
-  wizard_cert_out="$(run_aw_in "$WIZARD_BYOD_DIR" id cert show --json 2>/dev/null)"
+  capture_success wizard_cert_out "wizard_cert_out" run_aw_in "$WIZARD_BYOD_DIR" id cert show --json
   wizard_cert_team="$(echo "$wizard_cert_out" | jq_field team_id)"
   wizard_cert_alias="$(echo "$wizard_cert_out" | jq_field alias)"
   assert_eq "wizard cert team" "$local_team" "$wizard_cert_team"
@@ -2363,7 +2406,7 @@ phase_amy_symptom_reproducer() {
   # Switch alice to her cross-team-cert team (main:partner.local). Her
   # identity remains in test.local so cert.member_address (partner.local/alice)
   # ≠ identity.address (test.local/alice) — the aako-pattern.
-  run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+  run_success "alice switch partner" run_aw_in "$ALICE_DIR" id team switch main:partner.local
   local switch_exit=$?
   assert_eq "amy reproducer: alice switches to partner.local team" "0" "$switch_exit"
 
@@ -2429,7 +2472,7 @@ phase_amy_symptom_reproducer() {
   # Server-side: verification_status from partner_bob's mail inbox + chat
   # history for messages from alice in this phase.
   local bob_inbox_json
-  bob_inbox_json="$(run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+  capture_success bob_inbox_json "bob_inbox_json" run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all
   local server_mail_vs
   server_mail_vs="$(echo "$bob_inbox_json" | python3 -c "
 import sys, json
@@ -2455,7 +2498,7 @@ print(msg.get('conversation_id', '') if msg else '')
   # verification_status. Use `chat history alice` to pull the message-level
   # detail and find the chat we just sent.
   local bob_history_json
-  bob_history_json="$(run_aw_in "$PARTNER_BOB_DIR" chat history alice --json 2>/dev/null)"
+  capture_success bob_history_json "bob_history_json" run_aw_in "$PARTNER_BOB_DIR" chat history alice --json
   local server_chat_vs
   server_chat_vs="$(echo "$bob_history_json" | python3 -c "
 import sys, json
@@ -2615,7 +2658,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
   esac
 
   # Restore alice's primary team for any subsequent phases.
-  run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1 || true
+  run_success "alice switch devteam" run_aw_in "$ALICE_DIR" id team switch devteam:test.local || true
 
   echo "  amy reproducer: capture file preserved at $capture_file (log: $capture_log)"
   echo ""

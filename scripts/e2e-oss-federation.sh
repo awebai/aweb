@@ -192,13 +192,50 @@ run_aw_in() {
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
 }
 
+capture_success() {
+  local output_var="$1" label="$2"
+  shift 2
+  local output status
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label exit" "0" "$status"
+  if [[ "$status" == "0" ]]; then
+    printf -v "$output_var" "%s" "$output"
+  else
+    printf -v "$output_var" "%s" ""
+    if [[ -n "$output" ]]; then
+      echo "  $label output: ${output:0:240}"
+    fi
+  fi
+  return 0
+}
+
+run_success() {
+  local label="$1"
+  shift
+  local output status
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label exit" "0" "$status"
+  if [[ "$status" != "0" && -n "$output" ]]; then
+    echo "  $label output: ${output:0:240}"
+  fi
+  return 0
+}
+
 set_namespace_delivery_origin() {
   local dir="$1" label="$2" namespace="$3" origin="$4"
   local out status
-  out="$(run_aw_in "$dir" id namespace set-delivery-origin \
+  capture_success out "$label namespace delivery-origin" run_aw_in "$dir" id namespace set-delivery-origin \
     --namespace "$namespace" \
     --origin "$origin" \
-    --json 2>/dev/null)"
+    --json
   status="$(echo "$out" | jq_field status)"
   if [[ "$status" == "updated" || "$status" == "unchanged" ]]; then
     echo "  PASS: $label namespace address-route delivery origin set"
@@ -225,12 +262,12 @@ wait_health() {
 create_identity_and_join_team() {
   local dir="$1" domain="$2" name="$3" team="$4" url="$5"
   local create_out invite_out token accept_out init_out
-  create_out="$(run_aw_in "$dir" id create \
+  capture_success create_out "create_out" run_aw_in "$dir" id create \
     --name "$name" \
     --domain "$domain" \
     --registry "$AWID_URL" \
     --skip-dns-verify \
-    --json 2>/dev/null)"
+    --json
   printf '%s\n' "$create_out" > "$dir/create.json"
   assert_not_empty "$name did_aw" "$(echo "$create_out" | jq_field did_aw)"
 
@@ -238,16 +275,16 @@ create_identity_and_join_team() {
     :
   fi
 
-  invite_out="$(run_aw_in "$dir" id team invite \
+  capture_success invite_out "invite_out" run_aw_in "$dir" id team invite \
     --team "$team" \
     --namespace "$domain" \
     --global \
-    --json 2>/dev/null)"
+    --json
   token="$(echo "$invite_out" | jq_field token)"
   assert_not_empty "$name invite token" "$token"
-  accept_out="$(run_aw_in "$dir" id team accept-invite "$token" --alias "$name" --json 2>/dev/null)"
+  capture_success accept_out "accept_out" run_aw_in "$dir" id team accept-invite "$token" --alias "$name" --json
   assert_eq "$name invite accepted" "accepted" "$(echo "$accept_out" | jq_field status)"
-  init_out="$(run_aw_in "$dir" init --url "$url" --alias "$name" --do-not-touch-agents-md 2>&1)"
+  capture_success init_out "$name init" run_aw_in "$dir" init --url "$url" --alias "$name" --do-not-touch-agents-md
   assert_contains "$name init connected" "$init_out" "connected"
 }
 
@@ -392,64 +429,64 @@ wait_health "beta" "$BETA_URL"
 echo ""
 
 echo "=== Phase 2: Create alpha and beta identities/teams ==="
-alice_create="$(run_aw_in "$ALICE_DIR" id create --name alice --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
+capture_success alice_create "alice_create" run_aw_in "$ALICE_DIR" id create --name alice --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json
 ALICE_DID_AW="$(echo "$alice_create" | jq_field did_aw)"
 ALICE_DID_KEY="$(echo "$alice_create" | jq_field did_key)"
 assert_not_empty "alice did_aw" "$ALICE_DID_AW"
 assert_not_empty "alice did_key" "$ALICE_DID_KEY"
-alpha_team="$(run_aw_in "$ALICE_DIR" id team create --name alpha --namespace alpha.test.local --registry "$AWID_URL" --json 2>/dev/null)"
+capture_success alpha_team "alpha_team" run_aw_in "$ALICE_DIR" id team create --name alpha --namespace alpha.test.local --registry "$AWID_URL" --json
 assert_eq "alpha team id" "alpha:alpha.test.local" "$(echo "$alpha_team" | jq_field team_id)"
-alice_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
+capture_success alice_invite "alice_invite" run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json
 alice_token="$(echo "$alice_invite" | jq_field token)"
-run_aw_in "$ALICE_DIR" id team accept-invite "$alice_token" --alias alice --json >/dev/null 2>&1
-run_aw_in "$ALICE_DIR" init --url "$ALPHA_URL" --alias alice --do-not-touch-agents-md >/dev/null 2>&1
+run_success "alice accept invite" run_aw_in "$ALICE_DIR" id team accept-invite "$alice_token" --alias alice --json
+run_success "alice init" run_aw_in "$ALICE_DIR" init --url "$ALPHA_URL" --alias alice --do-not-touch-agents-md
 
-ann_create="$(run_aw_in "$ANN_DIR" id create --name ann --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
+capture_success ann_create "ann_create" run_aw_in "$ANN_DIR" id create --name ann --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json
 ANN_DID_AW="$(echo "$ann_create" | jq_field did_aw)"
 assert_not_empty "ann did_aw" "$ANN_DID_AW"
-ann_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
+capture_success ann_invite "ann_invite" run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json
 ann_token="$(echo "$ann_invite" | jq_field token)"
-run_aw_in "$ANN_DIR" id team accept-invite "$ann_token" --alias ann --json >/dev/null 2>&1
-run_aw_in "$ANN_DIR" init --url "$ALPHA_URL" --alias ann --do-not-touch-agents-md >/dev/null 2>&1
+run_success "ann accept invite" run_aw_in "$ANN_DIR" id team accept-invite "$ann_token" --alias ann --json
+run_success "ann init" run_aw_in "$ANN_DIR" init --url "$ALPHA_URL" --alias ann --do-not-touch-agents-md
 
-ned_create="$(run_aw_in "$NED_DIR" id create --name ned --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
+capture_success ned_create "ned_create" run_aw_in "$NED_DIR" id create --name ned --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json
 NED_DID_AW="$(echo "$ned_create" | jq_field did_aw)"
 assert_not_empty "ned did_aw" "$NED_DID_AW"
-ned_invite="$(run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json 2>/dev/null)"
+capture_success ned_invite "ned_invite" run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json
 ned_token="$(echo "$ned_invite" | jq_field token)"
-run_aw_in "$NED_DIR" id team accept-invite "$ned_token" --alias ned --json >/dev/null 2>&1
-run_aw_in "$NED_DIR" init --url "$ALPHA_URL" --alias ned --do-not-touch-agents-md >/dev/null 2>&1
+run_success "ned accept invite" run_aw_in "$NED_DIR" id team accept-invite "$ned_token" --alias ned --json
+run_success "ned init" run_aw_in "$NED_DIR" init --url "$ALPHA_URL" --alias ned --do-not-touch-agents-md
 
-bob_create="$(run_aw_in "$BOB_DIR" id create --name bob --domain beta.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
+capture_success bob_create "bob_create" run_aw_in "$BOB_DIR" id create --name bob --domain beta.test.local --registry "$AWID_URL" --skip-dns-verify --json
 BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
 BOB_DID_KEY="$(echo "$bob_create" | jq_field did_key)"
 assert_not_empty "bob did_aw" "$BOB_DID_AW"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
-beta_team="$(run_aw_in "$BOB_DIR" id team create --name beta --namespace beta.test.local --registry "$AWID_URL" --json 2>/dev/null)"
+capture_success beta_team "beta_team" run_aw_in "$BOB_DIR" id team create --name beta --namespace beta.test.local --registry "$AWID_URL" --json
 assert_eq "beta team id" "beta:beta.test.local" "$(echo "$beta_team" | jq_field team_id)"
-bob_invite="$(run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --global --json 2>/dev/null)"
+capture_success bob_invite "bob_invite" run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --global --json
 bob_token="$(echo "$bob_invite" | jq_field token)"
-run_aw_in "$BOB_DIR" id team accept-invite "$bob_token" --alias bob --json >/dev/null 2>&1
-run_aw_in "$BOB_DIR" init --url "$BETA_URL" --alias bob --do-not-touch-agents-md >/dev/null 2>&1
+run_success "bob accept invite" run_aw_in "$BOB_DIR" id team accept-invite "$bob_token" --alias bob --json
+run_success "bob init" run_aw_in "$BOB_DIR" init --url "$BETA_URL" --alias bob --do-not-touch-agents-md
 
-charlie_create="$(run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json 2>/dev/null)"
+capture_success charlie_create "charlie_create" run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json
 assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
 set_namespace_delivery_origin "$ALICE_DIR" "alpha" "alpha.test.local" "$ALPHA_ORIGIN"
 set_namespace_delivery_origin "$BOB_DIR" "beta" "beta.test.local" "$BETA_ORIGIN"
-alice_e2ee_setup="$(run_aw_in "$ALICE_DIR" id encryption-key setup --json 2>/dev/null)"
+capture_success alice_e2ee_setup "alice_e2ee_setup" run_aw_in "$ALICE_DIR" id encryption-key setup --json
 assert_not_empty "alice federation e2ee key id" "$(echo "$alice_e2ee_setup" | jq_field key_id)"
-bob_e2ee_setup="$(run_aw_in "$BOB_DIR" id encryption-key setup --json 2>/dev/null)"
+capture_success bob_e2ee_setup "bob_e2ee_setup" run_aw_in "$BOB_DIR" id encryption-key setup --json
 assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
-run_aw_in "$ALICE_DIR" mail send --to ann --subject "Local alias e2e" --body "hello local ann" >/dev/null
-ann_inbox="$(run_aw_in "$ANN_DIR" mail inbox --json --show-all 2>/dev/null)"
+run_success "same-server local mail send" run_aw_in "$ALICE_DIR" mail send --to ann --subject "Local alias e2e" --body "hello local ann"
+capture_success ann_inbox "ann_inbox" run_aw_in "$ANN_DIR" mail inbox --json --show-all
 ann_local_count="$(echo "$ann_inbox" | json_count_matching subject "Local alias e2e")"
 assert_eq "same-server local mail delivered" "1" "$ann_local_count"
-run_aw_in "$ALICE_DIR" chat send-and-leave ann "hello local chat ann" >/dev/null
-ann_chat="$(run_aw_in "$ANN_DIR" chat history alice --json 2>/dev/null)"
+run_success "same-server local chat send" run_aw_in "$ALICE_DIR" chat send-and-leave ann "hello local chat ann"
+capture_success ann_chat "ann_chat" run_aw_in "$ANN_DIR" chat history alice --json
 ann_chat_count="$(echo "$ann_chat" | json_count_matching body "hello local chat ann")"
 assert_eq "same-server local chat delivered" "1" "$ann_chat_count"
 echo ""
@@ -576,7 +613,7 @@ assert_eq "federated e2ee chat reply send exit" "0" "$fed_e2ee_chat_reply_exit"
 if [[ "$fed_e2ee_chat_reply_exit" != "0" ]]; then
   echo "$fed_e2ee_chat_reply_out"
 fi
-alice_e2ee_chat_reply="$(run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json 2>/dev/null)"
+capture_success alice_e2ee_chat_reply "alice_e2ee_chat_reply" run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json
 alice_e2ee_chat_reply_count="$(echo "$alice_e2ee_chat_reply" | json_count_matching body "$fed_e2ee_chat_reply_body")"
 assert_eq "alice decrypts federated e2ee chat reply" "1" "$alice_e2ee_chat_reply_count"
 fed_e2ee_chat_alpha_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_CHAT_%';")"
@@ -586,35 +623,35 @@ assert_eq "federated e2ee chat plaintext absent from beta DB" "0" "$fed_e2ee_cha
 echo ""
 
 echo "=== Phase 4: Public cross-server first contact and replies ==="
-run_aw_in "$ALICE_DIR" mail send --to-address beta.test.local/bob --subject "Public federated mail" --body "hello beta bob" >/dev/null
-bob_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+run_success "public federated mail send" run_aw_in "$ALICE_DIR" mail send --to-address beta.test.local/bob --subject "Public federated mail" --body "hello beta bob"
+capture_success bob_inbox "bob_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 public_mail_count="$(echo "$bob_inbox" | json_count_matching subject "Public federated mail")"
 public_conversation_id="$(echo "$bob_inbox" | json_first_field_matching subject "Public federated mail" conversation_id)"
 assert_eq "public federated mail delivered to beta" "1" "$public_mail_count"
 assert_not_empty "public federated mail conversation id" "$public_conversation_id"
 
-run_aw_in "$BOB_DIR" mail send --conversation-id "$public_conversation_id" --subject "Public federated reply" --body "reply from beta bob" >/dev/null
-alice_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+run_success "public federated reply send" run_aw_in "$BOB_DIR" mail send --conversation-id "$public_conversation_id" --subject "Public federated reply" --body "reply from beta bob"
+capture_success alice_inbox "alice_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 reply_count="$(echo "$alice_inbox" | json_count_matching subject "Public federated reply")"
 assert_eq "public federated mail reply delivered to alpha" "1" "$reply_count"
 
-run_aw_in "$ALICE_DIR" chat send-and-leave beta.test.local/bob "public federated chat" >/dev/null
-bob_chat="$(run_aw_in "$BOB_DIR" chat history alpha.test.local/alice --json 2>/dev/null)"
+run_success "public federated chat send" run_aw_in "$ALICE_DIR" chat send-and-leave beta.test.local/bob "public federated chat"
+capture_success bob_chat "bob_chat" run_aw_in "$BOB_DIR" chat history alpha.test.local/alice --json
 public_chat_count="$(echo "$bob_chat" | json_count_matching body "public federated chat")"
 assert_eq "public federated chat delivered to beta" "1" "$public_chat_count"
-run_aw_in "$BOB_DIR" chat send-and-leave alpha.test.local/alice "public federated chat reply" >/dev/null
-alice_chat="$(run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json 2>/dev/null)"
+run_success "public federated chat reply send" run_aw_in "$BOB_DIR" chat send-and-leave alpha.test.local/alice "public federated chat reply"
+capture_success alice_chat "alice_chat" run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json
 chat_reply_count="$(echo "$alice_chat" | json_count_matching body "public federated chat reply")"
 assert_eq "public federated chat reply delivered to alpha" "1" "$chat_reply_count"
 echo ""
 
 echo "=== Phase 5: Global federation fail-closed cases ==="
-run_aw_in "$NED_DIR" mail send --to-address beta.test.local/bob --subject "Global federated mail" --body "global sender reaches beta bob" >/dev/null
-bob_global_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+run_success "global federated mail send" run_aw_in "$NED_DIR" mail send --to-address beta.test.local/bob --subject "Global federated mail" --body "global sender reaches beta bob"
+capture_success bob_global_inbox "bob_global_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 global_mail_count="$(echo "$bob_global_inbox" | json_count_matching subject "Global federated mail")"
 assert_eq "global federated mail delivered" "1" "$global_mail_count"
-run_aw_in "$NED_DIR" chat send-and-leave beta.test.local/bob "global sender reaches beta chat" >/dev/null
-bob_global_chat="$(run_aw_in "$BOB_DIR" chat history alpha.test.local/ned --json 2>/dev/null)"
+run_success "global federated chat send" run_aw_in "$NED_DIR" chat send-and-leave beta.test.local/bob "global sender reaches beta chat"
+capture_success bob_global_chat "bob_global_chat" run_aw_in "$BOB_DIR" chat history alpha.test.local/ned --json
 global_chat_count="$(echo "$bob_global_chat" | json_count_matching body "global sender reaches beta chat")"
 assert_eq "global federated chat delivered" "1" "$global_chat_count"
 
@@ -723,7 +760,7 @@ print(",".join(str(status) for status in statuses))
 PY
 )"
 assert_eq "direct federation replay returns stable success" "200,200" "$replay_result"
-bob_replay_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+capture_success bob_replay_inbox "bob_replay_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 replay_count="$(echo "$bob_replay_inbox" | json_count_matching subject "Replay federated mail")"
 assert_eq "direct federation replay stores one message" "1" "$replay_count"
 echo ""
