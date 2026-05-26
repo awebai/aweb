@@ -621,6 +621,7 @@ def _validate_encrypted_payload(
             detail="message_id and conversation_id are required for encrypted mail",
         )
     recipient_address = _recipient_conversation_address(recipient, payload)
+    expected_recipient_did = str((recipient or {}).get("did_key") or recipient_did).strip()
     try:
         validate_e2ee_mail_envelope(
             payload.encrypted_envelope or {},
@@ -628,7 +629,7 @@ def _validate_encrypted_payload(
             conversation_id=payload.conversation_id,
             sender_did=(auth.did_key or sender_did).strip(),
             sender_stable_id=(auth.did_aw or "").strip() or None,
-            recipient_did=recipient_did,
+            recipient_did=expected_recipient_did,
             recipient_stable_id=str((recipient or {}).get("did_aw") or "").strip() or None,
             recipient_address=recipient_address,
         )

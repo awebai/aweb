@@ -26,7 +26,11 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
     """Reset-only rebaseline remains 001; new product schema changes are
     ordered forward migrations instead of edits to the historical baseline."""
     sql_files = sorted(p.name for p in AWEB_MIGRATIONS.iterdir() if p.name.endswith(".sql"))
-    assert sql_files == ["001_initial.sql", "002_agent_encryption_keys.sql"]
+    assert sql_files == [
+        "001_initial.sql",
+        "002_agent_encryption_keys.sql",
+        "003_messages_encrypted_v2.sql",
+    ]
 
 
 def test_agents_table_declares_team_and_contacts_inbound_mode_inline():

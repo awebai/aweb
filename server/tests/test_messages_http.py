@@ -111,7 +111,7 @@ def _encrypted_mail_envelope(
 ):
     signing_key = SigningKey(sender_sk)
     ciphertext = b"opaque-ciphertext-with-tag"
-    wrap = {
+    delivery_wrap = {
         "wrap_id": _sha256_b64(b"wrap-binding"),
         "recipient_stable_id": recipient_stable_id,
         "recipient_did": recipient_did,
@@ -123,16 +123,32 @@ def _encrypted_mail_envelope(
         "wrap_purpose": "delivery",
         "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
         "encapsulated_key": _raw_b64(b"e" * 32),
-        "wrapped_cek": _raw_b64(b"wrapped"),
+        "wrapped_cek": _raw_b64(b"w" * 48),
     }
+    sender_copy_wrap = {
+        "wrap_id": _sha256_b64(b"sender-copy-wrap-binding"),
+        "recipient_stable_id": sender_stable_id,
+        "recipient_did": sender_did,
+        "recipient_address": "acme.com/alice",
+        "recipient_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+        "sender_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
+        "sender_did": sender_did,
+        "sender_stable_id": sender_stable_id,
+        "wrap_purpose": "sender_copy",
+        "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+        "encapsulated_key": _raw_b64(b"E" * 32),
+        "wrapped_cek": _raw_b64(b"W" * 48),
+    }
+    created_at = datetime.now(timezone.utc).replace(microsecond=0)
+    expires_at = created_at + timedelta(minutes=5)
     envelope = {
         "message_version": 2,
         "envelope_type": "aweb.e2ee.message",
         "kind": "mail",
         "message_id": message_id,
         "conversation_id": conversation_id,
-        "created_at": "2026-05-26T12:00:00Z",
-        "expires_at": "2026-05-26T12:05:00Z",
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "from": {
             "address": "acme.com/alice",
             "did": sender_did,
@@ -145,7 +161,7 @@ def _encrypted_mail_envelope(
                 "did": recipient_did,
                 "stable_id": recipient_stable_id,
                 "encryption_key_id": "sha256:" + _raw_b64(b"r" * 32),
-                "wrap_id": wrap["wrap_id"],
+                "wrap_id": delivery_wrap["wrap_id"],
             }
         ],
         "routing": {
@@ -161,9 +177,12 @@ def _encrypted_mail_envelope(
             "ciphertext_hash": _sha256_b64(ciphertext),
             "ciphertext_size": len(ciphertext),
             "inner_header_hash": _sha256_b64(b"inner-header"),
-            "key_wraps_hash": _hash_canonical("key_wraps", [_key_wrap_map(wrap)]),
+            "key_wraps_hash": _hash_canonical(
+                "key_wraps",
+                [_key_wrap_map(delivery_wrap), _key_wrap_map(sender_copy_wrap)],
+            ),
         },
-        "key_wraps": [wrap],
+        "key_wraps": [delivery_wrap, sender_copy_wrap],
         "ciphertext": _raw_b64(ciphertext),
         "signing_key_id": sender_did,
     }
