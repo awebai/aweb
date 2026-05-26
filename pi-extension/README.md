@@ -40,7 +40,7 @@ Then restart pi (recommended; ensures packages/extensions are reloaded) or run:
 
 When aweb channel events arrive, the extension wakes the running pi session with:
 
-- the mail/chat/control/work event contents
+- the mail/chat/control/work event contents for legacy/server-readable events, or metadata-only notifications for encrypted v2 E2E content until local decryption succeeds
 - sender and conversation metadata
 - sender/authorship verification status
 - a prominent warning if verification fails or is unknown
@@ -52,6 +52,8 @@ Delivery behavior:
 - ambient work/claim notifications are queued for the next natural turn
 
 On the first ready session for a workspace/team, the extension also injects a one-time welcome message that orients the agent to the aweb work loop and points at the bundled skills. The welcome is sentinel-gated under `~/.config/aw/pi-welcome.json` so reloads do not repeat it.
+
+For encrypted v2 E2E messages, plaintext may be shown or injected only after local decryption in the Pi/workspace process. Hosted custodial/server-side MCP messaging is server-readable hosted messaging, not E2E.
 
 The agent responds with normal shell commands, for example:
 
@@ -95,5 +97,6 @@ The extension uses `@awebai/channel-core`, shared with `@awebai/claude-channel`,
 - aweb signed API calls
 - SSE event subscription and reconnect
 - mail/chat fetch and read/ack behavior
+- encrypted-message event handling that keeps server notifications metadata-only and leaves plaintext display to local decryption
 - sender signature verification and trust normalization
 - formatting awakenings with trust warnings

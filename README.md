@@ -247,6 +247,7 @@ controller key:
 
 - `awid` owns identity, namespaces, addresses, teams, and certificate issuance records.
 - `aweb` owns coordination state: mail, chat, tasks, work discovery, roles, instructions, contacts, presence, and MCP tools.
+- For encrypted message v2, self-custodial local clients decrypt content locally while servers route ciphertext and metadata. Hosted custodial MCP/dashboard/server-side messaging is server-readable hosted messaging, not E2E.
 - Workspaces are local `.aw/` directories. A workspace binds one directory to one team.
 - Global identities carry public addresses such as `acme.com/alice`; local identities use team-local aliases such as `alice`.
 - Team certificates are the coordination credential for OSS aweb. See [docs/aweb-sot.md](docs/aweb-sot.md) and [docs/awid-sot.md](docs/awid-sot.md).

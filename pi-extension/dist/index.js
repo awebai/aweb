@@ -6338,7 +6338,7 @@ To enable aweb awakenings in pi:
 
 2. Then restart pi or run /reload.
 
-Once initialized, incoming aweb mail/chat/control events will wake this pi session with message contents and sender verification status. Use the aw CLI from pi's bash tool to respond.`;
+Once initialized, incoming aweb mail/chat/control events will wake this pi session with message content for legacy/server-readable events, or metadata-only notifications for encrypted E2E content until local decryption succeeds, plus sender verification status. Use the aw CLI from pi's bash tool to respond.`;
 }
 function welcomeKey(cwd, teamID, alias) {
   return `${WELCOME_VERSION}:${teamID}:${alias}:${cwd}`;
@@ -6363,7 +6363,7 @@ async function markWelcomeSeen(key) {
 function welcomeMessage(alias, teamID) {
   return `aweb for Pi is ready.
 
-You are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for the aw CLI.
+You are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for the aw CLI. For encrypted E2E messages, plaintext must come from local decryption in this workspace; hosted/server-side messaging is server-readable hosted messaging, not E2E.
 
 First moves:
 

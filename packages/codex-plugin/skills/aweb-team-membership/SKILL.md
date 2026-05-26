@@ -12,8 +12,8 @@ Use this skill when the question is about teams — joining, leaving, switching 
 
 This skill builds on the identity vocabulary in `aweb-identity` (keypair, `did:key`, `did:aw`, AWID, custodial vs self-custodial). Read that section first if any of those terms are unfamiliar. Team-specific additions:
 
-- **Team controller** — a keypair separate from member identities. Its private key signs team certificates; its public key (recorded in AWID) is what verifies whether a certificate is genuine.
-- **Team certificate** — a signed statement that a specific `did:key` is a member of a specific team, with an alias and metadata. Public; replicated in AWID. Stored locally in `.aw/team-certs/*.pem`.
+- **Team controller** — a keypair separate from member identities. Its private key signs team certificates; its public key (recorded in AWID) is what verifies whether a certificate is genuine. Team controllers authorize membership; they do not decrypt member conversations and must not substitute a member's E2E encryption key.
+- **Team certificate** — a signed statement that a specific `did:key` is a member of a specific team, with an alias and metadata. Public; replicated in AWID. Stored locally in `.aw/team-certs/*.pem`. A certificate proves team membership; it is not a message-decryption key.
 - **Team id** — canonical form is `<name>:<namespace>` (e.g. `personal:acme.com`, `aweb:juan.aweb.ai`). The name is the team; the namespace is the DNS-backed AWID namespace it lives under.
 - **Hosted vs BYOT team authority** — *hosted* means aweb holds the team controller signing key (for `*.aweb.ai` namespaces). *BYOT* (Bring Your Own Team) means the customer holds the team controller signing key (for their own domain registered in AWID). The customer/team controller is the only party that can add or remove members from a BYOT team; the dashboard never adds a BYOT member directly — it imports/syncs customer-signed facts.
 
@@ -30,12 +30,14 @@ Identity custody (where the private key lives) and team authority (who holds the
 
 | Team authority | Identity custody | Meaning |
 | --- | --- | --- |
-| Hosted | Custodial | aweb manages team authority AND holds the encrypted identity key (browser/MCP). |
+| Hosted | Custodial | aweb manages team authority AND holds hosted identity signing key material (browser/MCP). Messaging in this mode is server-readable hosted messaging, not E2E. |
 | Hosted | Self-custodial | aweb manages team authority; the terminal agent holds its own `.aw/signing.key`. |
 | BYOT | Self-custodial | the customer controls team authority; the agent holds its own key. |
 | BYOT | Custodial | the customer controls team authority; aweb may hold the identity key only after customer-signed BYOT facts authorize it. |
 
 A custodial identity has **no BYOT team authority** until the customer-signed team certificate and address facts match. Do not infer team authority from identity custody.
+
+For E2E messaging, custody and team membership are still not enough by themselves: the recipient's encryption public key must be identity-authorized as described in `docs/e2e-messaging-contract.md`. Team/namespace authority may distribute that assertion, but it must not replace the member's key. If an encryption-key check fails, do not suggest a team-controller workaround or plaintext fallback; stop and route the user to the approved identity/key setup or recovery flow.
 
 ## Readiness checks (membership level)
 

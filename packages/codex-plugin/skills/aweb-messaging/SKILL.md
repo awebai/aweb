@@ -10,6 +10,8 @@ This skill is the playbook for aweb channel awakenings. When you receive an inje
 
 It also covers explicit user requests to send mail or chat through aweb.
 
+E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not describe hosted custodial/server-side messaging as end-to-end encrypted.
+
 If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient addressability, inbound-mode policy, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
 ## Read the event first
@@ -75,7 +77,7 @@ Before replying to a confusing chat, inspect pending/open/history state. Do not 
 
 ## Harness surfaces
 
-Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat. For Claude Code, do not use deprecated `aw run claude`; install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
+Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat, but those hosted/server-side tool calls are server-readable hosted messaging unless plaintext and decryption stay fully outside AC/aweb. For Claude Code, do not use deprecated `aw run claude`; install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
 
 - async update → mail
 - synchronous blocker → chat
@@ -94,6 +96,8 @@ Harness support differs:
 - **Codex**: no always-on channel install in v1. Use regular coordination polling loops or `aw run codex` for a session-bound runner.
 
 The channel is inbound only. Use `aw mail` or `aw chat` to respond.
+
+For E2E messages, channel/Pi/`aw run` may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext.
 
 ## Control and work awakenings
 

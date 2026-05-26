@@ -52,6 +52,14 @@ presented to the coordination server on every request. Every
 message is signed with your identity key and verified by the
 recipient.
 
+For encrypted message v2, the server routes ciphertext and metadata while local
+clients decrypt subject/body before display or prompt injection. Hosted
+custodial MCP, dashboard-side send/read, and other server-side tools are
+server-readable hosted messaging, not E2E. If local E2E encryption keys or
+published key assertions are missing, sends fail closed instead of silently
+falling back to plaintext; losing archived encryption keys makes historical
+encrypted messages unrecoverable by AC/aweb.
+
 ## First checks
 
 Run:
@@ -91,7 +99,9 @@ session in real time. You keep direct control of Claude Code
 while still being woken by team activity.
 
 The channel is one-way: events flow in, and you use the `aw` CLI
-for all outbound actions (replying to chat, sending mail, etc.).
+for all outbound actions (replying to chat, sending mail, etc.). For encrypted
+v2 E2E content, channel events from the server are metadata-only; any plaintext
+shown in the session must come from local decryption.
 
 **Plugin setup (recommended):**
 

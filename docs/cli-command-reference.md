@@ -792,6 +792,12 @@ Flags:
 - `-h, --help help for chat`
 - `--team string Override the selected team_id for this command`
 
+E2E note: encrypted v2 chat content is decrypted by the local client before
+display. Server-side chat surfaces and events must stay metadata-only for E2E
+content; hosted/server-side messaging is server-readable hosted messaging, not
+E2E. Missing encryption capability or keys fail closed rather than silently
+falling back to plaintext.
+
 ## `chat extend-wait`
 
 ### `chat extend-wait`
@@ -1041,6 +1047,12 @@ Subcommands:
 Flags:
 - `-h, --help help for mail`
 - `--team string Override the selected team_id for this command`
+
+E2E note: encrypted v2 mail keeps subject/body out of AC/aweb servers; local
+clients decrypt before display. Legacy plaintext remains separately labeled, and
+an intended E2E send must fail closed when recipient encryption capability or
+keys are missing unless the user explicitly selects the approved legacy
+plaintext mode.
 
 ## `mail inbox`
 

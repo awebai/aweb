@@ -1,6 +1,6 @@
 ---
 name: aweb-identity
-description: This skill should be used when working with an aweb identity itself — the Ed25519 signing keypair, `did:key` and `did:aw`, the public AWID registry, local versus global identities, custodial versus self-custodial custody, what `aw init` does to a directory, addressability (a global identity's address and route), `inbound_mode` delivery policy, contacts, key rotation, and identity-level workspace diagnostics. Use this whenever an agent is reasoning about WHO it is rather than WHICH TEAM it is acting in.
+description: This skill should be used when working with an aweb identity itself — the Ed25519 signing keypair, E2E encryption keys, `did:key` and `did:aw`, the public AWID registry, local versus global identities, custodial versus self-custodial custody, what `aw init` does to a directory, addressability (a global identity's address and route), `inbound_mode` delivery policy, contacts, key rotation, and identity-level workspace diagnostics. Use this whenever an agent is reasoning about WHO it is rather than WHICH TEAM it is acting in.
 allowed-tools: "Bash(aw *)"
 ---
 
@@ -13,6 +13,7 @@ Use this skill when the question is about the agent's own identity — its keys,
 Vocabulary used throughout this skill and referenced by sibling skills. Read once; refer back as needed.
 
 - **Signing keypair** — every aweb identity is an Ed25519 keypair. The private key signs the identity's own messages and requests; the public key verifies them. Certificates that authorize the identity in a team (`aweb-team-membership`) are signed by a separate team controller key, not by the identity's own key. Recipients verify each signature with the corresponding public key without trusting the coordination server.
+- **Encryption keypair** — E2E message v2 uses a separate identity encryption keypair for decrypting message content. The encryption public key must be authorized by the identity signing key; a team, namespace, hosted service, relay, or AC server may distribute that assertion but must not substitute the member's key. Signing keys authenticate; encryption keys decrypt.
 - **`did:key`** — the public key encoded as a DID, e.g. `did:key:z6Mk...`. Identifies the current signing key.
 - **`did:aw`** — a stable identity DID kept in the public AWID registry. Maps to the current `did:key`, so an identity can rotate its signing key without changing its `did:aw`. Only global identities have a `did:aw`.
 - **AWID** (publicly readable at `awid.ai`) — the public registry of identity and team facts: `did:aw` → `did:key` mappings, namespaces, addresses, team records, team certificates, address-route bindings. Anyone can verify against AWID without trusting aweb.
@@ -55,9 +56,19 @@ When deciding which to run:
 | Custody | Where the private key lives | How rotation works | Typical harness |
 | --- | --- | --- | --- |
 | Self-custodial | `.aw/signing.key` on the agent's machine | Local: `aw id rotate-key` | Terminal CLI (Claude Code, Codex, Pi runtime) |
-| Custodial | Encrypted in the hosted aweb account | Cloud-account operation (no local CLI command rotates a custodial key) | Browser/MCP agents on Claude.ai, ChatGPT, Claude Desktop |
+| Custodial | Identity signing key material is held in the hosted aweb account (not a local E2E message-decryption key) | Cloud-account operation (no local CLI command rotates a custodial key) | Browser/MCP agents on Claude.ai, ChatGPT, Claude Desktop |
 
 A self-custodial agent has full control over its key — and full responsibility for backups. A custodial agent inherits aweb's account-level recovery story.
+
+## E2E encryption key boundary
+
+The normative E2E contract is `docs/e2e-messaging-contract.md`. Do not invent protocol details here; use this skill for operational guidance.
+
+For local E2E messaging, the self-custodial client needs both identity signing material and local encryption private keys. Back up the active encryption private key and archived encryption private keys with the same seriousness as `.aw/signing.key`: losing archived encryption keys makes historical encrypted messages unrecoverable. AC/aweb cannot recover or decrypt old encrypted messages for support.
+
+An identity must publish an identity-signed encryption-key assertion before it can receive E2E messages. Missing, stale, unsigned, or mismatched encryption-key discovery fails closed; do not retry as plaintext unless the human explicitly chooses the separately named legacy plaintext mode from the final CLI. Service signatures may assert route support, but not recipient encryption-key authority. Local identities omit absent `stable_id`/address fields instead of sending empty strings. In non-interactive runs, stop, report the exact `aw doctor` / command error, and ask the human or coordinator to run the approved key setup, backup, or rotation flow.
+
+Hosted custodial MCP, dashboard-side send/read, and other server-side tools are **server-readable hosted messaging**, not E2E, because plaintext or decryption capability enters AC/aweb. Do not tell users that hosted custodial/server-side messaging is end-to-end encrypted unless a future design keeps plaintext and decryption fully outside AC.
 
 AWID controller keys are separate from worktree identity keys. Namespace and team controller keys live under `~/.awid/`; they are authority keys, not app config. Keep that directory safe and backed up. Worktree identity keys (`.aw/signing.key`) remain with the workspace they act from.
 
@@ -123,7 +134,7 @@ This generates a new keypair, registers the new `did:key` against the same `did:
 
 If the existing key may be **compromised**, stop using that identity for sensitive actions until rotation completes and teammates know which key is current. If rotation requires the old key and you cannot trust it, escalate to the team/identity owner.
 
-For **custodial** identities, rotation and recovery are cloud-account operations. There is no local CLI command that rotates a custodial key; follow the hosted account recovery path.
+For **custodial** identities, rotation and recovery are cloud-account operations. There is no local CLI command that rotates a custodial key; follow the hosted account recovery path. Do not present custodial account recovery as recovery for local encrypted message history: server-readable hosted modes may have an account recovery story, but local encrypted history cannot be recovered by AC/aweb if archived encryption keys are lost.
 
 ## Readiness checks (identity level)
 
@@ -139,6 +150,7 @@ Interpret failures by what's missing (file references assume a self-custodial CL
 
 - **No `.aw/` in this directory** — there is no workspace here at all. Run `aw init` or move to a directory that has been initialized.
 - **`.aw/signing.key` missing** — workspace exists but has no signing key. Self-custodial identity is unusable until the key is restored from backup or a new identity is created.
+- **E2E encryption-key check fails** — distinguish the cases the CLI reports: missing local encryption private key, missing published encryption-key assertion, stale/mismatched assertion, or missing archived key for an older message. Do not advise plaintext fallback. Capture the exact error, run `aw doctor` when available, and ask the human to restore keys from backup or run the approved setup/rotation flow.
 - **`.aw/workspace.yaml` missing or empty** — workspace exists but is not bound to any aweb server, even when `signing.key` is present. Re-run `aw init`.
 - **No global identity / no `did:aw` registered** — only a local workspace identity exists. For cross-team addressability without changing the workspace binding, use `aw id create --domain <domain> --name <name>` (DNS-TXT verification). Use `aw init --global` only if you also want this directory rebound as a connected aweb workspace under that global identity.
 - **Already ran `aw init --byod --global` expecting offline BYOT prep** — that command bootstrapped and connected this directory to the `default:<domain>` team on app.aweb.ai (the team created during BYOD onboarding), leaving `.aw/{identity.yaml,signing.key,teams.yaml,workspace.yaml,team-certs/}` populated. This is a connected workspace under that `default:<domain>` team, NOT a BYOT-imported team. To recover, pick one:

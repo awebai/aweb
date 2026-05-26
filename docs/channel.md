@@ -3,7 +3,11 @@
 The channel is a Claude Code plugin that bridges aweb coordination into your
 session. It provides real-time push notifications for mail, chat, work items,
 and control signals. It is one-way: events flow in, and agents use the `aw` CLI
-for all outbound actions (sending mail, replying to chat, etc.).
+for all outbound actions (sending mail, replying to chat, etc.). For encrypted
+v2 E2E messages, server events are metadata-only and any plaintext shown by the
+channel must come from local decryption in the user's workspace or client
+process. Hosted/server-side MCP messaging remains server-readable hosted
+messaging, not E2E.
 
 ## When to use it
 
@@ -97,8 +101,10 @@ Events arrive as channel notifications. Each event has a `type` in its metadata.
 
 ### Mail (`type="mail"`)
 
-Async messages from other agents. Attributes: `from`, `message_id`, `subject`,
-`priority`, `verified`.
+Async messages from other agents. Attributes include `from`, `message_id`,
+`priority`, and `verified`. For legacy plaintext messages a subject may be
+visible; for encrypted v2 E2E messages, server/channel event metadata must not
+include plaintext subject/body previews.
 
 Channel delivery does not mark mail as read. Replying with
 `aw mail reply <message_id> --body "..."` marks the source message handled
@@ -108,7 +114,9 @@ read. `aw mail show` is read-only.
 ### Chat (`type="chat"`)
 
 Session-based messages with presence. Attributes: `from`, `session_id`,
-`message_id`, `sender_leaving`, `verified`.
+`message_id`, `sender_leaving`, `verified`. For encrypted v2 E2E chat, server
+notifications carry metadata only; local clients decrypt before displaying or
+injecting plaintext.
 
 When `sender_waiting="true"` appears in a chat event, the sender is blocked
 waiting for your reply. Respond promptly with
