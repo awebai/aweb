@@ -1,9 +1,13 @@
 package awid
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -279,6 +283,70 @@ func TestE2EEMailDecryptRejectsInnerHeaderMismatch(t *testing.T) {
 	}
 }
 
+func TestClientSendMessageE2EEPostsOpaqueEnvelopeOnly(t *testing.T) {
+	alice := newE2EETestIdentity(t, "example.com/alice")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+
+	var posted SendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(SendMessageResponse{
+			MessageID:      posted.MessageID,
+			ConversationID: posted.ConversationID,
+			Status:         "delivered",
+			DeliveredAt:    "2026-05-26T12:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, alice.priv, alice.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(alice.stableID)
+	c.SetAddress(alice.address)
+	c.SetE2EEKey(alice.assertion, alice.xPriv)
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != bob.address {
+			t.Fatalf("resolve identifier=%q want %q", identifier, bob.address)
+		}
+		return &ResolvedIdentity{
+			DID:           bob.did,
+			StableID:      bob.stableID,
+			Address:       bob.address,
+			EncryptionKey: bob.assertion,
+		}, nil
+	}})
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToAddress:   bob.address,
+		Subject:     "plain subject",
+		Body:        "plain body",
+		EncryptE2EE: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted.ContentMode != ContentModeEncryptedV2 || posted.MessageVersion != E2EEMessageVersion {
+		t.Fatalf("posted mode/version = %q/%d", posted.ContentMode, posted.MessageVersion)
+	}
+	if posted.Subject != "" || posted.Body != "" {
+		t.Fatalf("plaintext leaked in request: subject=%q body=%q", posted.Subject, posted.Body)
+	}
+	if posted.Encrypted == nil || posted.Encrypted.Ciphertext == "" {
+		t.Fatalf("missing encrypted envelope: %#v", posted.Encrypted)
+	}
+	if strings.Contains(mustJSON(t, posted.Encrypted), "plain subject") || strings.Contains(mustJSON(t, posted.Encrypted), "plain body") {
+		t.Fatalf("encrypted envelope contains plaintext")
+	}
+}
+
 func encryptE2EETestMessage(t *testing.T, alice, bob e2eeTestIdentity, messageID, conversationID string) *E2EEMessageEnvelope {
 	t.Helper()
 	env, err := EncryptE2EEMail(E2EEEncryptMailParams{
@@ -314,4 +382,13 @@ func resignE2EETestEnvelope(t *testing.T, env *E2EEMessageEnvelope, signingKey e
 		t.Fatal(err)
 	}
 	env.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, payload))
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

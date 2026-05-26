@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Literal
@@ -256,6 +257,10 @@ async def deliver_message(
     to_agent_id: str | None = None,
     signature: str | None = None,
     signed_payload: str | None = None,
+    content_mode: str = "legacy_plaintext_v1",
+    message_version: int = 1,
+    encrypted_envelope: dict | None = None,
+    encrypted_metadata: dict | None = None,
     created_at: datetime | None = None,
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
@@ -298,6 +303,18 @@ async def deliver_message(
     from_alias_value = (from_alias or sender_address or sender_did).strip()
     from_address_value = (sender_address or "").strip() or None
     to_alias_value = (to_alias or recipient.get("alias") or recipient.get("address") or recipient_did).strip()
+    if content_mode == "encrypted_v2":
+        subject = ""
+        body = ""
+        message_version = 2
+        if encrypted_envelope is None:
+            raise ValidationError("Missing encrypted envelope")
+        encrypted_metadata = encrypted_metadata or {}
+    else:
+        content_mode = "legacy_plaintext_v1"
+        message_version = 1
+        encrypted_envelope = None
+        encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
@@ -305,8 +322,12 @@ async def deliver_message(
         INSERT INTO {{tables.messages}}
             (message_id, from_did, to_did, from_alias, from_address, to_alias, subject, body,
              priority, team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at,
-             conversation_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             conversation_id, message_version, content_mode, encrypted_envelope,
+             encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+             encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
+             signed_envelope_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -325,6 +346,18 @@ async def deliver_message(
         signed_payload,
         created_at,
         conversation_uuid,
+        message_version,
+        content_mode,
+        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":")) if encrypted_envelope is not None else None,
+        encrypted_metadata.get("encrypted_ciphertext"),
+        json.dumps(encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if encrypted_metadata.get("encrypted_key_wraps") is not None else None,
+        encrypted_metadata.get("encrypted_ciphertext_hash"),
+        encrypted_metadata.get("encrypted_ciphertext_size"),
+        encrypted_metadata.get("encrypted_key_wraps_hash"),
+        encrypted_metadata.get("encrypted_inner_header_hash"),
+        encrypted_metadata.get("encrypted_suite"),
+        encrypted_metadata.get("encrypted_signing_key_id"),
+        encrypted_metadata.get("signed_envelope_hash"),
     )
     if not row:
         raise ServiceError("Failed to create message")

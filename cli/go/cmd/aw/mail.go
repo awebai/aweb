@@ -21,14 +21,16 @@ var mailCmd = &cobra.Command{
 // mail send
 
 var (
-	mailSendTo             string
-	mailSendToDID          string
-	mailSendToAddress      string
-	mailSendSubject        string
-	mailSendBody           string
-	mailSendBodyFile       string
-	mailSendPriority       string
-	mailSendConversationID string
+	mailSendTo              string
+	mailSendToDID           string
+	mailSendToAddress       string
+	mailSendSubject         string
+	mailSendBody            string
+	mailSendBodyFile        string
+	mailSendPriority        string
+	mailSendConversationID  string
+	mailSendE2EE            bool
+	mailSendLegacyPlaintext bool
 )
 
 func mailIdentityMatchesTarget(msg awid.InboxMessage, targetKind, targetValue string) bool {
@@ -452,6 +454,15 @@ var mailSendCmd = &cobra.Command{
 		}
 
 		var resp *awid.SendMessageResponse
+		if mailSendE2EE && mailSendLegacyPlaintext {
+			return usageError("--e2ee and --legacy-plaintext are mutually exclusive")
+		}
+		req.EncryptE2EE = mailSendE2EE
+		if req.EncryptE2EE {
+			if err := configureClientE2EEForMail(c, sel, true); err != nil {
+				return err
+			}
+		}
 		if targetKind == "alias" {
 			resp, err = c.SendMessage(ctx, req)
 		} else {
@@ -503,10 +514,12 @@ var mailSendCmd = &cobra.Command{
 }
 
 var (
-	mailReplySubject  string
-	mailReplyBody     string
-	mailReplyBodyFile string
-	mailReplyPriority string
+	mailReplySubject         string
+	mailReplyBody            string
+	mailReplyBodyFile        string
+	mailReplyPriority        string
+	mailReplyE2EE            bool
+	mailReplyLegacyPlaintext bool
 )
 
 var mailReplyCmd = &cobra.Command{
@@ -556,11 +569,20 @@ var mailReplyCmd = &cobra.Command{
 		if strings.TrimSpace(subject) == "" {
 			subject = "Re"
 		}
+		if mailReplyE2EE && mailReplyLegacyPlaintext {
+			return usageError("--e2ee and --legacy-plaintext are mutually exclusive")
+		}
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
 			Subject:        subject,
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
+			EncryptE2EE:    mailReplyE2EE,
+		}
+		if req.EncryptE2EE {
+			if err := configureClientE2EEForMail(c, sel, true); err != nil {
+				return err
+			}
 		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {
@@ -674,6 +696,53 @@ func resolveMailTarget() (string, string, error) {
 	return "address", awid.NormalizeHostedHandleAddress(mailSendToAddress), nil
 }
 
+func configureClientE2EEForMail(c *aweb.Client, sel *awconfig.Selection, required bool) error {
+	if c == nil || c.Client == nil || sel == nil {
+		return usageError("E2E mail requires an initialized self-custodial workspace")
+	}
+	statePath := awconfig.WorktreeEncryptionStatePath(sel.WorkingDir)
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if !required {
+				return nil
+			}
+			return usageError("E2E mail requires a local encryption key; run `aw id encryption-key setup`, or pass --legacy-plaintext for explicit server-readable mail")
+		}
+		return err
+	}
+	record := state.ActiveRecord()
+	if record == nil {
+		if !required {
+			return nil
+		}
+		return usageError("E2E mail requires an active local encryption key; run `aw id encryption-key setup`, or pass --legacy-plaintext for explicit server-readable mail")
+	}
+	material, err := validateEncryptionRecordPrivateKey(sel.WorkingDir, record)
+	if err != nil {
+		return err
+	}
+	assertion, err := loadEncryptionAssertion(sel.WorkingDir, record.AssertionPath)
+	if err != nil {
+		return err
+	}
+	identity := &awconfig.ResolvedIdentity{
+		WorkingDir: sel.WorkingDir,
+		DID:        strings.TrimSpace(sel.DID),
+		StableID:   strings.TrimSpace(sel.StableID),
+	}
+	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
+		return err
+	}
+	privatePath := resolveWorktreeRelativePath(sel.WorkingDir, record.PrivateKeyPath)
+	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		return err
+	}
+	c.Client.SetE2EEKey(assertion, privateKey)
+	return nil
+}
+
 // mail inbox
 
 var (
@@ -690,6 +759,9 @@ var mailInboxCmd = &cobra.Command{
 
 		c, sel, err := resolveClientSelection()
 		if err != nil {
+			return err
+		}
+		if err := configureClientE2EEForMail(c, sel, false); err != nil {
 			return err
 		}
 		resp, err := c.Inbox(ctx, awid.InboxParams{
@@ -782,13 +854,17 @@ var mailShowCmd = &cobra.Command{
 		defer cancel()
 
 		var c *aweb.Client
+		var sel *awconfig.Selection
 		var err error
 		if strings.TrimSpace(teamFlag) != "" {
-			c, _, err = resolveClientSelection()
+			c, sel, err = resolveClientSelection()
 		} else {
-			c, _, err = resolveIdentityMessagingClientSelection()
+			c, sel, err = resolveIdentityMessagingClientSelection()
 		}
 		if err != nil {
+			return err
+		}
+		if err := configureClientE2EEForMail(c, sel, false); err != nil {
 			return err
 		}
 		var resp *awid.InboxResponse
@@ -821,6 +897,8 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", "Read body from file (use this for markdown with backticks; bypasses shell interpolation)")
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue")
+	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing")
+	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail")
 
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages")
@@ -828,6 +906,8 @@ func init() {
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", "Body (mutually exclusive with --body-file)")
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", "Read body from file")
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
+	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing")
+	mailReplyCmd.Flags().BoolVar(&mailReplyLegacyPlaintext, "legacy-plaintext", false, "Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
 	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages")

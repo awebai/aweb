@@ -115,11 +115,13 @@ type E2EEInnerPayload struct {
 }
 
 type E2EERecipientKey struct {
-	Address       string
-	DID           string
-	StableID      string
-	TeamID        string
-	EncryptionKey *EncryptionKeyAssertion
+	Address        string
+	DID            string
+	StableID       string
+	TeamID         string
+	DeliveryOrigin string
+	InboundMode    string
+	EncryptionKey  *EncryptionKeyAssertion
 }
 
 type E2EESenderKey struct {

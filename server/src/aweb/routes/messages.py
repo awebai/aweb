@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from aweb.deps import get_db
 from aweb.config import get_settings
+from aweb.e2ee_messages import (
+    E2EEEnvelopeError,
+    encrypted_message_storage_metadata,
+    validate_e2ee_mail_envelope,
+)
 from aweb.federation.envelope import (
     FederationEnvelope,
     FederationEnvelopeError,
@@ -85,13 +90,36 @@ class SendMessageRequest(BaseModel):
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
     conversation_id: Optional[str] = None
     subject: str = ""
-    body: str
+    body: str = ""
+    content_mode: Optional[str] = None
+    message_version: Optional[int] = None
+    encrypted_envelope: Optional[dict] = None
     priority: MessagePriority = "normal"
     message_id: Optional[str] = None
     timestamp: Optional[str] = None
     from_did: Optional[str] = Field(default=None, max_length=256)
     signature: Optional[str] = Field(default=None, max_length=512)
     signed_payload: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_content_mode(self):
+        is_encrypted = (
+            self.content_mode == "encrypted_v2"
+            or self.message_version == 2
+            or self.encrypted_envelope is not None
+        )
+        if is_encrypted:
+            if self.content_mode != "encrypted_v2":
+                raise ValueError("content_mode must be encrypted_v2 for encrypted messages")
+            if self.message_version != 2:
+                raise ValueError("message_version must be 2 for encrypted messages")
+            if self.encrypted_envelope is None:
+                raise ValueError("encrypted_envelope is required for encrypted messages")
+            if self.subject or self.body:
+                raise ValueError("encrypted messages must not include plaintext subject or body")
+        elif self.body == "":
+            raise ValueError("body is required for legacy plaintext mail")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -173,8 +201,11 @@ class InboxMessage(BaseModel):
     from_agent_id: Optional[str] = None
     from_alias: str
     to_alias: str
-    subject: str
-    body: str
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    content_mode: str = "legacy_plaintext_v1"
+    message_version: int = 1
+    encrypted_envelope: Optional[dict] = None
     priority: MessagePriority
     read_at: Optional[str]
     created_at: str
@@ -213,6 +244,10 @@ async def _inbox_response_from_rows(db, rows) -> InboxResponse:
     for r in rows:
         from_did = (r.get("from_did") or "").strip()
         to_did = (r.get("to_did") or "").strip()
+        content_mode = str(r.get("content_mode") or "legacy_plaintext_v1")
+        encrypted_envelope = r.get("encrypted_envelope")
+        if isinstance(encrypted_envelope, str):
+            encrypted_envelope = json.loads(encrypted_envelope)
         messages.append(
             InboxMessage(
                 message_id=str(r["message_id"]),
@@ -220,8 +255,11 @@ async def _inbox_response_from_rows(db, rows) -> InboxResponse:
                 from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
                 from_alias=r["from_alias"],
                 to_alias=r["to_alias"],
-                subject=r["subject"],
-                body=r["body"],
+                subject=(r["subject"] if content_mode == "legacy_plaintext_v1" else ""),
+                body=(r["body"] if content_mode == "legacy_plaintext_v1" else ""),
+                content_mode=content_mode,
+                message_version=int(r.get("message_version") or 1),
+                encrypted_envelope=(dict(encrypted_envelope) if encrypted_envelope is not None else None),
                 priority=r["priority"],
                 read_at=r["read_at"].isoformat() if r.get("read_at") else None,
                 created_at=r["created_at"].isoformat(),
@@ -287,7 +325,8 @@ async def get_mail_conversation(
             """
             SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
-                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+                   m.content_mode, m.message_version, m.encrypted_envelope
             FROM {{tables.messages}} m
             WHERE m.conversation_id = $1
             ORDER BY m.created_at ASC, m.message_id ASC
@@ -302,7 +341,8 @@ async def get_mail_conversation(
         """
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1
           AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
@@ -565,6 +605,38 @@ def _require_remote_mail_signature(payload: SendMessageRequest) -> None:
         )
 
 
+def _validate_encrypted_payload(
+    payload: SendMessageRequest,
+    *,
+    auth: MessagingAuth,
+    sender_did: str,
+    recipient: dict | None,
+    recipient_did: str,
+) -> dict | None:
+    if payload.content_mode != "encrypted_v2":
+        return None
+    if payload.message_id is None or payload.conversation_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="message_id and conversation_id are required for encrypted mail",
+        )
+    recipient_address = _recipient_conversation_address(recipient, payload)
+    try:
+        validate_e2ee_mail_envelope(
+            payload.encrypted_envelope or {},
+            message_id=payload.message_id,
+            conversation_id=payload.conversation_id,
+            sender_did=(auth.did_key or sender_did).strip(),
+            sender_stable_id=(auth.did_aw or "").strip() or None,
+            recipient_did=recipient_did,
+            recipient_stable_id=str((recipient or {}).get("did_aw") or "").strip() or None,
+            recipient_address=recipient_address,
+        )
+    except E2EEEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return encrypted_message_storage_metadata(payload.encrypted_envelope or {})
+
+
 def _remote_delivery_origin(recipient: dict | None) -> str:
     return str((recipient or {}).get("delivery_origin") or "").strip()
 
@@ -619,6 +691,8 @@ async def _deliver_remote_mail_and_project_locally(
     created_at: datetime | None,
     msg_uuid: UUID | None,
 ) -> SendMessageResponse:
+    if payload.content_mode == "encrypted_v2":
+        raise HTTPException(status_code=422, detail="Federated E2E mail delivery is not implemented yet")
     delivery_origin = _remote_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(
@@ -915,6 +989,13 @@ async def _send_mail_conversation_continuation(
                 conversation_id=conversation_id,
             )
             created_at = _parse_signed_timestamp(payload.timestamp)
+        encrypted_metadata = _validate_encrypted_payload(
+            payload,
+            auth=auth,
+            sender_did=sender_did,
+            recipient=recipient,
+            recipient_did=recipient_participant["did"],
+        )
         message_id, created_at = await deliver_message(
             db,
             registry_client=registry_client,
@@ -932,6 +1013,10 @@ async def _send_mail_conversation_continuation(
             priority=payload.priority,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode or "legacy_plaintext_v1",
+            message_version=payload.message_version or 1,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation_id,
@@ -1423,6 +1508,13 @@ async def send_message(
                 sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
+        encrypted_metadata = _validate_encrypted_payload(
+            payload,
+            auth=auth,
+            sender_did=sender_did,
+            recipient=recipient,
+            recipient_did=recipient_did or "",
+        )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
         conversation = await create_conversation(
@@ -1466,6 +1558,10 @@ async def send_message(
             priority=payload.priority,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode or "legacy_plaintext_v1",
+            message_version=payload.message_version or 1,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation["conversation_id"],
@@ -1537,7 +1633,8 @@ async def get_inbox(
         f"""
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
         ORDER BY m.created_at DESC

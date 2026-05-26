@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type MessagePriority string
@@ -14,23 +15,30 @@ const (
 	PriorityNormal MessagePriority = "normal"
 	PriorityHigh   MessagePriority = "high"
 	PriorityUrgent MessagePriority = "urgent"
+
+	ContentModeLegacyPlaintextV1 = "legacy_plaintext_v1"
+	ContentModeEncryptedV2       = "encrypted_v2"
 )
 
 type SendMessageRequest struct {
-	ToAgentID      string          `json:"to_agent_id,omitempty"`
-	ToAlias        string          `json:"to_alias,omitempty"`
-	ToDID          string          `json:"to_did,omitempty"`
-	ToStableID     string          `json:"to_stable_id,omitempty"`
-	ToAddress      string          `json:"to_address,omitempty"`
-	ConversationID string          `json:"conversation_id,omitempty"`
-	Subject        string          `json:"subject,omitempty"`
-	Body           string          `json:"body"`
-	Priority       MessagePriority `json:"priority,omitempty"`
-	MessageID      string          `json:"message_id,omitempty"`
-	Timestamp      string          `json:"timestamp,omitempty"`
-	FromDID        string          `json:"from_did,omitempty"`
-	Signature      string          `json:"signature,omitempty"`
-	SignedPayload  string          `json:"signed_payload,omitempty"`
+	ToAgentID      string               `json:"to_agent_id,omitempty"`
+	ToAlias        string               `json:"to_alias,omitempty"`
+	ToDID          string               `json:"to_did,omitempty"`
+	ToStableID     string               `json:"to_stable_id,omitempty"`
+	ToAddress      string               `json:"to_address,omitempty"`
+	ConversationID string               `json:"conversation_id,omitempty"`
+	Subject        string               `json:"subject,omitempty"`
+	Body           string               `json:"body"`
+	ContentMode    string               `json:"content_mode,omitempty"`
+	MessageVersion int                  `json:"message_version,omitempty"`
+	Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
+	Priority       MessagePriority      `json:"priority,omitempty"`
+	MessageID      string               `json:"message_id,omitempty"`
+	Timestamp      string               `json:"timestamp,omitempty"`
+	FromDID        string               `json:"from_did,omitempty"`
+	Signature      string               `json:"signature,omitempty"`
+	SignedPayload  string               `json:"signed_payload,omitempty"`
+	EncryptE2EE    bool                 `json:"-"`
 }
 
 type SendMessageResponse struct {
@@ -104,6 +112,16 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if strings.TrimSpace(payload.ToAddress) != "" {
 		to = strings.TrimSpace(payload.ToAddress)
 	}
+	if payload.EncryptE2EE {
+		if err := c.prepareE2EEMail(ctx, &payload, identityTarget, initialConversationID, hasRecipient); err != nil {
+			return nil, err
+		}
+		var out SendMessageResponse
+		if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
+	}
 	from := c.address
 	if c.signingKey != nil {
 		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
@@ -139,6 +157,140 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageRequest, identityTarget bool, initialConversationID string, hasRecipient bool) error {
+	if c == nil || payload == nil {
+		return errors.New("aweb: request is required")
+	}
+	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
+		return errors.New("E2E mail requires a local self-custodial signing key")
+	}
+	if c.e2eeEncryptionKey == nil {
+		return errors.New("E2E mail requires a local encryption key; run `aw id encryption-key setup`")
+	}
+	recipient, err := c.e2eeMailRecipient(ctx, payload)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	messageID := strings.TrimSpace(payload.MessageID)
+	if messageID == "" {
+		messageID, err = GenerateUUID4()
+		if err != nil {
+			return err
+		}
+	}
+	conversationID := strings.TrimSpace(payload.ConversationID)
+	if conversationID == "" && initialConversationID == "" && hasRecipient {
+		conversationID, err = GenerateUUID4()
+		if err != nil {
+			return err
+		}
+		payload.ConversationID = conversationID
+	}
+	if conversationID == "" {
+		return errors.New("E2E mail requires a conversation_id or explicit recipient")
+	}
+	fromAddress := c.address
+	if identityTarget && fromAddress == "" {
+		fromAddress = strings.TrimSpace(c.did)
+	}
+	envelope, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender: E2EESenderKey{
+			Address:       fromAddress,
+			DID:           c.did,
+			StableID:      c.stableID,
+			TeamID:        c.teamID,
+			EncryptionKey: c.e2eeEncryptionKey,
+			SigningKey:    c.signingKey,
+		},
+		Recipients:          []E2EERecipientKey{recipient},
+		Subject:             payload.Subject,
+		Body:                payload.Body,
+		MessageID:           messageID,
+		ConversationID:      conversationID,
+		CreatedAt:           now,
+		DeliveryOrigin:      recipient.DeliveryOrigin,
+		ObservedInboundMode: recipient.InboundMode,
+	})
+	if err != nil {
+		return err
+	}
+	payload.MessageID = envelope.MessageID
+	payload.Timestamp = envelope.CreatedAt
+	payload.FromDID = c.did
+	payload.ToDID = envelope.Routing.ToDID
+	payload.ToStableID = envelope.Routing.ToStableID
+	payload.ConversationID = envelope.ConversationID
+	payload.ContentMode = ContentModeEncryptedV2
+	payload.MessageVersion = E2EEMessageVersion
+	payload.Encrypted = envelope
+	payload.Subject = ""
+	payload.Body = ""
+	payload.Signature = ""
+	payload.SignedPayload = ""
+	return nil
+}
+
+func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequest) (E2EERecipientKey, error) {
+	if strings.TrimSpace(payload.ToAlias) != "" || strings.TrimSpace(payload.ToAgentID) != "" {
+		agent, err := c.e2eeRecipientAgent(ctx, strings.TrimSpace(payload.ToAgentID), strings.TrimSpace(payload.ToAlias))
+		if err != nil {
+			return E2EERecipientKey{}, err
+		}
+		assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
+		if err != nil {
+			return E2EERecipientKey{}, err
+		}
+		return E2EERecipientKey{
+			Address:       strings.TrimSpace(agent.Address),
+			DID:           strings.TrimSpace(agent.DIDKey),
+			StableID:      strings.TrimSpace(agent.DIDAW),
+			EncryptionKey: assertion,
+			InboundMode:   strings.TrimSpace(agent.InboundMode),
+		}, nil
+	}
+	target := strings.TrimSpace(payload.ToAddress)
+	if target == "" {
+		target = strings.TrimSpace(payload.ToStableID)
+	}
+	if target == "" {
+		target = strings.TrimSpace(payload.ToDID)
+	}
+	if target == "" {
+		return E2EERecipientKey{}, errors.New("E2E mail requires an explicit recipient to resolve an encryption key")
+	}
+	identity, err := c.ResolveIdentity(ctx, target)
+	if err != nil {
+		return E2EERecipientKey{}, err
+	}
+	if identity.EncryptionKey == nil {
+		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask it to run `aw id encryption-key setup`")
+	}
+	return E2EERecipientKey{
+		Address:        strings.TrimSpace(identity.Address),
+		DID:            strings.TrimSpace(identity.DID),
+		StableID:       strings.TrimSpace(identity.StableID),
+		EncryptionKey:  identity.EncryptionKey,
+		DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+	}, nil
+}
+
+func (c *Client) e2eeRecipientAgent(ctx context.Context, agentID, alias string) (AgentView, error) {
+	resp, err := c.ListAgents(ctx)
+	if err != nil {
+		return AgentView{}, err
+	}
+	for _, agent := range resp.Agents {
+		if strings.TrimSpace(agentID) != "" && strings.TrimSpace(agent.AgentID) == strings.TrimSpace(agentID) {
+			return agent, nil
+		}
+		if strings.TrimSpace(alias) != "" && strings.TrimSpace(agent.Alias) == strings.TrimSpace(alias) {
+			return agent, nil
+		}
+	}
+	return AgentView{}, errors.New("recipient agent not found")
 }
 
 type mailConversationTarget struct {
@@ -236,6 +388,9 @@ type InboxMessage struct {
 	ToAddress               string                   `json:"to_address,omitempty"`
 	Subject                 string                   `json:"subject"`
 	Body                    string                   `json:"body"`
+	ContentMode             string                   `json:"content_mode,omitempty"`
+	MessageVersion          int                      `json:"message_version,omitempty"`
+	Encrypted               *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
 	Priority                MessagePriority          `json:"priority"`
 	ThreadID                *string                  `json:"thread_id"`
 	ReadAt                  *string                  `json:"read_at"`
@@ -367,6 +522,27 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
+			if m.Encrypted == nil {
+				return nil, errors.New("encrypted mail response is missing encrypted envelope")
+			}
+			if c.e2eePrivateKey == nil {
+				return nil, errors.New("encrypted mail requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
+			}
+			plain, err := DecryptE2EEMessage(m.Encrypted, E2EEDecryptIdentity{
+				Address:         c.address,
+				DID:             c.did,
+				StableID:        c.stableID,
+				EncryptionKeyID: "",
+				PrivateKey:      c.e2eePrivateKey,
+			})
+			if err != nil {
+				return nil, err
+			}
+			m.Subject = plain.Subject
+			m.Body = plain.Body
+			m.VerificationStatus = Verified
+		}
 		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
 			if meta.FromDID != "" {
 				m.FromDID = meta.FromDID
@@ -391,7 +567,9 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		if m.FromAddress != "" {
 			from = m.FromAddress
 		}
-		if m.SignedPayload != "" {
+		if m.ContentMode == ContentModeEncryptedV2 {
+			// The v2 envelope signature was verified before decrypting above.
+		} else if m.SignedPayload != "" {
 			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
 			if m.VerificationStatus == Verified {
 				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)

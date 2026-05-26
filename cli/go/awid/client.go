@@ -3,6 +3,7 @@ package awid
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -190,6 +191,8 @@ type Client struct {
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
 	stableID                string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
+	e2eeEncryptionKey       *EncryptionKeyAssertion
+	e2eePrivateKey          *ecdh.PrivateKey
 	requireRecipientBinding bool
 	resolver                IdentityResolver // optional; resolves recipient DID for to_did binding
 	pinStore                *PinStore        // optional; TOFU pin store for sender identity verification
@@ -361,6 +364,14 @@ func (c *Client) SetRequireRecipientBindingForDirectAddresses(required bool) {
 // SetResolver sets the identity resolver used to resolve recipient DIDs
 // for to_did binding in signed envelopes.
 func (c *Client) SetResolver(r IdentityResolver) { c.resolver = r }
+
+func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.PrivateKey) {
+	if c == nil {
+		return
+	}
+	c.e2eeEncryptionKey = assertion
+	c.e2eePrivateKey = privateKey
+}
 
 func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
 	if c == nil || c.resolver == nil {
