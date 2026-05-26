@@ -237,7 +237,7 @@ async def list_agents(
               AND revoked_at IS NULL
               AND not_before_at <= NOW()
               AND expires_at > NOW()
-            ORDER BY published_at DESC
+            ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL

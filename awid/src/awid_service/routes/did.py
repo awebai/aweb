@@ -212,7 +212,7 @@ async def _fetch_current_encryption_assertion(
           AND revoked_at IS NULL
           AND not_before_at <= $2
           AND expires_at > $2
-        ORDER BY published_at DESC
+        ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
         LIMIT 1
         """,
         did_aw,

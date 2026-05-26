@@ -110,7 +110,7 @@ def validate_encryption_key_assertion(
     if expected_stable_id:
         if assertion_stable_id != expected_stable_id:
             raise ValueError("identity_stable_id must match did:aw")
-    elif "identity_stable_id" in assertion and assertion_stable_id:
+    elif "identity_stable_id" in assertion:
         raise ValueError("local encryption key assertions must omit identity_stable_id")
 
     expected_key_id = encryption_key_id(str(assertion.get("encryption_public_key") or ""))

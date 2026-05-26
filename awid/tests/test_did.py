@@ -52,11 +52,17 @@ def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:
     }
 
 
-def _encryption_assertion_body(identity_vectors: dict, *, expired: bool = False) -> dict:
+def _encryption_assertion_body(
+    identity_vectors: dict,
+    *,
+    expired: bool = False,
+    public_key: str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+    created_at: str = "2026-05-26T00:00:00Z",
+    not_before: str = "2026-05-26T00:00:00Z",
+) -> dict:
     seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
     did_aw = identity_vectors["mapping"]["did_aw"]
     did_key = identity_vectors["mapping"]["initial_did_key"]
-    public_key = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
     body = {
         "operation": "publish_encryption_key",
         "version": "aweb-e2ee-key-v1",
@@ -65,8 +71,8 @@ def _encryption_assertion_body(identity_vectors: dict, *, expired: bool = False)
         "encryption_key_id": encryption_key_id(public_key),
         "encryption_public_key": public_key,
         "algorithm": "x25519",
-        "created_at": "2026-05-26T00:00:00Z",
-        "not_before": "2026-05-26T00:00:00Z",
+        "created_at": created_at,
+        "not_before": not_before,
         "expires_at": "2026-05-27T00:00:00Z",
     }
     if expired:
@@ -282,6 +288,40 @@ async def test_publish_identity_encryption_key_and_resolve_from_key_endpoint(
     assert key_payload["encryption_key"]["encryption_key_id"] == body["encryption_key_id"]
     assert key_payload["encryption_key"]["identity_did"] == body["identity_did"]
     assert key_payload["encryption_key"]["signature"] == body["signature"]
+
+
+@pytest.mark.asyncio
+async def test_replayed_older_encryption_key_does_not_roll_back_current_key(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    older = _encryption_assertion_body(
+        identity_vectors,
+        public_key="AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        created_at="2026-05-26T00:00:00Z",
+        not_before="2026-05-26T00:00:00Z",
+    )
+    newer = _encryption_assertion_body(
+        identity_vectors,
+        public_key="AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+        created_at="2026-05-26T00:01:00Z",
+        not_before="2026-05-26T00:01:00Z",
+    )
+
+    first = await client.post(f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older)
+    assert first.status_code == 200, first.text
+    second = await client.post(f"/v1/did/{newer['identity_stable_id']}/encryption-key", json=newer)
+    assert second.status_code == 200, second.text
+    replay = await client.post(f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older)
+    assert replay.status_code == 200, replay.text
+
+    key_response = await client.get(f"/v1/did/{older['identity_stable_id']}/key")
+    assert key_response.status_code == 200, key_response.text
+    assert key_response.json()["encryption_key"]["encryption_key_id"] == newer["encryption_key_id"]
 
 
 @pytest.mark.asyncio

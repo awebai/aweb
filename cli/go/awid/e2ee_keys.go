@@ -22,7 +22,7 @@ type EncryptionKeyAssertion struct {
 	Operation               string  `json:"operation"`
 	Version                 string  `json:"version"`
 	IdentityDID             string  `json:"identity_did"`
-	IdentityStableID        string  `json:"identity_stable_id,omitempty"`
+	IdentityStableID        *string `json:"identity_stable_id,omitempty"`
 	EncryptionKeyID         string  `json:"encryption_key_id"`
 	EncryptionPublicKey     string  `json:"encryption_public_key"`
 	Algorithm               string  `json:"algorithm"`
@@ -58,8 +58,8 @@ func encryptionAssertionSignedPayload(assertion *EncryptionKeyAssertion) (string
 		"not_before":            assertion.NotBefore,
 		"expires_at":            assertion.ExpiresAt,
 	}
-	if strings.TrimSpace(assertion.IdentityStableID) != "" {
-		payload["identity_stable_id"] = assertion.IdentityStableID
+	if assertion.IdentityStableID != nil {
+		payload["identity_stable_id"] = strings.TrimSpace(*assertion.IdentityStableID)
 	}
 	if assertion.PreviousEncryptionKeyID != nil && strings.TrimSpace(*assertion.PreviousEncryptionKeyID) != "" {
 		payload["previous_encryption_key_id"] = strings.TrimSpace(*assertion.PreviousEncryptionKeyID)
@@ -87,10 +87,10 @@ func VerifyEncryptionKeyAssertion(assertion *EncryptionKeyAssertion, currentDIDK
 		return fmt.Errorf("encryption key assertion identity_did does not match current did:key")
 	}
 	if strings.TrimSpace(stableID) != "" {
-		if assertion.IdentityStableID != strings.TrimSpace(stableID) {
+		if assertion.IdentityStableID == nil || strings.TrimSpace(*assertion.IdentityStableID) != strings.TrimSpace(stableID) {
 			return fmt.Errorf("encryption key assertion identity_stable_id does not match did:aw")
 		}
-	} else if strings.TrimSpace(assertion.IdentityStableID) != "" {
+	} else if assertion.IdentityStableID != nil {
 		return fmt.Errorf("local encryption key assertions must omit identity_stable_id")
 	}
 	rawPub, err := base64.RawStdEncoding.DecodeString(assertion.EncryptionPublicKey)

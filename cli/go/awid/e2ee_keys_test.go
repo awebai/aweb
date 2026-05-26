@@ -28,13 +28,15 @@ func testEncryptionAssertion(t *testing.T, priv ed25519.PrivateKey, did, stableI
 		Operation:           "publish_encryption_key",
 		Version:             EncryptionKeyAssertionVersion,
 		IdentityDID:         did,
-		IdentityStableID:    stableID,
 		EncryptionKeyID:     keyID,
 		EncryptionPublicKey: base64.RawStdEncoding.EncodeToString(raw),
 		Algorithm:           EncryptionKeyAlgorithmX25519,
 		CreatedAt:           "2026-05-26T00:00:00Z",
 		NotBefore:           "2026-05-26T00:00:00Z",
 		ExpiresAt:           "2026-05-27T00:00:00Z",
+	}
+	if strings.TrimSpace(stableID) != "" {
+		assertion.IdentityStableID = &stableID
 	}
 	payload, err := encryptionAssertionSignedPayload(assertion)
 	if err != nil {
@@ -77,6 +79,29 @@ func TestVerifyEncryptionKeyAssertionRejectsSubstitution(t *testing.T) {
 	err = VerifyEncryptionKeyAssertion(assertion, ComputeDIDKey(otherPub), stableID, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "identity_did") {
 		t.Fatalf("err=%v, want identity_did mismatch", err)
+	}
+}
+
+func TestVerifyEncryptionKeyAssertionRejectsLocalEmptyStableIDField(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	assertion := testEncryptionAssertion(t, priv, did, "")
+	empty := ""
+	assertion.IdentityStableID = &empty
+	payload, err := encryptionAssertionSignedPayload(assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(priv, []byte(payload)))
+
+	err = VerifyEncryptionKeyAssertion(assertion, did, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "omit identity_stable_id") {
+		t.Fatalf("err=%v, want local stable-id omission rejection", err)
 	}
 }
 
