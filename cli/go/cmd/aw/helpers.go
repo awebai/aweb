@@ -89,7 +89,11 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
 	wd, _ := os.Getwd()
-	identity, err := awconfig.ResolveIdentity(wd)
+	return resolveIdentityForDir(wd)
+}
+
+func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error) {
+	identity, err := awconfig.ResolveIdentity(workingDir)
 	if err == nil {
 		if err := validateResolvedIdentity(identity); err != nil {
 			return nil, err
@@ -99,26 +103,37 @@ func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return resolveEphemeralIdentityWithoutState(wd)
+	return resolveEphemeralIdentityWithoutState(workingDir)
 }
 
 func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
-			return nil, err
+			teamState, err = awconfig.LoadTeamState(workingDir)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, fmt.Errorf("invalid worktree workspace: %w", err)
 		}
-		return nil, fmt.Errorf("invalid worktree workspace: %w", err)
 	}
 	activeMembership := awconfig.ActiveMembershipFor(workspace, teamState)
-	if activeMembership == nil {
+	activeTeamID := ""
+	if activeMembership != nil {
+		activeTeamID = strings.TrimSpace(activeMembership.TeamID)
+	}
+	if activeTeamID == "" && teamState != nil && teamState.Membership(strings.TrimSpace(teamState.ActiveTeam)) != nil {
+		activeTeamID = strings.TrimSpace(teamState.ActiveTeam)
+	}
+	if activeTeamID == "" {
 		return nil, usageError("current worktree is missing active_team membership; run `aw init` first")
 	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, activeMembership.TeamID)
+	cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, activeTeamID)
 	if err != nil {
-		return nil, fmt.Errorf("load active team certificate for %s: %w", activeMembership.TeamID, err)
+		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
-	if strings.TrimSpace(cert.Lifetime) != awid.LifetimeEphemeral {
+	if awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)) != awid.IdentityModeLocal {
 		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
 	}
 

@@ -166,6 +166,9 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := ensureWorktreeContextAt(workingDir); err != nil {
 		return connectOutput{}, err
 	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
+	}
 
 	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
 	return connectOutput{

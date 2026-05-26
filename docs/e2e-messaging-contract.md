@@ -60,7 +60,7 @@ second incompatible design later.
 - A relay cannot replace a recipient encryption key without invalidating the
   identity-authorized key assertion or sender signature.
 - A relay cannot downgrade a v2-capable sender/recipient pair to plaintext
-  unless the user explicitly chooses a named legacy plaintext mode.
+  unless the user explicitly chooses `--plaintext`.
 - A relay cannot replay a fresh delivery outside the server/federation ingestion
   window. Already-accepted stored mail remains readable later.
 - A ciphertext or key-wrap mutation is rejected by the AEAD tag, signed
@@ -446,9 +446,8 @@ the send fails closed with a diagnostic naming the missing capability. The
 client must not retry as plaintext automatically.
 
 The only allowed plaintext escape hatch is an explicit user command or flag
-named `--legacy-plaintext` or a more specific final product name approved in the
-release task. That mode must be visually and textually distinct from E2E and
-must not be enabled by policy fallback, old-client fallback, or server hint.
+named `--plaintext`. That mode must be visually and textually distinct from E2E
+and must not be enabled by policy fallback, old-client fallback, or server hint.
 
 Mixed-version behavior:
 

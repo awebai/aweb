@@ -387,7 +387,7 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 		{TeamID: "ops:acme.com", Alias: "ops-alice", WorkspaceID: "ws-ops", Address: "acme.com/ops-alice"},
 	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
 	run.Env = append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -477,7 +477,7 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 		{TeamID: "ops:acme.com", Alias: "ops-alice", WorkspaceID: "ws-ops", Address: "acme.com/ops-alice"},
 	})
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "randy", "hello", "--json")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -561,7 +561,7 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 		{TeamID: "qa:acme.com", Alias: "qa-alice", WorkspaceID: "ws-qa", Address: "acme.com/qa-alice"},
 	})
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "randy", "hello")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

@@ -176,6 +176,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if membership := teamState.Membership("backend:acme.com"); membership == nil {
 		t.Fatal("expected backend membership in teams.yaml")
 	}
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	// Verify connect payload had expected fields
 	if gotConnectPayload["hostname"] == nil || gotConnectPayload["hostname"] == "" {

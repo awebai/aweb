@@ -1043,6 +1043,7 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
 		t.Fatalf("local cert should not include global identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
 	}
+	requireWorktreeEncryptionKeyForTest(t, acceptDir)
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("registry lifetime=%v", registeredCert["identity_scope"])
 	}
@@ -1276,6 +1277,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
 		t.Fatalf("local workspace cert has global fields: %q %q", cert.MemberDIDAW, cert.MemberAddress)
 	}
+	requireWorktreeEncryptionKeyForTest(t, acceptDir)
 	if _, err := os.Stat(filepath.Join(acceptDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
 		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
 	}
@@ -1984,6 +1986,7 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 	if len(teamState.Memberships) != 1 || teamState.Memberships[0].CertPath == "" {
 		t.Fatalf("memberships=%+v", teamState.Memberships)
 	}
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	otherCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team:         "backend:acme.com",

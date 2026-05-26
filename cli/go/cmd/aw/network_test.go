@@ -212,7 +212,7 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	})
 	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", "acme/researcher", "--body", "hello network", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "acme/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -308,7 +308,7 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 
 	// Use --to with a full address (contains /). Should auto-detect as address
 	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "acme/researcher", "--body", "hello auto-detect", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "acme/researcher", "--body", "hello auto-detect", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -365,7 +365,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "bob", "--body", "hello local", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "bob", "--body", "hello local", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -434,7 +434,7 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "acme/bot", "hello network", "--json")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "acme/bot", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -507,7 +507,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--start-conversation", "aweb/merlin", "hello")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "--start-conversation", "aweb/merlin", "hello")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -560,7 +560,7 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

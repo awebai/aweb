@@ -113,7 +113,12 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 }
 
 func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEncryptionKeyOutput, error) {
-	identity, err := resolveIdentity()
+	wd, _ := os.Getwd()
+	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate)
+}
+
+func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool) (idEncryptionKeyOutput, error) {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
 	}
@@ -197,6 +202,122 @@ func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEnc
 		Published:      published,
 		PublishSkipped: skipped,
 		Warning:        encryptionKeyBackupWarning(),
+	}, nil
+}
+
+func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	signingKey, err := resolveIdentitySigningKey(identity)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
+		return nil
+	}
+	if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != strings.TrimSpace(identity.DID) {
+		return usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), got)
+	}
+
+	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			state = &awconfig.EncryptionKeyState{}
+		} else {
+			return err
+		}
+	}
+	if record := state.ActiveRecord(); record != nil {
+		material, err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record)
+		if err != nil {
+			return err
+		}
+		assertion, err := loadEncryptionAssertion(identity.WorkingDir, record.AssertionPath)
+		if err != nil {
+			return err
+		}
+		return validateEncryptionRecordAssertion(identity, record, assertion, material)
+	}
+
+	record, _, err := createLocalEncryptionKeyRecord(identity, signingKey, "")
+	if err != nil {
+		return err
+	}
+	state.ActiveKeyID = record.KeyID
+	state.UpsertRecord(*record)
+	return awconfig.SaveEncryptionKeyStateTo(statePath, state)
+}
+
+func resolveIdentityForEncryptionKeyForDir(workingDir string) (*awconfig.ResolvedIdentity, error) {
+	identity, err := awconfig.ResolveIdentity(workingDir)
+	if err == nil {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return nil, err
+		}
+		return identity, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, usageError("current identity has no local signing key")
+		}
+		return nil, fmt.Errorf("failed to load signing key: %w", err)
+	}
+	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+
+	var cert *awid.TeamCertificate
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+		if active := strings.TrimSpace(teamState.ActiveTeam); active != "" {
+			cert, _ = awconfig.LoadTeamCertificateForTeam(workingDir, active)
+		}
+	}
+	if cert == nil {
+		if workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir); err == nil {
+			if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
+				cert, _ = awconfig.LoadTeamCertificateForTeam(workingDir, membership.TeamID)
+			}
+		}
+	}
+	if cert != nil {
+		certDID := strings.TrimSpace(cert.MemberDIDKey)
+		if certDID == "" {
+			return nil, fmt.Errorf("active team certificate is missing member_did_key")
+		}
+		if certDID != didKey {
+			return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
+		}
+		lifetime := strings.TrimSpace(cert.IdentityScope)
+		if lifetime == "" {
+			lifetime = strings.TrimSpace(cert.Lifetime)
+		}
+		if lifetime == "" {
+			lifetime = awid.LifetimeEphemeral
+		}
+		return &awconfig.ResolvedIdentity{
+			WorkingDir:     strings.TrimSpace(workingDir),
+			SigningKeyPath: signingKeyPath,
+			DID:            didKey,
+			StableID:       strings.TrimSpace(cert.MemberDIDAW),
+			Address:        strings.TrimSpace(cert.MemberAddress),
+			Custody:        awid.CustodySelf,
+			Lifetime:       lifetime,
+		}, nil
+	}
+
+	return &awconfig.ResolvedIdentity{
+		WorkingDir:     strings.TrimSpace(workingDir),
+		SigningKeyPath: signingKeyPath,
+		DID:            didKey,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimeEphemeral,
 	}, nil
 }
 

@@ -665,6 +665,10 @@ func TestExecuteIDCreatePersistsDNSDiscoveredRegistryURLWhenRegistrationUnavaila
 	if strings.TrimSpace(out.RegistryError) == "" {
 		t.Fatal("expected registry_error for unavailable discovered registry")
 	}
+	if strings.TrimSpace(out.EncryptionKeyID) == "" {
+		t.Fatalf("encryption_key_id missing: %#v", out)
+	}
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {
@@ -725,6 +729,9 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	if got["address"] != "acme.com/alice" {
 		t.Fatalf("address=%v", got["address"])
 	}
+	if got["encryption_key_id"] == "" {
+		t.Fatalf("encryption_key_id missing: %+v", got)
+	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
 		t.Fatalf("identity.yaml missing: %v", err)
 	}
@@ -741,6 +748,7 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	if identity.Address != "acme.com/alice" {
 		t.Fatalf("identity address=%q", identity.Address)
 	}
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 }
 
 func TestAwIDCreateKeepsRegisteredIdentityWhenAddressClaimFails(t *testing.T) {
@@ -836,6 +844,9 @@ func TestAwIDCreateKeepsRegisteredIdentityWhenAddressClaimFails(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(got["registry_error"]), "retry the address claim") {
 		t.Fatalf("registry_error=%v", got["registry_error"])
 	}
+	if got["encryption_key_id"] == "" {
+		t.Fatalf("encryption_key_id missing: %+v", got)
+	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -846,6 +857,7 @@ func TestAwIDCreateKeepsRegisteredIdentityWhenAddressClaimFails(t *testing.T) {
 	if identity.StableID != didAW {
 		t.Fatalf("identity stable_id=%q want %q", identity.StableID, didAW)
 	}
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 }
 
 func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {

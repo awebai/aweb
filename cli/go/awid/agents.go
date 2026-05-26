@@ -50,7 +50,7 @@ func (a AgentView) VerifyEncryptionKey(now time.Time) error {
 
 func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion, error) {
 	if a.EncryptionKey == nil {
-		return nil, fmt.Errorf("agent %s has no E2E encryption key; ask it to publish one before sending encrypted mail", a.Alias)
+		return nil, fmt.Errorf("agent %s has no E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", a.Alias)
 	}
 	if err := a.VerifyEncryptionKey(now); err != nil {
 		return nil, err

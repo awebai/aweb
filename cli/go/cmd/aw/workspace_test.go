@@ -1396,6 +1396,7 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist: %v", err)
 	}
+	requireWorktreeEncryptionKeyForTest(t, child)
 	childKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(child))
 	if err != nil {
 		t.Fatalf("load child signing key: %v", err)
@@ -1438,12 +1439,12 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatalf("child aweb_url=%q", childWorkspace.AwebURL)
 	}
 
-	runAW(repo, "mail", "send", "--to", "charlie", "--body", "hello child", "--json")
+	runAW(repo, "mail", "send", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
 	childInbox := runAW(child, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, "mail", "send", "--to", "alice", "--body", "hello parent", "--json")
+	runAW(child, "mail", "send", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
 	parentInbox := runAW(repo, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
@@ -1668,6 +1669,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("parent identity.yaml should not exist after local API-key bootstrap: %v", err)
 	}
+	requireWorktreeEncryptionKeyForTest(t, repo)
 	parentCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(repo, teamID))
 	if err != nil {
 		t.Fatalf("load parent cert: %v", err)
@@ -1681,6 +1683,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist after local add-worktree: %v", err)
 	}
+	requireWorktreeEncryptionKeyForTest(t, child)
 	childCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(child, teamID))
 	if err != nil {
 		t.Fatalf("load child cert: %v", err)
@@ -1689,12 +1692,12 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("child local cert member_did_aw=%q", childCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "mail", "send", "--to", "charlie", "--body", "hello child", "--json")
+	runAW(repo, baseEnv, "mail", "send", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
 	childInbox := runAW(child, baseEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, baseEnv, "mail", "send", "--to", "alice", "--body", "hello parent", "--json")
+	runAW(child, baseEnv, "mail", "send", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
 	parentInbox := runAW(repo, baseEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)

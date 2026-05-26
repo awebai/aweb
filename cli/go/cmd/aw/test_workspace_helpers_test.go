@@ -20,6 +20,25 @@ func testCommandEnv(home string) []string {
 	)
 }
 
+func requireWorktreeEncryptionKeyForTest(t *testing.T, workingDir string) string {
+	t.Helper()
+	state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(workingDir))
+	if err != nil {
+		t.Fatalf("load encryption state: %v", err)
+	}
+	record := state.ActiveRecord()
+	if record == nil {
+		t.Fatalf("missing active encryption key in %#v", state)
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, filepath.FromSlash(record.PrivateKeyPath))); err != nil {
+		t.Fatalf("encryption private key missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, filepath.FromSlash(record.AssertionPath))); err != nil {
+		t.Fatalf("encryption assertion missing: %v", err)
+	}
+	return record.KeyID
+}
+
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
 	t.Helper()
 	teamState := teamStateForWorkspaceBindingForTest(state)

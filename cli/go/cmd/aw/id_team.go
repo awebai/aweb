@@ -660,6 +660,9 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
 		return err
 	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+		return err
+	}
 	printOutput(*accepted.Output, formatTeamAcceptInvite)
 	return nil
 }
@@ -685,6 +688,9 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 		return rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
 	}
 	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, false); err != nil {
+		return rollbackAddedTeamCertificate(workingDir, accepted, err)
+	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
 		return rollbackAddedTeamCertificate(workingDir, accepted, err)
 	}
 	printOutput(teamAddOutput{
@@ -1331,6 +1337,9 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 			}, existingCert, "", "", false); err != nil {
 				return err
 			}
+			if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+				return err
+			}
 			printOutput(teamFetchCertOutput{
 				Status:        "already_installed",
 				TeamID:        teamID,
@@ -1387,6 +1396,9 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		Alias:    strings.TrimSpace(cert.Alias),
 		CertPath: certPath,
 	}, cert, registryURL, "", false); err != nil {
+		return err
+	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
 		return err
 	}
 

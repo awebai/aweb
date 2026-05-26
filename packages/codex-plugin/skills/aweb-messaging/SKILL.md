@@ -12,7 +12,9 @@ It also covers explicit user requests to send mail or chat through aweb.
 
 E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not describe hosted custodial/server-side messaging as end-to-end encrypted.
 
-Legacy plaintext boundary: existing plaintext mail/chat remains legacy/server-readable while retained and must not be described as retroactively E2E. If an intended E2E send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not resend as plaintext unless the human explicitly chooses the approved legacy plaintext command/flag.
+Legacy plaintext boundary: existing plaintext mail/chat remains legacy/server-readable while retained and must not be described as retroactively E2E. Mail and chat send E2E by default. If an intended E2E send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not resend as plaintext unless the human explicitly chooses `--plaintext`.
+
+Mixed-version boundary: old pre-E2E aw/channel/Pi clients may not have published recipient encryption keys yet. A current aw CLI creates/publishes the sender's local encryption key before default-E2E sends, but it cannot create keys for another recipient. If the recipient lacks a key, report that they need to upgrade aw/Pi/channel and publish a key. Use `--plaintext` only for an explicit human-approved server-readable upgrade note.
 
 If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient addressability, inbound-mode policy, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
@@ -77,15 +79,15 @@ aw chat extend-wait <from> "working on it, 2 minutes"
 
 Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
 
-Encrypted chat is explicit. Use `--e2ee` only when the human or policy asks for E2E chat and every participant has identity-authorized encryption capability:
+Mail and chat are E2E by default. Do not add `--e2ee`; it is a deprecated compatibility no-op. Use `--plaintext` only when the human explicitly asks for server-readable plaintext and policy allows it.
 
 ```bash
-aw chat send-and-wait <alias-or-address> "..." --start-conversation --e2ee
-aw chat send-and-leave <alias-or-address> "..." --e2ee
-aw chat extend-wait <from> "working on it" --e2ee
+aw chat send-and-wait <alias-or-address> "..." --start-conversation
+aw chat send-and-leave <alias-or-address> "..."
+aw chat extend-wait <from> "working on it"
 ```
 
-Read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If `--e2ee` fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses the approved legacy plaintext path.
+Read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If the encrypted send fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses `--plaintext`.
 
 ## Harness surfaces
 
@@ -109,7 +111,7 @@ Harness support differs:
 
 The channel is inbound only. Use `aw mail` or `aw chat` to respond.
 
-For E2E messages, channel/Pi/`aw run` may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext.
+For E2E messages, channel/Pi/`aw run` may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext. If the local channel/Pi process was upgraded from a pre-E2E version, run `aw id encryption-key setup` in the workspace before expecting it to receive encrypted messages.
 
 ## Control and work awakenings
 

@@ -139,7 +139,7 @@ than building a parallel version-skew stack.
 | Case | Expected behavior | Release-blocking assertion |
 | --- | --- | --- |
 | new sender, new recipient, new server | v2 encrypted mail/chat send succeeds | recipient decrypts locally; sender self-copy decrypts; server stores no plaintext |
-| new sender, old recipient or missing recipient key assertion | send fails before storage | failure names missing/stale/unsupported key capability; no plaintext row/event |
+| new sender, old recipient or missing recipient key assertion | send fails before storage | sender key is created/published if missing; failure names missing/stale/unsupported recipient key capability; no plaintext row/event |
 | old sender, new recipient | legacy plaintext may arrive only if recipient/team policy still allows it | message is labeled legacy plaintext and never claimed as v2 |
 | new client, old server | v2 send fails clearly | client does not retry plaintext silently |
 | old client, new server on encrypted-required route | server rejects legacy plaintext | no plaintext row is stored |
@@ -166,12 +166,12 @@ right next step without encouraging plaintext fallback:
 - malformed ciphertext or key wrap,
 - replay or idempotency conflict,
 - inner-header mismatch,
-- explicit legacy plaintext mode required but not selected.
+- explicit `--plaintext` mode required but not selected.
 
 The message should say that no plaintext fallback occurred. If legacy plaintext
-is allowed, it must be a separate explicit command/UX path named as legacy
-plaintext and visually distinct from encrypted v2. If the product renames the
-legacy plaintext flag or UX label in a future release, update this runbook and
+is allowed, it must be the separate explicit `--plaintext` command/UX path and
+visually distinct from encrypted v2. If the product renames the plaintext flag
+or UX label in a future release, update this runbook and
 [`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json)
 in the same change so release tests and user-facing naming stay aligned.
 

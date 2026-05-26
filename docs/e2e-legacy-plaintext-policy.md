@@ -61,10 +61,9 @@ not translate v2 to v1.
 If legacy plaintext send remains supported, it must require an explicit,
 separately named user action. The approved placeholder CLI flag is:
 
-`--legacy-plaintext`
+`--plaintext`
 
-The final product name may change only through the release task, but it must stay
-visibly distinct from E2E. It must not be implied by:
+The flag must stay visibly distinct from E2E. It must not be implied by:
 
 - missing keys,
 - old clients,
@@ -87,7 +86,7 @@ into plaintext by default.
 | Sender | Recipient/route | Expected behavior |
 | --- | --- | --- |
 | v2-capable sender | v2-capable recipient + v2 route | Send `encrypted_v2`. |
-| v2-capable sender | missing/stale recipient key | Fail closed; do not send plaintext unless explicit legacy flag is present and policy allows it. |
+| v2-capable sender | missing/stale recipient key | Fail closed after creating/publishing the sender key if needed; do not send plaintext unless explicit legacy flag is present and policy allows it. |
 | v2-capable sender | old server or route without v2 support | Fail closed; no automatic plaintext retry. |
 | old sender | v2-capable recipient | May send `legacy_plaintext_v1` only if team/service policy still allows legacy plaintext. Recipient must label it as legacy. |
 | v2 server | receives v1 on E2E-required route | Reject. |

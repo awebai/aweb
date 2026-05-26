@@ -203,36 +203,29 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 
 	encryptionKeyID := ""
 	encryptionKeyPath := ""
+	identity := &awconfig.ResolvedIdentity{
+		WorkingDir:     workingDir,
+		IdentityPath:   plan.IdentityPath,
+		SigningKeyPath: plan.SigningKeyPath,
+		DID:            plan.DIDKey,
+		StableID:       plan.DIDAW,
+		Address:        plan.Address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    plan.RegistryURL,
+		RegistryStatus: registryStatus,
+		CreatedAt:      plan.CreatedAt,
+	}
+	record, assertion, err := createLocalEncryptionKeyRecord(identity, prepared.IdentityKey, "")
+	if err != nil {
+		return idCreateOutput{}, err
+	}
+	state := &awconfig.EncryptionKeyState{ActiveKeyID: record.KeyID}
+	state.UpsertRecord(*record)
+	if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(workingDir), state); err != nil {
+		return idCreateOutput{}, err
+	}
 	if registryStatus == "registered" {
-		identity := &awconfig.ResolvedIdentity{
-			WorkingDir:     workingDir,
-			IdentityPath:   plan.IdentityPath,
-			SigningKeyPath: plan.SigningKeyPath,
-			DID:            plan.DIDKey,
-			StableID:       plan.DIDAW,
-			Address:        plan.Address,
-			Custody:        awid.CustodySelf,
-			Lifetime:       awid.LifetimePersistent,
-			RegistryURL:    plan.RegistryURL,
-			RegistryStatus: registryStatus,
-			CreatedAt:      plan.CreatedAt,
-		}
-		record, assertion, err := createLocalEncryptionKeyRecord(identity, prepared.IdentityKey, "")
-		if err != nil {
-			return idCreateOutput{}, err
-		}
-		state := &awconfig.EncryptionKeyState{ActiveKeyID: record.KeyID}
-		state.UpsertRecord(*record)
-		if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(workingDir), state); err != nil {
-			return idCreateOutput{}, err
-		}
-		registry, err := newConfiguredRegistryClient(nil, "")
-		if err != nil {
-			return idCreateOutput{}, err
-		}
-		if err := registry.SetFallbackRegistryURL(plan.RegistryURL); err != nil {
-			return idCreateOutput{}, fmt.Errorf("invalid planned registry URL: %w", err)
-		}
 		if err := registry.PublishEncryptionKey(ctx, plan.RegistryURL, plan.DIDAW, assertion); err != nil {
 			registryErr = strings.TrimSpace(firstNonEmpty(registryErr, fmt.Sprintf("encryption key publish pending: %v", err)))
 		} else {
@@ -240,9 +233,9 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 			state.UpsertRecord(*record)
 			_ = awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(workingDir), state)
 		}
-		encryptionKeyID = record.KeyID
-		encryptionKeyPath = resolveWorktreeRelativePath(workingDir, record.PrivateKeyPath)
 	}
+	encryptionKeyID = record.KeyID
+	encryptionKeyPath = resolveWorktreeRelativePath(workingDir, record.PrivateKeyPath)
 
 	return idCreateOutput{
 		Status:            "created",

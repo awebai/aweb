@@ -39,9 +39,16 @@ If an intended E2E send cannot find a valid recipient encryption key or v2
 capability, it fails closed. Recipient encryption keys and recipient E2E
 capability must be identity-authorized; service signatures can assert only route
 support, not recipient key authority. There is no silent plaintext fallback; the
-user must explicitly choose the separately named legacy plaintext mode when that
-mode is allowed. Losing local archived encryption keys makes historical
+user must explicitly choose `--plaintext` when that server-readable mode is
+allowed. Losing local archived encryption keys makes historical
 encrypted messages unrecoverable; AC/aweb cannot decrypt them for support.
+
+For mixed-version rollouts, current aw creates and publishes the sender's local
+encryption key before a default-E2E mail/chat send. That self-heals upgraded old
+worktrees. It cannot create keys for another recipient. If the recipient is
+still running old aw/channel/Pi and has no published encryption key, the send
+fails before storage; the sender may explicitly use `--plaintext` only for a
+server-readable upgrade note when policy and the human allow it.
 
 Async mail remains readable after ingestion. Clients must not reject already
 accepted stored mail merely because its original timestamp is old; the freshness

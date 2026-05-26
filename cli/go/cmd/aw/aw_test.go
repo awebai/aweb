@@ -493,7 +493,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -575,7 +575,7 @@ func TestAwChatSendAndWaitExtraArgsRejected(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "bob", "hello", "extra-arg")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "bob", "hello", "extra-arg")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -645,7 +645,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -1005,7 +1005,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to", "alice",
 		"--body", "hello",
 		"--json",
@@ -1107,7 +1107,7 @@ func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 		SigningKey:  priv,
 	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to-did", recipientDID,
 		"--body", "hello from identity",
 	)
@@ -1195,7 +1195,7 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	})
 	writeKnownAgentPinForTest(t, tmp, "test.local/monitor", registryServer.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to-address", "test.local/monitor",
 		"--body", "hello from address",
 	)
@@ -1343,14 +1343,14 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	})
 
 	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1")
-	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", "example.invalid/randy", "--body", "mail repro")
+	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "example.invalid/randy", "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
 	if out, err := runMail.CombinedOutput(); err != nil {
 		t.Fatalf("mail failed: %v\n%s", err, string(out))
 	}
 
-	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "example.invalid/randy", "chat repro")
+	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "example.invalid/randy", "chat repro")
 	runChat.Env = env
 	runChat.Dir = tmp
 	if out, err := runChat.CombinedOutput(); err != nil {
@@ -1475,14 +1475,14 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	}
 
 	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
-	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", recipientAddress, "--body", "mail repro")
+	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", recipientAddress, "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
 	if out, err := runMail.CombinedOutput(); err != nil {
 		t.Fatalf("mail failed: %v\n%s", err, string(out))
 	}
 
-	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", recipientAddress, "chat repro")
+	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", recipientAddress, "chat repro")
 	runChat.Env = env
 	runChat.Dir = tmp
 	if out, err := runChat.CombinedOutput(); err != nil {
@@ -1576,7 +1576,7 @@ func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {
 	})
 
 	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
-	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", recipientAddress, "chat repro")
+	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", recipientAddress, "chat repro")
 	runChat.Env = env
 	runChat.Dir = tmp
 	out, err := runChat.CombinedOutput()
@@ -1675,7 +1675,7 @@ func TestAwMailSendToDIDStandaloneFirstContactFailsClosed(t *testing.T) {
 		t.Fatalf("write signing key: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to-did", "did:aw:monitor",
 		"--body", "hello from standalone",
 	)
@@ -1698,7 +1698,7 @@ func TestAwMailSendRejectsMultipleRecipientFlags(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeDefaultWorkspaceBindingForTest(t, tmp, "http://127.0.0.1:1")
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to", "alice",
 		"--to-did", "did:aw:alice",
 		"--body", "hello",
@@ -1888,7 +1888,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--to", "eve",
 		"--body", "hello from log test",
 		"--subject", "log test",

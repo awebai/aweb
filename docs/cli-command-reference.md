@@ -141,10 +141,12 @@ The template repository is convention-first:
 team.yaml supplies the parts that cannot be inferred safely: role bundle
 metadata, each agent responsibility's role_name, and default identity names.
 Agent directory names are responsibilities (for example implementation or
-review), not fixed human/agent names; bootstrap prompts for the actual name
-unless --yes is used.
+review), not fixed human/agent names. By default bootstrap uses the template's
+default identity names; pass --ask-for-agent-names when you want an interactive
+prompt to rename generated agents before provisioning.
 
 Flags:
+- `--ask-for-agent-names Prompt for generated agent names instead of using template defaults`
 - `--aweb-url string Aweb server base URL to connect each generated agent workspace`
 - `--dry-run Validate and print the bootstrap plan without changing files or team roles`
 - `--fork Fork the template repository with gh and clone the fork into the destination directory`
@@ -162,7 +164,6 @@ Flags:
 - `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
 - `--work-directory string Directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
 - `--work-repo-url string Git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
-- `--yes Accept default agent names without prompting`
 
 ## `workspace`
 
@@ -841,8 +842,8 @@ Flags:
 Ask the other party to wait longer
 
 Flags:
-- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for extend-wait`
+- `--plaintext Send explicit server-readable plaintext wait extension instead of the default E2E encrypted message`
 
 ## `chat history`
 
@@ -888,8 +889,8 @@ Flags:
 Send a message and leave the conversation
 
 Flags:
-- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send-and-leave`
+- `--plaintext Send explicit server-readable plaintext chat instead of the default E2E encrypted chat`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
@@ -899,8 +900,8 @@ Flags:
 Send a message and wait for a reply
 
 Flags:
-- `--e2ee Send E2E encrypted chat; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send-and-wait`
+- `--plaintext Send explicit server-readable plaintext chat instead of the default E2E encrypted chat`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
 
@@ -1107,9 +1108,8 @@ Reply to an existing mail conversation
 Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file`
-- `--e2ee Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for reply`
-- `--legacy-plaintext Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail`
+- `--plaintext Send explicit server-readable plaintext mail instead of the default E2E encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 
@@ -1123,9 +1123,8 @@ Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file (use this for markdown with backticks; bypasses shell interpolation)`
 - `--conversation-id string Existing mail conversation to continue`
-- `--e2ee Send E2E encrypted mail; fails closed if local or recipient encryption keys are missing`
 - `-h, --help help for send`
-- `--legacy-plaintext Send explicit server-readable legacy plaintext mail instead of E2E encrypted mail`
+- `--plaintext Send explicit server-readable plaintext mail instead of the default E2E encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`
