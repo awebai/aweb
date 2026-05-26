@@ -177,6 +177,11 @@ compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
 }
 
+psql_scalar() {
+  local service="$1" sql="$2"
+  compose exec -T "$service" psql -U aweb -d aweb -At -c "$sql" 2>/dev/null | tr -d '[:space:]'
+}
+
 run_aw_in() {
   local workdir="$1"
   shift
@@ -432,6 +437,10 @@ assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
 set_namespace_delivery_origin "$ALICE_DIR" "alpha" "alpha.test.local" "$ALPHA_ORIGIN"
 set_namespace_delivery_origin "$BOB_DIR" "beta" "beta.test.local" "$BETA_ORIGIN"
+alice_e2ee_setup="$(run_aw_in "$ALICE_DIR" id encryption-key setup --json 2>/dev/null)"
+assert_not_empty "alice federation e2ee key id" "$(echo "$alice_e2ee_setup" | jq_field key_id)"
+bob_e2ee_setup="$(run_aw_in "$BOB_DIR" id encryption-key setup --json 2>/dev/null)"
+assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
@@ -443,6 +452,80 @@ run_aw_in "$ALICE_DIR" chat send-and-leave ann "hello local chat ann" >/dev/null
 ann_chat="$(run_aw_in "$ANN_DIR" chat history alice --json 2>/dev/null)"
 ann_chat_count="$(echo "$ann_chat" | json_count_matching body "hello local chat ann")"
 assert_eq "same-server local chat delivered" "1" "$ann_chat_count"
+echo ""
+
+echo "=== Phase 4b: E2E cross-server mail routes ciphertext and clients decrypt ==="
+fed_e2ee_subject="FED_E2EE_SUBJECT_SENTINEL_260526"
+fed_e2ee_body="FED_E2EE_BODY_SENTINEL_260526"
+if fed_e2ee_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address beta.test.local/bob \
+  --subject "$fed_e2ee_subject" \
+  --body "$fed_e2ee_body" \
+  --e2ee \
+  --json 2>&1)"; then
+  fed_e2ee_exit=0
+else
+  fed_e2ee_exit=$?
+fi
+assert_eq "federated e2ee mail send exit" "0" "$fed_e2ee_exit"
+if [[ "$fed_e2ee_exit" != "0" ]]; then
+  echo "$fed_e2ee_out"
+fi
+fed_e2ee_message_id="$(echo "$fed_e2ee_out" | jq_field message_id)"
+fed_e2ee_conversation_id="$(echo "$fed_e2ee_out" | jq_field conversation_id)"
+assert_not_empty "federated e2ee message id" "$fed_e2ee_message_id"
+assert_not_empty "federated e2ee conversation id" "$fed_e2ee_conversation_id"
+if bob_e2ee_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>&1)"; then
+  bob_e2ee_inbox_exit=0
+else
+  bob_e2ee_inbox_exit=$?
+fi
+assert_eq "bob federated e2ee inbox exit" "0" "$bob_e2ee_inbox_exit"
+if [[ "$bob_e2ee_inbox_exit" != "0" ]]; then
+  echo "$bob_e2ee_inbox"
+fi
+bob_e2ee_body="$(echo "$bob_e2ee_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid), ''))" "$fed_e2ee_conversation_id" 2>/dev/null || echo "")"
+assert_eq "bob decrypts federated e2ee mail" "$fed_e2ee_body" "$bob_e2ee_body"
+if alice_e2ee_sent="$(run_aw_in "$ALICE_DIR" mail show --conversation-id "$fed_e2ee_conversation_id" --json 2>&1)"; then
+  alice_e2ee_sent_exit=0
+else
+  alice_e2ee_sent_exit=$?
+fi
+assert_eq "alice federated e2ee sent-show exit" "0" "$alice_e2ee_sent_exit"
+if [[ "$alice_e2ee_sent_exit" != "0" ]]; then
+  echo "$alice_e2ee_sent"
+fi
+alice_e2ee_self_copy="$(echo "$alice_e2ee_sent" | python3 -c "import sys,json; body=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')==body), ''))" "$fed_e2ee_body" 2>/dev/null || echo "")"
+assert_eq "alice decrypts federated sender self-copy" "$fed_e2ee_body" "$alice_e2ee_self_copy"
+fed_e2ee_reply_body="FED_E2EE_REPLY_BODY_SENTINEL_260526"
+if fed_e2ee_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+  --conversation-id "$fed_e2ee_conversation_id" \
+  --subject "FED_E2EE_REPLY_SUBJECT_SENTINEL_260526" \
+  --body "$fed_e2ee_reply_body" \
+  --e2ee 2>&1)"; then
+  fed_e2ee_reply_exit=0
+else
+  fed_e2ee_reply_exit=$?
+fi
+assert_eq "federated e2ee reply send exit" "0" "$fed_e2ee_reply_exit"
+if [[ "$fed_e2ee_reply_exit" != "0" ]]; then
+  echo "$fed_e2ee_reply_out"
+fi
+if alice_e2ee_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>&1)"; then
+  alice_e2ee_reply_inbox_exit=0
+else
+  alice_e2ee_reply_inbox_exit=$?
+fi
+assert_eq "alice federated e2ee reply inbox exit" "0" "$alice_e2ee_reply_inbox_exit"
+if [[ "$alice_e2ee_reply_inbox_exit" != "0" ]]; then
+  echo "$alice_e2ee_reply_inbox"
+fi
+alice_e2ee_reply_body="$(echo "$alice_e2ee_reply_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; body=sys.argv[2]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid and m.get('body')==body), ''))" "$fed_e2ee_conversation_id" "$fed_e2ee_reply_body" 2>/dev/null || echo "")"
+assert_eq "alice decrypts federated e2ee reply" "$fed_e2ee_reply_body" "$alice_e2ee_reply_body"
+fed_e2ee_alpha_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_%' OR COALESCE(body, '') LIKE '%FED_E2EE_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_%';")"
+fed_e2ee_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_%' OR COALESCE(body, '') LIKE '%FED_E2EE_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_%';")"
+assert_eq "federated e2ee plaintext absent from alpha DB" "0" "$fed_e2ee_alpha_plaintext_count"
+assert_eq "federated e2ee plaintext absent from beta DB" "0" "$fed_e2ee_beta_plaintext_count"
 echo ""
 
 echo "=== Phase 4: Public cross-server first contact and replies ==="

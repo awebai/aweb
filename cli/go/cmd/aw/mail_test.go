@@ -247,6 +247,39 @@ func TestResolveMailBodyMissingFileErrors(t *testing.T) {
 	}
 }
 
+func TestE2EEAssertionIdentityUsesMatchingIdentityStableID(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:      did,
+		StableID: stableID,
+		Address:  "example.test/eve",
+		Custody:  awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	identity := e2eeAssertionIdentityForSelection(&awconfig.Selection{
+		WorkingDir: tmp,
+		DID:        did,
+		StableID:   "",
+	})
+	if identity.DID != did {
+		t.Fatalf("did=%q, want %q", identity.DID, did)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("stable_id=%q, want %q", identity.StableID, stableID)
+	}
+}
+
 func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	t.Parallel()
 

@@ -726,11 +726,7 @@ func configureClientE2EEForMail(c *aweb.Client, sel *awconfig.Selection, require
 	if err != nil {
 		return err
 	}
-	identity := &awconfig.ResolvedIdentity{
-		WorkingDir: sel.WorkingDir,
-		DID:        strings.TrimSpace(sel.DID),
-		StableID:   strings.TrimSpace(sel.StableID),
-	}
+	identity := e2eeAssertionIdentityForSelection(sel)
 	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
 		return err
 	}
@@ -741,6 +737,34 @@ func configureClientE2EEForMail(c *aweb.Client, sel *awconfig.Selection, require
 	}
 	c.Client.SetE2EEKey(assertion, privateKey)
 	return nil
+}
+
+func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.ResolvedIdentity {
+	if sel == nil {
+		return &awconfig.ResolvedIdentity{}
+	}
+	did := strings.TrimSpace(sel.DID)
+	stableID := strings.TrimSpace(sel.StableID)
+
+	// A global identity can join a local/team-scoped certificate whose cert does
+	// not carry member_did_aw. The local encryption-key assertion is still
+	// identity-signed and must be checked against identity.yaml when it matches
+	// the selected signing did:key.
+	if identity, err := awconfig.ResolveIdentity(sel.WorkingDir); err == nil {
+		identityDID := strings.TrimSpace(identity.DID)
+		if identityDID != "" && (did == "" || identityDID == did) {
+			did = identityDID
+			if stableID == "" {
+				stableID = strings.TrimSpace(identity.StableID)
+			}
+		}
+	}
+
+	return &awconfig.ResolvedIdentity{
+		WorkingDir: strings.TrimSpace(sel.WorkingDir),
+		DID:        did,
+		StableID:   stableID,
+	}
 }
 
 // mail inbox

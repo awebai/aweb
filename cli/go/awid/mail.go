@@ -67,7 +67,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		strings.TrimSpace(payload.ToStableID) != "" ||
 		strings.TrimSpace(payload.ToAddress) != ""
 	if !hasRecipient && strings.TrimSpace(payload.ConversationID) != "" {
-		target, err := c.targetForMailConversation(ctx, strings.TrimSpace(payload.ConversationID))
+		target, err := c.targetForMailConversation(ctx, strings.TrimSpace(payload.ConversationID), payload.EncryptE2EE)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +298,7 @@ type mailConversationTarget struct {
 	value string
 }
 
-func (c *Client) targetForMailConversation(ctx context.Context, conversationID string) (mailConversationTarget, error) {
+func (c *Client) targetForMailConversation(ctx context.Context, conversationID string, preferAddress bool) (mailConversationTarget, error) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return mailConversationTarget{}, nil
@@ -311,7 +311,7 @@ func (c *Client) targetForMailConversation(ctx context.Context, conversationID s
 			if strings.TrimSpace(item.ConversationID) != conversationID {
 				continue
 			}
-			if target := c.mailConversationItemTarget(item); target.value != "" {
+			if target := c.mailConversationItemTarget(item, preferAddress); target.value != "" {
 				return target, nil
 			}
 			break
@@ -320,7 +320,7 @@ func (c *Client) targetForMailConversation(ctx context.Context, conversationID s
 		return mailConversationTarget{}, err
 	}
 	if resp, err := c.MailConversation(ctx, conversationID, 50); err == nil {
-		if target := c.mailInboxTarget(resp.Messages); target.value != "" {
+		if target := c.mailInboxTarget(resp.Messages, preferAddress); target.value != "" {
 			return target, nil
 		}
 	} else if !httpStatusIs(err, http.StatusNotFound) && !httpStatusIs(err, http.StatusForbidden) {
@@ -334,7 +334,7 @@ func httpStatusIs(err error, status int) bool {
 	return ok && code == status
 }
 
-func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversationTarget {
+func (c *Client) mailConversationItemTarget(item ConversationItem, preferAddress bool) mailConversationTarget {
 	otherDIDs, otherAddresses := OtherConversationParticipants(
 		item.ParticipantDIDs,
 		item.ParticipantAddresses,
@@ -342,6 +342,9 @@ func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversat
 		c.did,
 		c.address,
 	)
+	if preferAddress && len(otherAddresses) == 1 {
+		return mailConversationTarget{kind: "address", value: otherAddresses[0]}
+	}
 	if len(otherDIDs) == 1 {
 		return mailConversationTarget{kind: "did", value: otherDIDs[0]}
 	}
@@ -358,8 +361,16 @@ func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversat
 	return mailConversationTarget{}
 }
 
-func (c *Client) mailInboxTarget(messages []InboxMessage) mailConversationTarget {
+func (c *Client) mailInboxTarget(messages []InboxMessage, preferAddress bool) mailConversationTarget {
 	for _, msg := range messages {
+		if preferAddress {
+			for _, candidate := range []string{msg.FromAddress, msg.ToAddress} {
+				candidate = strings.TrimSpace(candidate)
+				if candidate != "" && !strings.EqualFold(candidate, strings.TrimSpace(c.address)) {
+					return mailConversationTarget{kind: "address", value: candidate}
+				}
+			}
+		}
 		for _, candidate := range []string{msg.FromStableID, msg.ToStableID, msg.FromDID, msg.ToDID} {
 			candidate = strings.TrimSpace(candidate)
 			if candidate != "" &&

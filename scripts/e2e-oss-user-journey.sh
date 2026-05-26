@@ -148,6 +148,17 @@ assert_contains() {
   fi
 }
 
+assert_file_not_contains() {
+  local label="$1" path="$2" needle="$3"
+  if grep -q -- "$needle" "$path" 2>/dev/null; then
+    echo "  FAIL: $label (did not expect '$needle' in $path)"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  fi
+}
+
 assert_not_contains() {
   local label="$1" haystack="$2" needle="$3"
   if echo "$haystack" | grep -q -- "$needle"; then
@@ -637,6 +648,90 @@ assert_eq "bob init exit" "0" "$bob_init_exit"
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 9a: E2E encryption keys fail closed until recipients publish keys
+# ---------------------------------------------------------------------------
+echo "=== Phase 9a: E2E encryption key setup ==="
+
+alice_e2ee_setup="$(run_aw_in "$ALICE_DIR" id encryption-key setup --json 2>/dev/null)"
+alice_e2ee_key="$(echo "$alice_e2ee_setup" | jq_field key_id)"
+assert_not_empty "alice e2ee key id" "$alice_e2ee_key"
+
+if missing_key_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "E2EE_MISSING_KEY_SUBJECT" \
+  --body "E2EE_MISSING_KEY_BODY" \
+  --e2ee 2>&1)"; then
+  missing_key_exit=0
+else
+  missing_key_exit=$?
+fi
+assert_eq "e2ee mail missing recipient key fails closed" "1" "$missing_key_exit"
+assert_contains "missing recipient key message" "$missing_key_out" "E2E encryption key"
+missing_key_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.messages WHERE subject = 'E2EE_MISSING_KEY_SUBJECT' OR body = 'E2EE_MISSING_KEY_BODY';")"
+assert_eq "missing-key e2ee attempt stores no plaintext row" "0" "$missing_key_plaintext_count"
+
+bob_e2ee_setup="$(run_aw_in "$BOB_DIR" id encryption-key setup --json 2>/dev/null)"
+bob_e2ee_key="$(echo "$bob_e2ee_setup" | jq_field key_id)"
+assert_not_empty "bob e2ee key id" "$bob_e2ee_key"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 9b: E2E mail — server routes ciphertext, clients read plaintext
+# ---------------------------------------------------------------------------
+echo "=== Phase 9b: E2E mail ciphertext-at-rest ==="
+
+E2EE_LOCAL_SUBJECT="E2EE_LOCAL_SUBJECT_SENTINEL_260526"
+E2EE_LOCAL_BODY="E2EE_LOCAL_BODY_SENTINEL_260526"
+e2ee_sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-sse.XXXXXX")"
+run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$e2ee_sse_capture_file" 2>/dev/null &
+e2ee_sse_pid=$!
+sleep 2
+if e2ee_send_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "$E2EE_LOCAL_SUBJECT" \
+  --body "$E2EE_LOCAL_BODY" \
+  --e2ee \
+  --json 2>&1)"; then
+  e2ee_send_exit=0
+else
+  e2ee_send_exit=$?
+fi
+assert_eq "e2ee local mail send exit" "0" "$e2ee_send_exit"
+if [[ "$e2ee_send_exit" != "0" ]]; then
+  echo "$e2ee_send_out"
+fi
+e2ee_message_id="$(echo "$e2ee_send_out" | jq_field message_id)"
+e2ee_conversation_id="$(echo "$e2ee_send_out" | jq_field conversation_id)"
+assert_not_empty "e2ee local message id" "$e2ee_message_id"
+assert_not_empty "e2ee local conversation id" "$e2ee_conversation_id"
+wait "$e2ee_sse_pid" 2>/dev/null || true
+
+bob_e2ee_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_e2ee_body="$(echo "$bob_e2ee_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid), ''))" "$e2ee_conversation_id" 2>/dev/null || echo "")"
+bob_e2ee_subject="$(echo "$bob_e2ee_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('conversation_id')==cid), ''))" "$e2ee_conversation_id" 2>/dev/null || echo "")"
+assert_eq "bob decrypts e2ee local body" "$E2EE_LOCAL_BODY" "$bob_e2ee_body"
+assert_eq "bob decrypts e2ee local subject" "$E2EE_LOCAL_SUBJECT" "$bob_e2ee_subject"
+
+alice_e2ee_sent="$(run_aw_in "$ALICE_DIR" mail show --conversation-id "$e2ee_conversation_id" --json 2>/dev/null)"
+alice_e2ee_self_copy="$(echo "$alice_e2ee_sent" | python3 -c "import sys,json; body=sys.argv[1]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')==body), ''))" "$E2EE_LOCAL_BODY" 2>/dev/null || echo "")"
+assert_eq "alice decrypts sender self-copy" "$E2EE_LOCAL_BODY" "$alice_e2ee_self_copy"
+
+db_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.messages WHERE message_id = '$e2ee_message_id' AND (COALESCE(subject, '') LIKE '%$E2EE_LOCAL_SUBJECT%' OR COALESCE(body, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(signature, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(signed_payload, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(encrypted_envelope::text, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(encrypted_ciphertext, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%$E2EE_LOCAL_BODY%');")"
+assert_eq "e2ee plaintext absent from message storage" "0" "$db_plaintext_count"
+chat_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%$E2EE_LOCAL_BODY%' OR COALESCE(signed_payload, '') LIKE '%$E2EE_LOCAL_BODY%';")"
+assert_eq "e2ee mail plaintext absent from chat storage" "0" "$chat_plaintext_count"
+assert_file_not_contains "e2ee plaintext absent from SSE capture subject" "$e2ee_sse_capture_file" "$E2EE_LOCAL_SUBJECT"
+assert_file_not_contains "e2ee plaintext absent from SSE capture body" "$e2ee_sse_capture_file" "$E2EE_LOCAL_BODY"
+assert_file_not_contains "e2ee plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs --no-color aweb 2>/dev/null || true) "$E2EE_LOCAL_BODY"
+e2ee_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-db-dump.XXXXXX")"
+(cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_dump_file" 2>/dev/null || true)
+assert_file_not_contains "e2ee plaintext absent from db dump subject" "$e2ee_dump_file" "$E2EE_LOCAL_SUBJECT"
+assert_file_not_contains "e2ee plaintext absent from db dump body" "$e2ee_dump_file" "$E2EE_LOCAL_BODY"
+e2ee_sse_mode="$(grep -m1 'encrypted_v2' "$e2ee_sse_capture_file" 2>/dev/null || true)"
+assert_not_empty "e2ee SSE emitted encrypted metadata" "$e2ee_sse_mode"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 10: Alice sends mail to bob
 # ---------------------------------------------------------------------------
 echo "=== Phase 10: Alice sends mail to bob ==="
@@ -712,7 +807,15 @@ if [[ "$eve_mail_exit" != "0" ]]; then
   echo "$eve_mail_out"
 fi
 
-eve_inbox="$(run_aw_in "$EVE_DIR" mail inbox --json 2>/dev/null)"
+if eve_inbox="$(run_aw_in "$EVE_DIR" mail inbox --json 2>&1)"; then
+  eve_inbox_exit=0
+else
+  eve_inbox_exit=$?
+fi
+assert_eq "eve inbox exit" "0" "$eve_inbox_exit"
+if [[ "$eve_inbox_exit" != "0" ]]; then
+  echo "$eve_inbox"
+fi
 eve_msg_body="$(echo "$eve_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Hello registered local eve'), ''))" 2>/dev/null || echo "")"
 assert_eq "eve receives bare-alias mail despite registered identity" "Hello registered local eve" "$eve_msg_body"
 echo ""

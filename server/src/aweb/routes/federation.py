@@ -9,6 +9,7 @@ from awid.log import canonical_server_origin
 
 from aweb.config import get_settings
 from aweb.deps import get_db
+from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.envelope import (
     FederatedDeliveryRequest,
     FederationEnvelope,
@@ -189,19 +190,50 @@ def _delivery_response(envelope: FederationEnvelope, *, message_id: str, convers
     return response
 
 
+def _envelope_is_encrypted_v2(envelope: FederationEnvelope) -> bool:
+    return (
+        envelope.content_mode == "encrypted_v2"
+        or envelope.message_version == 2
+        or envelope.encrypted_envelope is not None
+    )
+
+
 async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
     aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT message_id, conversation_id, from_did, to_did, from_address, subject,
-               body, priority, created_at
-        FROM {{tables.messages}}
-        WHERE message_id = $1
-        """,
-        UUID(envelope.message_id),
-    )
+    if _envelope_is_encrypted_v2(envelope):
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, conversation_id, from_did, to_did, from_address, content_mode,
+                   signed_envelope_hash, created_at
+            FROM {{tables.messages}}
+            WHERE message_id = $1
+            """,
+            UUID(envelope.message_id),
+        )
+    else:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, conversation_id, from_did, to_did, from_address, subject,
+                   body, priority, created_at
+            FROM {{tables.messages}}
+            WHERE message_id = $1
+            """,
+            UUID(envelope.message_id),
+        )
     if row is None:
         return None
+    if _envelope_is_encrypted_v2(envelope):
+        expected = encrypted_message_storage_metadata(envelope.encrypted_envelope or {}).get("signed_envelope_hash")
+        if (
+            str(row["conversation_id"]) != str(envelope.conversation_id)
+            or row["from_did"] != envelope.sender_did_aw
+            or row["to_did"] != envelope.target_did_aw
+            or (row.get("from_address") or "") != (envelope.sender_address or "")
+            or row["content_mode"] != "encrypted_v2"
+            or row["signed_envelope_hash"] != expected
+        ):
+            raise HTTPException(status_code=409, detail="Federation message_id already exists with different encrypted envelope")
+        return str(row["conversation_id"]), row["created_at"]
     if (
         str(row["conversation_id"]) != str(envelope.conversation_id)
         or row["from_did"] != envelope.sender_did_aw
@@ -539,6 +571,11 @@ async def receive_federated_message(
     try:
         if envelope.type == "mail":
             conversation_id = await _ensure_federated_mail_conversation(db, envelope, recipient)
+            encrypted_metadata = (
+                encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
+                if _envelope_is_encrypted_v2(envelope)
+                else None
+            )
             message_id, created_at = await deliver_message(
                 db,
                 registry_client=registry_client,
@@ -553,15 +590,19 @@ async def receive_federated_message(
                     envelope.target_address,
                     envelope.target_did_aw,
                 ),
-                subject=envelope.subject or "",
-                body=envelope.body,
+                subject="" if encrypted_metadata is not None else (envelope.subject or ""),
+                body="" if encrypted_metadata is not None else envelope.body,
                 priority=envelope.priority or "normal",
                 sender_address=envelope.sender_address,
                 team_id=recipient.get("team_id"),
                 from_agent_id=None,
                 to_agent_id=recipient.get("agent_id"),
-                signature=payload.signature,
-                signed_payload=envelope.signed_payload,
+                signature=None if encrypted_metadata is not None else payload.signature,
+                signed_payload=None if encrypted_metadata is not None else envelope.signed_payload,
+                content_mode=envelope.content_mode or "legacy_plaintext_v1",
+                message_version=envelope.message_version or 1,
+                encrypted_envelope=envelope.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
                 created_at=_parse_timestamp(envelope.timestamp),
                 message_id=UUID(envelope.message_id),
                 conversation_id=conversation_id,
@@ -612,6 +653,7 @@ async def receive_federated_message(
             "to_alias": recipient.get("alias"),
             "subject": envelope.subject or "",
             "priority": envelope.priority or "normal",
+            "content_mode": envelope.content_mode or "legacy_plaintext_v1",
             "federated": True,
         },
     )

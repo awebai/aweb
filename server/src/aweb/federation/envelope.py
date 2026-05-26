@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
+from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_mail_envelope
 
 FEDERATION_ENVELOPE_VERSION = 1
 FEDERATION_TIMESTAMP_SKEW_SECONDS = 300
@@ -54,10 +55,13 @@ class FederationEnvelope(BaseModel):
     body: str
     message_id: str
     timestamp: str
-    signed_payload: str = Field(..., min_length=1)
+    signed_payload: str | None = None
     conversation_id: str | None = Field(default=None, min_length=1, max_length=64)
     subject: str | None = None
     priority: str | None = None
+    content_mode: str | None = None
+    message_version: int | None = None
+    encrypted_envelope: dict[str, Any] | None = None
     wait_seconds: int | None = None
     reply_to: str | None = Field(default=None, min_length=1, max_length=64)
     sender_leaving: bool = False
@@ -140,6 +144,11 @@ def verify_federation_envelope(
     )
     _enforce_timestamp_skew(model.timestamp, now=now, max_skew_seconds=max_skew_seconds)
     _enforce_expected_fields(model, expected or {})
+    if _is_encrypted_v2(model):
+        _enforce_encrypted_payload_binding(model, signature, now=now)
+        return model
+    if not model.signed_payload:
+        raise FederationEnvelopeError("Federation signed_payload is required")
     _enforce_signed_payload_binding(model)
     try:
         verify_did_key_signature(
@@ -150,6 +159,14 @@ def verify_federation_envelope(
     except Exception as exc:
         raise FederationEnvelopeError("Invalid federation message signature") from exc
     return model
+
+
+def _is_encrypted_v2(model: FederationEnvelope) -> bool:
+    return (
+        model.content_mode == "encrypted_v2"
+        or model.message_version == 2
+        or model.encrypted_envelope is not None
+    )
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -259,3 +276,35 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
             raise FederationEnvelopeError("Federation signed_payload sender_leaving does not match")
         if bool(payload.get("hang_on")) != model.hang_on:
             raise FederationEnvelopeError("Federation signed_payload hang_on does not match")
+
+
+def _enforce_encrypted_payload_binding(
+    model: FederationEnvelope,
+    signature: str,
+    *,
+    now: datetime | None,
+) -> None:
+    if model.type != "mail":
+        raise FederationEnvelopeError("Federated encrypted delivery is only defined for mail")
+    if model.content_mode != "encrypted_v2":
+        raise FederationEnvelopeError("Federation encrypted content_mode must be encrypted_v2")
+    if model.message_version != 2:
+        raise FederationEnvelopeError("Federation encrypted message_version must be 2")
+    if not isinstance(model.encrypted_envelope, dict):
+        raise FederationEnvelopeError("Federation encrypted_envelope must be an object")
+    if model.encrypted_envelope.get("signature") != signature:
+        raise FederationEnvelopeError("Federation encrypted signature does not match envelope signature")
+    try:
+        validate_e2ee_mail_envelope(
+            model.encrypted_envelope,
+            message_id=model.message_id,
+            conversation_id=model.conversation_id or "",
+            sender_did=model.sender_current_did_key,
+            sender_stable_id=model.sender_did_aw if model.sender_did_aw.startswith("did:aw:") else None,
+            recipient_did=model.target_current_did_key,
+            recipient_stable_id=model.target_did_aw if model.target_did_aw.startswith("did:aw:") else None,
+            recipient_address=model.target_address,
+            now=now,
+        )
+    except E2EEEnvelopeError as exc:
+        raise FederationEnvelopeError(str(exc)) from exc

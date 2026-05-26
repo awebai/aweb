@@ -708,22 +708,39 @@ async def _deliver_remote_mail_and_project_locally(
     created_at: datetime | None,
     msg_uuid: UUID | None,
 ) -> SendMessageResponse:
-    if payload.content_mode == "encrypted_v2":
-        raise HTTPException(status_code=422, detail="Federated E2E mail delivery is not implemented yet")
     delivery_origin = _remote_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(
             status_code=424,
             detail="Recipient address has no federated delivery origin",
         )
-    _require_remote_mail_signature(payload)
+    encrypted_metadata = _validate_encrypted_payload(
+        payload,
+        auth=auth,
+        sender_did=sender_did,
+        recipient=recipient,
+        recipient_did=recipient_did,
+    )
+    is_encrypted = payload.content_mode == "encrypted_v2"
+    if not is_encrypted:
+        _require_remote_mail_signature(payload)
+    federation_signature = (
+        str((payload.encrypted_envelope or {}).get("signature") or "").strip()
+        if is_encrypted
+        else str(payload.signature or "").strip()
+    )
     sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
     if not sender_routing_did:
         raise HTTPException(
             status_code=422,
             detail="Federated mail delivery requires a sender identity",
         )
-    sender_current_did = payload.from_did.strip()
+    sender_current_did = (
+        ((payload.encrypted_envelope or {}).get("from") or {}).get("did")
+        if is_encrypted
+        else payload.from_did
+    ) or sender_did
+    sender_current_did = str(sender_current_did).strip()
     if sender_current_did not in set(auth_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
     target_current_did = str(recipient.get("did_key") or "").strip()
@@ -745,17 +762,20 @@ async def _deliver_remote_mail_and_project_locally(
             target_did_aw=target_stable_id,
             target_current_did_key=target_current_did,
             target_delivery_origin=delivery_origin,
-            body=payload.body,
+            body="" if is_encrypted else payload.body,
             message_id=payload.message_id,
-            timestamp=payload.timestamp,
-            signed_payload=payload.signed_payload,
+            timestamp=payload.timestamp or ((payload.encrypted_envelope or {}).get("created_at") if is_encrypted else None),
+            signed_payload=payload.signed_payload if not is_encrypted else None,
             conversation_id=payload.conversation_id,
-            subject=payload.subject,
+            subject="" if is_encrypted else payload.subject,
             priority=payload.priority,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
         )
         verify_federation_envelope(
             envelope,
-            payload.signature,
+            federation_signature,
             expected={
                 "type": "mail",
                 "target_address": target_address,
@@ -773,7 +793,7 @@ async def _deliver_remote_mail_and_project_locally(
         remote = await deliver_federated_mail(
             delivery_origin=delivery_origin,
             envelope=envelope,
-            signature=payload.signature,
+            signature=federation_signature,
             transport=getattr(request.app.state, "federation_mail_transport", None),
         )
     except FederatedMailDeliveryError as exc:
@@ -857,7 +877,11 @@ async def _deliver_remote_mail_and_project_locally(
             body=payload.body,
             priority=payload.priority,
             signature=payload.signature,
-            signed_payload=payload.signed_payload,
+            signed_payload=None if is_encrypted else payload.signed_payload,
+            content_mode=payload.content_mode or "legacy_plaintext_v1",
+            message_version=payload.message_version or 1,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation["conversation_id"],
