@@ -4193,6 +4193,94 @@ async def test_receive_federated_encrypted_mail_routes_ciphertext_only(aweb_clou
 
 
 @pytest.mark.asyncio
+async def test_receive_federated_encrypted_mail_rejects_plaintext_wrapper_and_timestamp_mismatch(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:beta.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="beta.example/bob",
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id=str(uuid4()),
+            domain="beta.example",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://recipient.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    encrypted = _encrypted_mail_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did_key,
+        sender_stable_id="did:aw:alice",
+        recipient_did=bob_did_key,
+        recipient_stable_id="did:aw:bob",
+        recipient_address="beta.example/bob",
+        message_id=message_id,
+        conversation_id=conversation_id,
+    )
+    base_payload = {
+        "envelope": {
+            "version": 1,
+            "type": "mail",
+            "sender_did_aw": "did:aw:alice",
+            "sender_current_did_key": alice_did_key,
+            "sender_address": "alpha.example/alice",
+            "sender_delivery_origin": "https://sender.example",
+            "target_address": "beta.example/bob",
+            "target_did_aw": "did:aw:bob",
+            "target_current_did_key": bob_did_key,
+            "target_delivery_origin": "https://recipient.example",
+            "body": "",
+            "message_id": message_id,
+            "timestamp": encrypted["created_at"],
+            "conversation_id": conversation_id,
+            "subject": "",
+            "priority": "normal",
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": encrypted,
+        },
+        "signature": encrypted["signature"],
+    }
+    created_at = datetime.fromisoformat(encrypted["created_at"].replace("Z", "+00:00"))
+    timestamp_mismatch = (created_at + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    variants = [
+        ("body", "plaintext sentinel", "body must be empty"),
+        ("subject", "plaintext sentinel", "subject must be empty"),
+        ("signed_payload", "legacy signed plaintext", "signed_payload must be absent"),
+        ("timestamp", timestamp_mismatch, "timestamp does not match"),
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for field, value, expected in variants:
+            payload = json.loads(json.dumps(base_payload))
+            payload["envelope"][field] = value
+            resp = await client.post("/v1/federation/messages", json=payload)
+            assert resp.status_code == 422, (field, resp.text)
+            assert expected in resp.text
+
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    ) == 0
+
+
+@pytest.mark.asyncio
 async def test_receive_federated_mail_rejects_wrong_delivery_origin(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()

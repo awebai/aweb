@@ -292,6 +292,14 @@ def _enforce_encrypted_payload_binding(
         raise FederationEnvelopeError("Federation encrypted_envelope must be an object")
     if model.encrypted_envelope.get("signature") != signature:
         raise FederationEnvelopeError("Federation encrypted signature does not match envelope signature")
+    if (model.subject or "") != "":
+        raise FederationEnvelopeError("Federation encrypted subject must be empty")
+    if model.body != "":
+        raise FederationEnvelopeError("Federation encrypted body must be empty")
+    if model.signed_payload is not None:
+        raise FederationEnvelopeError("Federation encrypted signed_payload must be absent")
+    if (model.timestamp or "") != str(model.encrypted_envelope.get("created_at") or ""):
+        raise FederationEnvelopeError("Federation encrypted timestamp does not match envelope created_at")
     try:
         validate_e2ee_message_envelope(
             model.encrypted_envelope,
