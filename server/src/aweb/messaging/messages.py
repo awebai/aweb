@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
 
@@ -317,6 +317,24 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
+    if content_mode == "encrypted_v2":
+        signed_envelope_hash = str(encrypted_metadata.get("signed_envelope_hash") or "").strip()
+        existing = await aweb_db.fetch_one(
+            """
+            SELECT message_id, created_at, content_mode, signed_envelope_hash
+            FROM {{tables.messages}}
+            WHERE message_id = $1
+            """,
+            message_id,
+        )
+        if existing:
+            if (
+                str(existing["content_mode"] or "") == "encrypted_v2"
+                and str(existing["signed_envelope_hash"] or "").strip() == signed_envelope_hash
+            ):
+                return UUID(str(existing["message_id"])), existing["created_at"]
+            raise ConflictError("message_id already exists with a different encrypted envelope")
+
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}

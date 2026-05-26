@@ -266,6 +266,9 @@ def validate_e2ee_mail_envelope(
         raise E2EEEnvelopeError("encrypted envelope sender stable id mismatch")
     if _non_empty(envelope.get("signing_key_id")) != sender_did:
         raise E2EEEnvelopeError("encrypted envelope signing key mismatch")
+    sender_key_id = _non_empty(from_ref.get("encryption_key_id"))
+    if not sender_key_id:
+        raise E2EEEnvelopeError("encrypted envelope sender missing key binding")
 
     recipients = envelope.get("recipients") or []
     if len(recipients) != 1:
@@ -331,6 +334,12 @@ def validate_e2ee_mail_envelope(
         raise E2EEEnvelopeError("encrypted envelope sender_copy sender did mismatch")
     if sender_stable_id and _non_empty(sender_copy_wrap.get("sender_stable_id")) != sender_stable_id:
         raise E2EEEnvelopeError("encrypted envelope sender_copy sender stable id mismatch")
+    if _non_empty(sender_copy_wrap.get("recipient_did")) != sender_did:
+        raise E2EEEnvelopeError("encrypted envelope sender_copy recipient did mismatch")
+    if sender_stable_id and _non_empty(sender_copy_wrap.get("recipient_stable_id")) != sender_stable_id:
+        raise E2EEEnvelopeError("encrypted envelope sender_copy recipient stable id mismatch")
+    if _non_empty(sender_copy_wrap.get("recipient_encryption_key_id")) != sender_key_id:
+        raise E2EEEnvelopeError("encrypted envelope sender_copy recipient key mismatch")
     key_wraps_hash = _hash_canonical(
         "key_wraps",
         [_key_wrap_map(item) for item in key_wraps],

@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from aweb.deps import get_db
 from aweb.config import get_settings
@@ -218,6 +218,14 @@ class InboxMessage(BaseModel):
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
     verification_status: Optional[str] = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+        if self.content_mode != "legacy_plaintext_v1":
+            data.pop("subject", None)
+            data.pop("body", None)
+        return data
 
 
 class InboxResponse(BaseModel):
@@ -529,6 +537,14 @@ def _recipient_conversation_address(recipient: dict | None, payload: SendMessage
     ) or None
 
 
+def _recipient_envelope_address(recipient: dict | None, payload: SendMessageRequest) -> str | None:
+    address = str((recipient or {}).get("address") or "").strip()
+    if address:
+        return address
+    requested_address = str(payload.to_address or "").strip()
+    return requested_address or None
+
+
 async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict | None:
     try:
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
@@ -620,7 +636,7 @@ def _validate_encrypted_payload(
             status_code=422,
             detail="message_id and conversation_id are required for encrypted mail",
         )
-    recipient_address = _recipient_conversation_address(recipient, payload)
+    recipient_address = _recipient_envelope_address(recipient, payload)
     expected_recipient_did = str((recipient or {}).get("did_key") or recipient_did).strip()
     try:
         validate_e2ee_mail_envelope(

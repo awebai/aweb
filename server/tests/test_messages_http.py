@@ -108,14 +108,16 @@ def _encrypted_mail_envelope(
     recipient_stable_id: str,
     message_id: str,
     conversation_id: str,
+    sender_address: str = "acme.com/alice",
+    recipient_address: str = "acme.com/bob",
+    ciphertext: bytes = b"opaque-ciphertext-with-tag",
 ):
     signing_key = SigningKey(sender_sk)
-    ciphertext = b"opaque-ciphertext-with-tag"
     delivery_wrap = {
         "wrap_id": _sha256_b64(b"wrap-binding"),
         "recipient_stable_id": recipient_stable_id,
         "recipient_did": recipient_did,
-        "recipient_address": "acme.com/bob",
+        "recipient_address": recipient_address,
         "recipient_encryption_key_id": "sha256:" + _raw_b64(b"r" * 32),
         "sender_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
         "sender_did": sender_did,
@@ -129,7 +131,7 @@ def _encrypted_mail_envelope(
         "wrap_id": _sha256_b64(b"sender-copy-wrap-binding"),
         "recipient_stable_id": sender_stable_id,
         "recipient_did": sender_did,
-        "recipient_address": "acme.com/alice",
+        "recipient_address": sender_address,
         "recipient_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
         "sender_encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
         "sender_did": sender_did,
@@ -150,14 +152,14 @@ def _encrypted_mail_envelope(
         "created_at": created_at.isoformat().replace("+00:00", "Z"),
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "from": {
-            "address": "acme.com/alice",
+            "address": sender_address,
             "did": sender_did,
             "stable_id": sender_stable_id,
             "encryption_key_id": "sha256:" + _raw_b64(b"s" * 32),
         },
         "recipients": [
             {
-                "address": "acme.com/bob",
+                "address": recipient_address,
                 "did": recipient_did,
                 "stable_id": recipient_stable_id,
                 "encryption_key_id": "sha256:" + _raw_b64(b"r" * 32),
@@ -165,7 +167,7 @@ def _encrypted_mail_envelope(
             }
         ],
         "routing": {
-            "to": "acme.com/bob",
+            "to": recipient_address,
             "to_did": recipient_did,
             "to_stable_id": recipient_stable_id,
             "sender_observed_inbound_mode": "open",
@@ -453,6 +455,40 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 200, resp.text
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        replay_resp = await client.post(
+            "/v1/messages",
+            content=body_bytes,
+            headers={
+                **_signed_identity_headers(alice_sk, alice_did_key, alice_stable, body_bytes),
+                "Content-Type": "application/json",
+            },
+        )
+    assert replay_resp.status_code == 200, replay_resp.text
+
+    different_envelope = _encrypted_mail_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did_key,
+        sender_stable_id=alice_stable,
+        recipient_did=bob_did_key,
+        recipient_stable_id=bob_stable,
+        message_id=message_id,
+        conversation_id=conversation_id,
+        ciphertext=b"different-ciphertext-with-tag",
+    )
+    different_payload = {**payload, "encrypted_envelope": different_envelope}
+    different_body = json.dumps(different_payload, separators=(",", ":")).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        mutation_resp = await client.post(
+            "/v1/messages",
+            content=different_body,
+            headers={
+                **_signed_identity_headers(alice_sk, alice_did_key, alice_stable, different_body),
+                "Content-Type": "application/json",
+            },
+        )
+    assert mutation_resp.status_code == 409, mutation_resp.text
+
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT subject, body, content_mode, message_version, encrypted_envelope,
@@ -476,6 +512,11 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
     assert row["encrypted_suite"] == envelope["crypto"]["suite"]
     assert row["encrypted_signing_key_id"] == envelope["signing_key_id"]
     assert str(row["signed_envelope_hash"]).startswith("sha256:")
+    count = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert count == 1
 
     async def _bob_auth():
         return MessagingAuth(
@@ -496,8 +537,81 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
     assert message["content_mode"] == "encrypted_v2"
     assert message["message_version"] == 2
     assert "encrypted_envelope" in message
-    assert message["subject"] == ""
-    assert message["body"] == ""
+    assert "subject" not in message
+    assert "body" not in message
+
+
+@pytest.mark.asyncio
+async def test_send_encrypted_message_to_local_alias_without_address(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="",
+        address="",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    message_id = "55555555-5555-4555-8555-555555555555"
+    conversation_id = "66666666-6666-4666-8666-666666666666"
+    envelope = _encrypted_mail_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did_key,
+        sender_stable_id="did:aw:alice",
+        recipient_did=bob_did_key,
+        recipient_stable_id="",
+        recipient_address="",
+        message_id=message_id,
+        conversation_id=conversation_id,
+    )
+    payload = {
+        "to_alias": "bob",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": envelope,
+    }
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    app.dependency_overrides[get_messaging_auth] = _auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/messages",
+            content=body_bytes,
+            headers={
+                **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+                "Content-Type": "application/json",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    assert [row["alias"] for row in participants] == ["alice", "bob"]
+    assert participants[1]["address"] == "acme.com/bob"
+    assert participants[1]["current_did_key"] == bob_did_key
+    assert bob_agent_id
 
 
 @pytest.mark.asyncio

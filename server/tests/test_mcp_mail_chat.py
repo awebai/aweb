@@ -2059,6 +2059,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_d
     assert message["message_version"] == 2
     assert message["subject"] == ""
     assert message["body"] == ""
+    assert message["verification_status"] == "verified_envelope_v2"
     assert "content_notice" in message
     assert "ciphertext-bytes" not in json.dumps(message)
 

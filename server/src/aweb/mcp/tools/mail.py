@@ -84,11 +84,11 @@ def mcp_mail_message_from_row(row: dict, *, include_bodies: bool = True) -> dict
         )
     if row.get("from_did"):
         msg["from_did"] = row["from_did"]
-    if row.get("signature"):
+    if not encrypted and row.get("signature"):
         msg["signature"] = row["signature"]
-    if row.get("signed_payload"):
+    if not encrypted and row.get("signed_payload"):
         msg["signed_payload"] = row["signed_payload"]
-    msg["verification_status"] = message_verification_status(dict(row))
+    msg["verification_status"] = "verified_envelope_v2" if encrypted else message_verification_status(dict(row))
     return msg
 
 
