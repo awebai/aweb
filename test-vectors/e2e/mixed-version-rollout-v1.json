@@ -1,0 +1,175 @@
+{
+  "schema": "aweb.e2ee.mixed_version_rollout.v1",
+  "contract_docs": [
+    "docs/e2e-messaging-contract.md",
+    "docs/e2e-operational-metadata.md",
+    "docs/e2e-release-rollout-runbook.md"
+  ],
+  "cases": [
+    {
+      "id": "new_sender_new_recipient_new_server",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "new_v2_server",
+      "expected": "encrypted_send_succeeds",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "recipient_local_decrypt_succeeds",
+        "sender_self_copy_decrypt_succeeds",
+        "server_stores_no_plaintext"
+      ]
+    },
+    {
+      "id": "new_sender_old_recipient_missing_key",
+      "sender": "new_v2_client",
+      "recipient": "old_or_missing_identity_authorized_key",
+      "server": "new_v2_server",
+      "expected": "fail_before_storage_missing_key_capability",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "no_plaintext_row",
+        "no_plaintext_event",
+        "diagnostic_names_missing_or_unsupported_key_capability"
+      ]
+    },
+    {
+      "id": "old_sender_new_recipient_policy_allows_legacy",
+      "sender": "old_plaintext_client",
+      "recipient": "new_v2_client",
+      "server": "new_v2_server",
+      "expected": "legacy_plaintext_only_if_policy_allows",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "message_labeled_legacy_plaintext",
+        "not_claimed_as_v2_encrypted"
+      ]
+    },
+    {
+      "id": "new_client_old_server",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "old_server_no_v2_accept",
+      "expected": "fail_clearly_old_server",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "client_does_not_retry_plaintext",
+        "diagnostic_names_old_server_or_route_lacks_v2_support"
+      ]
+    },
+    {
+      "id": "old_client_new_server_encrypted_required_route",
+      "sender": "old_plaintext_client",
+      "recipient": "new_v2_client_encrypted_required",
+      "server": "new_v2_server",
+      "expected": "reject_legacy_plaintext",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "no_plaintext_row",
+        "diagnostic_names_encrypted_required"
+      ]
+    },
+    {
+      "id": "hosted_server_readable_sender_new_local_encrypted_recipient",
+      "sender": "hosted_server_readable_mcp_or_dashboard",
+      "recipient": "new_local_v2_client",
+      "server": "hosted_server_readable_surface",
+      "expected": "not_treated_as_v2_encrypted",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "surface_labels_server_readable_mode",
+        "no_encrypted_product_claim"
+      ]
+    },
+    {
+      "id": "federated_peer_lacks_v2_route_support",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "new_v2_server_to_old_federated_peer",
+      "expected": "fail_before_delivery_route_lacks_v2_support",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "route_support_failure_distinct_from_key_failure",
+        "no_plaintext_federation_envelope"
+      ]
+    },
+    {
+      "id": "peer_route_support_without_recipient_key_authority",
+      "sender": "new_v2_client",
+      "recipient": "missing_stale_unsigned_or_mismatched_key_assertion",
+      "server": "new_v2_server_to_peer_claiming_route_support",
+      "expected": "fail_before_storage_or_delivery_recipient_key_authority",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "service_route_support_not_key_authority",
+        "no_plaintext_row",
+        "no_plaintext_federation_envelope"
+      ]
+    },
+    {
+      "id": "duplicate_message_id_same_signed_envelope",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "new_v2_server",
+      "expected": "idempotent_success_or_same_result",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "stored_envelope_hash_matches_original",
+        "no_duplicate_mutated_row"
+      ]
+    },
+    {
+      "id": "duplicate_message_id_different_signed_envelope",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "new_v2_server",
+      "expected": "reject_replay_or_mutation",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "no_second_row",
+        "no_event_with_mutated_metadata"
+      ]
+    },
+    {
+      "id": "stale_timestamp_at_ingestion",
+      "sender": "new_v2_client",
+      "recipient": "new_v2_client_with_identity_authorized_key",
+      "server": "new_v2_server",
+      "expected": "reject_at_ingress",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "no_plaintext_row",
+        "already_accepted_stored_mail_readability_unchanged"
+      ]
+    },
+    {
+      "id": "rollback_after_v2_messages_exist",
+      "sender": "new_v2_client_after_send_gate_disabled",
+      "recipient": "new_v2_client_with_existing_encrypted_history",
+      "server": "rolled_back_send_disabled_read_preserved",
+      "expected": "new_v2_send_disabled_existing_ciphertext_history_retrievable",
+      "plaintext_fallback_allowed": false,
+      "release_blocker": true,
+      "assertions": [
+        "rollback_does_not_convert_to_plaintext",
+        "existing_ciphertext_metadata_read_path_available",
+        "local_decrypt_still_available_when_client_has_keys"
+      ]
+    }
+  ],
+  "legacy_plaintext_naming": {
+    "current_label": "legacy_plaintext",
+    "current_cli_flag_placeholder": "--legacy-plaintext",
+    "update_rule": "If the product renames the legacy plaintext flag or UX label, update this fixture and docs/e2e-release-rollout-runbook.md in the same change."
+  }
+}

@@ -27,6 +27,9 @@ These documents define the system:
 - [e2e-operational-metadata.md](e2e-operational-metadata.md): metadata-only
   usage, billing, abuse, retention, support, and admin tooling contract for v2
   E2E messages
+- [e2e-release-rollout-runbook.md](e2e-release-rollout-runbook.md): release
+  sequencing, mixed-version matrix, observability, and rollback checklist for
+  encrypted message v2 rollout
 - [global-local-identity-routing.md](global-local-identity-routing.md):
   supporting SOT for the shipped route-level global/local messaging contract
   and the legacy reachability/conversation-auth cleanup path

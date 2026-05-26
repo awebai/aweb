@@ -61,8 +61,11 @@ metadata allowance is defined in
 
 Publishing ripple for E2E wording changes: keep the aw CLI docs/help, PyPI
 `aweb`/server docs, AC dashboard copy, canonical skills, Codex/Claude skill
-packages, and Pi/channel package wording aligned. Do not publish or tag from a
-docs-only edit unless the release owner routes that action.
+packages, and Pi/channel package wording aligned. The staged rollout and
+mixed-version release checklist lives in
+[`e2e-release-rollout-runbook.md`](e2e-release-rollout-runbook.md). Do not
+publish or tag from a docs-only edit unless the release owner routes that
+action.
 
 ## Mail
 
