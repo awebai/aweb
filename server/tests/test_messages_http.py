@@ -4166,9 +4166,27 @@ async def test_receive_federated_encrypted_mail_routes_ciphertext_only(aweb_clou
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post("/v1/federation/messages", json=payload)
         second = await client.post("/v1/federation/messages", json=payload)
+        different_encrypted = _encrypted_mail_envelope(
+            sender_sk=alice_sk,
+            sender_did=alice_did_key,
+            sender_stable_id="did:aw:alice",
+            recipient_did=bob_did_key,
+            recipient_stable_id="did:aw:bob",
+            recipient_address="beta.example/bob",
+            message_id=message_id,
+            conversation_id=conversation_id,
+            ciphertext=b"different-opaque-ciphertext-with-tag",
+        )
+        different_payload = json.loads(json.dumps(payload))
+        different_payload["envelope"]["timestamp"] = different_encrypted["created_at"]
+        different_payload["envelope"]["encrypted_envelope"] = different_encrypted
+        different_payload["signature"] = different_encrypted["signature"]
+        different = await client.post("/v1/federation/messages", json=different_payload)
 
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
+    assert different.status_code == 409, different.text
+    assert "different encrypted envelope" in different.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT subject, body, content_mode, message_version, signature, signed_payload,
