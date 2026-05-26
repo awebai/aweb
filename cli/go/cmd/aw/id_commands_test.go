@@ -504,6 +504,35 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 		t.Fatalf("show key_id=%v want %s", show["key_id"], secondKeyID)
 	}
 
+	assertionPath, _ := show["assertion_path"].(string)
+	if assertionPath == "" {
+		t.Fatalf("show assertion_path missing: %#v", show)
+	}
+	_, otherRawPub, err := awid.GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	badAssertion, err := awid.BuildEncryptionKeyAssertion(priv, did, stableID, otherRawPub, firstKeyID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveEncryptionAssertion(assertionPath, badAssertion); err != nil {
+		t.Fatalf("save mismatched assertion: %v", err)
+	}
+	run := exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("setup should fail when assertion does not match active private key\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "assertion does not match the active private key") {
+		t.Fatalf("missing assertion/private-key mismatch guidance:\n%s", string(out))
+	}
+	if len(published) != 2 {
+		t.Fatalf("mismatched assertion must not republish; published=%d", len(published))
+	}
+
 	privatePath, _ := show["private_key_path"].(string)
 	if privatePath == "" {
 		t.Fatalf("show private_key_path missing: %#v", show)
@@ -511,10 +540,10 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	if err := os.Remove(privatePath); err != nil {
 		t.Fatalf("remove private key: %v", err)
 	}
-	run := exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
+	run = exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
-	out, err := run.CombinedOutput()
+	out, err = run.CombinedOutput()
 	if err == nil {
 		t.Fatalf("setup should fail when private key is missing\n%s", string(out))
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -163,11 +164,15 @@ func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEnc
 			status = "rotated"
 		}
 	} else {
-		if err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record); err != nil {
+		material, err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record)
+		if err != nil {
 			return idEncryptionKeyOutput{}, err
 		}
 		assertion, err = loadEncryptionAssertion(identity.WorkingDir, record.AssertionPath)
 		if err != nil {
+			return idEncryptionKeyOutput{}, err
+		}
+		if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
 			return idEncryptionKeyOutput{}, err
 		}
 	}
@@ -226,22 +231,47 @@ func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signing
 	}, assertion, nil
 }
 
-func validateEncryptionRecordPrivateKey(root string, record *awconfig.EncryptionKeyRecord) error {
+type encryptionRecordKeyMaterial struct {
+	KeyID     string
+	PublicKey string
+}
+
+func validateEncryptionRecordPrivateKey(root string, record *awconfig.EncryptionKeyRecord) (*encryptionRecordKeyMaterial, error) {
 	if record == nil {
-		return usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
+		return nil, usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
 	}
 	privatePath := resolveWorktreeRelativePath(root, record.PrivateKeyPath)
 	priv, err := awid.LoadX25519PrivateKey(privatePath)
 	if err != nil {
-		return usageError("local E2E encryption private key is missing or unreadable at %s; restore it from backup before publishing this key, or run `aw id encryption-key rotate` to publish a new key", privatePath)
+		return nil, usageError("local E2E encryption private key is missing or unreadable at %s; restore it from backup before publishing this key, or run `aw id encryption-key rotate` to publish a new key", privatePath)
 	}
 	rawPub := priv.PublicKey().Bytes()
 	keyID, err := awid.ComputeEncryptionKeyID(rawPub)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	publicKey := base64.RawStdEncoding.EncodeToString(rawPub)
 	if keyID != strings.TrimSpace(record.KeyID) {
-		return usageError("local E2E encryption private key at %s does not match active key %s; restore the matching archived key or rotate", privatePath, strings.TrimSpace(record.KeyID))
+		return nil, usageError("local E2E encryption private key at %s does not match active key %s; restore the matching archived key or rotate", privatePath, strings.TrimSpace(record.KeyID))
+	}
+	if publicKey != strings.TrimSpace(record.PublicKey) {
+		return nil, usageError("local E2E encryption private key at %s does not match active public key metadata; restore the matching archived key or rotate", privatePath)
+	}
+	return &encryptionRecordKeyMaterial{KeyID: keyID, PublicKey: publicKey}, nil
+}
+
+func validateEncryptionRecordAssertion(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial) error {
+	if identity == nil || record == nil || assertion == nil || material == nil {
+		return usageError("local E2E encryption key state is incomplete; restore from backup or run `aw id encryption-key rotate`")
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), time.Now().UTC()); err != nil {
+		return usageError("local E2E encryption-key assertion is stale or mismatched; restore the matching assertion from backup or run `aw id encryption-key rotate`: %v", err)
+	}
+	if strings.TrimSpace(assertion.EncryptionKeyID) != strings.TrimSpace(record.KeyID) ||
+		strings.TrimSpace(assertion.EncryptionKeyID) != material.KeyID ||
+		strings.TrimSpace(assertion.EncryptionPublicKey) != strings.TrimSpace(record.PublicKey) ||
+		strings.TrimSpace(assertion.EncryptionPublicKey) != material.PublicKey {
+		return usageError("local E2E encryption-key assertion does not match the active private key; restore the matching assertion from backup or run `aw id encryption-key rotate` before publishing")
 	}
 	return nil
 }
