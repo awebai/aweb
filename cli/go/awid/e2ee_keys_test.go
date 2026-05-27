@@ -62,6 +62,70 @@ func TestVerifyEncryptionKeyAssertion(t *testing.T) {
 	}
 }
 
+func TestBuildEncryptionKeyAssertionIncludesSignedSelfCustody(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	rawPub := []byte{
+		1, 2, 3, 4, 5, 6, 7, 8,
+		9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24,
+		25, 26, 27, 28, 29, 30, 31, 32,
+	}
+
+	assertion, err := BuildEncryptionKeyAssertion(priv, did, stableID, rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assertion.Custody != EncryptionKeyCustodySelf {
+		t.Fatalf("custody=%q want self", assertion.Custody)
+	}
+	if err := VerifyEncryptionKeyAssertion(assertion, did, stableID, time.Date(2026, 5, 26, 12, 1, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyEncryptionKeyAssertionRejectsUnsignedCustodyMutation(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	assertion := testEncryptionAssertion(t, priv, did, stableID)
+	assertion.Custody = EncryptionKeyCustodySelf
+
+	err = VerifyEncryptionKeyAssertion(assertion, did, stableID, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "invalid encryption key assertion signature") {
+		t.Fatalf("err=%v, want custody mutation to break signature", err)
+	}
+}
+
+func TestVerifyEncryptionKeyAssertionRejectsInvalidCustody(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	assertion := testEncryptionAssertion(t, priv, did, stableID)
+	assertion.Custody = "server"
+
+	err = VerifyEncryptionKeyAssertion(assertion, did, stableID, time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "unsupported encryption key custody") {
+		t.Fatalf("err=%v, want invalid custody rejection", err)
+	}
+}
+
 func TestVerifyEncryptionKeyAssertionRejectsSubstitution(t *testing.T) {
 	t.Parallel()
 

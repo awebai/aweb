@@ -779,6 +779,7 @@ func e2eeEncryptionKeyAssertionJSONValue(assertion *EncryptionKeyAssertion) map[
 	if assertion.IdentityStableID != nil {
 		addNonEmpty(out, "identity_stable_id", *assertion.IdentityStableID)
 	}
+	addNonEmpty(out, "custody", assertion.Custody)
 	if assertion.PreviousEncryptionKeyID != nil {
 		addNonEmpty(out, "previous_encryption_key_id", *assertion.PreviousEncryptionKeyID)
 	}

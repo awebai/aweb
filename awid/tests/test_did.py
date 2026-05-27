@@ -59,6 +59,7 @@ def _encryption_assertion_body(
     public_key: str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
     created_at: str = "2026-05-26T00:00:00Z",
     not_before: str = "2026-05-26T00:00:00Z",
+    custody: str | None = None,
 ) -> dict:
     seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
     did_aw = identity_vectors["mapping"]["did_aw"]
@@ -79,6 +80,8 @@ def _encryption_assertion_body(
         body["created_at"] = "2020-01-01T00:00:00Z"
         body["not_before"] = "2020-01-01T00:00:00Z"
         body["expires_at"] = "2020-01-02T00:00:00Z"
+    if custody is not None:
+        body["custody"] = custody
     body["signature"] = sign_message(seed, canonical_json_bytes(body))
     return body
 
@@ -288,6 +291,42 @@ async def test_publish_identity_encryption_key_and_resolve_from_key_endpoint(
     assert key_payload["encryption_key"]["encryption_key_id"] == body["encryption_key_id"]
     assert key_payload["encryption_key"]["identity_did"] == body["identity_did"]
     assert key_payload["encryption_key"]["signature"] == body["signature"]
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_preserves_signed_custody(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors, custody="self")
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 200, publish.text
+    assert publish.json()["custody"] == "self"
+
+    key_response = await client.get(f"/v1/did/{body['identity_stable_id']}/key")
+    assert key_response.status_code == 200, key_response.text
+    assert key_response.json()["encryption_key"]["custody"] == "self"
+
+
+@pytest.mark.asyncio
+async def test_publish_identity_encryption_key_rejects_unsigned_custody_mutation(
+    client,
+    identity_vectors,
+    register_vector,
+):
+    register = await client.post("/v1/did", json=_register_body(register_vector))
+    assert register.status_code == 200, register.text
+
+    body = _encryption_assertion_body(identity_vectors)
+    body["custody"] = "self"
+
+    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    assert publish.status_code == 422, publish.text
+    assert "invalid signature" in publish.text
 
 
 @pytest.mark.asyncio

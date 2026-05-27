@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid_service.deps import get_db as get_db_infra
 from awid.ratelimit import rate_limit_dep
@@ -88,6 +88,7 @@ class EncryptionKeyAssertion(BaseModel):
     version: Literal["aweb-e2ee-key-v1"]
     identity_did: str = Field(..., max_length=256)
     identity_stable_id: str | None = Field(default=None, max_length=256)
+    custody: Literal["self", "hosted_custodial"] | None = None
     encryption_key_id: str = Field(..., max_length=128)
     encryption_public_key: str = Field(..., max_length=128)
     algorithm: Literal["x25519"]
@@ -96,6 +97,10 @@ class EncryptionKeyAssertion(BaseModel):
     expires_at: str = Field(..., max_length=64)
     previous_encryption_key_id: str | None = Field(default=None, max_length=128)
     signature: str = Field(..., max_length=2048)
+
+    @model_serializer(mode="wrap")
+    def serialize_without_null_optional_fields(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 class DidKeyResponse(BaseModel):
@@ -181,6 +186,7 @@ def _assertion_from_row(row) -> EncryptionKeyAssertion | None:
         version="aweb-e2ee-key-v1",
         identity_did=row["identity_did"],
         identity_stable_id=row["identity_stable_id"],
+        custody=row.get("assertion_custody") or None,
         encryption_key_id=row["encryption_key_id"],
         encryption_public_key=row["encryption_public_key"],
         algorithm=row["algorithm"],
@@ -204,7 +210,7 @@ async def _fetch_current_encryption_assertion(
         SELECT did_aw, encryption_key_id, encryption_public_key, algorithm,
                identity_did, identity_stable_id, assertion_signature,
                created_at_text, not_before_text, expires_at_text,
-               previous_encryption_key_id, published_at
+               previous_encryption_key_id, assertion_custody, published_at
         FROM {{tables.identity_encryption_keys}}
         WHERE did_aw = $1
           AND identity_did = $3
@@ -429,16 +435,17 @@ async def publish_encryption_key(
             """
             INSERT INTO {{tables.identity_encryption_keys}}
                 (did_aw, encryption_key_id, encryption_public_key, algorithm,
-                 identity_did, identity_stable_id, assertion_signature,
+                 identity_did, identity_stable_id, assertion_custody, assertion_signature,
                  assertion_canonical, created_at_text, not_before_text,
                  expires_at_text, assertion_created_at, not_before_at,
                  expires_at, previous_encryption_key_id, published_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
             ON CONFLICT (did_aw, encryption_key_id) DO UPDATE SET
                 encryption_public_key = EXCLUDED.encryption_public_key,
                 algorithm = EXCLUDED.algorithm,
                 identity_did = EXCLUDED.identity_did,
                 identity_stable_id = EXCLUDED.identity_stable_id,
+                assertion_custody = EXCLUDED.assertion_custody,
                 assertion_signature = EXCLUDED.assertion_signature,
                 assertion_canonical = EXCLUDED.assertion_canonical,
                 created_at_text = EXCLUDED.created_at_text,
@@ -457,6 +464,7 @@ async def publish_encryption_key(
             assertion.algorithm,
             assertion.identity_did,
             assertion.identity_stable_id,
+            assertion.custody,
             assertion.signature,
             canonical.decode("utf-8"),
             assertion.created_at,

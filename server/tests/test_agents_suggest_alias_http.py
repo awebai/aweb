@@ -66,6 +66,7 @@ def _make_encryption_assertion(
     created_at: str = "2026-05-25T12:00:00Z",
     not_before: str = "2026-05-25T11:59:00Z",
     expires_at: str = "2126-05-26T12:00:00Z",
+    custody: str | None = None,
 ) -> dict:
     payload = {
         "operation": "publish_encryption_key",
@@ -80,6 +81,8 @@ def _make_encryption_assertion(
     }
     if stable_id:
         payload["identity_stable_id"] = stable_id
+    if custody is not None:
+        payload["custody"] = custody
     payload["signature"] = sign_message(signing_key, canonical_json_bytes(payload))
     return payload
 
@@ -548,6 +551,105 @@ async def test_publish_my_encryption_key_for_local_agent_and_list_returns_verifi
     assert agent["repo"] is None
     assert agent["encryption_key"]["encryption_key_id"] == assertion["encryption_key_id"]
     assert "identity_stable_id" not in agent["encryption_key"]
+
+
+@pytest.mark.asyncio
+async def test_publish_my_encryption_key_preserves_signed_custody(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="local",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    assertion = _make_encryption_assertion(agent_sk, did_key=agent_did_key, custody="self")
+    body_bytes = json.dumps(assertion, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        publish = await client.put(
+            "/v1/agents/me/encryption-key",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+        listed = await client.get("/v1/agents", headers={
+            **_signed_request(agent_sk, agent_did_key, "backend:acme.com"),
+            "X-AWID-Team-Certificate": cert_header,
+        })
+
+    assert publish.status_code == 200, publish.text
+    assert publish.json()["encryption_key"]["custody"] == "self"
+    assert listed.status_code == 200, listed.text
+    [agent] = listed.json()["agents"]
+    assert agent["agent_id"] == str(agent_id)
+    assert agent["encryption_key"]["custody"] == "self"
+
+
+@pytest.mark.asyncio
+async def test_publish_my_encryption_key_rejects_unsigned_custody_mutation(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="local",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
+        """,
+        uuid4(),
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    assertion = _make_encryption_assertion(agent_sk, did_key=agent_did_key)
+    assertion["custody"] = "self"
+    body_bytes = json.dumps(assertion, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.put(
+            "/v1/agents/me/encryption-key",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 422, resp.text
+    assert "invalid signature" in resp.json()["detail"]["message"]
 
 
 @pytest.mark.asyncio

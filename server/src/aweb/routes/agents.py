@@ -73,6 +73,7 @@ class EncryptionKeyAssertion(BaseModel):
     version: Literal["aweb-e2ee-key-v1"]
     identity_did: str = Field(..., max_length=256)
     identity_stable_id: Optional[str] = Field(default=None, max_length=256)
+    custody: Optional[Literal["self", "hosted_custodial"]] = None
     encryption_key_id: str = Field(..., max_length=128)
     encryption_public_key: str = Field(..., max_length=128)
     algorithm: Literal["x25519"]
@@ -218,6 +219,7 @@ async def list_agents(
                e.algorithm AS encryption_key_algorithm,
                e.identity_did AS encryption_key_identity_did,
                e.identity_stable_id AS encryption_key_identity_stable_id,
+               e.assertion_custody AS encryption_key_custody,
                e.created_at_text AS encryption_key_created_at,
                e.not_before_text AS encryption_key_not_before,
                e.expires_at_text AS encryption_key_expires_at,
@@ -226,7 +228,7 @@ async def list_agents(
         FROM {{tables.agents}} a
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,
-                   identity_did, identity_stable_id, created_at_text,
+                   identity_did, identity_stable_id, assertion_custody, created_at_text,
                    not_before_text, expires_at_text,
                    previous_encryption_key_id, assertion_signature
             FROM {{tables.agent_encryption_keys}}
@@ -325,6 +327,7 @@ def _encryption_assertion_from_row(row) -> EncryptionKeyAssertion | None:
         version="aweb-e2ee-key-v1",
         identity_did=row["encryption_key_identity_did"],
         identity_stable_id=row.get("encryption_key_identity_stable_id") or None,
+        custody=row.get("encryption_key_custody") or None,
         encryption_key_id=row["encryption_key_id"],
         encryption_public_key=row["encryption_public_key"],
         algorithm=row["encryption_key_algorithm"],
@@ -506,6 +509,7 @@ async def publish_my_encryption_key(
             algorithm,
             identity_did,
             identity_stable_id,
+            assertion_custody,
             assertion_signature,
             assertion_canonical,
             created_at_text,
@@ -519,7 +523,7 @@ async def publish_my_encryption_key(
         )
         VALUES (
             $1::UUID, $2, $3, $4, $5, $6, $7, $8, $9,
-            $10, $11, $12, $13, $14, $15, $16, NULL
+            $10, $11, $12, $13, $14, $15, $16, $17, NULL
         )
         ON CONFLICT (agent_id, encryption_key_id) DO UPDATE SET
             team_id = EXCLUDED.team_id,
@@ -527,6 +531,7 @@ async def publish_my_encryption_key(
             algorithm = EXCLUDED.algorithm,
             identity_did = EXCLUDED.identity_did,
             identity_stable_id = EXCLUDED.identity_stable_id,
+            assertion_custody = EXCLUDED.assertion_custody,
             assertion_signature = EXCLUDED.assertion_signature,
             assertion_canonical = EXCLUDED.assertion_canonical,
             created_at_text = EXCLUDED.created_at_text,
@@ -546,6 +551,7 @@ async def publish_my_encryption_key(
         payload.algorithm,
         payload.identity_did,
         payload.identity_stable_id,
+        payload.custody,
         payload.signature,
         canonical_payload.decode("utf-8"),
         payload.created_at,

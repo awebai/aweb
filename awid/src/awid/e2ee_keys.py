@@ -10,15 +10,20 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from nacl.signing import SigningKey
+
+from awid.did import did_from_public_key
 from awid.did import public_key_from_did
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
 
 ENCRYPTION_KEY_ASSERTION_OPERATION = "publish_encryption_key"
 ENCRYPTION_KEY_ASSERTION_VERSION = "aweb-e2ee-key-v1"
 ENCRYPTION_KEY_ALGORITHM_X25519 = "x25519"
+ENCRYPTION_KEY_CUSTODY_SELF = "self"
+ENCRYPTION_KEY_CUSTODY_HOSTED = "hosted_custodial"
 
 
 def decode_raw_standard_b64(value: str, *, field_name: str) -> bytes:
@@ -77,12 +82,57 @@ def canonical_encryption_assertion(assertion: dict[str, Any]) -> bytes:
     return canonical_json_bytes(encryption_assertion_payload(assertion))
 
 
+def build_encryption_key_assertion(
+    *,
+    signing_key: bytes,
+    identity_did: str,
+    identity_stable_id: str | None,
+    encryption_public_key: bytes,
+    previous_encryption_key_id: str | None = None,
+    custody: str = ENCRYPTION_KEY_CUSTODY_SELF,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    if len(encryption_public_key) != 32:
+        raise ValueError("encryption_public_key must be 32 bytes")
+    if not signing_key:
+        raise ValueError("signing_key is required")
+    verify_key = bytes(SigningKey(signing_key).verify_key)
+    if did_from_public_key(verify_key) != identity_did:
+        raise ValueError("identity_did does not match signing key")
+    custody = (custody or "").strip()
+    if custody not in {ENCRYPTION_KEY_CUSTODY_SELF, ENCRYPTION_KEY_CUSTODY_HOSTED}:
+        raise ValueError("custody must be one of self, hosted_custodial")
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    public_key_b64 = raw_standard_b64(encryption_public_key)
+    assertion: dict[str, Any] = {
+        "operation": ENCRYPTION_KEY_ASSERTION_OPERATION,
+        "version": ENCRYPTION_KEY_ASSERTION_VERSION,
+        "identity_did": identity_did,
+        "custody": custody,
+        "encryption_key_id": encryption_key_id(public_key_b64),
+        "encryption_public_key": public_key_b64,
+        "algorithm": ENCRYPTION_KEY_ALGORITHM_X25519,
+        "created_at": now.isoformat().replace("+00:00", "Z"),
+        "not_before": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": (now + timedelta(days=90)).isoformat().replace("+00:00", "Z"),
+    }
+    stable_id = (identity_stable_id or "").strip()
+    if stable_id:
+        assertion["identity_stable_id"] = stable_id
+    previous = (previous_encryption_key_id or "").strip()
+    if previous:
+        assertion["previous_encryption_key_id"] = previous
+    assertion["signature"] = sign_message(signing_key, canonical_encryption_assertion(assertion))
+    return assertion
+
+
 def validate_encryption_key_assertion(
     assertion: dict[str, Any],
     *,
     current_did_key: str,
     stable_id: str | None,
     now: datetime,
+    expected_custody: str | None = None,
 ) -> tuple[bytes, datetime, datetime, datetime]:
     """Validate an identity-signed encryption-key assertion.
 
@@ -99,6 +149,15 @@ def validate_encryption_key_assertion(
     algorithm = str(assertion.get("algorithm") or "").strip()
     if algorithm != ENCRYPTION_KEY_ALGORITHM_X25519:
         raise ValueError("algorithm must be x25519")
+    custody = str(assertion.get("custody") or "").strip()
+    if custody and custody not in {ENCRYPTION_KEY_CUSTODY_SELF, ENCRYPTION_KEY_CUSTODY_HOSTED}:
+        raise ValueError("custody must be one of self, hosted_custodial")
+    if expected_custody:
+        expected_custody = expected_custody.strip()
+        if expected_custody == ENCRYPTION_KEY_CUSTODY_HOSTED and custody != expected_custody:
+            raise ValueError("hosted custodial encryption key assertions must include custody")
+        if custody and custody != expected_custody:
+            raise ValueError("custody does not match expected identity custody")
 
     identity_did = str(assertion.get("identity_did") or "").strip()
     if identity_did != current_did_key:

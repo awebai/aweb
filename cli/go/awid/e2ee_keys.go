@@ -16,6 +16,8 @@ import (
 const (
 	EncryptionKeyAssertionVersion = "aweb-e2ee-key-v1"
 	EncryptionKeyAlgorithmX25519  = "x25519"
+	EncryptionKeyCustodySelf      = "self"
+	EncryptionKeyCustodyHosted    = "hosted_custodial"
 )
 
 // EncryptionKeyAssertion is the identity-signed public assertion distributed by
@@ -27,6 +29,7 @@ type EncryptionKeyAssertion struct {
 	Version                 string  `json:"version"`
 	IdentityDID             string  `json:"identity_did"`
 	IdentityStableID        *string `json:"identity_stable_id,omitempty"`
+	Custody                 string  `json:"custody,omitempty"`
 	EncryptionKeyID         string  `json:"encryption_key_id"`
 	EncryptionPublicKey     string  `json:"encryption_public_key"`
 	Algorithm               string  `json:"algorithm"`
@@ -64,6 +67,9 @@ func encryptionAssertionSignedPayload(assertion *EncryptionKeyAssertion) (string
 	}
 	if assertion.IdentityStableID != nil {
 		payload["identity_stable_id"] = strings.TrimSpace(*assertion.IdentityStableID)
+	}
+	if strings.TrimSpace(assertion.Custody) != "" {
+		payload["custody"] = strings.TrimSpace(assertion.Custody)
 	}
 	if assertion.PreviousEncryptionKeyID != nil && strings.TrimSpace(*assertion.PreviousEncryptionKeyID) != "" {
 		payload["previous_encryption_key_id"] = strings.TrimSpace(*assertion.PreviousEncryptionKeyID)
@@ -142,6 +148,7 @@ func BuildEncryptionKeyAssertion(
 		Operation:           "publish_encryption_key",
 		Version:             EncryptionKeyAssertionVersion,
 		IdentityDID:         identityDID,
+		Custody:             EncryptionKeyCustodySelf,
 		EncryptionKeyID:     keyID,
 		EncryptionPublicKey: base64.RawStdEncoding.EncodeToString(rawPublicKey),
 		Algorithm:           EncryptionKeyAlgorithmX25519,
@@ -192,6 +199,10 @@ func VerifyEncryptionKeyAssertion(assertion *EncryptionKeyAssertion, currentDIDK
 	}
 	if assertion.Algorithm != EncryptionKeyAlgorithmX25519 {
 		return fmt.Errorf("unsupported encryption key algorithm %q", assertion.Algorithm)
+	}
+	custody := strings.TrimSpace(assertion.Custody)
+	if custody != "" && custody != EncryptionKeyCustodySelf && custody != EncryptionKeyCustodyHosted {
+		return fmt.Errorf("unsupported encryption key custody %q", assertion.Custody)
 	}
 	currentDIDKey = strings.TrimSpace(currentDIDKey)
 	if assertion.IdentityDID != currentDIDKey {

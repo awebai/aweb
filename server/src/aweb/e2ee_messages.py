@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from awid.signing import VerifyResult, canonical_json_bytes, verify_signature
-from awid.e2ee_keys import validate_encryption_key_assertion
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from nacl.signing import SigningKey
+
+from awid.did import did_from_public_key
+from awid.e2ee_keys import encryption_key_id, validate_encryption_key_assertion
+from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
 
 
 E2EE_MESSAGE_VERSION = 2
@@ -78,6 +86,7 @@ def _encryption_key_assertion_map(assertion: dict[str, Any]) -> dict[str, Any]:
         "signature": _non_empty(assertion.get("signature")),
     }
     _add_non_empty(out, "identity_stable_id", assertion.get("identity_stable_id"))
+    _add_non_empty(out, "custody", assertion.get("custody"))
     _add_non_empty(out, "previous_encryption_key_id", assertion.get("previous_encryption_key_id"))
     return out
 
@@ -173,6 +182,571 @@ def _hash_canonical(label: str, value: Any) -> str:
         return _hash_bytes(canonical_json_bytes(value))
     except Exception as exc:
         raise E2EEEnvelopeError(f"canonicalize {label}: {exc}") from exc
+
+
+def _b64_raw_encode(value: bytes) -> str:
+    return base64.b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def generate_x25519_keypair() -> tuple[bytes, bytes]:
+    private_key = x25519.X25519PrivateKey.generate()
+    private_bytes = private_key.private_bytes_raw()
+    public_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return private_bytes, public_bytes
+
+
+def _x25519_private(raw: bytes) -> x25519.X25519PrivateKey:
+    if len(raw) != 32:
+        raise E2EEEnvelopeError("x25519 private key must be 32 bytes")
+    return x25519.X25519PrivateKey.from_private_bytes(raw)
+
+
+def _x25519_public(raw: bytes) -> x25519.X25519PublicKey:
+    if len(raw) != 32:
+        raise E2EEEnvelopeError("x25519 public key must be 32 bytes")
+    return x25519.X25519PublicKey.from_public_bytes(raw)
+
+
+def _format_contract_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _inner_payload_map(inner: dict[str, Any], *, include_content: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "inner_version": int(inner.get("inner_version") or 0),
+        "kind": _non_empty(inner.get("kind")),
+        "message_id": _non_empty(inner.get("message_id")),
+        "conversation_id": _non_empty(inner.get("conversation_id")),
+        "created_at": _non_empty(inner.get("created_at")),
+        "from": _identity_ref_map(inner.get("from") or {}, include_key_id=False),
+        "recipients": [
+            _identity_ref_map(item, include_key_id=False)
+            for item in (inner.get("recipients") or [])
+        ],
+    }
+    _add_non_empty(out, "reply_to_message_id", inner.get("reply_to_message_id"))
+    if include_content:
+        if _non_empty(inner.get("kind")) == "mail":
+            out["subject"] = str(inner.get("subject") or "")
+        out["body"] = str(inner.get("body") or "")
+    return out
+
+
+def _inner_payload_canonical(inner: dict[str, Any]) -> bytes:
+    return canonical_json_bytes(_inner_payload_map(inner, include_content=True))
+
+
+def _inner_header_hash(inner: dict[str, Any]) -> str:
+    return _hash_canonical("inner_header", _inner_payload_map(inner, include_content=False))
+
+
+def _identity_refs_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return (
+        _non_empty(left.get("address")) == _non_empty(right.get("address"))
+        and _non_empty(left.get("did")) == _non_empty(right.get("did"))
+        and _non_empty(left.get("stable_id")) == _non_empty(right.get("stable_id"))
+        and _non_empty(left.get("team_id")) == _non_empty(right.get("team_id"))
+    )
+
+
+def _verify_inner_header(envelope: dict[str, Any], inner: dict[str, Any]) -> None:
+    if int(inner.get("inner_version") or 0) != E2EE_MESSAGE_VERSION:
+        raise E2EEEnvelopeError("inner header does not match outer envelope")
+    for field in ("kind", "message_id", "conversation_id", "reply_to_message_id", "created_at"):
+        if _non_empty(inner.get(field)) != _non_empty(envelope.get(field)):
+            raise E2EEEnvelopeError("inner header does not match outer envelope")
+    if not _identity_refs_equal(inner.get("from") or {}, envelope.get("from") or {}):
+        raise E2EEEnvelopeError("inner sender does not match outer envelope")
+    inner_recipients = inner.get("recipients") or []
+    envelope_recipients = envelope.get("recipients") or []
+    if len(inner_recipients) != len(envelope_recipients):
+        raise E2EEEnvelopeError("inner recipients do not match outer envelope")
+    for left, right in zip(inner_recipients, envelope_recipients, strict=True):
+        if not _identity_refs_equal(left, right):
+            raise E2EEEnvelopeError("inner recipients do not match outer envelope")
+
+
+E2EE_WRAP_VERSION = "aweb-e2ee-wrap-v1"
+_E2EE_WRAP_INFO_PREFIX = b"aweb-e2ee-v2 key-wrap\n"
+_HPKE_KEM_ID = b"\x00\x20"
+_HPKE_KDF_ID = b"\x00\x01"
+_HPKE_AEAD_ID = b"\x00\x02"
+_HPKE_SUITE_ID = b"HPKE" + _HPKE_KEM_ID + _HPKE_KDF_ID + _HPKE_AEAD_ID
+_KEM_SUITE_ID = b"KEM" + _HPKE_KEM_ID
+
+
+def _hkdf_extract(suite_id: bytes, salt: bytes | None, label: str, ikm: bytes) -> bytes:
+    labeled_ikm = b"HPKE-v1" + suite_id + label.encode("ascii") + ikm
+    return hmac.new(salt or b"\x00" * 32, labeled_ikm, hashlib.sha256).digest()
+
+
+def _hkdf_expand(suite_id: bytes, prk: bytes, label: str, info: bytes, length: int) -> bytes:
+    labeled_info = (
+        length.to_bytes(2, "big")
+        + b"HPKE-v1"
+        + suite_id
+        + label.encode("ascii")
+        + info
+    )
+    out = b""
+    previous = b""
+    counter = 1
+    while len(out) < length:
+        previous = hmac.new(prk, previous + labeled_info + bytes([counter]), hashlib.sha256).digest()
+        out += previous
+        counter += 1
+    return out[:length]
+
+
+def _hpke_dhkem_extract_and_expand(
+    private_key: x25519.X25519PrivateKey,
+    public_key: x25519.X25519PublicKey,
+    enc: bytes,
+    pk_rm: bytes,
+) -> bytes:
+    dh = private_key.exchange(public_key)
+    eae_prk = _hkdf_extract(_KEM_SUITE_ID, None, "eae_prk", dh)
+    return _hkdf_expand(_KEM_SUITE_ID, eae_prk, "shared_secret", enc + pk_rm, 32)
+
+
+def _hpke_key_schedule(shared_secret: bytes, info: bytes) -> tuple[bytes, bytes]:
+    psk_id_hash = _hkdf_extract(_HPKE_SUITE_ID, None, "psk_id_hash", b"")
+    info_hash = _hkdf_extract(_HPKE_SUITE_ID, None, "info_hash", info)
+    context = b"\x00" + psk_id_hash + info_hash
+    secret = _hkdf_extract(_HPKE_SUITE_ID, shared_secret, "secret", b"")
+    key = _hkdf_expand(_HPKE_SUITE_ID, secret, "key", context, 32)
+    nonce = _hkdf_expand(_HPKE_SUITE_ID, secret, "base_nonce", context, 12)
+    return key, nonce
+
+
+def _hpke_base_seal(recipient_public_key: bytes, info: bytes, plaintext: bytes) -> tuple[bytes, bytes]:
+    recipient_pub = _x25519_public(recipient_public_key)
+    ephemeral_private = x25519.X25519PrivateKey.generate()
+    enc = ephemeral_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    shared_secret = _hpke_dhkem_extract_and_expand(
+        ephemeral_private,
+        recipient_pub,
+        enc,
+        recipient_public_key,
+    )
+    key, nonce = _hpke_key_schedule(shared_secret, info)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
+    return enc, ciphertext
+
+
+def _hpke_base_open(
+    recipient_private_key: x25519.X25519PrivateKey,
+    enc: bytes,
+    info: bytes,
+    ciphertext: bytes,
+) -> bytes:
+    ephemeral_public = _x25519_public(enc)
+    recipient_public_key = recipient_private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    shared_secret = _hpke_dhkem_extract_and_expand(
+        recipient_private_key,
+        ephemeral_public,
+        enc,
+        recipient_public_key,
+    )
+    key, nonce = _hpke_key_schedule(shared_secret, info)
+    return AESGCM(key).decrypt(nonce, ciphertext, None)
+
+
+def _key_wrap_binding_map(
+    *,
+    message_id: str,
+    conversation_id: str,
+    sender: dict[str, Any],
+    recipient: dict[str, Any],
+    purpose: str,
+) -> dict[str, Any]:
+    out = {
+        "version": E2EE_WRAP_VERSION,
+        "message_id": _non_empty(message_id),
+        "conversation_id": _non_empty(conversation_id),
+        "recipient_did": _non_empty(recipient.get("did")),
+        "recipient_encryption_key_id": _non_empty(recipient.get("encryption_key_id")),
+        "sender_did": _non_empty(sender.get("did")),
+        "sender_encryption_key_id": _non_empty(sender.get("encryption_key_id")),
+        "wrap_purpose": _non_empty(purpose),
+        "suite": E2EE_SUITE,
+    }
+    _add_non_empty(out, "recipient_stable_id", recipient.get("stable_id"))
+    _add_non_empty(out, "recipient_address", recipient.get("address"))
+    _add_non_empty(out, "sender_stable_id", sender.get("stable_id"))
+    return out
+
+
+def _build_key_wrap(
+    *,
+    cek: bytes,
+    message_id: str,
+    conversation_id: str,
+    sender: dict[str, Any],
+    recipient: dict[str, Any],
+    purpose: str,
+    assertion: dict[str, Any],
+) -> dict[str, Any]:
+    if len(cek) != 32:
+        raise E2EEEnvelopeError("content key must be 32 bytes")
+    if _non_empty(assertion.get("encryption_key_id")) != _non_empty(recipient.get("encryption_key_id")):
+        raise E2EEEnvelopeError("recipient encryption key id mismatch")
+    binding = _key_wrap_binding_map(
+        message_id=message_id,
+        conversation_id=conversation_id,
+        sender=sender,
+        recipient=recipient,
+        purpose=purpose,
+    )
+    binding_bytes = canonical_json_bytes(binding)
+    recipient_public_key = _b64_raw_decode(
+        _non_empty(assertion.get("encryption_public_key")),
+        field="recipient encryption_public_key",
+    )
+    enc, wrapped = _hpke_base_seal(
+        recipient_public_key,
+        _E2EE_WRAP_INFO_PREFIX + binding_bytes,
+        cek,
+    )
+    return {
+        "wrap_id": _hash_bytes(binding_bytes),
+        "recipient_stable_id": _non_empty(recipient.get("stable_id")),
+        "recipient_did": _non_empty(recipient.get("did")),
+        "recipient_address": _non_empty(recipient.get("address")),
+        "recipient_encryption_key_id": _non_empty(recipient.get("encryption_key_id")),
+        "sender_encryption_key_id": _non_empty(sender.get("encryption_key_id")),
+        "sender_did": _non_empty(sender.get("did")),
+        "sender_stable_id": _non_empty(sender.get("stable_id")),
+        "wrap_purpose": _non_empty(purpose),
+        "algorithm": E2EE_KEY_WRAP_ALGORITHM,
+        "encapsulated_key": _b64_raw_encode(enc),
+        "wrapped_cek": _b64_raw_encode(wrapped),
+    }
+
+
+def _routing_to(recipients: list[dict[str, Any]]) -> str:
+    values = []
+    for recipient in recipients:
+        value = (
+            _non_empty(recipient.get("address"))
+            or _non_empty(recipient.get("stable_id"))
+            or _non_empty(recipient.get("did"))
+        )
+        if value:
+            values.append(value)
+    return ",".join(values)
+
+
+def _single_recipient_field(recipients: list[dict[str, Any]], field: str) -> str:
+    if len(recipients) != 1:
+        return ""
+    return _non_empty(recipients[0].get(field))
+
+
+def _content_aad(envelope: dict[str, Any]) -> bytes:
+    return canonical_json_bytes(
+        _envelope_map(
+            envelope,
+            include_signature=False,
+            include_ciphertext=False,
+            include_ciphertext_hash=False,
+        )
+    )
+
+
+def encrypt_e2ee_message(
+    *,
+    kind: str,
+    sender: dict[str, Any],
+    recipients: list[dict[str, Any]],
+    body: str,
+    subject: str = "",
+    message_id: str,
+    conversation_id: str,
+    reply_to_message_id: str = "",
+    created_at: datetime | None = None,
+    delivery_origin: str = "",
+    observed_inbound_mode: str = "",
+) -> dict[str, Any]:
+    kind = _non_empty(kind) or "mail"
+    if kind not in {"mail", "chat"}:
+        raise E2EEEnvelopeError(f"unsupported E2E message kind {kind!r}")
+    if kind == "mail" and len(recipients) != 1:
+        raise E2EEEnvelopeError("E2E mail requires exactly one delivery recipient")
+    if not recipients:
+        raise E2EEEnvelopeError("at least one delivery recipient is required")
+    signing_key = sender.get("signing_key")
+    if not isinstance(signing_key, bytes):
+        raise E2EEEnvelopeError("sender signing key is required")
+    sender_assertion = sender.get("encryption_key")
+    if not isinstance(sender_assertion, dict):
+        raise E2EEEnvelopeError("sender encryption key is required")
+    created = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    expires = created + E2EE_INGESTION_WINDOW
+    verify_key = bytes(SigningKey(signing_key).verify_key)
+    from_ref = {
+        "address": _non_empty(sender.get("address")),
+        "did": _non_empty(sender.get("did")),
+        "stable_id": _non_empty(sender.get("stable_id")),
+        "team_id": _non_empty(sender.get("team_id")),
+        "encryption_key_id": _non_empty(sender_assertion.get("encryption_key_id")),
+    }
+    if did_from_public_key(verify_key) != from_ref["did"]:
+        raise E2EEEnvelopeError("sender signing key does not match sender did")
+    validate_encryption_key_assertion(
+        sender_assertion,
+        current_did_key=from_ref["did"],
+        stable_id=from_ref["stable_id"] or None,
+        now=created,
+    )
+
+    recipient_refs: list[dict[str, Any]] = []
+    inner_recipients: list[dict[str, Any]] = []
+    for index, recipient in enumerate(recipients):
+        assertion = recipient.get("encryption_key")
+        if not isinstance(assertion, dict):
+            raise E2EEEnvelopeError(f"recipient {index} encryption key is required")
+        recipient_ref = {
+            "address": _non_empty(recipient.get("address")),
+            "did": _non_empty(recipient.get("did")),
+            "stable_id": _non_empty(recipient.get("stable_id")),
+            "team_id": _non_empty(recipient.get("team_id")),
+            "encryption_key_id": _non_empty(assertion.get("encryption_key_id")),
+        }
+        if not recipient_ref["did"] or not recipient_ref["encryption_key_id"]:
+            raise E2EEEnvelopeError(f"recipient {index} did and encryption key are required")
+        validate_encryption_key_assertion(
+            assertion,
+            current_did_key=recipient_ref["did"],
+            stable_id=recipient_ref["stable_id"] or None,
+            now=created,
+        )
+        recipient_refs.append(recipient_ref)
+        inner_recipients.append(_identity_ref_map(recipient_ref, include_key_id=False))
+
+    inner = {
+        "inner_version": E2EE_MESSAGE_VERSION,
+        "kind": kind,
+        "message_id": _non_empty(message_id),
+        "conversation_id": _non_empty(conversation_id),
+        "reply_to_message_id": _non_empty(reply_to_message_id),
+        "created_at": _format_contract_time(created),
+        "from": from_ref,
+        "recipients": inner_recipients,
+        "subject": subject if kind == "mail" else "",
+        "body": body,
+    }
+    inner_header_hash = _inner_header_hash(inner)
+    cek = os.urandom(32)
+    content_nonce = os.urandom(12)
+    if content_nonce == b"\x00" * 12:
+        raise E2EEEnvelopeError("generated all-zero content nonce")
+
+    key_wraps: list[dict[str, Any]] = []
+    for index, recipient in enumerate(recipients):
+        delivery_wrap = _build_key_wrap(
+            cek=cek,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            sender=from_ref,
+            recipient=recipient_refs[index],
+            purpose="delivery",
+            assertion=recipient["encryption_key"],
+        )
+        key_wraps.append(delivery_wrap)
+        recipient_refs[index]["wrap_id"] = delivery_wrap["wrap_id"]
+    sender_as_recipient = {
+        "address": from_ref["address"],
+        "did": from_ref["did"],
+        "stable_id": from_ref["stable_id"],
+        "team_id": from_ref["team_id"],
+        "encryption_key_id": from_ref["encryption_key_id"],
+    }
+    key_wraps.append(
+        _build_key_wrap(
+            cek=cek,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            sender=from_ref,
+            recipient=sender_as_recipient,
+            purpose="sender_copy",
+            assertion=sender_assertion,
+        )
+    )
+    key_wraps_hash = _hash_canonical("key_wraps", [_key_wrap_map(item) for item in key_wraps])
+    inner_bytes = _inner_payload_canonical(inner)
+    envelope: dict[str, Any] = {
+        "message_version": E2EE_MESSAGE_VERSION,
+        "envelope_type": E2EE_ENVELOPE_TYPE,
+        "kind": kind,
+        "message_id": _non_empty(message_id),
+        "conversation_id": _non_empty(conversation_id),
+        "created_at": _format_contract_time(created),
+        "expires_at": _format_contract_time(expires),
+        "from": from_ref,
+        "recipients": recipient_refs,
+        "routing": {
+            "to": _routing_to(recipient_refs),
+            "to_did": _single_recipient_field(recipient_refs, "did"),
+            "to_stable_id": _single_recipient_field(recipient_refs, "stable_id"),
+            "delivery_origin": _non_empty(delivery_origin),
+            "sender_observed_inbound_mode": _non_empty(observed_inbound_mode),
+        },
+        "policy": {"requires_e2ee": True, "legacy_plaintext_allowed": False},
+        "crypto": {
+            "suite": E2EE_SUITE,
+            "content_nonce": _b64_raw_encode(content_nonce),
+            "ciphertext_size": len(inner_bytes) + 16,
+            "inner_header_hash": inner_header_hash,
+            "key_wraps_hash": key_wraps_hash,
+        },
+        "key_wraps": key_wraps,
+        "signing_key_id": from_ref["did"],
+    }
+    _add_non_empty(envelope, "reply_to_message_id", reply_to_message_id)
+    if not from_ref["address"]:
+        envelope["sender_encryption_key"] = sender_assertion
+    aad = _content_aad(envelope)
+    ciphertext = AESGCM(cek).encrypt(content_nonce, inner_bytes, aad)
+    envelope["ciphertext"] = _b64_raw_encode(ciphertext)
+    envelope["crypto"]["ciphertext_hash"] = _hash_bytes(ciphertext)
+    signed_payload = canonical_json_bytes(
+        _envelope_map(
+            envelope,
+            include_signature=False,
+            include_ciphertext=True,
+            include_ciphertext_hash=True,
+        )
+    )
+    envelope["signature"] = sign_message(signing_key, signed_payload)
+    return envelope
+
+
+def encrypt_e2ee_mail(**kwargs: Any) -> dict[str, Any]:
+    kwargs["kind"] = "mail"
+    return encrypt_e2ee_message(**kwargs)
+
+
+def encrypt_e2ee_chat(**kwargs: Any) -> dict[str, Any]:
+    kwargs["kind"] = "chat"
+    kwargs.setdefault("subject", "")
+    return encrypt_e2ee_message(**kwargs)
+
+
+def _select_key_wrap(envelope: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    key_id = _non_empty(identity.get("encryption_key_id"))
+    private_key = identity.get("private_key")
+    if not key_id and isinstance(private_key, bytes):
+        public_key = _x25519_private(private_key).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        key_id = encryption_key_id(_b64_raw_encode(public_key))
+    for wrap in envelope.get("key_wraps") or []:
+        if _non_empty(wrap.get("recipient_encryption_key_id")) != key_id:
+            continue
+        if not _identity_field_matches(wrap.get("recipient_did"), identity.get("did")):
+            continue
+        if not _identity_field_matches(wrap.get("recipient_stable_id"), identity.get("stable_id")):
+            continue
+        if not _identity_field_matches(wrap.get("recipient_address"), identity.get("address")):
+            continue
+        return wrap
+    raise E2EEEnvelopeError("not a recipient")
+
+
+def _identity_field_matches(wrap_value: Any, local_value: Any) -> bool:
+    wrap_value = _non_empty(wrap_value)
+    local_value = _non_empty(local_value)
+    return not wrap_value or (bool(local_value) and wrap_value == local_value)
+
+
+def _open_key_wrap(
+    *,
+    wrap: dict[str, Any],
+    envelope: dict[str, Any],
+    identity: dict[str, Any],
+) -> bytes:
+    if _non_empty(wrap.get("algorithm")) != E2EE_KEY_WRAP_ALGORITHM:
+        raise E2EEEnvelopeError("unsupported key wrap algorithm")
+    private_key = identity.get("private_key")
+    if not isinstance(private_key, bytes):
+        raise E2EEEnvelopeError("missing local encryption private key")
+    recipient = {
+        "address": _non_empty(wrap.get("recipient_address")),
+        "did": _non_empty(wrap.get("recipient_did")),
+        "stable_id": _non_empty(wrap.get("recipient_stable_id")),
+        "encryption_key_id": _non_empty(wrap.get("recipient_encryption_key_id")),
+    }
+    binding = _key_wrap_binding_map(
+        message_id=_non_empty(envelope.get("message_id")),
+        conversation_id=_non_empty(envelope.get("conversation_id")),
+        sender=envelope.get("from") or {},
+        recipient=recipient,
+        purpose=_non_empty(wrap.get("wrap_purpose")),
+    )
+    binding_bytes = canonical_json_bytes(binding)
+    if _hash_bytes(binding_bytes) != _non_empty(wrap.get("wrap_id")):
+        raise E2EEEnvelopeError("key wrap binding mismatch")
+    enc = _b64_raw_decode(_non_empty(wrap.get("encapsulated_key")), field="encapsulated_key")
+    wrapped = _b64_raw_decode(_non_empty(wrap.get("wrapped_cek")), field="wrapped_cek")
+    cek = _hpke_base_open(
+        _x25519_private(private_key),
+        enc,
+        _E2EE_WRAP_INFO_PREFIX + binding_bytes,
+        wrapped,
+    )
+    if len(cek) != 32:
+        raise E2EEEnvelopeError("invalid content key size")
+    return cek
+
+
+def verify_e2ee_message_envelope_signature(envelope: dict[str, Any]) -> None:
+    from_did = _non_empty((envelope.get("from") or {}).get("did"))
+    if _non_empty(envelope.get("signing_key_id")) != from_did:
+        raise E2EEEnvelopeError("e2ee envelope signing key does not match sender did")
+    payload = canonical_json_bytes(
+        _envelope_map(
+            envelope,
+            include_signature=False,
+            include_ciphertext=True,
+            include_ciphertext_hash=True,
+        )
+    )
+    if verify_signature(from_did, payload, _non_empty(envelope.get("signature"))) != VerifyResult.VERIFIED:
+        raise E2EEEnvelopeError("invalid e2ee envelope signature")
+
+
+def decrypt_e2ee_message(envelope: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    if int(envelope.get("message_version") or 0) != E2EE_MESSAGE_VERSION:
+        raise E2EEEnvelopeError("unsupported e2ee envelope version")
+    if _non_empty(envelope.get("envelope_type")) != E2EE_ENVELOPE_TYPE:
+        raise E2EEEnvelopeError("unsupported e2ee envelope version")
+    verify_e2ee_message_envelope_signature(envelope)
+    crypto = envelope.get("crypto") or {}
+    ciphertext = _b64_raw_decode(_non_empty(envelope.get("ciphertext")), field="ciphertext")
+    if _hash_bytes(ciphertext) != _non_empty(crypto.get("ciphertext_hash")):
+        raise E2EEEnvelopeError("ciphertext hash mismatch")
+    if len(ciphertext) != int(crypto.get("ciphertext_size") or 0):
+        raise E2EEEnvelopeError("ciphertext size mismatch")
+    key_wraps_hash = _hash_canonical(
+        "key_wraps",
+        [_key_wrap_map(item) for item in envelope.get("key_wraps") or []],
+    )
+    if key_wraps_hash != _non_empty(crypto.get("key_wraps_hash")):
+        raise E2EEEnvelopeError("key_wraps hash mismatch")
+    wrap = _select_key_wrap(envelope, identity)
+    cek = _open_key_wrap(wrap=wrap, envelope=envelope, identity=identity)
+    nonce = _b64_raw_decode(_non_empty(crypto.get("content_nonce")), field="content_nonce")
+    aad = _content_aad(envelope)
+    try:
+        plain = AESGCM(cek).decrypt(nonce, ciphertext, aad)
+    except Exception as exc:
+        raise E2EEEnvelopeError("decrypt content") from exc
+    import json
+
+    inner = json.loads(plain)
+    if _inner_header_hash(inner) != _non_empty(crypto.get("inner_header_hash")):
+        raise E2EEEnvelopeError("inner header hash mismatch")
+    _verify_inner_header(envelope, inner)
+    return inner
 
 
 def _parse_timestamp(value: Any, *, field: str) -> datetime:
