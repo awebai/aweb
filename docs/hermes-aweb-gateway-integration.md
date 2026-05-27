@@ -179,6 +179,7 @@ Recommended order: external repo first, then Hermes bundled-plugin PR only if ma
 - `go test ./cmd/aw -run 'TeamBootstrap|TestAw(MailAckByMessageIDJSON|ChatReadBySessionMessageIDJSON|ChatHistoryBySessionMessageIDJSON)' -count=1`
 - `python3 -m unittest discover -s packages/hermes-aweb-platform/tests -v`
 - `python3 -m py_compile packages/hermes-aweb-platform/adapter.py packages/hermes-aweb-platform/__init__.py`
+- Hermes discovery/config smoke with temp `HERMES_HOME`, symlinked `plugins/platforms/aweb`, and `uv run python`: plugin registered in `platform_registry` and `load_gateway_config()` enabled `Platform("aweb")` with env-seeded extras.
 - `git diff --check`
 
 ## Next validation before shipping
