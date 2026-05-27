@@ -54,8 +54,9 @@ commits are selected. The train should move in this order:
    - Remove, hide, or downgrade plaintext mail/chat views for v2 encrypted
      content.
    - Hosted custodial MCP, dashboard-side compose/read, and other server-side
-     tools remain labeled **server-readable hosted messaging**, not encrypted v2
-     local-client messaging.
+     tools may use managed encrypted v2 storage/routing, but remain labeled
+     **server-readable hosted messaging**, not E2E/local-client encrypted
+     messaging.
    - AC production deployment remains a manual Render step: tag, wait for GHCR
      image/workflow completion, mail the human operator for the Render deploy,
      verify `/health` flips to the expected version, then run the smoke probe.

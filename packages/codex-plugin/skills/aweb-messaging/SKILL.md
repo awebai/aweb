@@ -10,7 +10,7 @@ This skill is the playbook for aweb channel awakenings. When you receive an inje
 
 It also covers explicit user requests to send mail or chat through aweb.
 
-E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not describe hosted custodial/server-side messaging as end-to-end encrypted.
+E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not use the end-to-end label for hosted custodial/server-side messaging.
 
 Interim plaintext boundary: in the current aw CLI release, mail and chat are server-readable plaintext by default. Do not describe default CLI mail/chat as E2E. Pass `--e2ee` only when the human explicitly wants encrypted send; if that encrypted send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not silently retry as plaintext.
 

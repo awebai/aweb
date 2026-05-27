@@ -79,7 +79,7 @@ aw id encryption-key show     # inspect local keyring state
 
 `setup` stores the private key locally before publishing the public assertion. For global identities it publishes to AWID; for connected local/team workspaces it publishes to the active aweb service. `rotate` must not delete old private keys. After either command, remind the human to back up `.aw/encryption-keys/`.
 
-Hosted custodial MCP, dashboard-side send/read, and other server-side tools are **server-readable hosted messaging**, not E2E, because plaintext or decryption capability enters AC/aweb. Do not tell users that hosted custodial/server-side messaging is end-to-end encrypted unless a future design keeps plaintext and decryption fully outside AC.
+Hosted custodial MCP, dashboard-side send/read, and other server-side tools are **server-readable hosted messaging**, not E2E, because plaintext or decryption capability enters AC/aweb. Do not use the end-to-end label for hosted custodial/server-side messaging unless a future design keeps plaintext and decryption fully outside AC.
 
 AWID controller keys are separate from worktree identity keys. Namespace and team controller keys live under `~/.awid/`; they are authority keys, not app config. Keep that directory safe and backed up. Worktree identity keys (`.aw/signing.key`) remain with the workspace they act from.
 
