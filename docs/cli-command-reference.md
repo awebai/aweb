@@ -842,8 +842,9 @@ Flags:
 Ask the other party to wait longer
 
 Flags:
+- `--e2ee Send E2E encrypted wait extension; fails closed if encryption keys are missing`
 - `-h, --help help for extend-wait`
-- `--plaintext Send explicit server-readable plaintext wait extension instead of the default E2E encrypted message`
+- `--plaintext Send explicit server-readable plaintext wait extension (currently the default)`
 
 ## `chat history`
 
@@ -889,8 +890,9 @@ Flags:
 Send a message and leave the conversation
 
 Flags:
+- `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-leave`
-- `--plaintext Send explicit server-readable plaintext chat instead of the default E2E encrypted chat`
+- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
@@ -900,8 +902,9 @@ Flags:
 Send a message and wait for a reply
 
 Flags:
+- `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-wait`
-- `--plaintext Send explicit server-readable plaintext chat instead of the default E2E encrypted chat`
+- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
 
@@ -1108,8 +1111,9 @@ Reply to an existing mail conversation
 Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file`
+- `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for reply`
-- `--plaintext Send explicit server-readable plaintext mail instead of the default E2E encrypted mail`
+- `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 
@@ -1123,8 +1127,9 @@ Flags:
 - `--body string Body (mutually exclusive with --body-file)`
 - `--body-file string Read body from file (use this for markdown with backticks; bypasses shell interpolation)`
 - `--conversation-id string Existing mail conversation to continue`
+- `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
-- `--plaintext Send explicit server-readable plaintext mail instead of the default E2E encrypted mail`
+- `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`

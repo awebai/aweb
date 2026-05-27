@@ -57,8 +57,8 @@ encryption material. The CLI stores the private encryption key before publishing
 the identity-signed public assertion. Back up `.aw/encryption-keys/`; losing
 archived encryption keys makes old encrypted messages unrecoverable.
 
-An upgraded pre-E2E worktree also creates and publishes its sender key on the
-first default-E2E send. That does not make an old recipient ready: each
+An upgraded pre-E2E worktree can also create and publish its sender key on the
+first explicit `--e2ee` send. That does not make an old recipient ready: each
 recipient must upgrade aw/channel/Pi and publish its own identity-signed
 encryption-key assertion before it can receive encrypted messages.
 

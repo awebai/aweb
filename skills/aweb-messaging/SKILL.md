@@ -12,9 +12,9 @@ It also covers explicit user requests to send mail or chat through aweb.
 
 E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not describe hosted custodial/server-side messaging as end-to-end encrypted.
 
-Legacy plaintext boundary: existing plaintext mail/chat remains legacy/server-readable while retained and must not be described as retroactively E2E. Mail and chat send E2E by default. If an intended E2E send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not resend as plaintext unless the human explicitly chooses `--plaintext`.
+Interim plaintext boundary: in the current aw CLI release, mail and chat are server-readable plaintext by default. Do not describe default CLI mail/chat as E2E. Pass `--e2ee` only when the human explicitly wants encrypted send; if that encrypted send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not silently retry as plaintext.
 
-Mixed-version boundary: old pre-E2E aw/channel/Pi clients may not have published recipient encryption keys yet. A current aw CLI creates/publishes the sender's local encryption key before default-E2E sends, but it cannot create keys for another recipient. If the recipient lacks a key, report that they need to upgrade aw/Pi/channel and publish a key. Use `--plaintext` only for an explicit human-approved server-readable upgrade note.
+Mixed-version boundary: old pre-E2E aw/channel/Pi clients may not have published recipient encryption keys yet. A current aw CLI can create/publish the sender's local encryption key for explicit `--e2ee` sends, but it cannot create keys for another recipient. If the recipient lacks a key, report that they need to upgrade aw/Pi/channel and publish a key. Plain default sends and `--plaintext` are server-readable.
 
 If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient addressability, inbound-mode policy, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
@@ -79,7 +79,7 @@ aw chat extend-wait <from> "working on it, 2 minutes"
 
 Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
 
-Mail and chat are E2E by default. Do not add `--e2ee`; it is a deprecated compatibility no-op. Use `--plaintext` only when the human explicitly asks for server-readable plaintext and policy allows it.
+Mail and chat are server-readable plaintext by default in the current aw CLI release. Add `--e2ee` only when the human explicitly wants an encrypted send; it fails closed if keys, capability, route support, or version support are missing. `--plaintext` is an explicit clarifier for the current default.
 
 ```bash
 aw chat send-and-wait <alias-or-address> "..." --start-conversation
@@ -87,7 +87,7 @@ aw chat send-and-leave <alias-or-address> "..."
 aw chat extend-wait <from> "working on it"
 ```
 
-Read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If the encrypted send fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses `--plaintext`.
+Encrypted read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If an explicit `--e2ee` send fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses server-readable plaintext.
 
 ## Harness surfaces
 

@@ -43,12 +43,14 @@ user must explicitly choose `--plaintext` when that server-readable mode is
 allowed. Losing local archived encryption keys makes historical
 encrypted messages unrecoverable; AC/aweb cannot decrypt them for support.
 
-For mixed-version rollouts, current aw creates and publishes the sender's local
-encryption key before a default-E2E mail/chat send. That self-heals upgraded old
-worktrees. It cannot create keys for another recipient. If the recipient is
-still running old aw/channel/Pi and has no published encryption key, the send
-fails before storage; the sender may explicitly use `--plaintext` only for a
-server-readable upgrade note when policy and the human allow it.
+Interim CLI posture: current aw sends mail/chat as server-readable plaintext by
+default. Use `--e2ee` only when the human explicitly wants encrypted send; that
+path creates and publishes the sender's local encryption key when needed and
+fails closed before storage if the recipient lacks a valid E2E key/capability.
+It cannot create keys for another recipient. If the recipient is still running
+old aw/channel/Pi and has no published encryption key, the sender may use the
+plaintext default or `--plaintext` only for a server-readable upgrade note when
+policy and the human allow it.
 
 Async mail remains readable after ingestion. Clients must not reject already
 accepted stored mail merely because its original timestamp is old; the freshness
