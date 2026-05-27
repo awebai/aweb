@@ -340,7 +340,8 @@ class AwebAdapter(BasePlatformAdapter):
     async def _send_chat_to_session(self, session_id: str, content: str, *, leave: bool = False) -> SendResult:
         if not session_id:
             return SendResult(success=False, error="Aweb session_id is empty")
-        args = ["chat", "send", "--session-id", session_id, "--plaintext", "--body", content]
+        body_path = self._write_temp_body(content)
+        args = ["chat", "send", "--session-id", session_id, "--plaintext", "--body-file", body_path]
         if leave:
             args.append("--leave")
         try:
@@ -349,6 +350,11 @@ class AwebAdapter(BasePlatformAdapter):
             return SendResult(success=True, message_id=msg_id, raw_response=payload)
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
+        finally:
+            try:
+                os.unlink(body_path)
+            except OSError:
+                pass
 
     async def _send_chat_to_target(self, target: str, content: str) -> SendResult:
         if not target:

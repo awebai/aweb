@@ -64,7 +64,7 @@ The MVP deliberately consumes the `aw` CLI rather than reimplementing Aweb auth 
 - fetch mail body: `aw mail show --message-id <id> --json`
 - fetch chat body: `aw chat history --session-id <id> --message-id <id> --limit 1 --json`
 - reply to mail: `aw mail reply <message-id> --plaintext --body-file <tmp> --json`
-- reply to chat: `aw chat send --session-id <id> --plaintext --body <body> --leave --json`
+- reply to chat: `aw chat send --session-id <id> --plaintext --body-file <tmp> --leave --json`
 - ack mail after confirmed send: `aw mail ack <message-id> --json`
 - mark chat read after confirmed send: `aw chat read --session-id <id> --message-id <id> --json`
 

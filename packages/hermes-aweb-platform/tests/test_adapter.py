@@ -112,7 +112,12 @@ class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
         result = await adapter.send("chat:sess-1", "pong")
 
         self.assertTrue(result.success, result.error)
-        self.assertEqual(adapter.commands[0], ("chat", "send", "--session-id", "sess-1", "--plaintext", "--body", "pong", "--leave"))
+        send_cmd = adapter.commands[0]
+        self.assertEqual(send_cmd[:6], ("chat", "send", "--session-id", "sess-1", "--plaintext", "--body-file"))
+        self.assertNotIn("pong", send_cmd)
+        self.assertIn("hermes-aweb-", Path(send_cmd[6]).name, send_cmd)
+        self.assertFalse(Path(send_cmd[6]).exists(), "temporary chat body file should be removed")
+        self.assertEqual(send_cmd[7:], ("--leave",))
         self.assertEqual(adapter.commands[1], ("chat", "read", "--session-id", "sess-1", "--message-id", "chat-1"))
 
 
