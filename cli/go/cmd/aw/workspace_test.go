@@ -207,6 +207,8 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", "backend:demo", "charlie")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -289,6 +291,8 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", "backend:demo", "mallory")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -470,6 +474,8 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", "backend:demo", "charlie")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -567,6 +573,8 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", "backend:demo", "mallory")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -1187,6 +1195,8 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", teamID, "charlie")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -1473,6 +1483,8 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 					"body_md": "Use aw for coordination.",
 				},
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", teamID, "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1792,6 +1804,8 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 					"body_md": "Use aw for coordination.",
 				},
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", teamID, "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1951,6 +1965,8 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 			http.Error(w, "alias conflict", http.StatusConflict)
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", teamID, "mallory")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -2062,6 +2078,8 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-3", teamID, "mallory")
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -2145,6 +2163,8 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-grace", "backend:demo", "grace")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2256,6 +2276,8 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-grace", teamID, "grace")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

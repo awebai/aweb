@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,6 +38,34 @@ func requireWorktreeEncryptionKeyForTest(t *testing.T, workingDir string) string
 		t.Fatalf("encryption assertion missing: %v", err)
 	}
 	return record.KeyID
+}
+
+func writePublishEncryptionKeyResponseForTest(
+	t *testing.T,
+	w http.ResponseWriter,
+	agentID string,
+	teamID string,
+	alias string,
+) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(awid.PublishAgentEncryptionKeyResponse{
+		AgentID: strings.TrimSpace(agentID),
+		TeamID:  strings.TrimSpace(teamID),
+		Alias:   strings.TrimSpace(alias),
+	}); err != nil {
+		t.Fatalf("write encryption-key publish response: %v", err)
+	}
+}
+
+func writeRegistryEncryptionKeyAssertionForTest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	var assertion awid.EncryptionKeyAssertion
+	if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+		t.Fatalf("decode encryption-key assertion: %v", err)
+	}
+	if err := json.NewEncoder(w).Encode(assertion); err != nil {
+		t.Fatalf("write encryption-key assertion response: %v", err)
+	}
 }
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {

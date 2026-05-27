@@ -370,6 +370,10 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:alice.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -478,6 +482,10 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-2", "default:alice.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

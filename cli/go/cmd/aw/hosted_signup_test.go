@@ -146,6 +146,12 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop")
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -423,6 +429,10 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-laptop", teamID, "laptop")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -604,6 +614,10 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -729,6 +743,8 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

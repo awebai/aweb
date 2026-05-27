@@ -947,6 +947,8 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 					"body_md": "Use aw mail inbox and aw chat pending.",
 				},
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-bob", "backend:acme.com", "bob")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1197,6 +1199,8 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"aweb_url":       server.URL,
 				"registry_url":   server.URL,
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-bob", "backend:acme.com", "bob")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

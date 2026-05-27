@@ -91,6 +91,8 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -266,6 +268,10 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:alice.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -453,6 +459,10 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:alice.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

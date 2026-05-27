@@ -120,6 +120,10 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 				"repo_id":      "",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop-agent")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -310,6 +314,8 @@ func TestConnectBootstrapLocal(t *testing.T) {
 				"repo_id":      "",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-2", "default:juanre.aweb.ai", "ci-runner-01")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -418,6 +424,8 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				"repo_id":      "",
 				"team_did_key": teamDIDKey,
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop-agent")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -448,6 +456,12 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			var assertion awid.EncryptionKeyAssertion
+			if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(assertion)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
 			var redeemBody map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&redeemBody); err != nil {

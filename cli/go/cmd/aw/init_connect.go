@@ -169,6 +169,9 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
 		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
 	}
+	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not publish E2E encryption key automatically: %v\n", err)
+	}
 
 	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
 	return connectOutput{

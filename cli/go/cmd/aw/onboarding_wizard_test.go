@@ -660,6 +660,8 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -740,6 +742,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -764,6 +768,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1008,6 +1014,8 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1089,6 +1097,8 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack-2.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1258,6 +1268,8 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 				}
 			}
 			t.Fatalf("missing did registration for %s", stableID)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
@@ -1276,6 +1288,8 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1431,6 +1445,8 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1566,6 +1582,8 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 				}
 			}
 			t.Fatalf("missing did registration for %s", stableID)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
@@ -1584,6 +1602,8 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1770,6 +1790,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1804,6 +1826,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 				"repo_id":      "repo-1",
 				"team_did_key": gotTeamPayload["team_did_key"],
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1987,6 +2011,8 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		default:
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
@@ -2022,6 +2048,8 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 			t.Fatal("connect should use discovered aweb_url with /api")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -2416,6 +2444,8 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			events = append(events, "claim-human")
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "verification_sent", "email": "jack@example.com"})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
 		default:
 			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 		}

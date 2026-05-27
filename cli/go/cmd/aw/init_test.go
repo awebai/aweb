@@ -835,6 +835,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": gotTeamPayload["team_did_key"],
 			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:local", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

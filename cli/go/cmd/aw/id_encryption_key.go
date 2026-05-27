@@ -323,14 +323,23 @@ func resolveIdentityForEncryptionKeyForDir(workingDir string) (*awconfig.Resolve
 
 func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	var cert *awid.TeamCertificate
+	registryURL := ""
 	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
 		if active := strings.TrimSpace(teamState.ActiveTeam); active != "" {
+			if membership := teamState.Membership(active); membership != nil {
+				registryURL = strings.TrimSpace(membership.RegistryURL)
+			}
 			cert, _ = awconfig.LoadTeamCertificateForTeam(workingDir, active)
 		}
 	}
 	if cert == nil {
 		if workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir); err == nil {
 			if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
+				if registryURL == "" && teamState != nil {
+					if teamMembership := teamState.Membership(membership.TeamID); teamMembership != nil {
+						registryURL = strings.TrimSpace(teamMembership.RegistryURL)
+					}
+				}
 				cert, _ = awconfig.LoadTeamCertificateForTeam(workingDir, membership.TeamID)
 			}
 		}
@@ -362,7 +371,12 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 	if lifetime == "" {
 		lifetime = awid.LifetimeEphemeral
 	}
-	return &awconfig.ResolvedIdentity{
+	if registryURL == "" {
+		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
+			registryURL = strings.TrimSpace(identity.RegistryURL)
+		}
+	}
+	resolved := &awconfig.ResolvedIdentity{
 		WorkingDir:     strings.TrimSpace(workingDir),
 		SigningKeyPath: signingKeyPath,
 		DID:            didKey,
@@ -370,7 +384,15 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 		Address:        strings.TrimSpace(cert.MemberAddress),
 		Custody:        awid.CustodySelf,
 		Lifetime:       lifetime,
-	}, nil
+		RegistryURL:    registryURL,
+	}
+	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {
+		resolved.Domain = domain
+		resolved.Handle = handle
+	} else if resolved.Address != "" {
+		resolved.Handle = resolved.Address
+	}
+	return resolved, nil
 }
 
 func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, previousKeyID string) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, error) {
