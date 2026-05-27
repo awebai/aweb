@@ -53,7 +53,7 @@ Install from npm:
 
 ```bash
 npm install -g @awebai/aw
-aw --version
+aw version
 ```
 
 Or build from source:
