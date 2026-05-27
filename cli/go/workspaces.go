@@ -18,32 +18,33 @@ type WorkspaceClaim struct {
 }
 
 type WorkspaceInfo struct {
-	WorkspaceID       string           `json:"workspace_id"`
-	Alias             string           `json:"alias"`
-	AgentLifetime     *string          `json:"agent_lifetime,omitempty"`
-	HumanName         *string          `json:"human_name,omitempty"`
-	ContextKind       *string          `json:"context_kind,omitempty"`
-	Program           *string          `json:"program,omitempty"`
-	Model             *string          `json:"model,omitempty"`
-	Repo              *string          `json:"repo,omitempty"`
-	Branch            *string          `json:"branch,omitempty"`
-	MemberEmail       *string          `json:"member_email,omitempty"`
-	Role              *string          `json:"role,omitempty"`
-	Hostname          *string          `json:"hostname,omitempty"`
-	WorkspacePath     *string          `json:"workspace_path,omitempty"`
-	ApexID            *string          `json:"apex_id,omitempty"`
-	ApexTitle         *string          `json:"apex_title,omitempty"`
-	ApexType          *string          `json:"apex_type,omitempty"`
-	FocusTaskRef      *string          `json:"focus_task_ref,omitempty"`
-	FocusTaskTitle    *string          `json:"focus_task_title,omitempty"`
-	FocusTaskType     *string          `json:"focus_task_type,omitempty"`
-	FocusTaskRepoName *string          `json:"focus_task_repo_name,omitempty"`
-	FocusTaskBranch   *string          `json:"focus_task_branch,omitempty"`
-	FocusUpdatedAt    *string          `json:"focus_updated_at,omitempty"`
-	Status            string           `json:"status"`
-	LastSeen          *string          `json:"last_seen,omitempty"`
-	DeletedAt         *string          `json:"deleted_at,omitempty"`
-	Claims            []WorkspaceClaim `json:"claims,omitempty"`
+	WorkspaceID        string           `json:"workspace_id"`
+	Alias              string           `json:"alias"`
+	AgentLifetime      *string          `json:"agent_lifetime,omitempty"`
+	AgentIdentityScope *string          `json:"agent_identity_scope,omitempty"`
+	HumanName          *string          `json:"human_name,omitempty"`
+	ContextKind        *string          `json:"context_kind,omitempty"`
+	Program            *string          `json:"program,omitempty"`
+	Model              *string          `json:"model,omitempty"`
+	Repo               *string          `json:"repo,omitempty"`
+	Branch             *string          `json:"branch,omitempty"`
+	MemberEmail        *string          `json:"member_email,omitempty"`
+	Role               *string          `json:"role,omitempty"`
+	Hostname           *string          `json:"hostname,omitempty"`
+	WorkspacePath      *string          `json:"workspace_path,omitempty"`
+	ApexID             *string          `json:"apex_id,omitempty"`
+	ApexTitle          *string          `json:"apex_title,omitempty"`
+	ApexType           *string          `json:"apex_type,omitempty"`
+	FocusTaskRef       *string          `json:"focus_task_ref,omitempty"`
+	FocusTaskTitle     *string          `json:"focus_task_title,omitempty"`
+	FocusTaskType      *string          `json:"focus_task_type,omitempty"`
+	FocusTaskRepoName  *string          `json:"focus_task_repo_name,omitempty"`
+	FocusTaskBranch    *string          `json:"focus_task_branch,omitempty"`
+	FocusUpdatedAt     *string          `json:"focus_updated_at,omitempty"`
+	Status             string           `json:"status"`
+	LastSeen           *string          `json:"last_seen,omitempty"`
+	DeletedAt          *string          `json:"deleted_at,omitempty"`
+	Claims             []WorkspaceClaim `json:"claims,omitempty"`
 }
 
 type WorkspaceListResponse struct {
@@ -139,10 +140,12 @@ func (c *Client) WorkspaceDelete(ctx context.Context, workspaceID string) (*Dele
 
 type WorkspaceListParams struct {
 	Hostname        string
+	Alias           string
 	IncludePresence bool
+	Limit           int
 }
 
-// WorkspaceList lists workspaces, optionally filtered by hostname.
+// WorkspaceList lists workspaces, optionally filtered by hostname or alias.
 func (c *Client) WorkspaceList(ctx context.Context, params WorkspaceListParams) (*WorkspaceListResponse, error) {
 	path := "/v1/workspaces"
 	sep := "?"
@@ -150,7 +153,14 @@ func (c *Client) WorkspaceList(ctx context.Context, params WorkspaceListParams) 
 		path += sep + "hostname=" + urlQueryEscape(params.Hostname)
 		sep = "&"
 	}
+	if params.Alias != "" {
+		path += sep + "alias=" + urlQueryEscape(params.Alias)
+		sep = "&"
+	}
 	path += sep + "include_presence=" + boolString(params.IncludePresence)
+	if params.Limit > 0 {
+		path += "&limit=" + itoa(params.Limit)
+	}
 	var out WorkspaceListResponse
 	if err := c.Get(ctx, path, &out); err != nil {
 		return nil, err

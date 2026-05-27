@@ -42,6 +42,13 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 	RunE:  runWorkspaceMigrateMultiTeam,
 }
 
+var workspaceDeleteCmd = &cobra.Command{
+	Use:   "delete <workspace-id-or-alias>",
+	Short: "Delete a local workspace and its local identity",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runWorkspaceDelete,
+}
+
 var (
 	workspaceStatusLimit int
 	workspaceStatusAll   bool
@@ -83,6 +90,13 @@ type workspaceMigrateMultiTeamOutput struct {
 	LegacyMoved bool   `json:"legacy_cert_moved"`
 }
 
+type workspaceDeleteOutput struct {
+	WorkspaceID     string `json:"workspace_id"`
+	Alias           string `json:"alias"`
+	DeletedAt       string `json:"deleted_at"`
+	IdentityDeleted bool   `json:"identity_deleted"`
+}
+
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
 
 func init() {
@@ -93,6 +107,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceStatusCmd)
 	workspaceCmd.AddCommand(workspaceAddWorktreeCmd)
 	workspaceCmd.AddCommand(workspaceMigrateMultiTeamCmd)
+	workspaceCmd.AddCommand(workspaceDeleteCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
@@ -201,6 +216,71 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	if gone := detectGoneWorkspaces(client, workspaceID); len(gone) > 0 {
 		fmt.Fprint(os.Stderr, formatGoneWorkspaces(gone))
 	}
+	return nil
+}
+
+func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
+	loadDotenvBestEffort()
+
+	workingDir, _ := os.Getwd()
+	client, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
+	}
+
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		return usageError("workspace id or alias is required")
+	}
+	workspaceID := target
+	if !workspaceIDPattern.MatchString(target) {
+		if !isValidWorkspaceAlias(target) {
+			return usageError("invalid workspace alias %q", target)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		resp, lookupErr := client.WorkspaceList(ctx, aweb.WorkspaceListParams{
+			Alias:           target,
+			IncludePresence: false,
+			Limit:           2,
+		})
+		cancel()
+		if lookupErr != nil {
+			return lookupErr
+		}
+		matches := make([]aweb.WorkspaceInfo, 0, len(resp.Workspaces))
+		for _, ws := range resp.Workspaces {
+			if strings.EqualFold(strings.TrimSpace(ws.Alias), target) {
+				matches = append(matches, ws)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			return fmt.Errorf("workspace alias %q not found", target)
+		case 1:
+			workspaceID = matches[0].WorkspaceID
+		default:
+			return fmt.Errorf("workspace alias %q matched multiple workspaces; retry with workspace id", target)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	deleteResp, err := client.WorkspaceDelete(ctx, workspaceID)
+	cancel()
+	if err != nil {
+		if _, reason := workspaceDeleteProtectiveReason(err); reason != "" {
+			return fmt.Errorf("workspace not deleted: %s", reason)
+		}
+		return err
+	}
+	if deleteResp == nil {
+		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
+	}
+	printOutput(workspaceDeleteOutput{
+		WorkspaceID:     deleteResp.WorkspaceID,
+		Alias:           deleteResp.Alias,
+		DeletedAt:       deleteResp.DeletedAt,
+		IdentityDeleted: deleteResp.IdentityDeleted,
+	}, formatWorkspaceDelete)
 	return nil
 }
 
@@ -668,6 +748,21 @@ func formatWorkspaceAddWorktree(v any) string {
 	return sb.String()
 }
 
+func formatWorkspaceDelete(v any) string {
+	out := v.(workspaceDeleteOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Deleted workspace %s (%s)\n", out.Alias, out.WorkspaceID))
+	if out.IdentityDeleted {
+		sb.WriteString("Deleted local identity: true\n")
+	} else {
+		sb.WriteString("Deleted local identity: false\n")
+	}
+	if strings.TrimSpace(out.DeletedAt) != "" {
+		sb.WriteString(fmt.Sprintf("Deleted at: %s\n", out.DeletedAt))
+	}
+	return sb.String()
+}
+
 func formatWorkspaceMigrateMultiTeam(v any) string {
 	out := v.(workspaceMigrateMultiTeamOutput)
 	var sb strings.Builder
@@ -688,6 +783,7 @@ func formatWorkspaceMigrateMultiTeam(v any) string {
 var (
 	workspaceAliasPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 	workspaceRoleWordPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+	workspaceIDPattern       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 func isValidWorkspaceAlias(alias string) bool {

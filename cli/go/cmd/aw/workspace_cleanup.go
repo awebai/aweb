@@ -63,11 +63,11 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 			WorkspacePath: path,
 		}
 
-		lifetime := strings.TrimSpace(derefString(ws.AgentLifetime))
-		switch lifetime {
-		case "ephemeral":
+		scope := workspaceIdentityScope(ws)
+		switch scope {
+		case "local":
 			g.CleanupStatus = "gone_ephemeral_cleanup_candidate"
-		case "persistent":
+		case "global":
 			g.CleanupStatus = "gone_persistent_path_only"
 			g.CleanupBlocked = "global identity path unavailable; no cleanup attempted"
 			deleted[ws.WorkspaceID] = true
@@ -75,7 +75,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 			continue
 		default:
 			g.CleanupStatus = "unknown_lifetime_no_cleanup"
-			g.CleanupBlocked = "identity lifetime unknown; no cleanup attempted"
+			g.CleanupBlocked = "identity scope unknown; no cleanup attempted"
 			deleted[ws.WorkspaceID] = true
 			gone = append(gone, g)
 			continue
@@ -108,6 +108,20 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 	}
 
 	return gone
+}
+
+func workspaceIdentityScope(ws aweb.WorkspaceInfo) string {
+	if scope := strings.TrimSpace(derefString(ws.AgentIdentityScope)); scope != "" {
+		return scope
+	}
+	switch strings.TrimSpace(derefString(ws.AgentLifetime)) {
+	case "ephemeral":
+		return "local"
+	case "persistent":
+		return "global"
+	default:
+		return ""
+	}
 }
 
 func workspaceDeleteProtectiveReason(err error) (string, string) {

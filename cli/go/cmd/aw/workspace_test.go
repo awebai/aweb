@@ -695,6 +695,164 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 	}
 }
 
+func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T) {
+	t.Parallel()
+
+	const selfID = "11111111-1111-1111-1111-111111111111"
+	const goneID = "44444444-4444-4444-4444-444444444444"
+
+	missingPath := filepath.Join(t.TempDir(), "gone-worktree")
+	var deletedWorkspace atomic.Bool
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch {
+		case r.URL.Path == "/v1/workspaces/team":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{
+					{
+						"workspace_id": selfID,
+						"alias":        "alice",
+						"role":         "developer",
+						"status":       "active",
+					},
+				},
+				"has_more": false,
+			})
+		case r.URL.Path == "/v1/reservations":
+			_ = json.NewEncoder(w).Encode(map[string]any{"reservations": []map[string]any{}})
+		case r.URL.Path == "/v1/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace":           map[string]any{"workspace_count": 2},
+				"agents":              []map[string]any{},
+				"claims":              []map[string]any{},
+				"conflicts":           []map[string]any{},
+				"escalations_pending": 0,
+				"timestamp":           "2026-03-10T10:10:00Z",
+			})
+		case r.URL.Path == "/v1/workspaces" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{
+					{
+						"workspace_id":         goneID,
+						"alias":                "bob",
+						"agent_identity_scope": "local",
+						"status":               "offline",
+						"workspace_path":       missingPath,
+					},
+				},
+				"has_more": false,
+			})
+		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
+			deletedWorkspace.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     goneID,
+				"alias":            "bob",
+				"deleted_at":       "2026-04-09T00:00:00Z",
+				"identity_deleted": true,
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buildAwBinary(t, ctx, bin)
+
+	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
+	state.Memberships[0].RoleName = "developer"
+	state.Hostname = "devbox"
+	state.WorkspacePath = tmp
+	writeWorkspaceBindingForTest(t, tmp, state)
+
+	run := exec.CommandContext(ctx, bin, "workspace", "status")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !deletedWorkspace.Load() {
+		t.Fatal("expected gone workspace record deletion from agent_identity_scope=local")
+	}
+	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
+		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	}
+}
+
+func TestAwWorkspaceDeleteByAlias(t *testing.T) {
+	t.Parallel()
+
+	const selfID = "11111111-1111-1111-1111-111111111111"
+	const goneID = "44444444-4444-4444-4444-444444444444"
+
+	var sawAliasLookup atomic.Bool
+	var sawDelete atomic.Bool
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch {
+		case r.URL.Path == "/v1/workspaces" && r.Method == http.MethodGet:
+			sawAliasLookup.Store(true)
+			if got := r.URL.Query().Get("alias"); got != "bob" {
+				t.Fatalf("alias query=%q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{
+					{"workspace_id": goneID, "alias": "bob", "agent_identity_scope": "local"},
+				},
+				"has_more": false,
+			})
+		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
+			sawDelete.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     goneID,
+				"alias":            "bob",
+				"deleted_at":       "2026-04-09T00:00:00Z",
+				"identity_deleted": true,
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buildAwBinary(t, ctx, bin)
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "alice", selfID))
+
+	run := exec.CommandContext(ctx, bin, "workspace", "delete", "bob")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !sawAliasLookup.Load() || !sawDelete.Load() {
+		t.Fatalf("expected alias lookup and delete, lookup=%v delete=%v", sawAliasLookup.Load(), sawDelete.Load())
+	}
+	if !strings.Contains(string(out), "Deleted workspace bob") || !strings.Contains(string(out), "Deleted local identity: true") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
 func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 	t.Parallel()
 
