@@ -32,8 +32,14 @@ from aweb.messaging.verification import message_verification_status, require_con
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
+    HostedMessageDecryptor,
+    HostedMessageDecryptionError,
+    HostedMessageEncryptionError,
+    HostedMessageEncryptor,
     HostedMessageSigner,
     HostedMessageSigningError,
+    decrypt_hosted_message_row,
+    encrypt_hosted_message,
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
@@ -48,6 +54,7 @@ from aweb.routes.chat import (
     _resolve_stored_remote_chat_route,
 )
 from aweb.service_errors import ServiceError
+from aweb.e2ee_messages import encrypted_message_storage_metadata
 
 MAX_TOTAL_WAIT_SECONDS = 600
 
@@ -139,6 +146,57 @@ def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
     )
 
 
+def _chat_recipient_for_encryptor(row: dict) -> dict:
+    recipient = dict(row)
+    agent_id = str(recipient.get("agent_id") or "").strip()
+    if agent_id:
+        recipient["agent_id"] = agent_id
+    return recipient
+
+
+def _encrypted_chat_storage(encrypted) -> tuple[dict, dict]:
+    envelope = encrypted.encrypted_envelope
+    return envelope, encrypted_message_storage_metadata(envelope)
+
+
+def _encrypted_chat_result_fields(encrypted) -> tuple[str, int]:
+    return encrypted.content_mode, encrypted.message_version
+
+
+async def _decrypt_chat_row_for_hosted(
+    *,
+    auth,
+    hosted_decryptor: HostedMessageDecryptor | None,
+    row: dict,
+) -> dict[str, object]:
+    body = str(row.get("body") or "")
+    if str(row.get("content_mode") or "legacy_plaintext_v1") != "encrypted_v2":
+        return {"body": body, "decryptable": True, "content_notice": None}
+    try:
+        decrypted = await decrypt_hosted_message_row(
+            auth=auth,
+            decryptor=hosted_decryptor,
+            message_type="chat",
+            row=row,
+        )
+    except HostedMessageDecryptionError as exc:
+        return {"body": "", "decryptable": False, "content_notice": str(exc)}
+    if decrypted is None:
+        return {
+            "body": "",
+            "decryptable": False,
+            "content_notice": (
+                "Encrypted chat content is not available in this server context. "
+                "Use a local client that holds the identity encryption key."
+            ),
+        }
+    return {
+        "body": decrypted.body,
+        "decryptable": bool(decrypted.decryptable),
+        "content_notice": decrypted.content_notice,
+    }
+
+
 def _target_did(row: dict) -> str:
     return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
 
@@ -215,6 +273,8 @@ async def _wait_for_replies(
     aweb_db,
     redis,
     *,
+    auth,
+    hosted_decryptor: HostedMessageDecryptor | None,
     session_id: UUID,
     participant_did: str,
     after: datetime,
@@ -238,7 +298,9 @@ async def _wait_for_replies(
 
             new_msgs = await aweb_db.fetch_all(
                 """
-                SELECT message_id, from_did, from_alias, body, created_at,
+                SELECT message_id, from_did, from_alias,
+                       CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                       content_mode, message_version, encrypted_envelope, created_at,
                        sender_leaving, hang_on
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1
@@ -255,6 +317,11 @@ async def _wait_for_replies(
             if new_msgs:
                 replies = []
                 for row in new_msgs:
+                    content = await _decrypt_chat_row_for_hosted(
+                        auth=auth,
+                        hosted_decryptor=hosted_decryptor,
+                        row=dict(row),
+                    )
                     last_seen_at = max(last_seen_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
                     if is_hang_on:
@@ -265,7 +332,9 @@ async def _wait_for_replies(
                             "message_id": str(row["message_id"]),
                             "from_alias": row["from_alias"],
                             "from_did": row["from_did"],
-                            "body": row["body"],
+                            "body": content["body"],
+                            "decryptable": content["decryptable"],
+                            "content_notice": content["content_notice"],
                             "hang_on": is_hang_on,
                             "sender_leaving": bool(row["sender_leaving"]),
                             "timestamp": row["created_at"].isoformat(),
@@ -287,6 +356,8 @@ async def chat_send(
     *,
     registry_client,
     hosted_signer: HostedMessageSigner | None = None,
+    hosted_encryptor: HostedMessageEncryptor | None = None,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
     message: str,
     to_alias: str = "",
     to_did: str = "",
@@ -296,6 +367,7 @@ async def chat_send(
     wait_seconds: int = 120,
     leaving: bool = False,
     hang_on: bool = False,
+    plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
 ) -> str:
@@ -456,15 +528,35 @@ async def chat_send(
             signed_fields["wait_seconds"] = wait_seconds
         if leaving:
             signed_fields["sender_leaving"] = True
-        try:
-            signed = await sign_hosted_message(
-                auth=auth,
-                signer=hosted_signer,
-                message_type="chat",
-                payload=signed_fields,
-            )
-        except HostedMessageSigningError as exc:
-            return json.dumps({"error": str(exc)})
+        signed = None
+        encrypted = None
+        encrypted_envelope = None
+        encrypted_metadata = None
+        content_mode = "legacy_plaintext_v1"
+        message_version = 1
+        if auth.trusted_proxy and not plaintext:
+            try:
+                encrypted = await encrypt_hosted_message(
+                    auth=auth,
+                    encryptor=hosted_encryptor,
+                    message_type="chat",
+                    payload=signed_fields,
+                    recipients=[_chat_recipient_for_encryptor(target)],
+                )
+            except HostedMessageEncryptionError as exc:
+                return json.dumps({"error": str(exc)})
+            encrypted_envelope, encrypted_metadata = _encrypted_chat_storage(encrypted)
+            content_mode, message_version = _encrypted_chat_result_fields(encrypted)
+        else:
+            try:
+                signed = await sign_hosted_message(
+                    auth=auth,
+                    signer=hosted_signer,
+                    message_type="chat",
+                    payload=signed_fields,
+                )
+            except HostedMessageSigningError as exc:
+                return json.dumps({"error": str(exc)})
         if target.get("external"):
             if not (target.get("delivery_origin") or "").strip():
                 return json.dumps({"error": "Recipient address has no federated delivery origin"})
@@ -478,7 +570,10 @@ async def chat_send(
             }
             if hang_on:
                 payload = ChatSendMessageRequest(
-                    body=message,
+                    body="" if encrypted_envelope is not None else message,
+                    content_mode=content_mode,
+                    message_version=message_version,
+                    encrypted_envelope=encrypted_envelope,
                     leaving=leaving,
                     hang_on=True,
                     message_id=str(pre_message_id),
@@ -491,7 +586,10 @@ async def chat_send(
                 payload = CreateSessionRequest(
                     session_id=str(sid),
                     to_addresses=[route["address"]],
-                    message=message,
+                    message="" if encrypted_envelope is not None else message,
+                    content_mode=content_mode,
+                    message_version=message_version,
+                    encrypted_envelope=encrypted_envelope,
                     leaving=leaving,
                     wait_seconds=wait_seconds if wait else None,
                     message_id=str(pre_message_id),
@@ -527,11 +625,15 @@ async def chat_send(
             sender_did=signed.from_did if signed else actor_did,
             sender_agent_id=actor_agent_id,
             sender_address=sender_address,
-            body=message,
+            body="" if encrypted_envelope is not None else message,
             leaving=leaving,
             hang_on=hang_on,
             signature=signed.signature if signed else None,
             signed_payload=signed.signed_payload if signed else None,
+            content_mode=content_mode,
+            message_version=message_version,
+            encrypted_envelope=encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -613,19 +715,42 @@ async def chat_send(
             signed_fields["wait_seconds"] = wait_seconds
         if leaving:
             signed_fields["sender_leaving"] = True
-        try:
-            signed = await sign_hosted_message(
-                auth=auth,
-                signer=hosted_signer,
-                message_type="chat",
-                payload=signed_fields,
-            )
-        except HostedMessageSigningError as exc:
-            return json.dumps({"error": str(exc)})
+        signed = None
+        encrypted = None
+        encrypted_envelope = None
+        encrypted_metadata = None
+        content_mode = "legacy_plaintext_v1"
+        message_version = 1
+        if auth.trusted_proxy and not plaintext:
+            try:
+                encrypted = await encrypt_hosted_message(
+                    auth=auth,
+                    encryptor=hosted_encryptor,
+                    message_type="chat",
+                    payload=signed_fields,
+                    recipients=[_chat_recipient_for_encryptor(row) for row in recipient_rows],
+                )
+            except HostedMessageEncryptionError as exc:
+                return json.dumps({"error": str(exc)})
+            encrypted_envelope, encrypted_metadata = _encrypted_chat_storage(encrypted)
+            content_mode, message_version = _encrypted_chat_result_fields(encrypted)
+        else:
+            try:
+                signed = await sign_hosted_message(
+                    auth=auth,
+                    signer=hosted_signer,
+                    message_type="chat",
+                    payload=signed_fields,
+                )
+            except HostedMessageSigningError as exc:
+                return json.dumps({"error": str(exc)})
 
         if remote_recipients:
             payload = ChatSendMessageRequest(
-                body=message,
+                body="" if encrypted_envelope is not None else message,
+                content_mode=content_mode,
+                message_version=message_version,
+                encrypted_envelope=encrypted_envelope,
                 leaving=leaving,
                 hang_on=hang_on,
                 wait_seconds=wait_seconds if wait else None,
@@ -663,11 +788,15 @@ async def chat_send(
             sender_did=signed.from_did if signed else session_actor_did,
             sender_agent_id=actor_agent_id,
             sender_address=sender_address,
-            body=message,
+            body="" if encrypted_envelope is not None else message,
             leaving=leaving,
             hang_on=hang_on,
             signature=signed.signature if signed else None,
             signed_payload=signed.signed_payload if signed else None,
+            content_mode=content_mode,
+            message_version=message_version,
+            encrypted_envelope=encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -685,6 +814,8 @@ async def chat_send(
         replies, timed_out = await _wait_for_replies(
             aweb_db,
             redis,
+            auth=auth,
+            hosted_decryptor=hosted_decryptor,
             session_id=sid,
             participant_did=wait_participant_did,
             after=msg["created_at"],
@@ -695,7 +826,12 @@ async def chat_send(
     return json.dumps(result)
 
 
-async def chat_pending(db_infra, redis) -> str:
+async def chat_pending(
+    db_infra,
+    redis,
+    *,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
+) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
@@ -711,6 +847,20 @@ async def chat_pending(db_infra, redis) -> str:
         for row in rows:
             conversations_by_session.setdefault(row["session_id"], row)
     conversations = list(conversations_by_session.values())
+    for row in conversations:
+        content = await _decrypt_chat_row_for_hosted(
+            auth=auth,
+            hosted_decryptor=hosted_decryptor,
+            row={
+                "content_mode": row.get("last_message_content_mode") or "legacy_plaintext_v1",
+                "message_version": row.get("last_message_version") or 1,
+                "encrypted_envelope": row.get("last_encrypted_envelope"),
+                "body": row.get("last_message") or "",
+            },
+        )
+        row["last_message"] = content["body"]
+        row["last_message_decryptable"] = content["decryptable"]
+        row["last_message_content_notice"] = content["content_notice"]
     pending = [
         {
             "session_id": row["session_id"],
@@ -718,6 +868,8 @@ async def chat_pending(db_infra, redis) -> str:
             "participants": row["participants"],
             "participant_addresses": row.get("participant_addresses") or [],
             "last_message": row["last_message"],
+            "last_message_decryptable": row.get("last_message_decryptable", True),
+            "last_message_content_notice": row.get("last_message_content_notice"),
             "last_from": row["last_from"],
             "unread_count": row["unread_count"],
             "last_activity": row["last_activity"].isoformat() if row["last_activity"] else "",
@@ -733,7 +885,9 @@ async def chat_history(
     session_id: str,
     unread_only: bool = False,
     limit: int = 50,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
 ) -> str:
+    auth = get_auth()
     actor_dids = _actor_dids()
     try:
         session_uuid = UUID(session_id.strip())
@@ -764,25 +918,35 @@ async def chat_history(
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
+    output_messages = []
+    for msg in messages:
+        content = await _decrypt_chat_row_for_hosted(
+            auth=auth,
+            hosted_decryptor=hosted_decryptor,
+            row=msg,
+        )
+        output_messages.append(
+            {
+                "message_id": msg["message_id"],
+                "conversation_id": str(session_uuid),
+                "from_alias": msg["from_alias"],
+                "from_did": msg.get("from_did"),
+                "body": content["body"],
+                "decryptable": content["decryptable"],
+                "content_notice": content["content_notice"],
+                "sender_leaving": msg["sender_leaving"],
+                "timestamp": msg["created_at"].isoformat(),
+                "verification_status": message_verification_status(
+                    {**msg, "conversation_id": str(session_uuid)}
+                ),
+            }
+        )
+
     return json.dumps(
         {
             "session_id": str(session_uuid),
             "conversation_id": str(session_uuid),
-            "messages": [
-                {
-                    "message_id": msg["message_id"],
-                    "conversation_id": str(session_uuid),
-                    "from_alias": msg["from_alias"],
-                    "from_did": msg.get("from_did"),
-                    "body": msg["body"],
-                    "sender_leaving": msg["sender_leaving"],
-                    "timestamp": msg["created_at"].isoformat(),
-                    "verification_status": message_verification_status(
-                        {**msg, "conversation_id": str(session_uuid)}
-                    ),
-                }
-                for msg in messages
-            ],
+            "messages": output_messages,
         }
     )
 

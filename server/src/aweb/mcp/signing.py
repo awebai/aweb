@@ -106,7 +106,8 @@ async def encrypt_hosted_message(
     encryptor: HostedMessageEncryptor | None,
     message_type: MessageType,
     payload: dict[str, Any],
-    recipient: dict[str, Any],
+    recipient: dict[str, Any] | None = None,
+    recipients: list[dict[str, Any]] | None = None,
 ) -> HostedMessageEncryptionResult | None:
     """Encrypt an MCP message payload when auth came through hosted custody."""
     if not getattr(auth, "trusted_proxy", False):
@@ -117,13 +118,20 @@ async def encrypt_hosted_message(
     if not workspace_id:
         raise HostedMessageEncryptionError("hosted custodial encryptor requires workspace_id")
 
+    recipient_list = [dict(item) for item in (recipients or [])]
+    if recipient is not None:
+        recipient_list.append(dict(recipient))
+    if not recipient_list:
+        raise HostedMessageEncryptionError("hosted custodial encryptor requires at least one recipient")
+
     result = await encryptor(
         agent_id=getattr(auth, "agent_id", None),
         workspace_id=workspace_id,
         team_id=getattr(auth, "team_id", None),
         message_type=message_type,
         payload=dict(payload),
-        recipient=dict(recipient),
+        recipient=recipient_list[0],
+        recipients=recipient_list,
     )
     if result is None:
         raise HostedMessageEncryptionError("hosted custodial encryptor returned no envelope")

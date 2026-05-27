@@ -183,9 +183,9 @@ async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(monk
 
     assert calls[0] == (
         "check_inbox",
-        {"unread_only": True, "limit": 3, "include_bodies": True},
+        {"hosted_decryptor": None, "unread_only": True, "limit": 3, "include_bodies": True},
     )
-    assert calls[1] == ("chat_pending", {})
+    assert calls[1] == ("chat_pending", {"hosted_decryptor": None})
     assert calls[2][0] == "chat_send"
     assert calls[2][1]["to_address"] == "aweb.ai/aida"
     assert calls[2][1]["message"] == "hi"

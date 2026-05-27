@@ -88,6 +88,25 @@ def _fake_encrypted_mail_envelope(payload: dict, *, sender_did: str, recipient_d
     }
 
 
+def _fake_encrypted_chat_envelope(payload: dict, *, sender_did: str, recipient_dids: list[str]) -> dict:
+    envelope = _fake_encrypted_mail_envelope(
+        payload,
+        sender_did=sender_did,
+        recipient_did=recipient_dids[0],
+    )
+    envelope["kind"] = "chat"
+    envelope["routing"]["to_did"] = ",".join(recipient_dids)
+    envelope["recipients"] = [
+        {
+            "did": recipient_did,
+            "encryption_key_id": f"sha256:recipient-{index}",
+            "wrap_id": f"sha256:{'A' * 43}",
+        }
+        for index, recipient_did in enumerate(recipient_dids)
+    ]
+    return envelope
+
+
 async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_agent_id, alice_did: str) -> None:
     await aweb_db.execute(
         """
@@ -1593,6 +1612,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
             message="hello chat",
             leaving=True,
             hang_on=True,
+            plaintext=True,
         )
     )
 
@@ -1616,6 +1636,79 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert row["hang_on"] is True
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _encryptor(**kwargs) -> dict:
+        seen.append(kwargs)
+        return {
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": _fake_encrypted_chat_envelope(
+                kwargs["payload"],
+                sender_did=alice_did,
+                recipient_dids=["did:key:z6MkBob"],
+            ),
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_encryptor=_encryptor,
+            to_alias="bob",
+            message="secret chat",
+        )
+    )
+
+    assert "error" not in result, result
+    assert len(seen) == 1
+    assert seen[0]["message_type"] == "chat"
+    assert seen[0]["workspace_id"] == str(workspace_id)
+    assert seen[0]["payload"]["body"] == "secret chat"
+    assert seen[0]["recipients"][0]["agent_id"] == str(bob_agent_id)
+
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
+    assert row["body"] == ""
+    assert row["content_mode"] == "encrypted_v2"
+    assert row["message_version"] == 2
+    assert row["signature"] is None
+    assert row["signed_payload"] is None
+    assert "secret chat" not in json.dumps(row["encrypted_envelope"], sort_keys=True)
 
 
 @pytest.mark.asyncio
@@ -1712,6 +1805,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
             hosted_signer=_signer,
             to_address="otherco.com/bob",
             message="hello external bob",
+            plaintext=True,
             federation_transport=httpx.MockTransport(_remote_handler),
             public_origin="https://local.example",
         )
@@ -1924,6 +2018,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
             wait=True,
             wait_seconds=7,
             hang_on=True,
+            plaintext=True,
         )
     )
 
@@ -2050,6 +2145,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
             hosted_signer=_signer,
             session_id=str(session_id),
             message="federated continuation",
+            plaintext=True,
             federation_transport=httpx.MockTransport(_remote_handler),
             public_origin="https://local.example",
         )
@@ -2118,6 +2214,7 @@ async def test_mcp_chat_send_rejects_forged_hosted_signature(aweb_cloud_db, monk
             hosted_signer=_signer,
             to_alias="bob",
             message="forged",
+            plaintext=True,
         )
     )
 
@@ -2351,6 +2448,99 @@ async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monk
     assert data["pending"][0]["session_id"] == str(session_id)
     assert data["pending"][0]["conversation_id"] == str(session_id)
     assert data["pending"][0]["last_message"] == "ping"
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    message_id = uuid4()
+    workspace_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=3)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (
+            message_id, session_id, from_did, from_alias, body, created_at,
+            content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+            encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+            encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+            encrypted_signing_key_id, signed_envelope_hash
+        )
+        VALUES (
+            $1, $2, 'did:aw:bob', 'bob', '', $3,
+            'encrypted_v2', 2, '{"kind":"chat"}'::jsonb, 'ciphertext-bytes',
+            '[]'::jsonb, 'sha256:ciphertext', 16,
+            'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
+            'did:key:z6MkBob', 'sha256:envelope'
+        )
+        """,
+        message_id,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=None,
+            agent_id=str(uuid4()),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _decryptor(**kwargs):
+        seen.append(kwargs)
+        return {"body": "decrypted chat", "decryptable": True}
+
+    pending = json.loads(
+        await chat_tools.chat_pending(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            hosted_decryptor=_decryptor,
+        )
+    )
+    assert pending["pending"][0]["last_message"] == "decrypted chat"
+    assert pending["pending"][0]["last_message_decryptable"] is True
+
+    history = json.loads(
+        await chat_tools.chat_history(
+            DBInfra(aweb_cloud_db.aweb_db),
+            session_id=str(session_id),
+            unread_only=False,
+            limit=50,
+            hosted_decryptor=_decryptor,
+        )
+    )
+    assert seen[0]["message_type"] == "chat"
+    assert seen[0]["workspace_id"] == str(workspace_id)
+    assert history["messages"][0]["body"] == "decrypted chat"
+    assert history["messages"][0]["decryptable"] is True
+    assert "ciphertext-bytes" not in json.dumps(history)
 
 
 @pytest.mark.asyncio

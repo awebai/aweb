@@ -241,7 +241,9 @@ def register_tools(
             "Send a real-time chat message. Provide to for a routable address, "
             "DID, hosted handle, or same-team local alias, or conversation_id "
             "to reply in an existing conversation. Set wait=true to block until "
-            "the other agent replies (recommended for conversations)."
+            "the other agent replies (recommended for conversations). Hosted "
+            "custodial sends encrypt by default; set plaintext=true only for "
+            "explicit server-readable chat."
         ),
     )
     async def send_chat(
@@ -252,6 +254,7 @@ def register_tools(
         wait_seconds: int = 120,
         leaving: bool = False,
         hang_on: bool = False,
+        plaintext: bool = False,
     ) -> str:
         recipient_ref = to.strip()
         to_alias = ""
@@ -268,6 +271,8 @@ def register_tools(
             redis,
             registry_client=registry_client,
             hosted_signer=hosted_signer,
+            hosted_encryptor=hosted_encryptor,
+            hosted_decryptor=hosted_decryptor,
             message=message,
             to_alias=to_alias,
             to_did=to_did,
@@ -277,6 +282,7 @@ def register_tools(
             wait_seconds=wait_seconds,
             leaving=leaving,
             hang_on=hang_on,
+            plaintext=plaintext,
             federation_transport=federation_chat_transport,
             public_origin=public_origin,
         )
@@ -286,7 +292,7 @@ def register_tools(
         description="List chat conversations with unread messages waiting for you.",
     )
     async def check_chats() -> str:
-        return await _chat_pending_impl(db_infra, redis)
+        return await _chat_pending_impl(db_infra, redis, hosted_decryptor=hosted_decryptor)
 
     @mcp.tool(
         name="read_chat",
@@ -298,7 +304,11 @@ def register_tools(
         limit: int = 50,
     ) -> str:
         return await _chat_history_impl(
-            db_infra, session_id=conversation_id, unread_only=unread_only, limit=limit
+            db_infra,
+            session_id=conversation_id,
+            unread_only=unread_only,
+            limit=limit,
+            hosted_decryptor=hosted_decryptor,
         )
 
     @mcp.tool(
@@ -587,12 +597,15 @@ def register_tools(
         wait_seconds: int = 120,
         leaving: bool = False,
         hang_on: bool = False,
+        plaintext: bool = False,
     ) -> str:
         return await _chat_send_impl(
             db_infra,
             redis,
             registry_client=registry_client,
             hosted_signer=hosted_signer,
+            hosted_encryptor=hosted_encryptor,
+            hosted_decryptor=hosted_decryptor,
             message=message,
             to_alias=to_alias,
             to_did=to_did,
@@ -602,6 +615,7 @@ def register_tools(
             wait_seconds=wait_seconds,
             leaving=leaving,
             hang_on=hang_on,
+            plaintext=plaintext,
             federation_transport=federation_chat_transport,
             public_origin=public_origin,
         )
@@ -611,7 +625,7 @@ def register_tools(
         description="Legacy compatibility alias for check_chats. Prefer check_chats.",
     )
     async def chat_pending() -> str:
-        return await _chat_pending_impl(db_infra, redis)
+        return await _chat_pending_impl(db_infra, redis, hosted_decryptor=hosted_decryptor)
 
     @mcp.tool(
         name="chat_history",
@@ -623,7 +637,11 @@ def register_tools(
         limit: int = 50,
     ) -> str:
         return await _chat_history_impl(
-            db_infra, session_id=session_id, unread_only=unread_only, limit=limit
+            db_infra,
+            session_id=session_id,
+            unread_only=unread_only,
+            limit=limit,
+            hosted_decryptor=hosted_decryptor,
         )
 
     @mcp.tool(
