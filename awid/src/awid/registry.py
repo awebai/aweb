@@ -81,6 +81,7 @@ class KeyResolution:
     did_aw: str
     current_did_key: str
     log_head: DIDKeyEvidence | None = None
+    encryption_key: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -380,6 +381,17 @@ class RegistryClient:
 
     async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
         return await self.resolve_key(did_aw)
+
+    async def publish_encryption_key(
+        self,
+        did_aw: str,
+        assertion: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._request_json(
+            "PUT",
+            f"/v1/did/{did_aw}/encryption-key",
+            json=assertion,
+        )
 
     async def rotate_key(
         self,
@@ -1627,6 +1639,7 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
         did_aw=data["did_aw"],
         current_did_key=data["current_did_key"],
         log_head=_did_key_evidence_from_json(data.get("log_head")),
+        encryption_key=data.get("encryption_key"),
     )
 
 

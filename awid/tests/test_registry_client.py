@@ -25,6 +25,44 @@ class FakeRedis:
 
 
 @pytest.mark.asyncio
+async def test_registry_client_publish_encryption_key_uses_awid_endpoint():
+    assertion = {
+        "operation": "publish_encryption_key",
+        "version": "aweb-e2ee-key-v1",
+        "identity_did": "did:key:z6MkIdentity",
+        "custody": "hosted_custodial",
+        "encryption_key_id": "sha256:key",
+        "encryption_public_key": "public",
+        "algorithm": "x25519",
+        "created_at": "2026-05-27T00:00:00Z",
+        "not_before": "2026-05-27T00:00:00Z",
+        "expires_at": "2026-08-25T00:00:00Z",
+        "signature": "signature",
+    }
+    seen: dict[str, object] = {}
+
+    async def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["payload"] = json.loads(request.content.decode("utf-8"))
+        return Response(200, json=assertion)
+
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(handler),
+    )
+    try:
+        result = await registry.publish_encryption_key("did:aw:abc", assertion)
+    finally:
+        await registry.aclose()
+
+    assert result == assertion
+    assert seen["method"] == "PUT"
+    assert seen["path"] == "/v1/did/did:aw:abc/encryption-key"
+    assert seen["payload"] == assertion
+
+
+@pytest.mark.asyncio
 async def test_registry_client_register_team_certificate_uses_public_method_contract():
     controller_key, _ = generate_keypair()
     seen: dict[str, object] = {}
