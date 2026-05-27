@@ -155,6 +155,7 @@ Canonical assertion payload:
   "version": "aweb-e2ee-key-v1",
   "identity_did": "did:key:z...",
   "identity_stable_id": "did:aw:...",
+  "custody": "self",
   "encryption_key_id": "sha256:...",
   "encryption_public_key": "base64...",
   "algorithm": "x25519",
@@ -169,6 +170,17 @@ Canonical assertion payload:
 signed by the current identity Ed25519 signing key. A namespace controller, team
 controller, hosted service, relay, or AC server may distribute this assertion
 but must not alter it or replace the key.
+
+`custody` is the sender-visible trust-model signal for the decrypting identity.
+Allowed values are `self` and `hosted_custodial`. New assertions MUST include
+`custody`. Assertions created before this field existed may omit it; upgraded
+senders MAY treat an omitted value as `self` only for existing self-custodial
+assertions that otherwise verify. Hosted custodial assertions MUST include
+`custody: "hosted_custodial"`; omission is invalid for hosted custodial managed
+encryption. Sender clients use this signed field to surface when AC can decrypt
+for a hosted custodial recipient. Registry, service, team, or namespace metadata
+may repeat custody for UI filtering, but it must not contradict the signed
+assertion.
 
 Publication invariant: the client must generate and durably store the
 encryption private key before publishing the public assertion. A public key must
@@ -207,6 +219,7 @@ The server-visible v2 envelope has this shape:
     "version": "aweb-e2ee-key-v1",
     "identity_did": "did:key:z...",
     "identity_stable_id": "did:aw:...",
+    "custody": "self",
     "encryption_key_id": "sha256:...",
     "encryption_public_key": "base64...",
     "algorithm": "x25519",
@@ -328,6 +341,9 @@ Omission rules:
 - In encryption-key assertions, `identity_stable_id` is omitted when the local
   identity has no stable id and included when the local team certificate carries
   one.
+- In encryption-key assertions, `custody` is included for all new assertions.
+  Legacy self-custodial assertions may omit it; hosted custodial assertions must
+  include `hosted_custodial`.
 - In outer envelope `from`, `recipients`, routing objects, inner headers, and
   key-wrap binding objects, `stable_id` fields are omitted only when absent.
 - Address fields are omitted when the identity has no address or when the route

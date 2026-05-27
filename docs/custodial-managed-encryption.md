@@ -99,6 +99,7 @@ workspace-scoped key-history table:
 | `encryption_public_key text` | yes | Raw-standard-base64-no-padding X25519 public key. |
 | `encryption_private_key_enc bytea` | yes | AEAD-wrapped X25519 private key storage blob. |
 | `encryption_key_assertion_json jsonb` | yes | Identity-signed public assertion JSON, including `signature`. |
+| `kek_id text` | yes | Non-secret identifier of the KEK that wrapped `encryption_private_key_enc`. |
 | `published_to_awid_at timestamptz` | nullable | Time this assertion was successfully published to AWID. |
 | `published_to_service_at timestamptz` | nullable | Time this assertion was successfully published to service-local discovery. |
 | `last_publish_error_code text` | nullable | Last safe structured publication failure code. No secrets. |
@@ -115,6 +116,7 @@ Required constraints and indexes:
 - Primary key: `(workspace_id, encryption_key_id)`.
 - Check: `key_state IN ('active', 'archived', 'disabled')`.
 - Check: `schema_version = 1` for the initial implementation.
+- Check: `kek_id <> ''`.
 - Unique partial index: at most one non-deleted active key per workspace:
   `(workspace_id) WHERE key_state = 'active' AND deleted_at IS NULL`.
 - Lookup index: `(workspace_id, key_state)` for active/archive decrypt lookup.
@@ -123,9 +125,12 @@ AC migration files must follow the AC migration conventions for that repo.
 
 ## Dedicated KEK
 
-Custodial message encryption private keys must use a dedicated 32-byte hex KEK:
+Custodial message encryption private keys must use a dedicated 32-byte hex KEK
+and a non-secret key identifier:
 
 `AWEB_CUSTODIAL_E2EE_KEY`
+
+`AWEB_CUSTODIAL_E2EE_KEY_ID`
 
 Rules:
 
@@ -133,10 +138,20 @@ Rules:
   custodial encrypt/decrypt/backfill operation needs it.
 - The key must decode as exactly 32 bytes from 64 lowercase or uppercase hex
   characters.
+- Production must fail closed if `AWEB_CUSTODIAL_E2EE_KEY_ID` is missing or
+  empty. The id is a non-secret label such as `custodial-e2ee-2026-05`.
 - Do not silently fall back to `AWEB_CUSTODY_KEY` in production.
 - Tests may inject a deterministic KEK through the same environment variable.
 - Any proposal to reuse `AWEB_CUSTODY_KEY` must be explicit and reviewed by
   Mia before code lands.
+
+KEK rotation re-wraps existing `encryption_private_key_enc` rows. The rotation
+operation must decrypt each row with the KEK named by row `kek_id`, re-encrypt
+the same raw X25519 private key under the new KEK/id, update `kek_id`, and leave
+`encryption_key_id` and `encryption_public_key` unchanged. During rotation,
+read paths may accept both old and new KEK ids from an explicit configured map;
+write paths use only the active `AWEB_CUSTODIAL_E2EE_KEY_ID`. A row whose
+`kek_id` is not configured fails closed with `custodial_e2ee_kek_unavailable`.
 
 ## AEAD Storage Blob
 
@@ -157,7 +172,9 @@ Where:
 ```json
 {
   "purpose": "aweb-custodial-e2ee-private-key",
+  "wrap_purpose": "custodial_private_key_storage",
   "schema_version": 1,
+  "kek_id": "custodial-e2ee-2026-05",
   "workspace_id": "uuid",
   "did_key": "did:key:z...",
   "did_aw": "did:aw:...",
@@ -169,8 +186,9 @@ Where:
 
 For local-only custodial identities without a `did:aw`, omit `did_aw`; do not
 encode an empty string. `did_key` is required. `workspace_id`, `did_key`,
-`encryption_key_id`, and `encryption_public_key` must be taken from trusted AC
-workspace/agent/key state, not caller-supplied request fields.
+`kek_id`, `encryption_key_id`, and `encryption_public_key` must be taken from
+trusted AC workspace/agent/key state and configured KEK state, not
+caller-supplied request fields.
 
 Decrypt must recompute AAD from trusted current row state and fail if any bound
 field differs. A decrypt failure is structured as key state failure, not as a
@@ -186,6 +204,7 @@ Custodial encryption-key assertions use the same assertion payload as
 - `identity_did`: hosted identity `did:key`
 - `identity_stable_id`: hosted identity `did:aw` when present; omitted for
   local-only identities
+- `custody`: `hosted_custodial`
 - `encryption_key_id`
 - `encryption_public_key`
 - `algorithm`: `x25519`
@@ -197,6 +216,13 @@ The signature is produced with the hosted identity signing key. AC may use its
 custodial signing-key storage to produce this signature on behalf of the hosted
 identity. No team controller, namespace controller, service key, API key, or
 operator key may sign or replace this assertion.
+
+`custody: "hosted_custodial"` is required for every hosted custodial assertion.
+This signed field is the sender-visible trust signal that AC can decrypt for the
+recipient. Discovery metadata may repeat custody, but it must not contradict the
+signed assertion. Self-custodial assertions use `custody: "self"`; legacy
+self-custodial assertions that predate the field may omit it as allowed by
+`docs/e2e-messaging-contract.md`.
 
 Publication surfaces:
 
@@ -216,7 +242,10 @@ discovery surfaces.
 
 ## Backfill and Repair
 
-Existing hosted custodial identities need an idempotent backfill.
+Existing hosted custodial identities need an idempotent backfill. Backfill
+applies to both global-addressed and local-only custodial identities. Local-only
+backfill publishes the assertion to service-local discovery only; it must not
+call AWID as a fallback.
 
 For each active hosted custodial workspace:
 
@@ -308,11 +337,49 @@ Missing or stale recipient keys fail closed. The only plaintext escape hatch is
 an explicit server-readable plaintext operation that is clearly labeled as not
 E2E and allowed by policy.
 
+Senders must re-resolve recipient assertions on every send. Cached assertions
+from prior conversation turns must not be reused as authority for a new send. If
+a recipient's signed `custody` value changes between conversation turns, the
+sender must surface the trust-model change before continuing or fail closed.
+
+Sender clients that discover a `custody: "hosted_custodial"` recipient
+assertion must have enough information to tell the human that AC can decrypt for
+that recipient. The exact UX is product-owned, but the trust signal is
+protocol-contractual and must not be suppressed by the resolver.
+
+### Mixed-Custody Groups
+
+Encrypted v2 group chat uses one content key with per-recipient wraps. In a
+mixed-custody group, the confidentiality floor of every new message is the least
+private participant. If any recipient is hosted custodial, AC can decrypt that
+message through that participant's wrap. Senders must surface this floor for
+mixed-custody groups before sending or fail closed. Adding a custodial
+participant affects future messages only; it does not retroactively grant AC
+access to earlier ciphertext for which no custodial wrap exists.
+
+### Recipient Resolver Matrix
+
+Resolvers must use this table; implementations should not invent additional
+fallbacks.
+
+| Sender | Recipient | Scope | Authority source | Cache rule | Failure mode |
+| --- | --- | --- | --- | --- | --- |
+| custodial | self-custodial global | same or cross service | AWID identity encryption-key assertion, stable id cross-check | Re-resolve every send | Fail closed on missing/stale/mismatch. |
+| custodial | self-custodial local-only | same service/team | Service-local `agent_encryption_keys` for team/agent/did_key | Re-resolve every send | Fail closed; AWID lookup forbidden. |
+| custodial | hosted custodial global | same or cross service | AWID assertion with `custody: hosted_custodial` | Re-resolve every send | Fail closed on missing/stale/mismatch; surface hosted custody. |
+| custodial | hosted custodial local-only | same service/team | Service-local assertion with `custody: hosted_custodial` | Re-resolve every send | Fail closed; AWID lookup forbidden. |
+| self-custodial | hosted custodial global | same or cross service | AWID assertion with `custody: hosted_custodial` | Re-resolve every send | Fail closed or surface hosted custody before send. |
+| self-custodial | hosted custodial local-only | same service/team | Service-local assertion with `custody: hosted_custodial` | Re-resolve every send | Fail closed or surface hosted custody; AWID lookup forbidden. |
+| self-custodial | self-custodial local-only | same service/team | Existing service-local E2E discovery | Re-resolve every send, learned sender assertion only for reviewed reply continuity | Fail closed; no AWID fallback. |
+| any | local-only recipient | cross service without stored route | None | Not cacheable | Unsupported; require global identity or explicit service-mediated route. |
+
 ## Read and Decrypt Path Requirements
 
 For hosted custodial reads:
 
-1. Authenticate the hosted workspace/agent.
+1. Authenticate as the hosted identity that owns the custodial encryption key.
+   Workspace-level admin or operator authentication does not grant decrypt
+   access by default.
 2. Fetch encrypted v2 envelope and metadata.
 3. Load active and archived custodial encryption private keys for that
    workspace.
@@ -327,6 +394,10 @@ For hosted custodial reads:
 
 For self-custodial reads, AC does none of this decryption.
 
+Glass-break support/admin decryption is out of scope for v1. If implemented
+later, it must use a separate authorization surface with explicit audit logging;
+it must not be added as an MCP tool extension or implicit dashboard/admin power.
+
 ## Local-Only Identity Rules
 
 Local-only identities have no AWID row and no public address. Their assertions
@@ -337,6 +408,8 @@ are still identity-authorized:
 - Address fields are omitted.
 - Discovery is service/team-scoped, using trusted service state such as
   `agent_encryption_keys`, not AWID.
+- AWID lookup for local-only recipients is forbidden. If service-local
+  discovery has no matching row, encrypted send fails closed.
 
 Custodial implementation must support:
 
@@ -355,6 +428,7 @@ Use structured errors. Do not log secrets or plaintext.
 | --- | --- |
 | `custodial_e2ee_kek_unconfigured` | `AWEB_CUSTODIAL_E2EE_KEY` missing for an operation that needs it. |
 | `custodial_e2ee_kek_invalid` | KEK is not exactly 32 bytes from hex. |
+| `custodial_e2ee_kek_unavailable` | Row is wrapped under a `kek_id` that is not configured. |
 | `custodial_e2ee_signing_key_missing` | Hosted identity signing key unavailable; assertion/envelope cannot be signed. |
 | `custodial_e2ee_private_key_missing` | Active or required archived encryption private key missing. |
 | `custodial_e2ee_private_key_decrypt_failed` | AEAD unwrap failed or bound AAD does not match row state. |
