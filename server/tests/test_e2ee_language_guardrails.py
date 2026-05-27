@@ -6,6 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 FILES_TO_SCAN = [
+    # Extend this list when adding new customer-visible string sources.
     *REPO_ROOT.glob("docs/**/*.md"),
     *REPO_ROOT.glob("skills/**/*.md"),
     *REPO_ROOT.glob("packages/codex-plugin/skills/**/*.md"),
