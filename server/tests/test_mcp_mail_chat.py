@@ -1712,6 +1712,102 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
 
 
 @pytest.mark.asyncio
+async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    carol_agent_id = uuid4()
+    session_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, 'did:key:z6MkCarol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'active', 'open')
+        """,
+        carol_agent_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, left_at)
+        VALUES
+            ($1, $2, $3, 'alice', 'acme.com/alice', NULL),
+            ($1, 'did:aw:bob', $4, 'bob', 'acme.com/bob', NULL),
+            ($1, 'did:aw:carol', $5, 'carol', 'acme.com/carol', NOW())
+        """,
+        session_id,
+        alice_did,
+        alice_agent_id,
+        bob_agent_id,
+        carol_agent_id,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _encryptor(**kwargs) -> dict:
+        seen.append(kwargs)
+        return {
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": _fake_encrypted_chat_envelope(
+                kwargs["payload"],
+                sender_did=alice_did,
+                recipient_dids=["did:key:z6MkBob"],
+            ),
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_encryptor=_encryptor,
+            session_id=str(session_id),
+            message="continuation secret",
+        )
+    )
+
+    assert "error" not in result, result
+    assert len(seen) == 1
+    assert [recipient.get("agent_id") for recipient in seen[0]["recipients"]] == [str(bob_agent_id)]
+    assert all(recipient.get("agent_id") != str(carol_agent_id) for recipient in seen[0]["recipients"])
+
+
+@pytest.mark.asyncio
 async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()

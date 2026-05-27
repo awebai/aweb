@@ -217,12 +217,13 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT p.did, p.alias, p.address AS participant_address, p.delivery_origin,
+        SELECT p.did, p.agent_id, p.alias, p.address AS participant_address, p.delivery_origin,
                p.current_did_key, a.did_key, a.did_aw, a.address
         FROM {{tables.chat_participants}} p
         LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
         WHERE p.session_id = $1
           AND p.did <> ALL($2::text[])
+          AND p.left_at IS NULL
         ORDER BY p.alias ASC, p.did ASC
         """,
         session_id,
