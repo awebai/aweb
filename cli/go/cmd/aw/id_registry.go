@@ -28,6 +28,8 @@ type idShowOutput struct {
 	RegistryError         string `json:"registry_error,omitempty"`
 }
 
+var errMissingIdentityRegistryContext = errors.New("missing identity registry context")
+
 type idRegisterOutput struct {
 	Status        string `json:"status"`
 	RegistryURL   string `json:"registry_url"`
@@ -453,6 +455,9 @@ func currentIdentityRegistryURL(ctx context.Context, identity *awconfig.Resolved
 	}
 	if strings.TrimSpace(identity.Domain) != "" {
 		return registry.DiscoverRegistry(ctx, identity.Domain)
+	}
+	if strings.TrimSpace(identity.StableID) != "" {
+		return "", fmt.Errorf("%w: global identity %s has no registry_url or address domain; cannot safely choose an AWID registry", errMissingIdentityRegistryContext, strings.TrimSpace(identity.StableID))
 	}
 	return registry.DefaultRegistryURL, nil
 }

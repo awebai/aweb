@@ -482,12 +482,16 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 		}
 		registryURL, err := currentIdentityRegistryURL(ctx, identity, registry)
 		if err != nil {
-			return nil, nil, err
-		}
-		if err := registry.PublishEncryptionKey(ctx, registryURL, identity.StableID, assertion); err != nil {
+			if errors.Is(err, errMissingIdentityRegistryContext) {
+				skipped = append(skipped, "awid: global identity is missing registry_url or address domain; cannot safely choose a registry")
+			} else {
+				return nil, nil, err
+			}
+		} else if err := registry.PublishEncryptionKey(ctx, registryURL, identity.StableID, assertion); err != nil {
 			return nil, nil, fmt.Errorf("publish encryption key to awid: %w", err)
+		} else {
+			published = append(published, "awid:"+registryURL)
 		}
-		published = append(published, "awid:"+registryURL)
 	} else {
 		skipped = append(skipped, "awid: local identity has no did:aw")
 	}

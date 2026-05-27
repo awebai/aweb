@@ -694,6 +694,142 @@ func TestEncryptionKeyEnsureRefreshesGlobalAssertionForActiveLocalCertificate(t 
 	}
 }
 
+func TestEnsureE2EEKeyReadyForSendPublishesExistingLocalRecord(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	tmp := t.TempDir()
+
+	var publishCount int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			atomic.AddInt32(&publishCount, 1)
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", "backend:demo", "alice")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "backend:demo",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  priv,
+		CreatedAt:   "2026-05-26T00:00:00Z",
+	})
+	if err := ensureLocalIdentityEncryptionKeyForDir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&publishCount); got != 0 {
+		t.Fatalf("ensureLocalIdentityEncryptionKeyForDir published unexpectedly: %d", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := ensureE2EEKeyReadyForSend(ctx, tmp); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&publishCount); got != 1 {
+		t.Fatalf("publish count=%d want 1", got)
+	}
+}
+
+func TestEncryptionKeySetupSkipsAWIDWhenGlobalCertificateHasNoRegistryContext(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "")
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	stableID := awid.ComputeStableID(memberPub)
+	const teamID = "backend:demo"
+
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         teamID,
+		MemberDIDKey: memberDID,
+		MemberDIDAW:  stableID,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := t.TempDir()
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, teamID, cert); err != nil {
+		t.Fatalf("save team certificate: %v", err)
+	}
+
+	var servicePublishCount int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			t.Fatalf("must not publish to default AWID registry without registry context: %s %s", r.Method, r.URL.Path)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			atomic.AddInt32(&servicePublishCount, 1)
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath()), &awconfig.WorktreeWorkspace{
+		AwebURL: server.URL,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "alice",
+			WorkspaceID: "workspace-1",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-05-26T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	if err := awconfig.SaveTeamState(tmp, &awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   teamID,
+			Alias:    "alice",
+			CertPath: awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt: "2026-05-26T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, tmp, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&servicePublishCount); got != 1 {
+		t.Fatalf("service publish count=%d want 1", got)
+	}
+	if len(out.Published) != 1 || out.Published[0] != "aweb-service" {
+		t.Fatalf("published=%#v want only service", out.Published)
+	}
+	if len(out.PublishSkipped) == 0 || !strings.Contains(strings.Join(out.PublishSkipped, "\n"), "missing registry_url or address domain") {
+		t.Fatalf("publish skipped missing registry-context explanation: %#v", out.PublishSkipped)
+	}
+}
+
 func idCreateCommandEnv(home string) []string {
 	return append(os.Environ(), "HOME="+home, "AW_CONFIG_PATH=")
 }
