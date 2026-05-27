@@ -18,6 +18,7 @@
 #   AWEB_ALPHA_E2E_PORT   alpha aweb host port (default: 8320)
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
+#   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
 
 set -euo pipefail
 
@@ -55,7 +56,8 @@ ANN_DIR="$E2E_ROOT/ann"
 NED_DIR="$E2E_ROOT/ned"
 BOB_DIR="$E2E_ROOT/bob"
 CHARLIE_DIR="$E2E_ROOT/charlie"
-mkdir -p "$E2E_HOME" "$ALICE_DIR" "$ANN_DIR" "$NED_DIR" "$BOB_DIR" "$CHARLIE_DIR"
+DAVE_DIR="$E2E_ROOT/dave"
+mkdir -p "$E2E_HOME" "$ALICE_DIR" "$ANN_DIR" "$NED_DIR" "$BOB_DIR" "$CHARLIE_DIR" "$DAVE_DIR"
 
 pass=0
 fail=0
@@ -64,10 +66,14 @@ cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
-  if [[ -f "$COMPOSE_FILE" ]]; then
+  if [[ "${AWEB_FED_E2E_KEEP:-0}" == "1" ]]; then
+    echo "Keeping federation e2e artifacts for debugging:"
+    echo "  project: $PROJECT"
+    echo "  root:    $E2E_ROOT"
+  elif [[ -f "$COMPOSE_FILE" ]]; then
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+    rm -rf "$E2E_ROOT"
   fi
-  rm -rf "$E2E_ROOT"
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -469,6 +475,14 @@ bob_token="$(echo "$bob_invite" | jq_field token)"
 run_success "bob accept invite" run_aw_in "$BOB_DIR" id team accept-invite "$bob_token" --alias bob --json
 run_success "bob init" run_aw_in "$BOB_DIR" init --url "$BETA_URL" --alias bob --do-not-touch-agents-md
 
+capture_success dave_invite "dave_invite" run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --json
+dave_token="$(echo "$dave_invite" | jq_field token)"
+run_success "dave accept invite" run_aw_in "$DAVE_DIR" id team accept-invite "$dave_token" --alias dave --json
+run_success "dave init" run_aw_in "$DAVE_DIR" init --url "$BETA_URL" --alias dave --do-not-touch-agents-md
+capture_success dave_whoami "dave_whoami" run_aw_in "$DAVE_DIR" whoami --json
+DAVE_DID_KEY="$(echo "$dave_whoami" | jq_field did)"
+assert_not_empty "dave local did_key" "$DAVE_DID_KEY"
+
 capture_success charlie_create "charlie_create" run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json
 assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
@@ -478,6 +492,8 @@ capture_success alice_e2ee_setup "alice_e2ee_setup" run_aw_in "$ALICE_DIR" id en
 assert_not_empty "alice federation e2ee key id" "$(echo "$alice_e2ee_setup" | jq_field key_id)"
 capture_success bob_e2ee_setup "bob_e2ee_setup" run_aw_in "$BOB_DIR" id encryption-key setup --json
 assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
+capture_success dave_e2ee_setup "dave_e2ee_setup" run_aw_in "$DAVE_DIR" id encryption-key setup --json
+assert_not_empty "dave local-only federation e2ee key id" "$(echo "$dave_e2ee_setup" | jq_field key_id)"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
@@ -565,6 +581,51 @@ assert_eq "federated e2ee plaintext absent from alpha DB" "0" "$fed_e2ee_alpha_p
 assert_eq "federated e2ee plaintext absent from beta DB" "0" "$fed_e2ee_beta_plaintext_count"
 echo ""
 
+echo "=== Phase 4b.1: E2E cross-server local-only sender replies via learned assertion ==="
+fed_local_subject="FED_E2EE_LOCAL_ONLY_SUBJECT_SENTINEL_260526"
+fed_local_body="FED_E2EE_LOCAL_ONLY_BODY_SENTINEL_260526"
+if fed_local_out="$(run_aw_in "$DAVE_DIR" mail send \
+  --to-address alpha.test.local/alice \
+  --subject "$fed_local_subject" \
+  --body "$fed_local_body" \
+  --e2ee \
+  --json 2>&1)"; then
+  fed_local_exit=0
+else
+  fed_local_exit=$?
+fi
+assert_eq "local-only federated e2ee mail send exit" "0" "$fed_local_exit"
+if [[ "$fed_local_exit" != "0" ]]; then
+  echo "$fed_local_out"
+fi
+fed_local_conversation_id="$(echo "$fed_local_out" | jq_field conversation_id)"
+assert_not_empty "local-only federated e2ee conversation id" "$fed_local_conversation_id"
+capture_success alice_local_inbox "alice_local_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
+alice_local_body="$(echo "$alice_local_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; body=sys.argv[2]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid and m.get('body')==body), ''))" "$fed_local_conversation_id" "$fed_local_body" 2>/dev/null || echo "")"
+assert_eq "alice decrypts local-only federated e2ee mail" "$fed_local_body" "$alice_local_body"
+fed_local_reply_body="FED_E2EE_LOCAL_ONLY_REPLY_SENTINEL_260526"
+if fed_local_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --conversation-id "$fed_local_conversation_id" \
+  --subject "FED_E2EE_LOCAL_ONLY_REPLY_SUBJECT_SENTINEL_260526" \
+  --body "$fed_local_reply_body" \
+  --e2ee 2>&1)"; then
+  fed_local_reply_exit=0
+else
+  fed_local_reply_exit=$?
+fi
+assert_eq "local-only federated e2ee learned-key reply send exit" "0" "$fed_local_reply_exit"
+if [[ "$fed_local_reply_exit" != "0" ]]; then
+  echo "$fed_local_reply_out"
+fi
+capture_success dave_local_reply_inbox "dave_local_reply_inbox" run_aw_in "$DAVE_DIR" mail inbox --json --show-all
+dave_local_reply_body="$(echo "$dave_local_reply_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; body=sys.argv[2]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid and m.get('body')==body), ''))" "$fed_local_conversation_id" "$fed_local_reply_body" 2>/dev/null || echo "")"
+assert_eq "dave decrypts learned-key e2ee mail reply" "$fed_local_reply_body" "$dave_local_reply_body"
+fed_local_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%';")"
+assert_eq "local-only e2ee mail plaintext absent from alpha DB" "0" "$fed_local_plaintext_count"
+fed_local_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%';")"
+assert_eq "local-only e2ee mail plaintext absent from beta DB" "0" "$fed_local_beta_plaintext_count"
+echo ""
+
 echo "=== Phase 4c: E2E cross-server chat routes ciphertext and clients decrypt ==="
 fed_e2ee_chat_body="FED_E2EE_CHAT_BODY_SENTINEL_260526"
 if fed_e2ee_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave beta.test.local/bob \
@@ -622,25 +683,68 @@ assert_eq "federated e2ee chat plaintext absent from alpha DB" "0" "$fed_e2ee_ch
 assert_eq "federated e2ee chat plaintext absent from beta DB" "0" "$fed_e2ee_chat_beta_plaintext_count"
 echo ""
 
+echo "=== Phase 4c.1: E2E cross-server local-only chat reply via learned assertion ==="
+fed_local_chat_body="FED_E2EE_LOCAL_ONLY_CHAT_SENTINEL_260526"
+if fed_local_chat_out="$(run_aw_in "$DAVE_DIR" chat send-and-leave alpha.test.local/alice \
+  "$fed_local_chat_body" \
+  --start-conversation \
+  --e2ee \
+  --json 2>&1)"; then
+  fed_local_chat_exit=0
+else
+  fed_local_chat_exit=$?
+fi
+assert_eq "local-only federated e2ee chat send exit" "0" "$fed_local_chat_exit"
+if [[ "$fed_local_chat_exit" != "0" ]]; then
+  echo "$fed_local_chat_out"
+fi
+fed_local_chat_session_id="$(echo "$fed_local_chat_out" | jq_field session_id)"
+assert_not_empty "local-only federated e2ee chat session id" "$fed_local_chat_session_id"
+capture_success alice_local_chat "alice_local_chat" run_aw_in "$ALICE_DIR" chat history --session-id "$fed_local_chat_session_id" --json
+alice_local_chat_count="$(echo "$alice_local_chat" | json_count_matching body "$fed_local_chat_body")"
+assert_eq "alice decrypts local-only federated e2ee chat" "1" "$alice_local_chat_count"
+fed_local_chat_reply_body="FED_E2EE_LOCAL_ONLY_CHAT_REPLY_SENTINEL_260526"
+if fed_local_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave "$DAVE_DID_KEY" \
+  "$fed_local_chat_reply_body" \
+  --e2ee 2>&1)"; then
+  fed_local_chat_reply_exit=0
+else
+  fed_local_chat_reply_exit=$?
+fi
+assert_eq "local-only federated e2ee chat learned-key reply send exit" "0" "$fed_local_chat_reply_exit"
+if [[ "$fed_local_chat_reply_exit" != "0" ]]; then
+  echo "$fed_local_chat_reply_out"
+fi
+capture_success dave_local_chat_reply "dave_local_chat_reply" run_aw_in "$DAVE_DIR" chat history --session-id "$fed_local_chat_session_id" --json
+dave_local_chat_reply_count="$(echo "$dave_local_chat_reply" | json_count_matching body "$fed_local_chat_reply_body")"
+assert_eq "dave decrypts learned-key e2ee chat reply" "1" "$dave_local_chat_reply_count"
+fed_local_chat_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%';")"
+assert_eq "local-only e2ee chat plaintext absent from alpha DB" "0" "$fed_local_chat_plaintext_count"
+fed_local_chat_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%';")"
+assert_eq "local-only e2ee chat plaintext absent from beta DB" "0" "$fed_local_chat_beta_plaintext_count"
+echo ""
+
 echo "=== Phase 4: Public cross-server first contact and replies ==="
-run_success "public federated mail send" run_aw_in "$ALICE_DIR" mail send --to-address beta.test.local/bob --subject "Public federated mail" --body "hello beta bob"
+run_success "public federated mail send" run_aw_in "$ALICE_DIR" mail send --plaintext --to-address beta.test.local/bob --subject "Public federated mail" --body "hello beta bob"
 capture_success bob_inbox "bob_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
 public_mail_count="$(echo "$bob_inbox" | json_count_matching subject "Public federated mail")"
 public_conversation_id="$(echo "$bob_inbox" | json_first_field_matching subject "Public federated mail" conversation_id)"
 assert_eq "public federated mail delivered to beta" "1" "$public_mail_count"
 assert_not_empty "public federated mail conversation id" "$public_conversation_id"
 
-run_success "public federated reply send" run_aw_in "$BOB_DIR" mail send --conversation-id "$public_conversation_id" --subject "Public federated reply" --body "reply from beta bob"
+run_success "public federated reply send" run_aw_in "$BOB_DIR" mail send --plaintext --conversation-id "$public_conversation_id" --subject "Public federated reply" --body "reply from beta bob"
 capture_success alice_inbox "alice_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
 reply_count="$(echo "$alice_inbox" | json_count_matching subject "Public federated reply")"
 assert_eq "public federated mail reply delivered to alpha" "1" "$reply_count"
 
-run_success "public federated chat send" run_aw_in "$ALICE_DIR" chat send-and-leave beta.test.local/bob "public federated chat"
+run_success "public federated chat send" run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext beta.test.local/bob "public federated chat"
 capture_success bob_chat "bob_chat" run_aw_in "$BOB_DIR" chat history alpha.test.local/alice --json
 public_chat_count="$(echo "$bob_chat" | json_count_matching body "public federated chat")"
 assert_eq "public federated chat delivered to beta" "1" "$public_chat_count"
-run_success "public federated chat reply send" run_aw_in "$BOB_DIR" chat send-and-leave alpha.test.local/alice "public federated chat reply"
-capture_success alice_chat "alice_chat" run_aw_in "$ALICE_DIR" chat history beta.test.local/bob --json
+capture_success public_chat_reply "public_chat_reply" run_aw_in "$BOB_DIR" chat send-and-leave --plaintext alpha.test.local/alice "public federated chat reply" --json
+public_chat_reply_session_id="$(echo "$public_chat_reply" | jq_field session_id)"
+assert_not_empty "public federated chat reply session id" "$public_chat_reply_session_id"
+capture_success alice_chat "alice_chat" run_aw_in "$ALICE_DIR" chat history --session-id "$public_chat_reply_session_id" --json
 chat_reply_count="$(echo "$alice_chat" | json_count_matching body "public federated chat reply")"
 assert_eq "public federated chat reply delivered to alpha" "1" "$chat_reply_count"
 echo ""

@@ -98,8 +98,16 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string, pref
 			c.address,
 		)
 		if preferAddress {
+			if len(otherDIDs) == 1 && isLocalDIDKey(otherDIDs[0]) {
+				return otherDIDs[0], nil
+			}
 			if toAddr := c.toAddressForAliases(otherAddresses); toAddr != "" {
 				return toAddr, nil
+			}
+			if selfAlias := c.addressAlias(); selfAlias != "" {
+				if toAlias := c.toAddressForAliases(removeOneSelfIdentifier(s.Participants, selfAlias)); toAlias != "" {
+					return toAlias, nil
+				}
 			}
 		}
 		if len(otherDIDs) == 1 {
@@ -325,7 +333,7 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	now := time.Now().UTC().Truncate(time.Second)
 	envelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
 		Sender: E2EESenderKey{
-			Address:       c.address,
+			Address:       c.e2eeAddress(),
 			DID:           c.did,
 			StableID:      c.stableID,
 			TeamID:        c.teamID,
@@ -364,12 +372,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if c.e2eeEncryptionKey == nil {
 		return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
 	}
-	to, err := c.toAddressForSession(ctx, sessionID, true)
-	if err != nil {
-		return err
-	}
-	aliases, dids, addresses := classifyE2EEChatTargets(to)
-	recipients, err := c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+	recipients, err := c.e2eeChatRecipientsForSession(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -383,7 +386,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	now := time.Now().UTC().Truncate(time.Second)
 	envelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
 		Sender: E2EESenderKey{
-			Address:       c.address,
+			Address:       c.e2eeAddress(),
 			DID:           c.did,
 			StableID:      c.stableID,
 			TeamID:        c.teamID,
@@ -410,6 +413,108 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	payload.Signature = ""
 	payload.SignedPayload = ""
 	return nil
+}
+
+func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID string) ([]E2EERecipientKey, error) {
+	to, err := c.toAddressForSession(ctx, sessionID, true)
+	if err != nil {
+		return nil, err
+	}
+	aliases, dids, addresses := classifyE2EEChatTargets(to)
+	if len(addresses) > 0 || len(aliases) > 0 || hasGlobalDIDTarget(dids) {
+		return c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+	}
+	if len(dids) > 0 {
+		if recipients, ok, err := c.learnedE2EEChatRecipients(ctx, sessionID); err != nil {
+			return nil, err
+		} else if ok {
+			return recipients, nil
+		}
+	}
+	return c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+}
+
+func hasGlobalDIDTarget(dids []string) bool {
+	for _, did := range dids {
+		if strings.HasPrefix(strings.TrimSpace(did), "did:aw:") {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalDIDKey(did string) bool {
+	return strings.HasPrefix(strings.TrimSpace(did), "did:key:")
+}
+
+func (c *Client) learnedE2EEChatRecipients(ctx context.Context, sessionID string) ([]E2EERecipientKey, bool, error) {
+	history, err := c.ChatHistory(ctx, ChatHistoryParams{SessionID: sessionID, Limit: 50})
+	if err != nil {
+		return nil, false, err
+	}
+	recipients := make([]E2EERecipientKey, 0, 1)
+	seen := map[string]bool{}
+	for _, msg := range history.Messages {
+		recipient, ok, err := c.learnedE2EERecipientFromEnvelope(msg.Encrypted)
+		if err != nil {
+			return nil, true, err
+		}
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(recipient.DID)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		recipients = append(recipients, recipient)
+	}
+	if len(recipients) == 0 {
+		return nil, false, nil
+	}
+	return recipients, true, nil
+}
+
+func (c *Client) learnedE2EEChatRecipientForDID(ctx context.Context, did string) (E2EERecipientKey, bool, error) {
+	did = strings.TrimSpace(did)
+	if !isLocalDIDKey(did) {
+		return E2EERecipientKey{}, false, nil
+	}
+	resp, err := c.ChatListSessions(ctx)
+	if err != nil {
+		return E2EERecipientKey{}, false, err
+	}
+	for _, session := range resp.Sessions {
+		if !stringSliceContainsFold(session.ParticipantDIDs, did) {
+			continue
+		}
+		recipients, ok, err := c.learnedE2EEChatRecipients(ctx, session.SessionID)
+		if err != nil {
+			return E2EERecipientKey{}, true, err
+		}
+		if !ok {
+			continue
+		}
+		for _, recipient := range recipients {
+			if strings.EqualFold(strings.TrimSpace(recipient.DID), did) {
+				return recipient, true, nil
+			}
+		}
+	}
+	return E2EERecipientKey{}, false, nil
+}
+
+func stringSliceContainsFold(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyE2EEChatTargets(targetList string) (aliases []string, dids []string, addresses []string) {
@@ -446,25 +551,41 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 			if !ok {
 				return nil, fmt.Errorf("recipient agent not found: %s", alias)
 			}
-			assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
+			recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
 			if err != nil {
 				return nil, err
 			}
-			recipients = append(recipients, E2EERecipientKey{
-				Address:       strings.TrimSpace(agent.Address),
-				DID:           strings.TrimSpace(agent.DIDKey),
-				StableID:      strings.TrimSpace(agent.DIDAW),
-				EncryptionKey: assertion,
-				InboundMode:   strings.TrimSpace(agent.InboundMode),
-			})
+			recipients = append(recipients, recipient)
 		}
 	}
-	for _, target := range append(append([]string{}, addresses...), dids...) {
+	for _, target := range addresses {
 		identity, err := c.ResolveIdentity(ctx, target)
 		if err != nil {
 			return nil, err
 		}
 		if identity.EncryptionKey == nil {
+			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+		}
+		recipients = append(recipients, E2EERecipientKey{
+			Address:        strings.TrimSpace(identity.Address),
+			DID:            strings.TrimSpace(identity.DID),
+			StableID:       strings.TrimSpace(identity.StableID),
+			EncryptionKey:  identity.EncryptionKey,
+			DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+		})
+	}
+	for _, target := range dids {
+		identity, err := c.ResolveIdentity(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		if identity.EncryptionKey == nil {
+			if recipient, ok, err := c.learnedE2EEChatRecipientForDID(ctx, target); err != nil {
+				return nil, err
+			} else if ok {
+				recipients = append(recipients, recipient)
+				continue
+			}
 			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
 		}
 		recipients = append(recipients, E2EERecipientKey{

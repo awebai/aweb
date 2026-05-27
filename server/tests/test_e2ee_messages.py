@@ -8,6 +8,7 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key, stable_id_from_public_key
 from awid.signing import canonical_json_bytes
+from awid.e2ee_keys import encryption_key_id, encryption_assertion_payload
 from aweb.e2ee_messages import (
     E2EE_SUITE,
     E2EEEnvelopeError,
@@ -127,6 +128,67 @@ def _signed_test_envelope():
     return envelope, sender_did, sender_stable, recipient_did, recipient_stable
 
 
+def _resign_envelope(envelope: dict, sender: SigningKey) -> None:
+    payload = canonical_json_bytes(
+        _envelope_map(
+            envelope,
+            include_signature=False,
+            include_ciphertext=True,
+            include_ciphertext_hash=True,
+        )
+    )
+    envelope["signature"] = _b64(sender.sign(payload).signature)
+
+
+def _sender_assertion(sender: SigningKey, sender_did: str, sender_stable: str) -> dict:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    raw_key = b"x" * 32
+    assertion = {
+        "operation": "publish_encryption_key",
+        "version": "aweb-e2ee-key-v1",
+        "identity_did": sender_did,
+        "identity_stable_id": sender_stable,
+        "encryption_key_id": encryption_key_id(_b64(raw_key)),
+        "encryption_public_key": _b64(raw_key),
+        "algorithm": "x25519",
+        "created_at": now.isoformat().replace("+00:00", "Z"),
+        "not_before": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": (now + timedelta(days=90)).isoformat().replace("+00:00", "Z"),
+    }
+    assertion["signature"] = _b64(sender.sign(canonical_json_bytes(encryption_assertion_payload(assertion))).signature)
+    return assertion
+
+
+def _signed_test_envelope_with_sender_key():
+    sender = SigningKey.generate()
+    sender_pub = bytes(sender.verify_key)
+    sender_did = did_from_public_key(sender_pub)
+    sender_stable = stable_id_from_public_key(sender_pub)
+    envelope, _, _, recipient_did, recipient_stable = _signed_test_envelope()
+    assertion = _sender_assertion(sender, sender_did, sender_stable)
+    key_id = assertion["encryption_key_id"]
+    envelope["from"]["did"] = sender_did
+    envelope["from"]["stable_id"] = sender_stable
+    envelope["from"]["encryption_key_id"] = key_id
+    envelope["sender_encryption_key"] = assertion
+    envelope["signing_key_id"] = sender_did
+    envelope["key_wraps"][0]["sender_did"] = sender_did
+    envelope["key_wraps"][0]["sender_stable_id"] = sender_stable
+    envelope["key_wraps"][0]["sender_encryption_key_id"] = key_id
+    envelope["key_wraps"][1]["recipient_did"] = sender_did
+    envelope["key_wraps"][1]["recipient_stable_id"] = sender_stable
+    envelope["key_wraps"][1]["recipient_encryption_key_id"] = key_id
+    envelope["key_wraps"][1]["sender_did"] = sender_did
+    envelope["key_wraps"][1]["sender_stable_id"] = sender_stable
+    envelope["key_wraps"][1]["sender_encryption_key_id"] = key_id
+    envelope["crypto"]["key_wraps_hash"] = _hash_canonical(
+        "key_wraps",
+        [_key_wrap_map(envelope["key_wraps"][0]), _key_wrap_map(envelope["key_wraps"][1])],
+    )
+    _resign_envelope(envelope, sender)
+    return envelope, sender_did, sender_stable, recipient_did, recipient_stable
+
+
 def test_validate_e2ee_mail_envelope_accepts_signed_opaque_content():
     envelope, sender_did, sender_stable, recipient_did, recipient_stable = _signed_test_envelope()
 
@@ -140,6 +202,28 @@ def test_validate_e2ee_mail_envelope_accepts_signed_opaque_content():
         recipient_stable_id=recipient_stable,
         recipient_address="example.com/bob",
     )
+
+
+def test_validate_e2ee_mail_envelope_accepts_sender_encryption_key_assertion():
+    envelope, sender_did, sender_stable, recipient_did, recipient_stable = _signed_test_envelope_with_sender_key()
+
+    validate_e2ee_mail_envelope(
+        envelope,
+        message_id=envelope["message_id"],
+        conversation_id=envelope["conversation_id"],
+        sender_did=sender_did,
+        sender_stable_id=sender_stable,
+        recipient_did=recipient_did,
+        recipient_stable_id=recipient_stable,
+        recipient_address="example.com/bob",
+    )
+
+
+def test_validate_e2ee_mail_envelope_rejects_sender_encryption_key_mismatch():
+    envelope, sender_did, sender_stable, recipient_did, recipient_stable = _signed_test_envelope_with_sender_key()
+    envelope["sender_encryption_key"]["encryption_key_id"] = "sha256:" + _b64(b"z" * 32)
+
+    _assert_rejects(envelope, sender_did, sender_stable, recipient_did, recipient_stable, "sender encryption key assertion")
 
 
 def test_validate_e2ee_mail_envelope_recomputes_ciphertext_hash():

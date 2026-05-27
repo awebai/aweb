@@ -366,6 +366,7 @@ var mailSendCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
+		sendEncryptE2EE := !(mailSendPlaintext || mailSendLegacyPlaintext)
 		var c *aweb.Client
 		var sel *awconfig.Selection
 		req := &awid.SendMessageRequest{
@@ -397,18 +398,22 @@ var mailSendCmd = &cobra.Command{
 					targetKind = "conversation"
 					targetValue = conversation.conversationID
 					req.ConversationID = conversation.conversationID
-					applyMailRecipientTarget(req, conversation.kind, conversation.value)
-					if !mailRecipientTargetApplied(req) {
-						applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
-					}
-					if !mailRecipientTargetApplied(req) {
-						applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
-					}
-					if !mailRecipientTargetApplied(req) {
-						applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
-					}
-					if !mailRecipientTargetApplied(req) {
-						applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
+					if sendEncryptE2EE {
+						req.ToAlias = targetValue
+					} else {
+						applyMailRecipientTarget(req, conversation.kind, conversation.value)
+						if !mailRecipientTargetApplied(req) {
+							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
+						}
+						if !mailRecipientTargetApplied(req) {
+							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
+						}
+						if !mailRecipientTargetApplied(req) {
+							applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
+						}
+						if !mailRecipientTargetApplied(req) {
+							applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
+						}
 					}
 				} else {
 					req.ToAlias = targetValue
@@ -446,7 +451,11 @@ var mailSendCmd = &cobra.Command{
 				targetKind = "conversation"
 				targetValue = conversation.conversationID
 				req.ConversationID = conversation.conversationID
-				applyMailRecipientTarget(req, conversation.kind, conversation.value)
+				if sendEncryptE2EE {
+					req.ToAddress = targetValue
+				} else {
+					applyMailRecipientTarget(req, conversation.kind, conversation.value)
+				}
 			} else {
 				req.ToAddress = targetValue
 			}
@@ -458,7 +467,7 @@ var mailSendCmd = &cobra.Command{
 		if cmd.Flags().Changed("e2ee") && (mailSendPlaintext || mailSendLegacyPlaintext) {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
-		req.EncryptE2EE = !(mailSendPlaintext || mailSendLegacyPlaintext)
+		req.EncryptE2EE = sendEncryptE2EE
 		if req.EncryptE2EE {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err

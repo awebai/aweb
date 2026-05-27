@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature
+from awid.e2ee_keys import validate_encryption_key_assertion
 
 
 E2EE_MESSAGE_VERSION = 2
@@ -60,6 +61,24 @@ def _recipient_ref_map(ref: dict[str, Any]) -> dict[str, Any]:
     _add_non_empty(out, "team_id", ref.get("team_id"))
     _add_non_empty(out, "encryption_key_id", ref.get("encryption_key_id"))
     _add_non_empty(out, "wrap_id", ref.get("wrap_id"))
+    return out
+
+
+def _encryption_key_assertion_map(assertion: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        "operation": _non_empty(assertion.get("operation")),
+        "version": _non_empty(assertion.get("version")),
+        "identity_did": _non_empty(assertion.get("identity_did")),
+        "encryption_key_id": _non_empty(assertion.get("encryption_key_id")),
+        "encryption_public_key": _non_empty(assertion.get("encryption_public_key")),
+        "algorithm": _non_empty(assertion.get("algorithm")),
+        "created_at": _non_empty(assertion.get("created_at")),
+        "not_before": _non_empty(assertion.get("not_before")),
+        "expires_at": _non_empty(assertion.get("expires_at")),
+        "signature": _non_empty(assertion.get("signature")),
+    }
+    _add_non_empty(out, "identity_stable_id", assertion.get("identity_stable_id"))
+    _add_non_empty(out, "previous_encryption_key_id", assertion.get("previous_encryption_key_id"))
     return out
 
 
@@ -126,7 +145,6 @@ def _envelope_map(
         "created_at": _non_empty(envelope.get("created_at")),
         "expires_at": _non_empty(envelope.get("expires_at")),
         "from": _identity_ref_map(envelope.get("from") or {}, include_key_id=True),
-        "recipients": [_recipient_ref_map(item) for item in envelope.get("recipients") or []],
         "routing": _routing_map(envelope.get("routing") or {}),
         "policy": {
             "requires_e2ee": bool(policy.get("requires_e2ee")),
@@ -136,6 +154,12 @@ def _envelope_map(
         "key_wraps": [_key_wrap_map(item) for item in envelope.get("key_wraps") or []],
         "signing_key_id": _non_empty(envelope.get("signing_key_id")),
     }
+    sender_key = envelope.get("sender_encryption_key")
+    if sender_key is not None:
+        if not isinstance(sender_key, dict):
+            raise E2EEEnvelopeError("encrypted envelope sender_encryption_key must be an object")
+        out["sender_encryption_key"] = _encryption_key_assertion_map(sender_key)
+    out["recipients"] = [_recipient_ref_map(item) for item in envelope.get("recipients") or []]
     _add_non_empty(out, "reply_to_message_id", envelope.get("reply_to_message_id"))
     if include_ciphertext:
         out["ciphertext"] = _non_empty(envelope.get("ciphertext"))
@@ -271,6 +295,22 @@ def validate_e2ee_message_envelope(
     sender_key_id = _non_empty(from_ref.get("encryption_key_id"))
     if not sender_key_id:
         raise E2EEEnvelopeError("encrypted envelope sender missing key binding")
+    sender_encryption_key = envelope.get("sender_encryption_key")
+    if sender_encryption_key is not None:
+        if not isinstance(sender_encryption_key, dict):
+            raise E2EEEnvelopeError("encrypted envelope sender_encryption_key must be an object")
+        assertion_time = _parse_timestamp(envelope.get("created_at"), field="created_at")
+        try:
+            validate_encryption_key_assertion(
+                sender_encryption_key,
+                current_did_key=sender_did,
+                stable_id=sender_stable_id,
+                now=assertion_time,
+            )
+        except Exception as exc:
+            raise E2EEEnvelopeError(f"sender encryption key assertion: {exc}") from exc
+        if _non_empty(sender_encryption_key.get("encryption_key_id")) != sender_key_id:
+            raise E2EEEnvelopeError("sender encryption key assertion id mismatch")
 
     if not recipients:
         raise E2EEEnvelopeError("encrypted envelope requires at least one delivery recipient")
@@ -296,6 +336,13 @@ def validate_e2ee_message_envelope(
         recipient = envelope_recipients_by_did[recipient_did]
         expected_stable_id = _non_empty(expected.get("stable_id"))
         expected_address = _non_empty(expected.get("address"))
+        if recipient_did.startswith("did:key:") and not _non_empty(recipient.get("stable_id")):
+            # A remote local-only did:key participant can carry server-visible
+            # transport hints such as alias/address. Those hints are not AWID
+            # identity authority and are intentionally omitted from the
+            # encrypted recipient binding.
+            expected_stable_id = ""
+            expected_address = ""
         if expected_stable_id and _non_empty(recipient.get("stable_id")) != expected_stable_id:
             raise E2EEEnvelopeError("encrypted envelope recipient stable id mismatch")
         if expected_address and _non_empty(recipient.get("address")) != expected_address:
@@ -349,6 +396,9 @@ def validate_e2ee_message_envelope(
         delivery_wrap = delivery_wraps_by_did[recipient_did]
         expected_stable_id = _non_empty(expected.get("stable_id"))
         expected_address = _non_empty(expected.get("address"))
+        if recipient_did.startswith("did:key:") and not _non_empty(recipient.get("stable_id")):
+            expected_stable_id = ""
+            expected_address = ""
         recipient_key_id = _non_empty(recipient.get("encryption_key_id"))
         recipient_wrap_id = _non_empty(recipient.get("wrap_id"))
         if expected_stable_id and _non_empty(delivery_wrap.get("recipient_stable_id")) != expected_stable_id:

@@ -458,6 +458,11 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		return nil
 	}
 	c.SetAddress(selectionAddress(sel))
+	e2eeAddress := ""
+	if awid.IdentityHasPublicAddress(sel.Lifetime) {
+		e2eeAddress = strings.TrimSpace(sel.Address)
+	}
+	c.SetE2EESenderAddress(e2eeAddress)
 	if sel.StableID != "" {
 		c.SetStableID(sel.StableID)
 	}

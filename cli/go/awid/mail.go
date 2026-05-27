@@ -39,6 +39,7 @@ type SendMessageRequest struct {
 	Signature      string               `json:"signature,omitempty"`
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
+	E2EERecipient  *E2EERecipientKey    `json:"-"`
 }
 
 type SendMessageResponse struct {
@@ -82,6 +83,8 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 			}
 		case "alias":
 			payload.ToAlias = target.value
+		case "learned_e2ee":
+			payload.E2EERecipient = target.recipient
 		}
 		hasRecipient = strings.TrimSpace(payload.ToAlias) != "" ||
 			strings.TrimSpace(payload.ToAgentID) != "" ||
@@ -192,10 +195,7 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 	if conversationID == "" {
 		return errors.New("E2E mail requires a conversation_id or explicit recipient")
 	}
-	fromAddress := c.address
-	if identityTarget && fromAddress == "" {
-		fromAddress = strings.TrimSpace(c.did)
-	}
+	fromAddress := c.e2eeAddress()
 	envelope, err := EncryptE2EEMail(E2EEEncryptMailParams{
 		Sender: E2EESenderKey{
 			Address:       fromAddress,
@@ -234,22 +234,15 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 }
 
 func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequest) (E2EERecipientKey, error) {
+	if payload.E2EERecipient != nil {
+		return *payload.E2EERecipient, nil
+	}
 	if strings.TrimSpace(payload.ToAlias) != "" || strings.TrimSpace(payload.ToAgentID) != "" {
 		agent, err := c.e2eeRecipientAgent(ctx, strings.TrimSpace(payload.ToAgentID), strings.TrimSpace(payload.ToAlias))
 		if err != nil {
 			return E2EERecipientKey{}, err
 		}
-		assertion, err := agent.RequireEncryptionKey(time.Now().UTC())
-		if err != nil {
-			return E2EERecipientKey{}, err
-		}
-		return E2EERecipientKey{
-			Address:       strings.TrimSpace(agent.Address),
-			DID:           strings.TrimSpace(agent.DIDKey),
-			StableID:      strings.TrimSpace(agent.DIDAW),
-			EncryptionKey: assertion,
-			InboundMode:   strings.TrimSpace(agent.InboundMode),
-		}, nil
+		return c.e2eeRecipientFromAgent(ctx, agent)
 	}
 	target := strings.TrimSpace(payload.ToAddress)
 	if target == "" {
@@ -294,8 +287,10 @@ func (c *Client) e2eeRecipientAgent(ctx context.Context, agentID, alias string) 
 }
 
 type mailConversationTarget struct {
-	kind  string
-	value string
+	kind      string
+	value     string
+	recipient *E2EERecipientKey
+	err       error
 }
 
 func (c *Client) targetForMailConversation(ctx context.Context, conversationID string, preferAddress bool) (mailConversationTarget, error) {
@@ -311,7 +306,13 @@ func (c *Client) targetForMailConversation(ctx context.Context, conversationID s
 			if strings.TrimSpace(item.ConversationID) != conversationID {
 				continue
 			}
-			if target := c.mailConversationItemTarget(item, preferAddress); target.value != "" {
+			if target := c.mailConversationItemTarget(item, preferAddress); target.err != nil || target.value != "" || target.recipient != nil {
+				if target.err != nil {
+					return mailConversationTarget{}, target.err
+				}
+				if preferAddress && target.kind == "did" && strings.HasPrefix(strings.TrimSpace(target.value), "did:key:") {
+					break
+				}
 				return target, nil
 			}
 			break
@@ -320,7 +321,10 @@ func (c *Client) targetForMailConversation(ctx context.Context, conversationID s
 		return mailConversationTarget{}, err
 	}
 	if resp, err := c.MailConversation(ctx, conversationID, 50); err == nil {
-		if target := c.mailInboxTarget(resp.Messages, preferAddress); target.value != "" {
+		if target := c.mailInboxTarget(resp.Messages, preferAddress); target.err != nil || target.value != "" || target.recipient != nil {
+			if target.err != nil {
+				return mailConversationTarget{}, target.err
+			}
 			return target, nil
 		}
 	} else if !httpStatusIs(err, http.StatusNotFound) && !httpStatusIs(err, http.StatusForbidden) {
@@ -342,8 +346,18 @@ func (c *Client) mailConversationItemTarget(item ConversationItem, preferAddress
 		c.did,
 		c.address,
 	)
+	if preferAddress && len(otherDIDs) == 1 && isLocalDIDKey(otherDIDs[0]) {
+		return mailConversationTarget{kind: "did", value: otherDIDs[0]}
+	}
 	if preferAddress && len(otherAddresses) == 1 {
 		return mailConversationTarget{kind: "address", value: otherAddresses[0]}
+	}
+	if preferAddress {
+		if value := c.mailConversationAliasTarget(item.Participants); value != "" {
+			if !strings.HasPrefix(strings.TrimSpace(value), "did:") {
+				return mailConversationTarget{kind: "alias", value: value}
+			}
+		}
 	}
 	if len(otherDIDs) == 1 {
 		return mailConversationTarget{kind: "did", value: otherDIDs[0]}
@@ -351,23 +365,47 @@ func (c *Client) mailConversationItemTarget(item ConversationItem, preferAddress
 	if len(otherAddresses) == 1 {
 		return mailConversationTarget{kind: "address", value: otherAddresses[0]}
 	}
-	selfAlias := c.addressAlias()
-	if selfAlias == "" {
-		return mailConversationTarget{}
-	}
-	if value := deterministicTargetList(removeOneSelfIdentifier(item.Participants, selfAlias)); value != "" {
-		return mailConversationTarget{kind: "alias", value: value}
+	if value := c.mailConversationAliasTarget(item.Participants); value != "" {
+		if !strings.HasPrefix(strings.TrimSpace(value), "did:") {
+			return mailConversationTarget{kind: "alias", value: value}
+		}
 	}
 	return mailConversationTarget{}
+}
+
+func (c *Client) mailConversationAliasTarget(participants []string) string {
+	selfAlias := c.addressAlias()
+	if selfAlias == "" {
+		return ""
+	}
+	return deterministicTargetList(removeOneSelfIdentifier(participants, selfAlias))
 }
 
 func (c *Client) mailInboxTarget(messages []InboxMessage, preferAddress bool) mailConversationTarget {
 	for _, msg := range messages {
 		if preferAddress {
-			for _, candidate := range []string{msg.FromAddress, msg.ToAddress} {
+			addressCandidates := []string{msg.FromAddress, msg.ToAddress}
+			if msg.Encrypted != nil {
+				addressCandidates = []string{msg.Encrypted.From.Address}
+				for _, recipient := range msg.Encrypted.Recipients {
+					addressCandidates = append(addressCandidates, recipient.Address)
+				}
+			}
+			for _, candidate := range addressCandidates {
 				candidate = strings.TrimSpace(candidate)
-				if candidate != "" && !strings.EqualFold(candidate, strings.TrimSpace(c.address)) {
+				if candidate != "" &&
+					!strings.EqualFold(candidate, strings.TrimSpace(c.address)) &&
+					!strings.EqualFold(candidate, strings.TrimSpace(c.did)) &&
+					!strings.EqualFold(candidate, strings.TrimSpace(c.stableID)) {
 					return mailConversationTarget{kind: "address", value: candidate}
+				}
+			}
+			if target := c.learnedE2EEMailTarget([]InboxMessage{msg}); target.err != nil || target.recipient != nil {
+				return target
+			}
+			if alias := c.mailInboxAliasTarget(msg); alias != "" {
+				if !strings.HasPrefix(strings.TrimSpace(alias), "did:") {
+					return mailConversationTarget{kind: "alias", value: alias}
 				}
 			}
 		}
@@ -387,6 +425,28 @@ func (c *Client) mailInboxTarget(messages []InboxMessage, preferAddress bool) ma
 		}
 	}
 	return mailConversationTarget{}
+}
+
+func (c *Client) learnedE2EEMailTarget(messages []InboxMessage) mailConversationTarget {
+	for _, msg := range messages {
+		recipient, ok, err := c.learnedE2EERecipientFromEnvelope(msg.Encrypted)
+		if err != nil {
+			return mailConversationTarget{kind: "learned_e2ee", err: err}
+		}
+		if !ok {
+			continue
+		}
+		return mailConversationTarget{kind: "learned_e2ee", recipient: &recipient}
+	}
+	return mailConversationTarget{}
+}
+
+func (c *Client) mailInboxAliasTarget(msg InboxMessage) string {
+	selfAlias := c.addressAlias()
+	if selfAlias == "" {
+		return ""
+	}
+	return deterministicTargetList(removeOneSelfIdentifier([]string{msg.FromAlias, msg.ToAlias}, selfAlias, c.did, c.stableID))
 }
 
 type InboxMessage struct {

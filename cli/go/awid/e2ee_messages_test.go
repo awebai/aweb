@@ -50,6 +50,30 @@ func newE2EETestIdentity(t *testing.T, address string) e2eeTestIdentity {
 	}
 }
 
+func newE2EETestLocalIdentity(t *testing.T) e2eeTestIdentity {
+	t.Helper()
+	pub, priv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	xPriv, rawPub, err := GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	assertion, err := BuildEncryptionKeyAssertion(priv, did, "", rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e2eeTestIdentity{
+		pub:       pub,
+		priv:      priv,
+		did:       did,
+		xPriv:     xPriv,
+		assertion: assertion,
+	}
+}
+
 func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 	alice := newE2EETestIdentity(t, "example.com/alice")
 	bob := newE2EETestIdentity(t, "example.com/bob")
@@ -86,6 +110,9 @@ func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 	if len(env.KeyWraps) != 2 {
 		t.Fatalf("key wraps=%d want 2", len(env.KeyWraps))
 	}
+	if env.SenderEncryptionKey != nil {
+		t.Fatalf("global/addressed sender should not include learned-reply assertion by default")
+	}
 
 	bobPlain, err := DecryptE2EEMessage(env, E2EEDecryptIdentity{
 		Address:         bob.address,
@@ -112,6 +139,63 @@ func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 	}
 	if alicePlain.Subject != bobPlain.Subject || alicePlain.Body != bobPlain.Body {
 		t.Fatalf("self-copy plaintext mismatch: alice=%#v bob=%#v", alicePlain, bobPlain)
+	}
+}
+
+func TestE2EERecipientFromEnvelopeSenderRequiresMatchingAssertion(t *testing.T) {
+	alice := newE2EETestLocalIdentity(t)
+	bob := newE2EETestLocalIdentity(t)
+
+	env, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender: E2EESenderKey{
+			DID:           alice.did,
+			EncryptionKey: alice.assertion,
+			SigningKey:    alice.priv,
+		},
+		Recipients: []E2EERecipientKey{{
+			DID:           bob.did,
+			EncryptionKey: bob.assertion,
+		}},
+		Subject:        "subject",
+		Body:           "body",
+		MessageID:      "11111111-1111-4111-8111-111111111112",
+		ConversationID: "22222222-2222-4222-8222-222222222223",
+		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		DeliveryOrigin: "https://remote.example",
+	})
+	if err != nil {
+		t.Fatalf("EncryptE2EEMail: %v", err)
+	}
+	recipient, err := E2EERecipientFromEnvelopeSender(env, time.Date(2026, 5, 26, 12, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("E2EERecipientFromEnvelopeSender: %v", err)
+	}
+	if recipient.DID != alice.did || recipient.EncryptionKey.EncryptionKeyID != alice.assertion.EncryptionKeyID {
+		t.Fatalf("recipient=%#v, want sender learned key", recipient)
+	}
+
+	var mutated E2EEMessageEnvelope
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &mutated); err != nil {
+		t.Fatal(err)
+	}
+	mutated.SenderEncryptionKey.EncryptionKeyID = bob.assertion.EncryptionKeyID
+	_, err = DecryptE2EEMessage(&mutated, E2EEDecryptIdentity{
+		DID:             bob.did,
+		EncryptionKeyID: bob.assertion.EncryptionKeyID,
+		PrivateKey:      bob.xPriv,
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid e2ee envelope signature") {
+		t.Fatalf("err=%v, want sender_encryption_key mutation to break envelope signature", err)
+	}
+
+	env.SenderEncryptionKey = bob.assertion
+	_, err = E2EERecipientFromEnvelopeSender(env, time.Date(2026, 5, 26, 12, 1, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "does not match envelope sender key id") {
+		t.Fatalf("err=%v, want sender key mismatch", err)
 	}
 }
 
@@ -506,6 +590,17 @@ func TestClientChatCreateSessionE2EEPostsOpaqueEnvelopeOnly(t *testing.T) {
 	c.SetStableID(alice.stableID)
 	c.SetAddress(alice.address)
 	c.SetE2EEKey(alice.assertion, alice.xPriv)
+	c.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		if identifier != bob.address {
+			t.Fatalf("resolve identifier=%q want %q", identifier, bob.address)
+		}
+		return &ResolvedIdentity{
+			DID:           bob.did,
+			StableID:      bob.stableID,
+			Address:       bob.address,
+			EncryptionKey: bob.assertion,
+		}, nil
+	}})
 
 	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
 		ToAliases:   []string{"bob"},

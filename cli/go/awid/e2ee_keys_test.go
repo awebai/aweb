@@ -33,7 +33,7 @@ func testEncryptionAssertion(t *testing.T, priv ed25519.PrivateKey, did, stableI
 		Algorithm:           EncryptionKeyAlgorithmX25519,
 		CreatedAt:           "2026-05-26T00:00:00Z",
 		NotBefore:           "2026-05-26T00:00:00Z",
-		ExpiresAt:           "2026-05-27T00:00:00Z",
+		ExpiresAt:           "2030-05-27T00:00:00Z",
 	}
 	if strings.TrimSpace(stableID) != "" {
 		assertion.IdentityStableID = &stableID
@@ -305,7 +305,7 @@ func TestAgentViewRequireEncryptionKeyRejectsStale(t *testing.T) {
 	did := ComputeDIDKey(pub)
 	assertion := testEncryptionAssertion(t, priv, did, "")
 	agent := AgentView{Alias: "alice", DIDKey: did, EncryptionKey: assertion}
-	_, err = agent.RequireEncryptionKey(time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC))
+	_, err = agent.RequireEncryptionKey(time.Date(2030, 5, 28, 12, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("err=%v, want stale encryption key error", err)
 	}

@@ -190,7 +190,9 @@ type Client struct {
 	teamID                  string             // team identifier from certificate, used in auth signature
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
-	stableID                string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
+	e2eeSenderAddress       string             // explicit address for E2EE envelopes; empty for addressless local/team identities
+	e2eeSenderAddressSet    bool
+	stableID                string // did:aw:..., set on outgoing signed envelopes as from_stable_id
 	e2eeEncryptionKey       *EncryptionKeyAssertion
 	e2eePrivateKey          *ecdh.PrivateKey
 	requireRecipientBinding bool
@@ -305,6 +307,21 @@ func (c *Client) Address() string { return c.address }
 // SetAddress sets the client's agent address (namespace/alias) for use in
 // signed message envelopes.
 func (c *Client) SetAddress(address string) { c.address = address }
+
+// SetE2EESenderAddress sets the address to place in E2EE sender metadata.
+// Use an explicit address from identity/certificate state, not a display
+// fallback derived from domain + alias.
+func (c *Client) SetE2EESenderAddress(address string) {
+	c.e2eeSenderAddress = strings.TrimSpace(address)
+	c.e2eeSenderAddressSet = true
+}
+
+func (c *Client) e2eeAddress() string {
+	if c.e2eeSenderAddressSet {
+		return strings.TrimSpace(c.e2eeSenderAddress)
+	}
+	return strings.TrimSpace(c.address)
+}
 
 func (c *Client) addressAlias() string {
 	parts := strings.SplitN(c.address, "/", 2)

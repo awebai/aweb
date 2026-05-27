@@ -106,7 +106,9 @@ The suite has these exact primitives:
 - Content AAD: canonical JSON bytes of the outer protected header with
   `signature`, `ciphertext`, and `crypto.ciphertext_hash` omitted. The sender
   computes `ciphertext_hash` after encryption and the Ed25519 signature then
-  covers both the AAD-bound metadata and the final ciphertext hash.
+  covers both the AAD-bound metadata and the final ciphertext hash. If
+  `sender_encryption_key` is present, it is part of the protected header and
+  therefore part of the AAD and final signature.
 - Ciphertext hash: SHA-256 over the exact AES-GCM ciphertext bytes, including
   the authentication tag.
 - Key wrapping: HPKE base mode using X25519, HKDF-SHA256, and AES-256-GCM.
@@ -200,6 +202,19 @@ The server-visible v2 envelope has this shape:
     "team_id": "team:example.com",
     "encryption_key_id": "sha256:..."
   },
+  "sender_encryption_key": {
+    "operation": "publish_encryption_key",
+    "version": "aweb-e2ee-key-v1",
+    "identity_did": "did:key:z...",
+    "identity_stable_id": "did:aw:...",
+    "encryption_key_id": "sha256:...",
+    "encryption_public_key": "base64...",
+    "algorithm": "x25519",
+    "created_at": "2026-05-26T00:00:00Z",
+    "not_before": "2026-05-26T00:00:00Z",
+    "expires_at": "2026-08-24T00:00:00Z",
+    "signature": "base64..."
+  },
   "recipients": [
     {
       "address": "example.com/bob",
@@ -258,6 +273,27 @@ Rules:
   five minutes after `created_at`.
 - `signature` is omitted from the signed payload and present on the transmitted
   envelope.
+- `sender_encryption_key` is optional and omitted when absent. It is a public
+  identity-signed encryption-key assertion for the sender. It is included only
+  for conversation-local reply continuity whenever the sender has no
+  address-based AWID/global key-discovery path. A local/team-scoped sender may
+  still carry a stable id in its local team certificate; the embedded assertion
+  is still only conversation-local and is not a global directory entry. It must
+  not be used for bare `did:aw` first contact.
+- When `sender_encryption_key` is present, the server validates it at envelope
+  `created_at`, inside the normal ingestion window. Clients validate it at
+  reply-send time before using it to encrypt a future reply. If it is missing,
+  expired, not yet valid, invalidly signed, or mismatched, a local-only E2E
+  reply fails closed with no plaintext fallback.
+- `sender_encryption_key.identity_did` must equal `from.did`;
+  `identity_stable_id` must equal `from.stable_id` when `from.stable_id` is
+  present and must be omitted when `from.stable_id` is absent;
+  `encryption_key_id` must equal `from.encryption_key_id`; algorithm,
+  key-id/public-key derivation, signature, and time validity must pass.
+- For addressable global senders or recipients, current AWID/service authority
+  remains the source for first contact and same-service alias resolution. The
+  learned sender assertion is used only as conversation-local reply continuity
+  for no-address local/team-scoped senders.
 - `signing_key_id` must match `from.did`.
 - The sender signs the canonical JSON bytes of the full outer envelope with
   `signature` omitted.
@@ -281,16 +317,19 @@ Rules:
 ## Local Identity Field Optionality
 
 Global identities may have `stable_id` (`did:aw`) and address fields. Local or
-team-scoped identities may have only `did:key` plus team/workspace context.
+team-scoped identities may have only `did:key` plus team/workspace context, or
+may carry a stable id in a local team certificate without being addressable
+through AWID first-contact discovery.
 
 Omission rules:
 
 - Optional identity fields are omitted when absent. They are never encoded as
   empty strings.
-- In encryption-key assertions, `identity_stable_id` is omitted for local
-  identities without a `did:aw`.
+- In encryption-key assertions, `identity_stable_id` is omitted when the local
+  identity has no stable id and included when the local team certificate carries
+  one.
 - In outer envelope `from`, `recipients`, routing objects, inner headers, and
-  key-wrap binding objects, `stable_id` fields are omitted for local identities.
+  key-wrap binding objects, `stable_id` fields are omitted only when absent.
 - Address fields are omitted when the identity has no address or when the route
   is a stored local/team route that is not address-based.
 - `team_id` is included only when it is part of the sender or recipient routing
@@ -416,6 +455,7 @@ AES-GCM content AAD is the canonical JSON bytes of the outer envelope with:
 - `ciphertext` omitted,
 - `crypto.ciphertext_hash` omitted to avoid circular dependency,
 - all `key_wraps` included,
+- `sender_encryption_key` included when present and omitted when absent,
 - all routing, policy, sender, recipient, nonce, and algorithm fields included.
 
 This binds ciphertext to routing metadata, recipient list, key ids, key wraps,
@@ -459,6 +499,14 @@ Mixed-version behavior:
 - v2 server receiving v1 plaintext on an E2E-only route: reject.
 - v1 server receiving v2 encrypted envelope: fail clearly; do not ask the sender
   to downgrade silently.
+
+Any change to the protected envelope surface, including adding optional fields
+such as `sender_encryption_key`, requires a coordinated package bump for every
+client and server component that signs, verifies, canonicalizes, routes, or
+decrypts v2 envelopes. Old clients that do not include a newly required
+protected field, or old servers that do not canonicalize a protected field that
+is present, must fail clearly. They must not strip the field, retry as
+plaintext, or silently downgrade the envelope version.
 
 ## Replay And Idempotency
 
@@ -593,4 +641,8 @@ of this contract it touches. Minimum release-blocking tests include:
 - malformed ciphertext and malformed key wraps return structured errors rather
   than panics,
 - inner-header mismatch fails closed,
+- mutation, removal, or replacement of `sender_encryption_key` after encryption
+  breaks signature/AAD verification,
+- a valid embedded sender assertion enables local-only stored-route replies,
+  while a missing or invalid assertion on such a reply target fails closed,
 - legacy plaintext is never selected without explicit user intent.

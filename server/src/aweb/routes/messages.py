@@ -636,8 +636,15 @@ def _validate_encrypted_payload(
             status_code=422,
             detail="message_id and conversation_id are required for encrypted mail",
         )
-    recipient_address = _recipient_envelope_address(recipient, payload)
     expected_recipient_did = str((recipient or {}).get("did_key") or recipient_did).strip()
+    recipient_stable_id = str((recipient or {}).get("did_aw") or "").strip()
+    recipient_address = _recipient_envelope_address(recipient, payload)
+    if expected_recipient_did.startswith("did:key:") and not recipient_stable_id.startswith("did:aw:"):
+        # For remote local-only participants, any stored address is a transport
+        # hint. It is not an AWID address authority and must not be required in
+        # the encrypted recipient binding.
+        recipient_address = None
+        recipient_stable_id = ""
     try:
         validate_e2ee_mail_envelope(
             payload.encrypted_envelope or {},
@@ -646,7 +653,7 @@ def _validate_encrypted_payload(
             sender_did=(auth.did_key or sender_did).strip(),
             sender_stable_id=(auth.did_aw or "").strip() or None,
             recipient_did=expected_recipient_did,
-            recipient_stable_id=str((recipient or {}).get("did_aw") or "").strip() or None,
+            recipient_stable_id=recipient_stable_id or None,
             recipient_address=recipient_address,
         )
     except E2EEEnvelopeError as exc:

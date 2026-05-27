@@ -82,23 +82,24 @@ type E2EEKeyWrap struct {
 }
 
 type E2EEMessageEnvelope struct {
-	MessageVersion   int                `json:"message_version"`
-	EnvelopeType     string             `json:"envelope_type"`
-	Kind             string             `json:"kind"`
-	MessageID        string             `json:"message_id"`
-	ConversationID   string             `json:"conversation_id"`
-	ReplyToMessageID string             `json:"reply_to_message_id,omitempty"`
-	CreatedAt        string             `json:"created_at"`
-	ExpiresAt        string             `json:"expires_at"`
-	From             E2EEIdentityRef    `json:"from"`
-	Recipients       []E2EERecipientRef `json:"recipients"`
-	Routing          E2EERouting        `json:"routing"`
-	Policy           E2EEPolicy         `json:"policy"`
-	Crypto           E2EECryptoHeader   `json:"crypto"`
-	KeyWraps         []E2EEKeyWrap      `json:"key_wraps"`
-	Ciphertext       string             `json:"ciphertext"`
-	Signature        string             `json:"signature,omitempty"`
-	SigningKeyID     string             `json:"signing_key_id"`
+	MessageVersion      int                     `json:"message_version"`
+	EnvelopeType        string                  `json:"envelope_type"`
+	Kind                string                  `json:"kind"`
+	MessageID           string                  `json:"message_id"`
+	ConversationID      string                  `json:"conversation_id"`
+	ReplyToMessageID    string                  `json:"reply_to_message_id,omitempty"`
+	CreatedAt           string                  `json:"created_at"`
+	ExpiresAt           string                  `json:"expires_at"`
+	From                E2EEIdentityRef         `json:"from"`
+	SenderEncryptionKey *EncryptionKeyAssertion `json:"sender_encryption_key,omitempty"`
+	Recipients          []E2EERecipientRef      `json:"recipients"`
+	Routing             E2EERouting             `json:"routing"`
+	Policy              E2EEPolicy              `json:"policy"`
+	Crypto              E2EECryptoHeader        `json:"crypto"`
+	KeyWraps            []E2EEKeyWrap           `json:"key_wraps"`
+	Ciphertext          string                  `json:"ciphertext"`
+	Signature           string                  `json:"signature,omitempty"`
+	SigningKeyID        string                  `json:"signing_key_id"`
 }
 
 type E2EEInnerPayload struct {
@@ -359,6 +360,9 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		KeyWraps:     keyWraps,
 		SigningKeyID: from.DID,
 	}
+	if from.Address == "" {
+		envelope.SenderEncryptionKey = params.Sender.EncryptionKey
+	}
 	aad, err := e2eeContentAAD(envelope)
 	if err != nil {
 		return nil, err
@@ -491,6 +495,33 @@ func VerifyE2EEMessageEnvelopeSignature(envelope *E2EEMessageEnvelope) error {
 		return fmt.Errorf("invalid e2ee envelope signature")
 	}
 	return nil
+}
+
+func E2EERecipientFromEnvelopeSender(envelope *E2EEMessageEnvelope, now time.Time) (E2EERecipientKey, error) {
+	if envelope == nil {
+		return E2EERecipientKey{}, fmt.Errorf("missing e2ee envelope")
+	}
+	assertion := envelope.SenderEncryptionKey
+	if assertion == nil {
+		return E2EERecipientKey{}, fmt.Errorf("encrypted conversation does not include the sender E2E key assertion; ask the sender to upgrade aw/Pi/channel, or explicitly send a server-readable upgrade note with --plaintext")
+	}
+	from := envelope.From
+	if strings.TrimSpace(from.DID) == "" {
+		return E2EERecipientKey{}, fmt.Errorf("encrypted envelope sender did is missing")
+	}
+	if strings.TrimSpace(assertion.EncryptionKeyID) != strings.TrimSpace(from.EncryptionKeyID) {
+		return E2EERecipientKey{}, fmt.Errorf("sender encryption key assertion id does not match envelope sender key id")
+	}
+	if err := VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(from.DID), strings.TrimSpace(from.StableID), now); err != nil {
+		return E2EERecipientKey{}, err
+	}
+	return E2EERecipientKey{
+		Address:       strings.TrimSpace(from.Address),
+		DID:           strings.TrimSpace(from.DID),
+		StableID:      strings.TrimSpace(from.StableID),
+		TeamID:        strings.TrimSpace(from.TeamID),
+		EncryptionKey: assertion,
+	}, nil
 }
 
 func buildE2EEKeyWrap(cek []byte, messageID, conversationID string, sender E2EEIdentityRef, recipient E2EERecipientRef, purpose string, assertion *EncryptionKeyAssertion) (*E2EEKeyWrap, error) {
@@ -709,7 +740,6 @@ func e2eeEnvelopeMap(envelope *E2EEMessageEnvelope, includeSignature, includeCip
 		"created_at":      envelope.CreatedAt,
 		"expires_at":      envelope.ExpiresAt,
 		"from":            e2eeIdentityRefMap(envelope.From, true),
-		"recipients":      e2eeRecipientRefsJSONValue(envelope.Recipients),
 		"routing":         e2eeRoutingMap(envelope.Routing),
 		"policy": map[string]any{
 			"requires_e2ee":            envelope.Policy.RequiresE2EE,
@@ -719,12 +749,38 @@ func e2eeEnvelopeMap(envelope *E2EEMessageEnvelope, includeSignature, includeCip
 		"key_wraps":      e2eeKeyWrapsJSONValue(envelope.KeyWraps),
 		"signing_key_id": envelope.SigningKeyID,
 	}
+	if envelope.SenderEncryptionKey != nil {
+		out["sender_encryption_key"] = e2eeEncryptionKeyAssertionJSONValue(envelope.SenderEncryptionKey)
+	}
+	out["recipients"] = e2eeRecipientRefsJSONValue(envelope.Recipients)
 	addNonEmpty(out, "reply_to_message_id", envelope.ReplyToMessageID)
 	if includeCiphertext {
 		out["ciphertext"] = envelope.Ciphertext
 	}
 	if includeSignature {
 		addNonEmpty(out, "signature", envelope.Signature)
+	}
+	return out
+}
+
+func e2eeEncryptionKeyAssertionJSONValue(assertion *EncryptionKeyAssertion) map[string]any {
+	out := map[string]any{
+		"operation":             strings.TrimSpace(assertion.Operation),
+		"version":               strings.TrimSpace(assertion.Version),
+		"identity_did":          strings.TrimSpace(assertion.IdentityDID),
+		"encryption_key_id":     strings.TrimSpace(assertion.EncryptionKeyID),
+		"encryption_public_key": strings.TrimSpace(assertion.EncryptionPublicKey),
+		"algorithm":             strings.TrimSpace(assertion.Algorithm),
+		"created_at":            strings.TrimSpace(assertion.CreatedAt),
+		"not_before":            strings.TrimSpace(assertion.NotBefore),
+		"expires_at":            strings.TrimSpace(assertion.ExpiresAt),
+		"signature":             strings.TrimSpace(assertion.Signature),
+	}
+	if assertion.IdentityStableID != nil {
+		addNonEmpty(out, "identity_stable_id", *assertion.IdentityStableID)
+	}
+	if assertion.PreviousEncryptionKeyID != nil {
+		addNonEmpty(out, "previous_encryption_key_id", *assertion.PreviousEncryptionKeyID)
 	}
 	return out
 }

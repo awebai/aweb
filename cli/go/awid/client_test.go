@@ -682,6 +682,354 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 }
 
+func TestChatE2EEContinuationUsesLocalDIDForHistoryLookup(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/sessions" {
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+			Sessions: []ChatSessionItem{
+				{
+					SessionID:       "sess-1",
+					Participants:    []string{"rose", "monitor"},
+					ParticipantDIDs: []string{stableID, "did:key:monitor"},
+					CreatedAt:       "2026-02-01T00:00:00Z",
+				},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("example.com/rose")
+	c.SetStableID(stableID)
+
+	target, err := c.toAddressForSession(context.Background(), "sess-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "did:key:monitor" {
+		t.Fatalf("target=%q, want did:key:monitor", target)
+	}
+}
+
+func TestE2EERecipientFromGlobalAgentUsesAuthoritativeAWIDAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	assertion := testEncryptionAssertion(t, priv, did, stableID)
+
+	c, err := New("https://aweb.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolved string
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			resolved = identifier
+			return &ResolvedIdentity{
+				DID:           did,
+				StableID:      stableID,
+				Address:       "acme.com/bob",
+				EncryptionKey: assertion,
+			}, nil
+		},
+	})
+
+	recipient, err := c.e2eeRecipientFromAgent(context.Background(), AgentView{
+		Alias:   "bob",
+		DIDKey:  "did:key:stale-service-row",
+		DIDAW:   stableID,
+		Address: "acme.com/bob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "acme.com/bob" {
+		t.Fatalf("resolved=%q, want acme.com/bob", resolved)
+	}
+	if recipient.EncryptionKey == nil || recipient.EncryptionKey.EncryptionKeyID != assertion.EncryptionKeyID {
+		t.Fatalf("recipient encryption key mismatch")
+	}
+	if recipient.StableID != stableID || recipient.DID != did {
+		t.Fatalf("recipient identity=(%q,%q), want (%q,%q)", recipient.DID, recipient.StableID, did, stableID)
+	}
+}
+
+func TestE2EERecipientFromGlobalAgentIgnoresStaleServiceKey(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	authoritative := testEncryptionAssertion(t, priv, did, stableID)
+
+	_, stalePriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := testEncryptionAssertion(t, stalePriv, did, stableID)
+	stale.EncryptionKeyID = "sha256:stale-service-key"
+
+	c, err := New("https://aweb.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "acme.com/bob" {
+				t.Fatalf("resolved=%q, want acme.com/bob", identifier)
+			}
+			return &ResolvedIdentity{
+				DID:           did,
+				StableID:      stableID,
+				Address:       "acme.com/bob",
+				EncryptionKey: authoritative,
+			}, nil
+		},
+	})
+
+	recipient, err := c.e2eeRecipientFromAgent(context.Background(), AgentView{
+		Alias:         "bob",
+		DIDKey:        did,
+		DIDAW:         stableID,
+		Address:       "acme.com/bob",
+		EncryptionKey: stale,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recipient.EncryptionKey == nil || recipient.EncryptionKey.EncryptionKeyID != authoritative.EncryptionKeyID {
+		t.Fatalf("recipient key=%v, want AWID authoritative key %s", recipient.EncryptionKey, authoritative.EncryptionKeyID)
+	}
+}
+
+func TestE2EERecipientFromLocalAgentMissingServiceKeyDoesNotUseAWID(t *testing.T) {
+	t.Parallel()
+
+	c, err := New("https://aweb.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			t.Fatalf("unexpected AWID resolution for local-only recipient %q", identifier)
+			return nil, context.Canceled
+		},
+	})
+
+	_, err = c.e2eeRecipientFromAgent(context.Background(), AgentView{
+		Alias:  "bob",
+		DIDKey: "did:key:bob",
+	})
+	if err == nil || !strings.Contains(err.Error(), "local-only recipients cannot be resolved through AWID") {
+		t.Fatalf("err=%v, want local-only no-AWID failure", err)
+	}
+}
+
+func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
+	t.Parallel()
+
+	self := newE2EETestLocalIdentity(t)
+	remote := newE2EETestLocalIdentity(t)
+	env, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender: E2EESenderKey{
+			DID:           remote.did,
+			EncryptionKey: remote.assertion,
+			SigningKey:    remote.priv,
+		},
+		Recipients: []E2EERecipientKey{{
+			DID:           self.did,
+			EncryptionKey: self.assertion,
+		}},
+		Subject:        "incoming",
+		Body:           "incoming body",
+		MessageID:      "11111111-1111-4111-8111-111111111131",
+		ConversationID: "22222222-2222-4222-8222-222222222231",
+		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		DeliveryOrigin: "https://alpha.example",
+	})
+	if err != nil {
+		t.Fatalf("EncryptE2EEMail: %v", err)
+	}
+
+	var posted SendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(ConversationsResponse{Conversations: []ConversationItem{{
+				ConversationType: "mail",
+				ConversationID:   "22222222-2222-4222-8222-222222222231",
+				Participants:     []string{"self", "remote"},
+				ParticipantDIDs:  []string{self.did, remote.did},
+			}}})
+		case "/v1/messages/conversations/22222222-2222-4222-8222-222222222231":
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{
+				MessageID:      env.MessageID,
+				ConversationID: env.ConversationID,
+				FromAlias:      "remote",
+				ToAlias:        "self",
+				FromDID:        remote.did,
+				ToDID:          self.did,
+				ContentMode:    ContentModeEncryptedV2,
+				MessageVersion: E2EEMessageVersion,
+				Encrypted:      env,
+				Priority:       PriorityNormal,
+			}}})
+		case "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(SendMessageResponse{MessageID: posted.MessageID, ConversationID: posted.ConversationID, Status: "delivered"})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, self.priv, self.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("beta.test.local/self")
+	c.SetE2EESenderAddress("")
+	c.SetE2EEKey(self.assertion, self.xPriv)
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ConversationID: "22222222-2222-4222-8222-222222222231",
+		Body:           "reply body",
+		EncryptE2EE:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted.Encrypted == nil || len(posted.Encrypted.Recipients) != 1 {
+		t.Fatalf("missing encrypted reply envelope: %#v", posted)
+	}
+	if got := posted.Encrypted.Recipients[0].DID; got != remote.did {
+		t.Fatalf("reply recipient did=%q, want learned local-only sender %q", got, remote.did)
+	}
+	if got := posted.Encrypted.Recipients[0].EncryptionKeyID; got != remote.assertion.EncryptionKeyID {
+		t.Fatalf("reply recipient key=%q, want %q", got, remote.assertion.EncryptionKeyID)
+	}
+	if posted.Encrypted.From.Address != "" {
+		t.Fatalf("reply sender address=%q, want no derived display address in E2EE envelope", posted.Encrypted.From.Address)
+	}
+	if posted.Encrypted.SenderEncryptionKey == nil {
+		t.Fatal("reply from addressless sender should include sender_encryption_key for future continuity")
+	}
+}
+
+func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
+	t.Parallel()
+
+	self := newE2EETestLocalIdentity(t)
+	remote := newE2EETestLocalIdentity(t)
+	env, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender: E2EESenderKey{
+			DID:           remote.did,
+			EncryptionKey: remote.assertion,
+			SigningKey:    remote.priv,
+		},
+		Recipients: []E2EERecipientKey{{
+			DID:           self.did,
+			EncryptionKey: self.assertion,
+		}},
+		Body:           "incoming chat",
+		MessageID:      "11111111-1111-4111-8111-111111111132",
+		ConversationID: "22222222-2222-4222-8222-222222222232",
+		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		DeliveryOrigin: "https://alpha.example",
+	})
+	if err != nil {
+		t.Fatalf("EncryptE2EEChat: %v", err)
+	}
+
+	var posted ChatSendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{{
+				SessionID:       "22222222-2222-4222-8222-222222222232",
+				Participants:    []string{"self", "remote"},
+				ParticipantDIDs: []string{self.did, remote.did},
+			}}})
+		case "/v1/chat/sessions/22222222-2222-4222-8222-222222222232/messages":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(ChatHistoryResponse{Messages: []ChatMessage{{
+					MessageID:      env.MessageID,
+					ConversationID: env.ConversationID,
+					FromAgent:      "remote",
+					FromDID:        remote.did,
+					ContentMode:    ContentModeEncryptedV2,
+					MessageVersion: E2EEMessageVersion,
+					Encrypted:      env,
+					Timestamp:      env.CreatedAt,
+				}}})
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{MessageID: posted.MessageID, Delivered: true})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, self.priv, self.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("beta.test.local/self")
+	c.SetE2EESenderAddress("")
+	c.SetE2EEKey(self.assertion, self.xPriv)
+
+	_, err = c.ChatSendMessage(context.Background(), "22222222-2222-4222-8222-222222222232", &ChatSendMessageRequest{
+		Body:        "reply chat",
+		EncryptE2EE: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted.Encrypted == nil || len(posted.Encrypted.Recipients) != 1 {
+		t.Fatalf("missing encrypted chat reply envelope: %#v", posted)
+	}
+	if got := posted.Encrypted.Recipients[0].DID; got != remote.did {
+		t.Fatalf("reply recipient did=%q, want learned local-only sender %q", got, remote.did)
+	}
+	if got := posted.Encrypted.Recipients[0].EncryptionKeyID; got != remote.assertion.EncryptionKeyID {
+		t.Fatalf("reply recipient key=%q, want %q", got, remote.assertion.EncryptionKeyID)
+	}
+	if posted.Encrypted.From.Address != "" {
+		t.Fatalf("reply sender address=%q, want no derived display address in E2EE envelope", posted.Encrypted.From.Address)
+	}
+	if posted.Encrypted.SenderEncryptionKey == nil {
+		t.Fatal("reply from addressless sender should include sender_encryption_key for future continuity")
+	}
+}
+
 func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.T) {
 	t.Parallel()
 

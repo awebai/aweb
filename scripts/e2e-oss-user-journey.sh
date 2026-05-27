@@ -56,6 +56,7 @@ E2E_HOME="$(make_temp_dir aw-e2e-home)"
 E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
+NO_KEY_DIR="$E2E_CWD/nokey"
 EVE_DIR="$E2E_CWD/eve"
 CAROL_DIR="$E2E_CWD/carol"
 DAVE_DIR="$E2E_CWD/dave"
@@ -72,7 +73,7 @@ SERVICE_BETA_DIR="$E2E_CWD/service-beta"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
@@ -682,6 +683,23 @@ assert_eq "bob accepted" "accepted" "$BOB_ACCEPT_STATUS"
 run_success "bob init" run_aw_in "$BOB_DIR" init --url "$AWEB_URL"
 bob_init_exit=$?
 assert_eq "bob init exit" "0" "$bob_init_exit"
+
+# Create a local-only teammate and remove the service-local E2E key row to
+# simulate an old client. Global identities may already have AWID-published
+# keys, so they are not a useful missing-key fixture.
+capture_success nokey_invite_out "nokey_invite_out" run_aw_in "$ALICE_DIR" id team invite \
+  --team devteam \
+  --namespace test.local \
+  --json
+NOKEY_INVITE_TOKEN="$(echo "$nokey_invite_out" | jq_field token)"
+assert_not_empty "nokey invite token" "$NOKEY_INVITE_TOKEN"
+capture_success nokey_accept "nokey_accept" run_aw_in "$NO_KEY_DIR" id team accept-invite "$NOKEY_INVITE_TOKEN" \
+  --alias nokey \
+  --json
+NOKEY_ACCEPT_STATUS="$(echo "$nokey_accept" | jq_field status)"
+assert_eq "nokey accepted" "accepted" "$NOKEY_ACCEPT_STATUS"
+run_success "nokey init" run_aw_in "$NO_KEY_DIR" init --url "$AWEB_URL"
+psql_exec "DELETE FROM aweb.agent_encryption_keys e USING aweb.agents a WHERE e.agent_id = a.agent_id AND a.team_id = 'devteam:test.local' AND a.alias = 'nokey';"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -704,7 +722,7 @@ fi
 assert_not_empty "alice e2ee key id" "$alice_e2ee_key"
 
 if missing_key_out="$(run_aw_in "$ALICE_DIR" mail send \
-  --to bob \
+  --to nokey \
   --subject "E2EE_MISSING_KEY_SUBJECT" \
   --body "E2EE_MISSING_KEY_BODY" \
   --e2ee 2>&1)"; then
@@ -853,7 +871,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 10: Alice sends mail to bob ==="
 
-if mail_send_out="$(run_aw_in "$ALICE_DIR" mail send \
+if mail_send_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "E2E test" \
   --body "Hello from alice" 2>&1)"; then
@@ -861,7 +879,7 @@ if mail_send_out="$(run_aw_in "$ALICE_DIR" mail send \
 else
   mail_send_exit=$?
 fi
-assert_eq "mail send exit" "0" "$mail_send_exit"
+assert_eq "mail send --plaintext exit" "0" "$mail_send_exit"
 if [[ "$mail_send_exit" != "0" ]]; then
   echo "$mail_send_out"
 fi
@@ -911,7 +929,7 @@ run_success "eve init" run_aw_in "$EVE_DIR" init --url "$AWEB_URL"
 eve_init_exit=$?
 assert_eq "eve init exit" "0" "$eve_init_exit"
 
-if eve_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+if eve_mail_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to eve \
   --subject "Registered local e2e" \
   --body "Hello registered local eve" 2>&1)"; then
@@ -1002,7 +1020,7 @@ run_success "erin init" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DI
 erin_init_exit=$?
 assert_eq "erin init after fetch-cert" "0" "$erin_init_exit"
 
-run_success "erin mail send" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" mail send \
+run_success "erin mail send --plaintext" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" mail send --plaintext \
   --to alice \
   --subject "Remote fetch-cert mail" \
   --body "Remote fetch-cert path works"
@@ -1012,7 +1030,7 @@ capture_success alice_erin_inbox "alice_erin_inbox" run_aw_in "$ALICE_DIR" mail 
 alice_erin_from_address="$(echo "$alice_erin_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Remote fetch-cert mail'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees erin remote from_address" "erin.local/erin" "$alice_erin_from_address"
 
-run_success "erin chat send" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" chat send-and-leave alice \
+run_success "erin chat send" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" chat send-and-leave --plaintext alice \
   "Remote fetch-cert chat"
 erin_chat_exit=$?
 assert_eq "erin chat after fetch-cert" "0" "$erin_chat_exit"
@@ -1167,7 +1185,7 @@ service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WH
 assert_eq "service init creates two agents" "2" "$service_agents_after"
 assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
 
-run_success "service registered team mail send" run_aw_in "$SERVICE_ALPHA_DIR" mail send \
+run_success "service registered team mail send --plaintext" run_aw_in "$SERVICE_ALPHA_DIR" mail send --plaintext \
   --to beta \
   --subject "Service registered team e2e" \
   --body "service init path works"
@@ -1243,7 +1261,7 @@ run_success "alice contacts add bob" run_aw_in "$ALICE_DIR" contacts add "test.l
 contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
 
-if bob_direct_out="$(run_aw_in "$BOB_DIR" mail send \
+if bob_direct_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
   --body "Address hello from bob" 2>&1)"; then
   bob_direct_exit=0
@@ -1259,7 +1277,7 @@ capture_success alice_contacts_inbox "alice_contacts_inbox" run_aw_in "$ALICE_DI
 alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Address hello from bob'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives bob address message" "Address hello from bob" "$alice_bob_message"
 
-if carol_direct_out="$(run_aw_in "$CAROL_DIR" mail send \
+if carol_direct_out="$(run_aw_in "$CAROL_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
   --body 'Blocked hello from carol' 2>&1)"; then
   carol_direct_exit=0
@@ -1275,7 +1293,7 @@ else
 fi
 
 set_inbound_mode "$ALICE_DID_AW" "open"
-run_success "carol retry mail send" run_aw_in "$CAROL_DIR" mail send \
+run_success "carol retry mail send --plaintext" run_aw_in "$CAROL_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
   --body "Address hello from carol"
 carol_retry_exit=$?
@@ -1291,15 +1309,15 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12: Chat ==="
 
-run_success "alice bob chat send-and-wait" run_aw_in "$ALICE_DIR" chat send-and-wait bob \
-  "E2E chat from alice" --start-conversation --wait 3
+run_success "alice bob chat send-and-wait --plaintext" run_aw_in "$ALICE_DIR" chat send-and-wait --plaintext bob \
+  "E2E chat from alice" --wait 3
 chat_send_exit=$?
 assert_eq "alice→bob chat send exit" "0" "$chat_send_exit"
 
 capture_success bob_pending "bob_pending" run_aw_in "$BOB_DIR" chat pending
 assert_contains "bob sees pending from alice" "$bob_pending" "alice"
 
-run_success "bob chat reply" run_aw_in "$BOB_DIR" chat send-and-leave alice \
+run_success "bob chat reply" run_aw_in "$BOB_DIR" chat send-and-leave --plaintext alice \
   "Chat reply from bob"
 chat_reply_exit=$?
 assert_eq "bob→alice chat reply exit" "0" "$chat_reply_exit"
@@ -1313,7 +1331,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12b: Cross-team tilde addressing ==="
 
-if tilde_mail_out="$(run_aw_in "$DAVE_DIR" mail send \
+if tilde_mail_out="$(run_aw_in "$DAVE_DIR" mail send --plaintext \
   --to devteam~alice \
   --subject "Cross-team tilde mail" \
   --body "Cross-team hello from dave" 2>&1)"; then
@@ -1330,7 +1348,7 @@ capture_success alice_tilde_inbox "alice_tilde_inbox" run_aw_in "$ALICE_DIR" mai
 alice_dave_message="$(echo "$alice_tilde_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Cross-team hello from dave'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives dave cross-team mail" "Cross-team hello from dave" "$alice_dave_message"
 
-if tilde_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave ops~dave \
+if tilde_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext ops~dave \
   "Cross-team chat from alice" 2>&1)"; then
   tilde_chat_exit=0
 else
@@ -1375,7 +1393,7 @@ else
   fail=$((fail + 1))
 fi
 
-if gsk_mail_out="$(run_aw_in "$GSK_DIR" mail send \
+if gsk_mail_out="$(run_aw_in "$GSK_DIR" mail send --plaintext \
   --to alice \
   --subject "Local sender address" \
   --body "Local hello from gsk" 2>&1)"; then
@@ -1392,7 +1410,7 @@ capture_success alice_local_inbox "alice_local_inbox" run_aw_in "$ALICE_DIR" mai
 alice_gsk_from_address="$(echo "$alice_local_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
 
-if gsk_identity_mail_out="$(run_aw_in "$GSK_DIR" mail send \
+if gsk_identity_mail_out="$(run_aw_in "$GSK_DIR" mail send --plaintext \
   --to-address test.local/alice \
   --subject "Local identity-auth sender address" \
   --body "Identity-auth hello from gsk" 2>&1)"; then
@@ -1409,7 +1427,7 @@ capture_success alice_identity_mail_inbox "alice_identity_mail_inbox" run_aw_in 
 alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Local identity-auth sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk identity-auth mail address" "test.local/gsk" "$alice_gsk_identity_from_address"
 
-if alice_gsk_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+if alice_gsk_reply_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to-address test.local/gsk \
   --subject "Reply to local address" \
   --body "Reply to gsk by local address" 2>&1)"; then
@@ -1426,7 +1444,7 @@ capture_success gsk_inbox "gsk_inbox" run_aw_in "$GSK_DIR" mail inbox --json --s
 gsk_reply_body="$(echo "$gsk_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply to local address'), ''))" 2>/dev/null || echo "")"
 assert_eq "gsk receives address-routed mail reply" "Reply to gsk by local address" "$gsk_reply_body"
 
-if gsk_chat_out="$(run_aw_in "$GSK_DIR" chat send-and-leave alice \
+if gsk_chat_out="$(run_aw_in "$GSK_DIR" chat send-and-leave --plaintext alice \
   "Local chat from gsk" 2>&1)"; then
   gsk_chat_exit=0
 else
@@ -1440,7 +1458,7 @@ fi
 capture_success alice_gsk_pending "alice_gsk_pending" run_aw_in "$ALICE_DIR" chat pending
 assert_contains "alice sees gsk server-local chat address" "$alice_gsk_pending" "test.local/gsk"
 
-if alice_gsk_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/gsk \
+if alice_gsk_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext test.local/gsk \
   "Reply to local chat address" 2>&1)"; then
   alice_gsk_chat_reply_exit=0
 else
@@ -1547,7 +1565,7 @@ capture_success alice_primary_cert_out "alice_primary_cert_out" run_aw_in "$ALIC
 alice_primary_cert_address="$(echo "$alice_primary_cert_out" | jq_field member_address)"
 assert_eq "alice primary cert member_address" "test.local/alice" "$alice_primary_cert_address"
 
-run_success "alice primary mail send" run_aw_in "$ALICE_DIR" mail send \
+run_success "alice primary mail send --plaintext" run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Per-membership primary" \
   --body "Primary address hello"
@@ -1558,7 +1576,7 @@ capture_success bob_per_membership_inbox "bob_per_membership_inbox" run_aw_in "$
 bob_primary_from_address="$(echo "$bob_per_membership_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership primary'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice primary from_address" "test.local/alice" "$bob_primary_from_address"
 
-run_success "alice primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+run_success "alice primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext bob \
   "Per-membership primary chat"
 alice_primary_chat_exit=$?
 assert_eq "alice primary-team chat exit" "0" "$alice_primary_chat_exit"
@@ -1567,7 +1585,7 @@ capture_success bob_primary_pending "bob_primary_pending" run_aw_in "$BOB_DIR" c
 bob_primary_chat_from_address="$(echo "$bob_primary_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice primary chat from_address" "test.local/alice" "$bob_primary_chat_from_address"
 
-if bob_primary_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+if bob_primary_reply_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to-address test.local/alice \
   --subject "Reply primary address" \
   --body "Reply to alice primary address" 2>&1)"; then
@@ -1604,7 +1622,7 @@ alice_partner_whoami_address="$(echo "$alice_partner_whoami" | jq_field address)
 assert_eq "alice partner whoami domain after switch" "partner.local" "$alice_partner_whoami_domain"
 assert_eq "alice partner whoami address after switch" "partner.local/alice" "$alice_partner_whoami_address"
 
-run_success "alice partner mail send" run_aw_in "$ALICE_DIR" mail send \
+run_success "alice partner mail send --plaintext" run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Per-membership partner" \
   --body "Partner address hello"
@@ -1615,7 +1633,7 @@ capture_success partner_bob_inbox "partner_bob_inbox" run_aw_in "$PARTNER_BOB_DI
 partner_bob_from_address="$(echo "$partner_bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership partner'), ''))" 2>/dev/null || echo "")"
 assert_eq "partner bob sees alice partner from_address" "partner.local/alice" "$partner_bob_from_address"
 
-run_success "alice partner chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+run_success "alice partner chat send" run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext bob \
   "Per-membership partner chat"
 alice_partner_chat_exit=$?
 assert_eq "alice partner-team chat exit" "0" "$alice_partner_chat_exit"
@@ -1627,7 +1645,7 @@ if [[ "$partner_bob_chat_from_address" != "partner.local/alice" ]]; then
   echo "  partner bob pending output: ${partner_bob_pending:0:400}"
 fi
 
-if partner_bob_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
+if partner_bob_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send --plaintext \
   --to-address partner.local/alice \
   --subject "Reply partner address" \
   --body "Reply to alice partner address" 2>&1)"; then
@@ -1662,7 +1680,7 @@ alice_restored_whoami_address="$(echo "$alice_restored_whoami" | jq_field addres
 assert_eq "alice restored whoami domain after switch" "test.local" "$alice_restored_whoami_domain"
 assert_eq "alice restored whoami address after switch" "test.local/alice" "$alice_restored_whoami_address"
 
-run_success "alice restored primary mail send" run_aw_in "$ALICE_DIR" mail send \
+run_success "alice restored primary mail send --plaintext" run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Per-membership restored primary" \
   --body "Restored primary address hello"
@@ -1673,7 +1691,7 @@ capture_success bob_restored_inbox "bob_restored_inbox" run_aw_in "$BOB_DIR" mai
 bob_restored_from_address="$(echo "$bob_restored_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership restored primary'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary from_address" "test.local/alice" "$bob_restored_from_address"
 
-run_success "alice restored primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+run_success "alice restored primary chat send" run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext bob \
   "Per-membership restored primary chat"
 alice_restored_chat_exit=$?
 assert_eq "alice restored primary-team chat exit" "0" "$alice_restored_chat_exit"
@@ -1682,7 +1700,7 @@ capture_success bob_restored_pending "bob_restored_pending" run_aw_in "$BOB_DIR"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 
-if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send \
+if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to alice \
   --subject "SSE continuation initial" \
   --body "SSE continuation starts here" \
@@ -1698,7 +1716,7 @@ sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-sse-conversation.XXXXXX")"
 run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$sse_capture_file" 2>/dev/null &
 sse_capture_pid=$!
 sleep 2
-if sse_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+if sse_reply_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$sse_conversation_id" \
   --subject "SSE continuation reply" \
   --body "SSE continuation live event" \
@@ -1731,7 +1749,7 @@ with open(capture_path, 'r', encoding='utf-8') as f:
 " "$sse_capture_file" "SSE continuation reply")"
 assert_eq "sse live event carries continuation conversation_id" "$sse_conversation_id" "$sse_event_conversation_id"
 
-if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to-address partner.local/bob \
   --subject "Cross namespace conversation" \
   --body "Cross namespace initial" \
@@ -1747,7 +1765,7 @@ fi
 cross_ns_conversation_id="$(echo "$cross_ns_mail_out" | jq_field conversation_id)"
 assert_not_empty "cross-namespace global initial returns conversation_id" "$cross_ns_conversation_id"
 
-if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
+if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send --plaintext \
   --conversation-id "$cross_ns_conversation_id" \
   --subject "Cross namespace reply" \
   --body "Cross namespace response" \
@@ -1787,7 +1805,7 @@ else
   fail=$((fail + 1))
 fi
 
-if alice_global_addr_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+if alice_global_addr_mail_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to-address test.local/bob \
   --subject "Global direct address" \
   --body "Global direct address mail" 2>&1)"; then
@@ -1807,7 +1825,7 @@ if [[ "$bob_global_addr_vs" != "verified" ]]; then
   echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('subject')=='Global direct address'), {}); print('  global address mail debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
 fi
 
-if alice_global_addr_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
+if alice_global_addr_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext test.local/bob \
   "Global direct address chat" 2>&1)"; then
   alice_global_addr_chat_exit=0
 else
@@ -1824,7 +1842,7 @@ if [[ "$bob_global_addr_chat_vs" != "verified" ]]; then
   echo "$bob_global_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('body')=='Global direct address chat'), {}); print('  global address chat debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
 fi
 
-if bob_hidden_start_out="$(run_aw_in "$BOB_DIR" mail send \
+if bob_hidden_start_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
   --subject "Global conversation bob starts" \
   --body "Bob starts a global conversation" \
@@ -1844,7 +1862,7 @@ capture_success alice_hidden_start_inbox "alice_hidden_start_inbox" run_aw_in "$
 alice_hidden_start_body="$(echo "$alice_hidden_start_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation alice receives bob initiation" "Bob starts a global conversation" "$alice_hidden_start_body"
 
-if alice_hidden_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+if alice_hidden_reply_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
   --subject "Global conversation reply" \
   --body "Reply through stored participant route" \
@@ -1864,7 +1882,7 @@ capture_success bob_hidden_reply_inbox "bob_hidden_reply_inbox" run_aw_in "$BOB_
 bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Global conversation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation bob receives stored-route reply" "Reply through stored participant route" "$bob_hidden_reply_body"
 
-if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send \
+if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
   --subject "Conversation leaked id" \
   --body "Carol should not enter this conversation" 2>&1)"; then
@@ -1880,7 +1898,7 @@ else
   fail=$((fail + 1))
 fi
 
-if missing_conversation_out="$(run_aw_in "$ALICE_DIR" mail send \
+if missing_conversation_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "99999999-9999-4999-8999-999999999999" \
   --subject "Missing conversation" \
   --body "Missing conversation should fail" 2>&1)"; then
@@ -1897,7 +1915,7 @@ else
 fi
 
 psql_exec "UPDATE aweb.conversations SET status = 'closed' WHERE conversation_id = '${bob_hidden_conversation_id}'::uuid;"
-if closed_conversation_out="$(run_aw_in "$ALICE_DIR" mail send \
+if closed_conversation_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
   --subject "Closed conversation" \
   --body "Closed conversation should fail" 2>&1)"; then
@@ -1913,7 +1931,7 @@ else
   fail=$((fail + 1))
 fi
 
-if ttl_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+if ttl_start_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Conversation TTL slide" \
   --body "TTL initial" \
@@ -1929,7 +1947,7 @@ fi
 ttl_conversation_id="$(echo "$ttl_start_out" | jq_field conversation_id)"
 assert_not_empty "conversation ttl slide initial returns conversation_id" "$ttl_conversation_id"
 psql_exec "UPDATE aweb.conversations SET expires_at = NOW() + INTERVAL '1 day' WHERE conversation_id = '${ttl_conversation_id}'::uuid;"
-if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --conversation-id "$ttl_conversation_id" \
   --subject "Conversation TTL reply" \
   --body "TTL reply" \
@@ -1942,7 +1960,7 @@ assert_eq "conversation ttl slide continuation exit" "0" "$ttl_reply_exit"
 ttl_slid="$(psql_scalar "SELECT CASE WHEN expires_at > NOW() + INTERVAL '29 days' THEN 'yes' ELSE 'no' END FROM aweb.conversations WHERE conversation_id = '${ttl_conversation_id}'::uuid;")"
 assert_eq "conversation continuation slides ttl 30 days" "yes" "$ttl_slid"
 
-if expired_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+if expired_start_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Conversation concurrent expiry" \
   --body "Expiry initial" \
@@ -1961,7 +1979,7 @@ expired_one_code="$E2E_CWD/expired-one.code"
 expired_two_code="$E2E_CWD/expired-two.code"
 (
   set +e
-  run_aw_in "$BOB_DIR" mail send \
+  run_aw_in "$BOB_DIR" mail send --plaintext \
     --conversation-id "$expired_conversation_id" \
     --subject "Expired one" \
     --body "Expired one" >"$expired_one_out" 2>&1
@@ -1970,7 +1988,7 @@ expired_two_code="$E2E_CWD/expired-two.code"
 expired_one_pid=$!
 (
   set +e
-  run_aw_in "$BOB_DIR" mail send \
+  run_aw_in "$BOB_DIR" mail send --plaintext \
     --conversation-id "$expired_conversation_id" \
     --subject "Expired two" \
     --body "Expired two" >"$expired_two_out" 2>&1
@@ -2009,7 +2027,7 @@ else
   fail=$((fail + 1))
 fi
 
-if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --to bob \
   --subject "Conversation rotation initial" \
   --body "Rotation initial" \
@@ -2034,7 +2052,7 @@ fi
 bob_rotated_new_did="$(echo "$bob_rotate_out" | jq_field new_did)"
 assert_not_empty "conversation bob rotation returns new did:key" "$bob_rotated_new_did"
 
-if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --conversation-id "$rotation_conversation_id" \
   --subject "Conversation rotation reply" \
   --body "Rotation reply after did:key change" \
@@ -2054,7 +2072,7 @@ capture_success alice_rotation_inbox "alice_rotation_inbox" run_aw_in "$ALICE_DI
 alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "conversation rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
 
-if partner_bob_bare_mail_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
+if partner_bob_bare_mail_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send --plaintext \
   --to alice \
   --subject "Bare alias duplicate partner" \
   --body "Bare alias should stay in partner team" 2>&1)"; then
@@ -2071,7 +2089,7 @@ partner_bob_bare_mail_address="$(psql_scalar "SELECT COALESCE(a.address, '') FRO
 assert_eq "partner bob bare-alias mail routes to active team alice" "main:partner.local" "$partner_bob_bare_mail_team"
 assert_eq "partner bob bare-alias mail does not route to primary alice" "partner.local/alice" "$partner_bob_bare_mail_address"
 
-if partner_bob_bare_chat_out="$(run_aw_in "$PARTNER_BOB_DIR" chat send-and-leave alice \
+if partner_bob_bare_chat_out="$(run_aw_in "$PARTNER_BOB_DIR" chat send-and-leave --plaintext alice \
   "Bare alias duplicate partner chat" 2>&1)"; then
   partner_bob_bare_chat_exit=0
 else
@@ -2137,7 +2155,7 @@ assert_eq "awid team name" "devteam" "$team_get_name"
 
 certs_list="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 cert_count="$(echo "$certs_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "5 active certificates" "5" "$cert_count"
+assert_eq "6 active certificates (alice, bob, erin, eve, gsk, and nokey)" "6" "$cert_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2166,7 +2184,7 @@ assert_eq "1 revocation" "1" "$revocation_count"
 
 active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "4 active certificates (alice, erin, eve, and gsk)" "4" "$active_count"
+assert_eq "5 active certificates (alice, erin, eve, gsk, and nokey)" "5" "$active_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2197,7 +2215,7 @@ revocation_flush_out="$(
 )"
 echo "$revocation_flush_out"
 
-if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send \
+if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to alice --body "should fail" 2>&1)"; then
   bob_mail_exit=0
 else
@@ -2247,12 +2265,12 @@ phase_aw_init_reconnect() {
   assert_eq "reconnect workspace alias" "alice" "$reconnect_alias"
   assert_eq "reconnect workspace role empty" "" "$reconnect_role"
 
-  if reconnect_mail_out="$(run_aw_in "$RECONNECT_DIR" mail send --to alice --subject "Reconnect e2e" --body "Reconnect path works" 2>&1)"; then
+  if reconnect_mail_out="$(run_aw_in "$RECONNECT_DIR" mail send --plaintext --to alice --subject "Reconnect e2e" --body "Reconnect path works" 2>&1)"; then
     reconnect_mail_exit=0
   else
     reconnect_mail_exit=$?
   fi
-  assert_eq "reconnect mail send exit" "0" "$reconnect_mail_exit"
+  assert_eq "reconnect mail send --plaintext exit" "0" "$reconnect_mail_exit"
   if [[ "$reconnect_mail_exit" != "0" ]]; then
     echo "  reconnect mail output: ${reconnect_mail_out:0:480}"
   fi
@@ -2318,12 +2336,12 @@ phase_aw_init_local_quickstart() {
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
 
-  if wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"; then
+  if wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --plaintext --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"; then
     wizard_mail_exit=0
   else
     wizard_mail_exit=$?
   fi
-  assert_eq "wizard mail send exit" "0" "$wizard_mail_exit"
+  assert_eq "wizard mail send --plaintext exit" "0" "$wizard_mail_exit"
   if [[ "$wizard_mail_exit" != "0" ]]; then
     echo "  wizard mail output: ${wizard_mail_out:0:480}"
   fi
@@ -2454,14 +2472,14 @@ phase_amy_symptom_reproducer() {
   # to bob via the configured sender binary.
   local mail_subject="amy-symptom mail $(date +%s)"
   local mail_body="amy reproducer mail body"
-  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" mail send \
+  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" mail send --plaintext \
     --to bob \
     --subject "$mail_subject" \
     --body "$mail_body" >/dev/null 2>&1
   local mail_exit=$?
-  assert_eq "amy reproducer: mail send exit" "0" "$mail_exit"
+  assert_eq "amy reproducer: mail send --plaintext exit" "0" "$mail_exit"
 
-  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" chat send-and-leave bob \
+  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" chat send-and-leave --plaintext bob \
     "amy reproducer chat" >/dev/null 2>&1
   local chat_exit=$?
   assert_eq "amy reproducer: chat send exit" "0" "$chat_exit"

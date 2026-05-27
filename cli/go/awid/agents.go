@@ -58,6 +58,81 @@ func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion,
 	return a.EncryptionKey, nil
 }
 
+func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {
+	if strings.TrimSpace(agent.DIDAW) != "" {
+		return c.e2eeGlobalRecipientFromAgent(ctx, agent)
+	}
+	if assertion, err := agent.RequireEncryptionKey(time.Now().UTC()); err == nil {
+		return E2EERecipientKey{
+			Address:       strings.TrimSpace(agent.Address),
+			DID:           strings.TrimSpace(agent.DIDKey),
+			EncryptionKey: assertion,
+			InboundMode:   strings.TrimSpace(agent.InboundMode),
+		}, nil
+	} else if agent.EncryptionKey != nil {
+		return E2EERecipientKey{}, err
+	}
+
+	return E2EERecipientKey{}, fmt.Errorf("agent %s has no E2E encryption key; local-only recipients cannot be resolved through AWID, ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
+}
+
+func (c *Client) e2eeGlobalRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {
+	address := strings.TrimSpace(agent.Address)
+	if address == "" {
+		return E2EERecipientKey{}, fmt.Errorf("agent %s is global but has no address for AWID E2E key discovery; send by address or repair the roster entry", agent.Alias)
+	}
+	identity, err := c.ResolveIdentity(ctx, address)
+	if err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("agent %s AWID E2E key discovery for %s failed: %w", agent.Alias, address, err)
+	}
+	if strings.TrimSpace(identity.StableID) != strings.TrimSpace(agent.DIDAW) {
+		return E2EERecipientKey{}, fmt.Errorf("agent %s AWID key discovery stable id mismatch: roster has %s, address %s resolved to %s", agent.Alias, strings.TrimSpace(agent.DIDAW), address, strings.TrimSpace(identity.StableID))
+	}
+	if identity.EncryptionKey == nil {
+		return E2EERecipientKey{}, fmt.Errorf("agent %s has no AWID-published E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
+	}
+	return E2EERecipientKey{
+		Address:        strings.TrimSpace(identity.Address),
+		DID:            strings.TrimSpace(identity.DID),
+		StableID:       strings.TrimSpace(identity.StableID),
+		EncryptionKey:  identity.EncryptionKey,
+		DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+		InboundMode:    strings.TrimSpace(agent.InboundMode),
+	}, nil
+}
+
+func (c *Client) learnedE2EERecipientFromEnvelope(envelope *E2EEMessageEnvelope) (E2EERecipientKey, bool, error) {
+	if envelope == nil {
+		return E2EERecipientKey{}, false, nil
+	}
+	from := envelope.From
+	if strings.TrimSpace(from.DID) == "" {
+		return E2EERecipientKey{}, false, nil
+	}
+	for _, self := range []string{c.did, c.stableID, c.address} {
+		self = strings.TrimSpace(self)
+		if self == "" {
+			continue
+		}
+		for _, candidate := range []string{from.DID, from.StableID, from.Address} {
+			if strings.EqualFold(strings.TrimSpace(candidate), self) {
+				return E2EERecipientKey{}, false, nil
+			}
+		}
+	}
+	if strings.TrimSpace(from.Address) != "" {
+		return E2EERecipientKey{}, false, nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(from.DID), "did:key:") {
+		return E2EERecipientKey{}, false, nil
+	}
+	recipient, err := E2EERecipientFromEnvelopeSender(envelope, time.Now().UTC())
+	if err != nil {
+		return E2EERecipientKey{}, true, fmt.Errorf("local-only E2E reply target %s cannot be used: %w", strings.TrimSpace(from.DID), err)
+	}
+	return recipient, true, nil
+}
+
 type ListAgentsResponse struct {
 	TeamID string      `json:"team_id"`
 	Agents []AgentView `json:"agents"`
