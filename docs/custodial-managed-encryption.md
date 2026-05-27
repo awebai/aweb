@@ -360,7 +360,10 @@ access to earlier ciphertext for which no custodial wrap exists.
 ### Recipient Resolver Matrix
 
 Resolvers must use this table; implementations should not invent additional
-fallbacks.
+fallbacks. This matrix covers paths involving hosted custodial identities.
+Self-custodial to self-custodial paths are governed by
+`docs/e2e-messaging-contract.md` and the `aweb-aapv.16` recipient resolver
+implementation.
 
 | Sender | Recipient | Scope | Authority source | Cache rule | Failure mode |
 | --- | --- | --- | --- | --- | --- |
