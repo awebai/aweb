@@ -10,7 +10,7 @@ Inbound flow:
   aw mail show / aw chat history -> Hermes MessageEvent.
 
 Outbound flow:
-  Hermes adapter send() -> aw mail reply / aw chat send-and-leave -> after a
+  Hermes adapter send() -> aw mail reply / exact aw chat send --session-id -> after a
   successful visible send, aw mail ack / aw chat read marks the triggering
   Aweb message delivered/read.
 """
@@ -326,13 +326,29 @@ class AwebAdapter(BasePlatformAdapter):
                 pass
 
     async def _send_chat_reply(self, route: dict, content: str) -> SendResult:
-        result = await self._send_chat_to_target(str(route.get("sender") or ""), content)
+        session_id = str(route.get("session_id") or "").strip()
+        if not session_id:
+            return SendResult(success=False, error="Aweb chat route is missing session_id")
+        result = await self._send_chat_to_session(session_id, content, leave=True)
         if result.success:
             try:
-                await self._run_aw_json("chat", "read", "--session-id", str(route["session_id"]), "--message-id", str(route["message_id"]))
+                await self._run_aw_json("chat", "read", "--session-id", session_id, "--message-id", str(route["message_id"]))
             except Exception as exc:
                 logger.warning("Aweb: reply sent but chat read mark failed: %s", exc)
         return result
+
+    async def _send_chat_to_session(self, session_id: str, content: str, *, leave: bool = False) -> SendResult:
+        if not session_id:
+            return SendResult(success=False, error="Aweb session_id is empty")
+        args = ["chat", "send", "--session-id", session_id, "--plaintext", "--body", content]
+        if leave:
+            args.append("--leave")
+        try:
+            payload = await self._run_aw_json(*args)
+            msg_id = str(payload.get("message_id") or payload.get("MessageID") or int(time.time() * 1000))
+            return SendResult(success=True, message_id=msg_id, raw_response=payload)
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
 
     async def _send_chat_to_target(self, target: str, content: str) -> SendResult:
         if not target:
@@ -391,7 +407,7 @@ def interactive_setup() -> None:
     print("Aweb setup")
     print("----------")
     print("Requirements:")
-    print("  1. aw CLI installed and upgraded to a version with `aw mail ack` and `aw chat read`.")
+    print("  1. aw CLI installed and upgraded to a version with `aw chat send --session-id`, `aw mail ack`, and `aw chat read`.")
     print("  2. A configured aw workspace for the Hermes gateway identity.")
     print()
     try:

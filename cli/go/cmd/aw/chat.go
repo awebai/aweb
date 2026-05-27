@@ -111,9 +111,11 @@ var (
 	chatSendAndLeaveStartConversation bool
 	chatSendAndWaitE2EE               bool
 	chatSendAndLeaveE2EE              bool
+	chatSendE2EE                      bool
 	chatExtendWaitE2EE                bool
 	chatSendAndWaitPlaintext          bool
 	chatSendAndLeavePlaintext         bool
+	chatSendPlaintext                 bool
 	chatExtendWaitPlaintext           bool
 	chatHistorySessionID              string
 	chatHistoryMessageID              string
@@ -122,6 +124,10 @@ var (
 	chatListenWait                    int
 	chatReadSessionID                 string
 	chatReadMessageID                 string
+	chatSendSessionID                 string
+	chatSendBody                      string
+	chatSendBodyFile                  string
+	chatSendLeave                     bool
 )
 
 var chatSendAndWaitCmd = &cobra.Command{
@@ -308,6 +314,71 @@ var chatHistoryCmd = &cobra.Command{
 	},
 }
 
+// chat send exact session
+
+func formatChatSendMessage(v any) string {
+	resp, ok := v.(*awid.ChatSendMessageResponse)
+	if !ok || resp == nil {
+		return ""
+	}
+	if resp.MessageID != "" {
+		return fmt.Sprintf("Sent chat message %s\n", resp.MessageID)
+	}
+	return "Sent chat message\n"
+}
+
+var chatSendCmd = &cobra.Command{
+	Use:   "send",
+	Short: "Send a message to an exact chat session",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("e2ee") && chatSendPlaintext {
+			return usageError("--e2ee and --plaintext are mutually exclusive")
+		}
+		sessionID := strings.TrimSpace(chatSendSessionID)
+		if sessionID == "" {
+			return usageError("missing required flag: --session-id")
+		}
+		body, err := resolveMailBody(chatSendBody, chatSendBodyFile)
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		c, sel, err := resolveClientSelection()
+		if err != nil {
+			return err
+		}
+		if chatSendE2EE {
+			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
+				return err
+			}
+		}
+		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
+			Body:        body,
+			Leaving:     chatSendLeave,
+			EncryptE2EE: chatSendE2EE,
+		})
+		if err != nil {
+			return err
+		}
+		logsDir := defaultLogsDir()
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Dir:       "send",
+			Channel:   "chat",
+			MessageID: resp.MessageID,
+			SessionID: sessionID,
+			From:      selectionAddress(sel),
+			Body:      body,
+		})
+		printOutput(resp, formatChatSendMessage)
+		return nil
+	},
+}
+
 // chat read
 
 func formatChatRead(v any) string {
@@ -459,6 +530,12 @@ func init() {
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
+	chatSendCmd.Flags().StringVar(&chatSendSessionID, "session-id", "", "Existing chat session id")
+	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", "Body (mutually exclusive with --body-file)")
+	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", "Read body from file")
+	chatSendCmd.Flags().BoolVar(&chatSendLeave, "leave", false, "Leave the conversation after sending")
+	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendCmd.Flags().BoolVar(&chatSendE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (currently the default)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
 
@@ -471,6 +548,6 @@ func init() {
 	chatReadCmd.Flags().StringVar(&chatReadSessionID, "session-id", "", "Chat session id")
 	chatReadCmd.Flags().StringVar(&chatReadMessageID, "message-id", "", "Last delivered message id to mark read")
 
-	chatCmd.AddCommand(chatSendAndWaitCmd, chatSendAndLeaveCmd, chatPendingCmd, chatOpenCmd, chatHistoryCmd, chatReadCmd, chatExtendWaitCmd, chatShowPendingCmd, chatListenCmd)
+	chatCmd.AddCommand(chatSendAndWaitCmd, chatSendAndLeaveCmd, chatSendCmd, chatPendingCmd, chatOpenCmd, chatHistoryCmd, chatReadCmd, chatExtendWaitCmd, chatShowPendingCmd, chatListenCmd)
 	rootCmd.AddCommand(chatCmd)
 }

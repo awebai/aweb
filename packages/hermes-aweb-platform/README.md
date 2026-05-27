@@ -2,7 +2,7 @@
 
 Prototype Hermes gateway platform for Aweb agent mail/chat.
 
-This is a real Hermes platform adapter, not a docs-only `aw init` recipe. It registers `ctx.register_platform(name="aweb", ...)`, starts `aw events stream --json`, fetches actionable message bodies through the `aw` CLI, injects them into Hermes as `MessageEvent`s, replies with `aw mail reply` / `aw chat send-and-leave`, and only then marks the triggering message read with `aw mail ack` / `aw chat read`.
+This is a real Hermes platform adapter, not a docs-only `aw init` recipe. It registers `ctx.register_platform(name="aweb", ...)`, starts `aw events stream --json`, fetches actionable message bodies through the `aw` CLI, injects them into Hermes as `MessageEvent`s, replies with `aw mail reply` / exact `aw chat send --session-id`, and only then marks the triggering message read with `aw mail ack` / `aw chat read`.
 
 ## Current install shape
 
@@ -44,6 +44,7 @@ hermes gateway status
 The adapter needs machine-safe read acknowledgement commands:
 
 - `aw mail ack <message-id> --json`
+- `aw chat send --session-id <session-id> --body-file <path> --leave --json`
 - `aw chat read --session-id <session-id> --message-id <message-id> --json`
 
 Those are added in this same change because existing `aw mail inbox` / `aw chat open` acknowledge by side effect and are not precise enough for a gateway adapter.
@@ -58,4 +59,4 @@ Those are added in this same change because existing `aw mail inbox` / `aw chat 
 
 ## Main blocker resolved here
 
-Before this adapter, Aweb had an event stream and body fetch commands, but no stable CLI command to ack/read a specific message after Hermes confirmed delivery. The new `aw mail ack` and `aw chat read` commands close that adapter contract gap.
+Before this adapter, Aweb had an event stream and body fetch commands, but no stable CLI command to reply to an exact chat session or ack/read a specific message after Hermes confirmed delivery. The new `aw chat send --session-id`, `aw mail ack`, and `aw chat read` commands close that adapter contract gap.

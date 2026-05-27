@@ -65,8 +65,10 @@ class FakeAwebAdapter(adapter_mod.AwebAdapter):
             return {"message_id": "reply-1"}
         if args[:2] == ("mail", "ack"):
             return {"message_id": args[2], "acknowledged_at": "now"}
+        if args[:2] == ("chat", "send"):
+            return {"message_id": "reply-chat-1", "delivered": True}
         if args[:2] == ("chat", "send-and-leave"):
-            return {"session_id": "sess-1", "events": [{"message_id": "reply-chat-1"}]}
+            return {"session_id": "sess-1", "events": [{"message_id": "legacy-reply-chat-1"}]}
         if args[:2] == ("chat", "read"):
             return {"success": True, "messages_marked": 1}
         return {}
@@ -110,7 +112,7 @@ class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
         result = await adapter.send("chat:sess-1", "pong")
 
         self.assertTrue(result.success, result.error)
-        self.assertEqual(adapter.commands[0][:3], ("chat", "send-and-leave", "--plaintext"))
+        self.assertEqual(adapter.commands[0], ("chat", "send", "--session-id", "sess-1", "--plaintext", "--body", "pong", "--leave"))
         self.assertEqual(adapter.commands[1], ("chat", "read", "--session-id", "sess-1", "--message-id", "chat-1"))
 
 

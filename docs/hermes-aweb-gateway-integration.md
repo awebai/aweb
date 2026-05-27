@@ -64,7 +64,7 @@ The MVP deliberately consumes the `aw` CLI rather than reimplementing Aweb auth 
 - fetch mail body: `aw mail show --message-id <id> --json`
 - fetch chat body: `aw chat history --session-id <id> --message-id <id> --limit 1 --json`
 - reply to mail: `aw mail reply <message-id> --plaintext --body-file <tmp> --json`
-- reply to chat: `aw chat send-and-leave --plaintext <sender-address-or-alias> <body> --json`
+- reply to chat: `aw chat send --session-id <id> --plaintext --body <body> --leave --json`
 - ack mail after confirmed send: `aw mail ack <message-id> --json`
 - mark chat read after confirmed send: `aw chat read --session-id <id> --message-id <id> --json`
 
@@ -72,17 +72,19 @@ Using `aw` keeps workspace selection, DID signatures, team certs, hosted/BYOT ro
 
 ## Aweb gap found and closed
 
-Before this work, Aweb had event streaming and message body fetches but did not expose precise machine commands for post-delivery acknowledgement:
+Before this work, Aweb had event streaming and message body fetches but did not expose all of the precise machine commands a gateway adapter needs:
 
 - `aw mail inbox` marks all listed unread mail read as a side effect.
 - `aw chat open <alias>` marks unread messages read by alias/session resolution.
+- `aw chat send-and-leave <target>` routes by recipient lookup rather than the exact triggering session.
 
-That is not safe enough for a gateway adapter because Hermes should ack/read only after it has delivered the message to the agent and sent a visible response. This change adds:
+That is not safe enough for a gateway adapter because Hermes should reply to the triggering session exactly and ack/read only after it has delivered the message to the agent and sent a visible response. This change adds:
 
 - `aw mail ack <message-id> --json`
+- `aw chat send --session-id <session-id> --body-file <path> --leave --json`
 - `aw chat read --session-id <session-id> --message-id <message-id> --json`
 
-These wrap existing client/server primitives (`AckMessage`, `ChatMarkRead`) with explicit CLI contracts.
+These wrap existing client/server primitives (`ChatSendMessage`, `AckMessage`, `ChatMarkRead`) with explicit CLI contracts.
 
 ## Prototype implementation
 
@@ -101,7 +103,7 @@ Runtime behavior:
 3. On `actionable_chat`, the adapter fetches the exact message with `aw chat history --session-id --message-id`, creates `chat_id="chat:<session_id>"`, stores a reply route, and injects a Hermes `MessageEvent`.
 4. When Hermes calls `send()`:
    - mail routes use `aw mail reply`, then `aw mail ack` only after the reply succeeds;
-   - chat routes use `aw chat send-and-leave`, then `aw chat read` only after the reply succeeds;
+   - chat routes use exact `aw chat send --session-id ... --leave`, then `aw chat read` only after the reply succeeds;
    - unknown/home routes are treated as Aweb chat targets for cron delivery.
 
 ## MVP user flow
@@ -169,7 +171,7 @@ Recommended order: external repo first, then Hermes bundled-plugin PR only if ma
 
 - Shelling to `aw` is reliable enough for MVP but not as efficient as a library surface.
 - `aw events stream --json` is a process boundary; restart/backoff is required.
-- `aw chat send-and-leave <address>` resumes by recipient resolution, not explicit session id. If multiple sessions match a target, Aweb may reject and ask the operator to choose. A future `aw chat send --session-id` would make this exact.
+- Cron/home-channel fallback still treats the target as an Aweb alias/address. Inbound chat replies do not: they use the exact triggering `session_id`.
 - Hermes plugin install UX is clean for separate plugin repos, not for monorepo subdirectories.
 - The plugin currently uses plaintext explicit sends because current Aweb release default is plaintext and recent `--e2ee` opt-in smoke hit a server 422 schema mismatch.
 
