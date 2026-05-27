@@ -1278,6 +1278,50 @@ func TestAwMailShowFetchesConversation(t *testing.T) {
 	}
 }
 
+func TestAwMailAckByMessageIDJSON(t *testing.T) {
+	t.Parallel()
+
+	messageID := "88888888-8888-4888-8888-888888888888"
+	var sawAck bool
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/" + messageID + "/ack":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s, want POST", r.Method)
+			}
+			sawAck = true
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID, AcknowledgedAt: "2026-05-02T00:00:01Z"})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "mail", "ack", messageID, "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !sawAck {
+		t.Fatal("mail ack did not call ack endpoint")
+	}
+	if !strings.Contains(string(out), messageID) || !strings.Contains(string(out), "acknowledged_at") {
+		t.Fatalf("output missing ack fields:\n%s", string(out))
+	}
+}
+
 func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	t.Parallel()
 

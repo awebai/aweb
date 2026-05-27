@@ -13,6 +13,59 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func TestAwChatReadBySessionMessageIDJSON(t *testing.T) {
+	t.Parallel()
+
+	var sawRead bool
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions/session-1/read":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s, want POST", r.Method)
+			}
+			var req awid.ChatMarkReadRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if req.UpToMessageID != "chat-1" {
+				t.Fatalf("up_to_message_id=%q, want chat-1", req.UpToMessageID)
+			}
+			sawRead = true
+			_ = json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "chat", "read",
+		"--session-id", "session-1",
+		"--message-id", "chat-1",
+		"--json",
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !sawRead {
+		t.Fatal("chat read did not call mark-read endpoint")
+	}
+	if !strings.Contains(string(out), `"messages_marked": 1`) {
+		t.Fatalf("output missing messages_marked:\n%s", string(out))
+	}
+}
+
 func TestAwChatHistoryBySessionMessageIDJSON(t *testing.T) {
 	t.Parallel()
 

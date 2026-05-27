@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
 	"github.com/spf13/cobra"
 )
@@ -119,6 +120,8 @@ var (
 	chatHistoryLimit                  int
 	chatHistoryUnreadOnly             bool
 	chatListenWait                    int
+	chatReadSessionID                 string
+	chatReadMessageID                 string
 )
 
 var chatSendAndWaitCmd = &cobra.Command{
@@ -305,6 +308,45 @@ var chatHistoryCmd = &cobra.Command{
 	},
 }
 
+// chat read
+
+func formatChatRead(v any) string {
+	resp, ok := v.(*awid.ChatMarkReadResponse)
+	if !ok || resp == nil {
+		return ""
+	}
+	return fmt.Sprintf("Marked %d chat message(s) read\n", resp.MessagesMarked)
+}
+
+var chatReadCmd = &cobra.Command{
+	Use:   "read",
+	Short: "Mark chat messages read by session and message id",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sessionID := strings.TrimSpace(chatReadSessionID)
+		messageID := strings.TrimSpace(chatReadMessageID)
+		if sessionID == "" {
+			return usageError("missing required flag: --session-id")
+		}
+		if messageID == "" {
+			return usageError("missing required flag: --message-id")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		c, _, err := resolveClientSelection()
+		if err != nil {
+			return err
+		}
+		resp, err := c.Client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{UpToMessageID: messageID})
+		if err != nil {
+			return err
+		}
+		printOutput(resp, formatChatRead)
+		return nil
+	},
+}
+
 // chat extend-wait
 
 var chatExtendWaitCmd = &cobra.Command{
@@ -426,7 +468,9 @@ func init() {
 	chatHistoryCmd.Flags().BoolVar(&chatHistoryUnreadOnly, "unread-only", false, "Fetch unread messages only")
 
 	chatListenCmd.Flags().IntVar(&chatListenWait, "wait", chat.DefaultWait, "Seconds to wait for a message (0 = no wait)")
+	chatReadCmd.Flags().StringVar(&chatReadSessionID, "session-id", "", "Chat session id")
+	chatReadCmd.Flags().StringVar(&chatReadMessageID, "message-id", "", "Last delivered message id to mark read")
 
-	chatCmd.AddCommand(chatSendAndWaitCmd, chatSendAndLeaveCmd, chatPendingCmd, chatOpenCmd, chatHistoryCmd, chatExtendWaitCmd, chatShowPendingCmd, chatListenCmd)
+	chatCmd.AddCommand(chatSendAndWaitCmd, chatSendAndLeaveCmd, chatPendingCmd, chatOpenCmd, chatHistoryCmd, chatReadCmd, chatExtendWaitCmd, chatShowPendingCmd, chatListenCmd)
 	rootCmd.AddCommand(chatCmd)
 }

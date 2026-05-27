@@ -1,0 +1,42 @@
+name: aweb-platform
+label: Aweb
+kind: platform
+version: 0.1.0
+description: >
+  Hermes gateway adapter for Aweb agent mail/chat. Listens to aw events,
+  delivers actionable Aweb mail/chat into Hermes, and replies through aw.
+author: Aweb
+requires_env:
+  - name: AWEB_PLATFORM_ENABLED
+    description: "Set true to auto-enable the Aweb gateway platform from environment"
+    prompt: "Enable Aweb platform? (true/false)"
+    password: false
+optional_env:
+  - name: AWEB_PLATFORM_WORKDIR
+    description: "Directory of the aw workspace identity Hermes should use (defaults to gateway cwd)"
+    prompt: "Aweb workspace directory"
+    password: false
+  - name: AWEB_PLATFORM_AW_BIN
+    description: "aw executable path (default: aw)"
+    prompt: "aw binary"
+    password: false
+  - name: AWEB_PLATFORM_ENABLE_MAIL
+    description: "Listen for actionable Aweb mail (default: true)"
+    prompt: "Enable Aweb mail? (true/false)"
+    password: false
+  - name: AWEB_PLATFORM_ENABLE_CHAT
+    description: "Listen for actionable Aweb chat (default: true)"
+    prompt: "Enable Aweb chat? (true/false)"
+    password: false
+  - name: AWEB_ALLOWED_USERS
+    description: "Comma-separated Aweb sender addresses/aliases allowed to talk to Hermes"
+    prompt: "Allowed Aweb senders"
+    password: false
+  - name: AWEB_ALLOW_ALL_USERS
+    description: "Allow any Aweb sender to talk to Hermes (dev only)"
+    prompt: "Allow all Aweb senders? (true/false)"
+    password: false
+  - name: AWEB_HOME_CHANNEL
+    description: "Default Aweb address/alias for Hermes cron delivery"
+    prompt: "Aweb home channel"
+    password: false

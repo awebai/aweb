@@ -890,6 +890,42 @@ var (
 	mailShowLimit          int
 )
 
+func formatMailAck(v any) string {
+	resp, ok := v.(*awid.AckResponse)
+	if !ok || resp == nil {
+		return ""
+	}
+	if resp.AcknowledgedAt != "" {
+		return fmt.Sprintf("Acknowledged mail %s at %s\n", resp.MessageID, resp.AcknowledgedAt)
+	}
+	return fmt.Sprintf("Acknowledged mail %s\n", resp.MessageID)
+}
+
+var mailAckCmd = &cobra.Command{
+	Use:   "ack <message-id>",
+	Short: "Acknowledge one mail message as read",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		messageID := strings.TrimSpace(args[0])
+		if messageID == "" {
+			return usageError("message id is required")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		c, _, err := resolveClientSelection()
+		if err != nil {
+			return err
+		}
+		resp, err := c.AckMessage(ctx, messageID)
+		if err != nil {
+			return err
+		}
+		printOutput(resp, formatMailAck)
+		return nil
+	},
+}
+
 var mailShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show a mail conversation",
@@ -969,6 +1005,6 @@ func init() {
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
 	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages")
 
-	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd)
+	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd)
 	rootCmd.AddCommand(mailCmd)
 }
