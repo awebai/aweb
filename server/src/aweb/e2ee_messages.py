@@ -336,7 +336,7 @@ def validate_e2ee_message_envelope(
         recipient = envelope_recipients_by_did[recipient_did]
         expected_stable_id = _non_empty(expected.get("stable_id"))
         expected_address = _non_empty(expected.get("address"))
-        if recipient_did.startswith("did:key:") and not _non_empty(recipient.get("stable_id")):
+        if recipient_did.startswith("did:key:") and not expected_stable_id:
             # A remote local-only did:key participant can carry server-visible
             # transport hints such as alias/address. Those hints are not AWID
             # identity authority and are intentionally omitted from the
@@ -396,7 +396,7 @@ def validate_e2ee_message_envelope(
         delivery_wrap = delivery_wraps_by_did[recipient_did]
         expected_stable_id = _non_empty(expected.get("stable_id"))
         expected_address = _non_empty(expected.get("address"))
-        if recipient_did.startswith("did:key:") and not _non_empty(recipient.get("stable_id")):
+        if recipient_did.startswith("did:key:") and not expected_stable_id:
             expected_stable_id = ""
             expected_address = ""
         recipient_key_id = _non_empty(recipient.get("encryption_key_id"))

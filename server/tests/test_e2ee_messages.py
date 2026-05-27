@@ -307,6 +307,13 @@ def test_validate_e2ee_mail_envelope_requires_exact_recipient_binding():
     _assert_rejects(envelope, sender_did, sender_stable, recipient_did, recipient_stable, "recipient did mismatch")
 
     envelope, sender_did, sender_stable, recipient_did, recipient_stable = _signed_test_envelope()
+    envelope["recipients"][0].pop("stable_id")
+    envelope["recipients"][0].pop("address")
+    envelope["key_wraps"][0].pop("recipient_stable_id")
+    envelope["key_wraps"][0].pop("recipient_address")
+    _assert_rejects(envelope, sender_did, sender_stable, recipient_did, recipient_stable, "recipient stable id mismatch")
+
+    envelope, sender_did, sender_stable, recipient_did, recipient_stable = _signed_test_envelope()
     envelope["key_wraps"][0]["recipient_encryption_key_id"] = "sha256:" + _b64(b"x" * 32)
     _assert_rejects(envelope, sender_did, sender_stable, recipient_did, recipient_stable, "recipient key mismatch")
 

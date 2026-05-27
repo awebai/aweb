@@ -331,11 +331,20 @@ def _chat_envelope_recipients(rows: list[dict[str, Any]]) -> list[dict[str, str 
         recipient_did = str(row.get("did_key") or row.get("current_did_key") or row.get("did") or "").strip()
         if not recipient_did:
             recipient_did = _target_did(row)
+        stable_id = str(row.get("did_aw") or "").strip()
+        address = str(row.get("address") or "").strip()
+        if recipient_did.startswith("did:key:") and not stable_id.startswith("did:aw:"):
+            # Remote local-only did:key chat participants can have stored
+            # address/alias transport hints. Those are routing hints only, not
+            # encrypted identity authority, so do not require them in the v2
+            # recipient binding.
+            stable_id = ""
+            address = ""
         recipients.append(
             {
                 "did": recipient_did,
-                "stable_id": str(row.get("did_aw") or "").strip() or None,
-                "address": str(row.get("address") or "").strip() or None,
+                "stable_id": stable_id or None,
+                "address": address or None,
             }
         )
     return recipients
