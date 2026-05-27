@@ -388,7 +388,7 @@ class RegistryClient:
         assertion: dict[str, Any],
     ) -> dict[str, Any]:
         return await self._request_json(
-            "PUT",
+            "POST",
             f"/v1/did/{did_aw}/encryption-key",
             json=assertion,
         )

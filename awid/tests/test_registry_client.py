@@ -57,7 +57,7 @@ async def test_registry_client_publish_encryption_key_uses_awid_endpoint():
         await registry.aclose()
 
     assert result == assertion
-    assert seen["method"] == "PUT"
+    assert seen["method"] == "POST"
     assert seen["path"] == "/v1/did/did:aw:abc/encryption-key"
     assert seen["payload"] == assertion
 

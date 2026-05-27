@@ -1,4 +1,4 @@
-"""Hosted custodial signing hooks for MCP message sends."""
+"""Hosted custodial signing/encryption hooks for MCP message sends."""
 
 from __future__ import annotations
 
@@ -32,6 +32,45 @@ class HostedMessageSigningError(RuntimeError):
     """Raised when a hosted custodial message cannot be signed safely."""
 
 
+@dataclass(frozen=True)
+class HostedMessageEncryptionResult:
+    """Encrypted v2 envelope material returned by hosted custody."""
+
+    encrypted_envelope: dict[str, Any]
+    content_mode: str = "encrypted_v2"
+    message_version: int = 2
+
+
+HostedMessageEncryptor = Callable[
+    [...],
+    Awaitable[HostedMessageEncryptionResult | dict[str, Any] | None],
+]
+
+
+class HostedMessageEncryptionError(RuntimeError):
+    """Raised when a hosted custodial message cannot be encrypted safely."""
+
+
+@dataclass(frozen=True)
+class HostedMessageDecryptionResult:
+    """Plaintext material returned by hosted custody for an encrypted row."""
+
+    subject: str = ""
+    body: str = ""
+    decryptable: bool = True
+    content_notice: str | None = None
+
+
+HostedMessageDecryptor = Callable[
+    [...],
+    Awaitable[HostedMessageDecryptionResult | dict[str, Any] | None],
+]
+
+
+class HostedMessageDecryptionError(RuntimeError):
+    """Raised when hosted custodial message content cannot be decrypted safely."""
+
+
 def canonical_signed_payload(payload: dict[str, Any]) -> str:
     """Return the canonical JSON string used for message signing."""
     return canonical_payload(payload).decode("utf-8")
@@ -41,6 +80,114 @@ def _result_field(result: HostedMessageSigningResult | dict[str, Any], field: st
     if isinstance(result, dict):
         return result.get(field)
     return getattr(result, field)
+
+
+def _encryption_result_field(
+    result: HostedMessageEncryptionResult | dict[str, Any],
+    field: str,
+) -> Any:
+    if isinstance(result, dict):
+        return result.get(field)
+    return getattr(result, field)
+
+
+def _decryption_result_field(
+    result: HostedMessageDecryptionResult | dict[str, Any],
+    field: str,
+) -> Any:
+    if isinstance(result, dict):
+        return result.get(field)
+    return getattr(result, field)
+
+
+async def encrypt_hosted_message(
+    *,
+    auth: Any,
+    encryptor: HostedMessageEncryptor | None,
+    message_type: MessageType,
+    payload: dict[str, Any],
+    recipient: dict[str, Any],
+) -> HostedMessageEncryptionResult | None:
+    """Encrypt an MCP message payload when auth came through hosted custody."""
+    if not getattr(auth, "trusted_proxy", False):
+        return None
+    if encryptor is None:
+        raise HostedMessageEncryptionError("hosted custodial encryptor is not configured")
+    workspace_id = getattr(auth, "workspace_id", None)
+    if not workspace_id:
+        raise HostedMessageEncryptionError("hosted custodial encryptor requires workspace_id")
+
+    result = await encryptor(
+        agent_id=getattr(auth, "agent_id", None),
+        workspace_id=workspace_id,
+        team_id=getattr(auth, "team_id", None),
+        message_type=message_type,
+        payload=dict(payload),
+        recipient=dict(recipient),
+    )
+    if result is None:
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned no envelope")
+
+    content_mode = str(_encryption_result_field(result, "content_mode") or "").strip()
+    message_version = int(_encryption_result_field(result, "message_version") or 0)
+    encrypted_envelope = _encryption_result_field(result, "encrypted_envelope")
+    if content_mode != "encrypted_v2" or message_version != 2:
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned non-v2 content")
+    if not isinstance(encrypted_envelope, dict):
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned no encrypted envelope")
+    if str(encrypted_envelope.get("kind") or "").strip() != message_type:
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned wrong envelope kind")
+    if str(encrypted_envelope.get("message_id") or "").strip() != str(payload.get("message_id") or "").strip():
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned mismatched message_id")
+    if str(encrypted_envelope.get("conversation_id") or "").strip() != str(payload.get("conversation_id") or "").strip():
+        raise HostedMessageEncryptionError("hosted custodial encryptor returned mismatched conversation_id")
+    return HostedMessageEncryptionResult(
+        encrypted_envelope=encrypted_envelope,
+        content_mode=content_mode,
+        message_version=message_version,
+    )
+
+
+async def decrypt_hosted_message_row(
+    *,
+    auth: Any,
+    decryptor: HostedMessageDecryptor | None,
+    message_type: MessageType,
+    row: dict[str, Any],
+) -> HostedMessageDecryptionResult | None:
+    """Decrypt an MCP message row when auth came through hosted custody."""
+    if not getattr(auth, "trusted_proxy", False):
+        return None
+    if str(row.get("content_mode") or "legacy_plaintext_v1") != "encrypted_v2":
+        return None
+    if decryptor is None:
+        raise HostedMessageDecryptionError("hosted custodial decryptor is not configured")
+    workspace_id = getattr(auth, "workspace_id", None)
+    if not workspace_id:
+        raise HostedMessageDecryptionError("hosted custodial decryptor requires workspace_id")
+
+    result = await decryptor(
+        agent_id=getattr(auth, "agent_id", None),
+        workspace_id=workspace_id,
+        team_id=getattr(auth, "team_id", None),
+        message_type=message_type,
+        row=dict(row),
+    )
+    if result is None:
+        return HostedMessageDecryptionResult(
+            decryptable=False,
+            content_notice="Encrypted message content is not available to this hosted identity.",
+        )
+    subject = str(_decryption_result_field(result, "subject") or "")
+    body = str(_decryption_result_field(result, "body") or "")
+    decryptable = bool(_decryption_result_field(result, "decryptable"))
+    notice = _decryption_result_field(result, "content_notice")
+    return HostedMessageDecryptionResult(
+        subject=subject,
+        body=body if decryptable else "",
+        decryptable=decryptable,
+        content_notice=(str(notice) if notice else None),
+    )
 
 
 async def sign_hosted_message(

@@ -35,6 +35,59 @@ class DBInfra:
         return self._aweb_db
 
 
+def _fake_encrypted_mail_envelope(payload: dict, *, sender_did: str, recipient_did: str) -> dict:
+    hash32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    now = str(payload["timestamp"])
+    return {
+        "message_version": 2,
+        "envelope_type": "aweb-e2ee-message-v2",
+        "kind": "mail",
+        "message_id": str(payload["message_id"]),
+        "conversation_id": str(payload["conversation_id"]),
+        "created_at": now,
+        "expires_at": now,
+        "from": {
+            "did": sender_did,
+            "stable_id": payload.get("from_stable_id"),
+            "address": payload.get("from") or "",
+            "encryption_key_id": "sha256:sender",
+        },
+        "recipients": [
+            {
+                "did": recipient_did,
+                "stable_id": payload.get("to_stable_id"),
+                "address": payload.get("to") or "",
+                "encryption_key_id": "sha256:recipient",
+            }
+        ],
+        "routing": {"delivery_origin": "", "sender_observed_inbound_mode": ""},
+        "policy": {"requires_e2ee": True, "legacy_plaintext_allowed": False},
+        "crypto": {
+            "suite": "aweb-e2ee-v2/x25519-hpke-aes256gcm",
+            "content_nonce": "AAAAAAAAAAAAAAAA",
+            "ciphertext_hash": f"sha256:{hash32}",
+            "ciphertext_size": 12,
+            "key_wraps_hash": f"sha256:{hash32}",
+            "inner_header_hash": f"sha256:{hash32}",
+        },
+        "ciphertext": "Y2lwaGVydGV4dA",
+        "key_wraps": [
+            {
+                "wrap_id": f"sha256:{hash32}",
+                "recipient_encryption_key_id": "sha256:recipient",
+                "sender_encryption_key_id": "sha256:sender",
+                "sender_did": sender_did,
+                "wrap_purpose": "delivery",
+                "algorithm": "HPKE-Base-X25519-HKDF-SHA256-AES-256-GCM",
+                "encapsulated_key": hash32,
+                "wrapped_cek": hash32 + "AAAAA",
+            }
+        ],
+        "signing_key_id": sender_did,
+        "signature": "sig",
+    }
+
+
 async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_agent_id, alice_did: str) -> None:
     await aweb_db.execute(
         """
@@ -524,6 +577,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             hosted_signer=_signer,
+            plaintext=True,
             to="bob",
             subject="hello",
             body="from mcp",
@@ -553,6 +607,110 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    _, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open')
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        alice_did,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _encryptor(**kwargs):
+        seen.append(kwargs)
+        payload = kwargs["payload"]
+        return {
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": _fake_encrypted_mail_envelope(
+                payload,
+                sender_did=alice_did,
+                recipient_did="did:key:z6MkBob",
+            ),
+        }
+
+    async def _signer(**_kwargs):
+        raise AssertionError("plaintext signer must not run for encrypted hosted mail")
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            hosted_signer=_signer,
+            hosted_encryptor=_encryptor,
+            to="bob",
+            subject="secret subject",
+            body="secret body",
+            priority="urgent",
+        )
+    )
+
+    assert "error" not in result, result
+    assert result["status"] == "delivered"
+    assert len(seen) == 1
+    assert seen[0]["message_type"] == "mail"
+    assert seen[0]["agent_id"] == str(alice_agent_id)
+    assert seen[0]["workspace_id"] == str(workspace_id)
+    assert seen[0]["payload"]["subject"] == "secret subject"
+    assert seen[0]["payload"]["body"] == "secret body"
+    assert seen[0]["recipient"]["alias"] == "bob"
+
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.messages}}")
+    assert row["subject"] == ""
+    assert row["body"] == ""
+    assert row["signature"] is None
+    assert row["signed_payload"] is None
+    assert row["content_mode"] == "encrypted_v2"
+    assert row["message_version"] == 2
+    encrypted_envelope = row["encrypted_envelope"]
+    if isinstance(encrypted_envelope, str):
+        encrypted_envelope = json.loads(encrypted_envelope)
+    assert encrypted_envelope["kind"] == "mail"
+    assert encrypted_envelope["message_id"] == str(row["message_id"])
+    assert "secret body" not in json.dumps(encrypted_envelope, sort_keys=True)
 
 
 @pytest.mark.asyncio
@@ -645,6 +803,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=_NoRediscoveryRegistry(),
             hosted_signer=_signer,
+            plaintext=True,
             conversation_id=str(conversation_id),
             subject="Re",
             body="conversation reply",
@@ -776,6 +935,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=_Registry(),
             hosted_signer=_signer,
+            plaintext=True,
             conversation_id=str(conversation_id),
             subject="Re",
             body="federated reply",
@@ -926,6 +1086,7 @@ async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_clou
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             hosted_signer=_signer,
+            plaintext=True,
             conversation_id=str(conversation_id),
             subject="Re",
             body="continuing legacy first contact",
@@ -1037,6 +1198,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=_Registry(),
             hosted_signer=_signer,
+            plaintext=True,
             to="otherco.com/bob",
             subject="external",
             body="hello external bob",
@@ -1179,7 +1341,7 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_cloud_db, monkeypatch):
+async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_encryptor(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -1221,11 +1383,11 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             to="bob",
-            body="unsigned should not send",
+            body="unencrypted should not send",
         )
     )
 
-    assert result["error"] == "hosted custodial signer is not configured"
+    assert result["error"] == "hosted custodial encryptor is not configured"
     count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.messages}}")
     assert count == 0
 
@@ -1276,6 +1438,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             hosted_signer=_signer,
+            plaintext=True,
             to="bob",
             body="unsigned should not send",
         )
@@ -2055,11 +2218,82 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_d
     message = data["messages"][0]
     assert message["message_id"] == str(encrypted_message_id)
     assert message["encrypted"] is True
+    assert message["decryptable"] is False
     assert message["content_mode"] == "encrypted_v2"
     assert message["message_version"] == 2
     assert message["subject"] == ""
     assert message["body"] == ""
     assert message["verification_status"] == "verified_envelope_v2"
+
+
+@pytest.mark.asyncio
+async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(aweb_cloud_db, monkeypatch):
+    encrypted_message_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at,
+            content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+            encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+            encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+            encrypted_signing_key_id, signed_envelope_hash
+        )
+        VALUES (
+            $1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice', '', '', 'normal', now(),
+            'encrypted_v2', 2, '{"kind":"mail"}'::jsonb, 'ciphertext-bytes',
+            '[]'::jsonb, 'sha256:ciphertext', 16,
+            'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
+            'did:key:z6MkBob', 'sha256:envelope'
+        )
+        """,
+        encrypted_message_id,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(uuid4()),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _decryptor(**kwargs):
+        seen.append(kwargs)
+        return {
+            "subject": "decrypted subject",
+            "body": "decrypted body",
+            "decryptable": True,
+        }
+
+    data = json.loads(
+        await mail_tools.check_inbox(
+            DBInfra(aweb_cloud_db.aweb_db),
+            hosted_decryptor=_decryptor,
+            unread_only=False,
+        )
+    )
+
+    assert len(data["messages"]) == 1
+    assert seen[0]["message_type"] == "mail"
+    assert seen[0]["workspace_id"] == str(workspace_id)
+    assert seen[0]["row"]["content_mode"] == "encrypted_v2"
+    message = data["messages"][0]
+    assert message["message_id"] == str(encrypted_message_id)
+    assert message["encrypted"] is True
+    assert message["decryptable"] is True
+    assert message["subject"] == "decrypted subject"
+    assert message["body"] == "decrypted body"
+    assert message["content_notice"] is None
     assert "content_notice" in message
     assert "ciphertext-bytes" not in json.dumps(message)
 

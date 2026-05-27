@@ -6,7 +6,7 @@ import json
 from uuid import UUID
 
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
-from aweb.mcp.signing import HostedMessageSigner
+from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
 from aweb.messaging.alias_targets import (
@@ -104,6 +104,7 @@ async def send_message_to_contact(
     *,
     registry_client,
     hosted_signer: HostedMessageSigner | None = None,
+    hosted_encryptor: HostedMessageEncryptor | None = None,
     contact_id: str,
     message: str,
     subject: str = "",
@@ -140,6 +141,7 @@ async def send_message_to_contact(
                 db_infra,
                 registry_client=registry_client,
                 hosted_signer=hosted_signer,
+                hosted_encryptor=hosted_encryptor,
                 conversation_id=existing["conversation_id"],
                 subject=subject,
                 body=message,
@@ -149,6 +151,7 @@ async def send_message_to_contact(
             db_infra,
             registry_client=registry_client,
             hosted_signer=hosted_signer,
+            hosted_encryptor=hosted_encryptor,
             to=target["address"],
             subject=subject,
             body=message,

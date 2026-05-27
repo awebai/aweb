@@ -9,10 +9,18 @@ from typing import cast
 
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
+    HostedMessageDecryptor,
+    HostedMessageDecryptionError,
+    HostedMessageDecryptionResult,
+    HostedMessageEncryptor,
+    HostedMessageEncryptionError,
     HostedMessageSigner,
     HostedMessageSigningError,
+    decrypt_hosted_message_row,
+    encrypt_hosted_message,
     sign_hosted_message,
 )
+from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.mcp.tools.federation import (
     mcp_federation_request,
     mcp_messaging_auth,
@@ -54,9 +62,15 @@ from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, Val
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
 
-def mcp_mail_message_from_row(row: dict, *, include_bodies: bool = True) -> dict:
+def mcp_mail_message_from_row(
+    row: dict,
+    *,
+    include_bodies: bool = True,
+    hosted_plaintext=None,
+) -> dict:
     content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
     encrypted = content_mode == "encrypted_v2"
+    decryptable = bool(getattr(hosted_plaintext, "decryptable", False)) if encrypted else True
     read_at = _utc_iso(row["read_at"]) if row.get("read_at") is not None else None
     msg: dict = {
         "message_id": str(row["message_id"]),
@@ -65,7 +79,11 @@ def mcp_mail_message_from_row(row: dict, *, include_bodies: bool = True) -> dict
         "from_alias": row["from_alias"],
         "from_address": row["from_address"] or "",
         "to_alias": row["to_alias"],
-        "subject": "" if encrypted else row["subject"],
+        "subject": (
+            getattr(hosted_plaintext, "subject", "")
+            if encrypted and decryptable
+            else ("" if encrypted else row["subject"])
+        ),
         "priority": row["priority"],
         "read": read_at is not None,
         "read_at": read_at,
@@ -74,13 +92,23 @@ def mcp_mail_message_from_row(row: dict, *, include_bodies: bool = True) -> dict
         "content_mode": content_mode,
         "message_version": int(row.get("message_version") or (2 if encrypted else 1)),
         "encrypted": encrypted,
+        "decryptable": decryptable,
     }
     if include_bodies:
-        msg["body"] = "" if encrypted else row["body"]
+        msg["body"] = (
+            getattr(hosted_plaintext, "body", "")
+            if encrypted and decryptable
+            else ("" if encrypted else row["body"])
+        )
     if encrypted:
-        msg["content_notice"] = (
-            "Encrypted message content is not available through hosted MCP; "
-            "read it in a local client that holds the identity encryption key."
+        notice = getattr(hosted_plaintext, "content_notice", None)
+        msg["content_notice"] = notice or (
+            None
+            if decryptable
+            else (
+                "Encrypted message content is not available through hosted MCP; "
+                "read it in a local client that holds the identity encryption key."
+            )
         )
     if row.get("from_did"):
         msg["from_did"] = row["from_did"]
@@ -123,11 +151,13 @@ async def send_mail(
     *,
     registry_client,
     hosted_signer: HostedMessageSigner | None = None,
+    hosted_encryptor: HostedMessageEncryptor | None = None,
     to: str = "",
     conversation_id: str = "",
     subject: str = "",
     body: str = "",
     priority: str = "normal",
+    plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
 ) -> str:
@@ -202,38 +232,57 @@ async def send_mail(
             signed_fields["from_stable_id"] = auth.did_aw
         if priority != "normal":
             signed_fields["priority"] = priority
-        try:
-            signed = await sign_hosted_message(
-                auth=auth,
-                signer=hosted_signer,
-                message_type="mail",
-                payload=signed_fields,
-            )
-        except HostedMessageSigningError as exc:
-            return json.dumps({"error": str(exc)})
-        if signed is not None:
-            sender_did = signed.from_did
-            signature = signed.signature
-            signed_payload = signed.signed_payload
 
         recipient_did = recipient_participant["did"]
         recipient = remote_recipient or await recipient_for_conversation_participant(
             db_infra,
             recipient_participant,
         )
+        encrypted = None
+        encrypted_metadata = None
+        if not plaintext:
+            try:
+                encrypted = await encrypt_hosted_message(
+                    auth=auth,
+                    encryptor=hosted_encryptor,
+                    message_type="mail",
+                    payload=signed_fields,
+                    recipient=recipient,
+                )
+            except HostedMessageEncryptionError as exc:
+                return json.dumps({"error": str(exc)})
+            if encrypted is not None:
+                encrypted_metadata = encrypted_message_storage_metadata(encrypted.encrypted_envelope)
+        if encrypted is None:
+            try:
+                signed = await sign_hosted_message(
+                    auth=auth,
+                    signer=hosted_signer,
+                    message_type="mail",
+                    payload=signed_fields,
+                )
+            except HostedMessageSigningError as exc:
+                return json.dumps({"error": str(exc)})
+            if signed is not None:
+                sender_did = signed.from_did
+                signature = signed.signature
+                signed_payload = signed.signed_payload
         try:
             if remote_recipient is not None:
                 payload = SendMessageRequest(
                     to_address=remote_recipient["address"],
                     conversation_id=conversation_ref,
-                    subject=subject,
-                    body=body,
+                    subject="" if encrypted is not None else subject,
+                    body="" if encrypted is not None else body,
+                    content_mode=encrypted.content_mode if encrypted is not None else None,
+                    message_version=encrypted.message_version if encrypted is not None else None,
+                    encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
                     priority=cast(MessagePriority, priority),
                     message_id=str(message_id),
                     timestamp=_utc_iso(created_at),
                     from_did=sender_did,
-                    signature=signature,
-                    signed_payload=signed_payload,
+                    signature=None if encrypted is not None else signature,
+                    signed_payload=None if encrypted is not None else signed_payload,
                 )
                 response = await _deliver_remote_mail_and_project_locally(
                     mcp_federation_request(
@@ -274,11 +323,15 @@ async def send_mail(
                 sender_address=sender_address,
                 to_agent_id=recipient_participant.get("agent_id"),
                 to_alias=recipient_participant.get("alias"),
-                subject=subject,
-                body=body,
+                subject="" if encrypted is not None else subject,
+                body="" if encrypted is not None else body,
                 priority=cast(MessagePriority, priority),
-                signature=signature,
-                signed_payload=signed_payload,
+                signature=None if encrypted is not None else signature,
+                signed_payload=None if encrypted is not None else signed_payload,
+                content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+                message_version=encrypted.message_version if encrypted is not None else 1,
+                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+                encrypted_metadata=encrypted_metadata,
                 created_at=created_at,
                 message_id=message_id,
                 conversation_id=conversation_ref,
@@ -383,19 +436,35 @@ async def send_mail(
     if priority != "normal":
         signed_fields["priority"] = priority
 
-    try:
-        signed = await sign_hosted_message(
-            auth=auth,
-            signer=hosted_signer,
-            message_type="mail",
-            payload=signed_fields,
-        )
-    except HostedMessageSigningError as exc:
-        return json.dumps({"error": str(exc)})
-    if signed is not None:
-        sender_did = signed.from_did
-        signature = signed.signature
-        signed_payload = signed.signed_payload
+    encrypted = None
+    encrypted_metadata = None
+    if not plaintext:
+        try:
+            encrypted = await encrypt_hosted_message(
+                auth=auth,
+                encryptor=hosted_encryptor,
+                message_type="mail",
+                payload=signed_fields,
+                recipient=recipient,
+            )
+        except HostedMessageEncryptionError as exc:
+            return json.dumps({"error": str(exc)})
+        if encrypted is not None:
+            encrypted_metadata = encrypted_message_storage_metadata(encrypted.encrypted_envelope)
+    if encrypted is None:
+        try:
+            signed = await sign_hosted_message(
+                auth=auth,
+                signer=hosted_signer,
+                message_type="mail",
+                payload=signed_fields,
+            )
+        except HostedMessageSigningError as exc:
+            return json.dumps({"error": str(exc)})
+        if signed is not None:
+            sender_did = signed.from_did
+            signature = signed.signature
+            signed_payload = signed.signed_payload
 
     try:
         if not (recipient or {}).get("external"):
@@ -412,14 +481,17 @@ async def send_mail(
             payload = SendMessageRequest(
                 to_address=recipient.get("address") or recipient_ref,
                 conversation_id=str(initial_conversation_id),
-                subject=subject,
-                body=body,
+                subject="" if encrypted is not None else subject,
+                body="" if encrypted is not None else body,
+                content_mode=encrypted.content_mode if encrypted is not None else None,
+                message_version=encrypted.message_version if encrypted is not None else None,
+                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
                 priority=cast(MessagePriority, priority),
                 message_id=str(message_id),
                 timestamp=_utc_iso(created_at),
                 from_did=sender_did,
-                signature=signature,
-                signed_payload=signed_payload,
+                signature=None if encrypted is not None else signature,
+                signed_payload=None if encrypted is not None else signed_payload,
             )
             response = await _deliver_remote_mail_and_project_locally(
                 mcp_federation_request(
@@ -483,11 +555,15 @@ async def send_mail(
             sender_address=sender_address,
             to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
             to_alias=recipient_alias,
-            subject=subject,
-            body=body,
+            subject="" if encrypted is not None else subject,
+            body="" if encrypted is not None else body,
             priority=cast(MessagePriority, priority),
-            signature=signature,
-            signed_payload=signed_payload,
+            signature=None if encrypted is not None else signature,
+            signed_payload=None if encrypted is not None else signed_payload,
+            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+            message_version=encrypted.message_version if encrypted is not None else 1,
+            encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+            encrypted_metadata=encrypted_metadata,
             created_at=created_at,
             message_id=message_id,
             conversation_id=conversation["conversation_id"],
@@ -511,6 +587,7 @@ async def send_mail(
 async def check_inbox(
     db_infra,
     *,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
     unread_only: bool = True,
     limit: int = 50,
     include_bodies: bool = True,
@@ -531,7 +608,8 @@ async def check_inbox(
         """
         SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
-               from_did, to_did, signature, signed_payload, content_mode, message_version
+               from_did, to_did, signature, signed_payload, content_mode, message_version,
+               encrypted_envelope
         FROM {{tables.messages}}
         WHERE to_did = ANY($1::text[])
           AND ($2::bool IS FALSE OR read_at IS NULL)
@@ -559,7 +637,24 @@ async def check_inbox(
 
     messages = []
     for r in rows:
-        msg = mcp_mail_message_from_row(dict(r), include_bodies=include_bodies)
+        hosted_plaintext = None
+        try:
+            hosted_plaintext = await decrypt_hosted_message_row(
+                auth=auth,
+                decryptor=hosted_decryptor,
+                message_type="mail",
+                row=dict(r),
+            )
+        except HostedMessageDecryptionError as exc:
+            hosted_plaintext = HostedMessageDecryptionResult(
+                decryptable=False,
+                content_notice=str(exc),
+            )
+        msg = mcp_mail_message_from_row(
+            dict(r),
+            include_bodies=include_bodies,
+            hosted_plaintext=hosted_plaintext,
+        )
         if r["message_id"] in unread_message_ids:
             msg["read"] = True
         messages.append(msg)

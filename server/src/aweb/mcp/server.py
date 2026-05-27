@@ -21,7 +21,7 @@ from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
-from aweb.mcp.signing import HostedMessageSigner
+from aweb.mcp.signing import HostedMessageDecryptor, HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
 from aweb.mcp.tools.agents import list_agents as _list_agents_impl
 from aweb.mcp.tools.chat import chat_history as _chat_history_impl
@@ -143,6 +143,8 @@ def register_tools(
     redis: Optional[Redis],
     registry_client: RegistryClient,
     hosted_signer: HostedMessageSigner | None = None,
+    hosted_encryptor: HostedMessageEncryptor | None = None,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
     federation_mail_transport=None,
     federation_chat_transport=None,
     public_origin: str | None = None,
@@ -168,9 +170,10 @@ def register_tools(
     @mcp.tool(
         name="send_mail",
         description=(
-            "Send hosted server-readable async mail with a required body by recipient, "
-            "or continue an existing mail conversation by conversation_id. This hosted "
-            "MCP tool is not E2E; use local aw clients for E2E mail."
+            "Send async mail with a required body by recipient, or continue an existing "
+            "mail conversation by conversation_id. Hosted custodial sends encrypt by "
+            "default when the recipient has an E2E key; set plaintext=true only for "
+            "explicit server-readable mail."
         ),
     )
     async def send_mail(
@@ -179,16 +182,19 @@ def register_tools(
         conversation_id: str = "",
         subject: str = "",
         priority: str = "normal",
+        plaintext: bool = False,
     ) -> str:
         return await _send_mail_impl(
             db_infra,
             registry_client=registry_client,
             hosted_signer=hosted_signer,
+            hosted_encryptor=hosted_encryptor,
             to=to,
             conversation_id=conversation_id,
             subject=subject,
             body=body,
             priority=priority,
+            plaintext=plaintext,
             federation_transport=federation_mail_transport,
             public_origin=public_origin,
         )
@@ -196,8 +202,8 @@ def register_tools(
     @mcp.tool(
         name="check_mail",
         description=(
-            "Check hosted mail metadata and legacy plaintext messages. Encrypted E2E "
-            "message contents are not decrypted by hosted MCP; read them in a local aw client."
+            "Check hosted mail. Hosted custodial identities decrypt encrypted E2E "
+            "mail for this MCP session; self-custodial encrypted content remains metadata-only."
         ),
     )
     async def check_mail(
@@ -205,6 +211,7 @@ def register_tools(
     ) -> str:
         return await _check_inbox_impl(
             db_infra,
+            hosted_decryptor=hosted_decryptor,
             unread_only=unread_only,
             limit=limit,
             include_bodies=include_bodies,
@@ -552,7 +559,7 @@ def register_tools(
         name="check_inbox",
         description=(
             "Legacy compatibility alias for check_mail. Prefer check_mail. "
-            "Hosted MCP cannot decrypt E2E contents."
+            "Hosted custodial identities decrypt encrypted E2E mail for this MCP session."
         ),
     )
     async def check_inbox(
@@ -560,6 +567,7 @@ def register_tools(
     ) -> str:
         return await _check_inbox_impl(
             db_infra,
+            hosted_decryptor=hosted_decryptor,
             unread_only=unread_only,
             limit=limit,
             include_bodies=include_bodies,
@@ -676,6 +684,7 @@ def register_tools(
             redis=redis,
             registry_client=registry_client,
             hosted_signer=hosted_signer,
+            hosted_encryptor=hosted_encryptor,
             contact_id=contact_id,
             message=message,
             subject=subject,
@@ -716,6 +725,8 @@ def create_mcp_app(
     redis: Optional[Redis] = None,
     registry_client: RegistryClient | None = None,
     hosted_signer: HostedMessageSigner | None = None,
+    hosted_encryptor: HostedMessageEncryptor | None = None,
+    hosted_decryptor: HostedMessageDecryptor | None = None,
     federation_mail_transport=None,
     federation_chat_transport=None,
     public_origin: str | None = None,
@@ -756,6 +767,8 @@ def create_mcp_app(
         redis,
         registry_client,
         hosted_signer=hosted_signer,
+        hosted_encryptor=hosted_encryptor,
+        hosted_decryptor=hosted_decryptor,
         federation_mail_transport=federation_mail_transport,
         federation_chat_transport=federation_chat_transport,
         public_origin=public_origin,
