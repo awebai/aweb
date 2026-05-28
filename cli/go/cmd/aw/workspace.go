@@ -420,9 +420,14 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 			teamID, teamDomain, teamName, sourceServerURL, workingDir,
 			alias, role, state,
 		)
-	} else {
+	} else if strings.TrimSpace(state.APIKey) != "" {
 		_, err = addWorktreeViaCloudBootstrap(
 			worktreePath, root, branchName, branchCreated,
+			sourceServerURL, alias, role, state,
+		)
+	} else {
+		_, err = addWorktreeViaPrimaryInvite(
+			workingDir, worktreePath, root, branchName, branchCreated,
 			sourceServerURL, alias, role, state,
 		)
 	}
