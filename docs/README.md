@@ -42,6 +42,9 @@ These documents define the system:
 - [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
   engineering contract for the two supported onboarding shapes: Fully Hosted
   and BYOT
+- [bootstrap-layout-contract.md](bootstrap-layout-contract.md): the normative
+  contract for the in-repo `agents/` bootstrap convention, legacy bootstrap
+  compatibility boundary, and generated agent-home layout
 
 ## User guides
 

@@ -26,6 +26,12 @@ For the underlying team model — what a team is, how membership
 certificates work, how cross-team addressing differs from same-team
 aliases — see [teams.md](https://aweb.ai/docs/teams.md).
 
+The in-repo `agents/` bootstrap convention is specified in
+[`bootstrap-layout-contract.md`](bootstrap-layout-contract.md). That
+contract defines the new project-local layout, the legacy
+template-checkout compatibility boundary, and the fail-before-side-effects
+rules implementers must follow.
+
 ## Mental model
 
 Bootstrap is easier to reason about if you keep four layers
