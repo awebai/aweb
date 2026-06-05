@@ -72,10 +72,12 @@ SERVICE_ALPHA_DIR="$E2E_CWD/service-alpha"
 SERVICE_BETA_DIR="$E2E_CWD/service-beta"
 BOOTSTRAP_PROJECT_DIR="$E2E_CWD/bootstrap-project"
 BOOTSTRAP_TEMPLATE_DIR="$E2E_CWD/bootstrap-template"
+BOOTSTRAP_LEGACY_TEMPLATE_DIR="$E2E_CWD/bootstrap-legacy-template"
+BOOTSTRAP_LEGACY_WORK_DIR="$E2E_CWD/bootstrap-legacy-work"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_WORK_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
@@ -94,6 +96,8 @@ SERVICE_ALPHA_DIR="$(canonicalize_dir "$SERVICE_ALPHA_DIR")"
 SERVICE_BETA_DIR="$(canonicalize_dir "$SERVICE_BETA_DIR")"
 BOOTSTRAP_PROJECT_DIR="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR")"
 BOOTSTRAP_TEMPLATE_DIR="$(canonicalize_dir "$BOOTSTRAP_TEMPLATE_DIR")"
+BOOTSTRAP_LEGACY_TEMPLATE_DIR="$(canonicalize_dir "$BOOTSTRAP_LEGACY_TEMPLATE_DIR")"
+BOOTSTRAP_LEGACY_WORK_DIR="$(canonicalize_dir "$BOOTSTRAP_LEGACY_WORK_DIR")"
 
 pass=0
 fail=0
@@ -675,12 +679,72 @@ else
   pass=$((pass + 1))
 fi
 
+bootstrap_before_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -prune -o -print | LC_ALL=C sort)"
+bootstrap_before_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
 rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL" 2>&1 || true)"
+  --aweb-url "http://127.0.0.1:9" \
+  --registry "http://127.0.0.1:9" 2>&1 || true)"
 assert_contains "bootstrap rerun refuses existing agents dir" "$rerun_output" "agents directory already exists"
+bootstrap_after_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -prune -o -print | LC_ALL=C sort)"
+bootstrap_after_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
+assert_eq "bootstrap rerun leaves filesystem snapshot unchanged" "$bootstrap_before_tree" "$bootstrap_after_tree"
+assert_eq "bootstrap rerun leaves git status unchanged" "$bootstrap_before_status" "$bootstrap_after_status"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 1c: Bootstrap legacy work-directory compatibility
+# ---------------------------------------------------------------------------
+echo "=== Phase 1c: Bootstrap legacy work-directory layout ==="
+
+cat > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/team.yaml" <<'EOF'
+name: bootstrap-legacy-e2e
+instructions:
+  file: docs/team.md
+roles:
+  coordinator:
+    title: Coordinator
+    file: roles/coordinator.md
+agents:
+  coordinator:
+    role_name: coordinator
+    default_name: bootstrap-legacy-coord
+    default_alias: blegacy
+EOF
+mkdir -p "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/docs" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/roles" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator"
+printf '# Legacy bootstrap team\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/docs/team.md"
+printf '# Legacy coordinator role\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/roles/coordinator.md"
+printf '# Legacy coordinator home\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/AGENTS.md"
+printf '# legacy work repo\n' > "$BOOTSTRAP_LEGACY_WORK_DIR/README.md"
+git -C "$BOOTSTRAP_LEGACY_WORK_DIR" init >/dev/null
+git -C "$BOOTSTRAP_LEGACY_WORK_DIR" config user.email test@example.com
+git -C "$BOOTSTRAP_LEGACY_WORK_DIR" config user.name "Test User"
+git -C "$BOOTSTRAP_LEGACY_WORK_DIR" add README.md
+git -C "$BOOTSTRAP_LEGACY_WORK_DIR" commit -m init >/dev/null
+
+run_success "bootstrap legacy work-directory apply" run_aw_in "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" team bootstrap "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" \
+  --namespace bootstrap.local \
+  --team circle \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL" \
+  --work-directory "$BOOTSTRAP_LEGACY_WORK_DIR"
+
+assert_file_exists "bootstrap legacy coordinator workspace" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/.aw/workspace.yaml"
+if [[ -L "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/work" ]]; then
+  legacy_work_target="$(canonicalize_dir "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/work")"
+  assert_eq "bootstrap legacy work points to work-directory" "$BOOTSTRAP_LEGACY_WORK_DIR" "$legacy_work_target"
+else
+  echo "  FAIL: bootstrap legacy work symlink missing"
+  fail=$((fail + 1))
+fi
+if [[ -d "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/home" || -d "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/worktrees" ]]; then
+  echo "  FAIL: bootstrap legacy mode created in-repo layout directories"
+  fail=$((fail + 1))
+else
+  echo "  PASS: bootstrap legacy mode did not create in-repo layout directories"
+  pass=$((pass + 1))
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
