@@ -174,7 +174,7 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Deprecated alias for --work-directory (kept for one release cycle)")
 	_ = teamBootstrapCmd.Flags().MarkHidden("work-repo")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
@@ -452,15 +452,9 @@ func applyInRepoBootstrapWorkBindings(layout teamBootstrapLayout, plans []teamBo
 		case teamBootstrapWorkRepoRoot:
 			plans[i].WorkDir = layout.CustomerRepoRoot
 		case teamBootstrapWorkGitWorktree:
-			name := strings.TrimSpace(plans[i].Alias)
-			if name == "" {
-				name = sanitizeSlug(plans[i].Name)
-			}
-			if name == "" {
-				name = sanitizeSlug(plans[i].Responsibility)
-			}
-			if name == "" {
-				return fmt.Errorf("cannot derive worktree name for %s", plans[i].Responsibility)
+			name, err := teamBootstrapWorktreeName(plans[i])
+			if err != nil {
+				return err
 			}
 			plans[i].WorkDir = filepath.Join(layout.WorktreesRoot, name)
 		default:
@@ -499,12 +493,9 @@ func createInRepoBootstrapWorktrees(layout teamBootstrapLayout, plans []teamBoot
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("stat worktree path %s: %w", plan.WorkDir, err)
 		}
-		branchName := strings.TrimSpace(plan.Alias)
-		if branchName == "" {
-			branchName = sanitizeSlug(plan.Name)
-		}
-		if branchName == "" {
-			branchName = sanitizeSlug(plan.Responsibility)
+		branchName, err := teamBootstrapWorktreeName(plan)
+		if err != nil {
+			return err
 		}
 		branchCreated, err := createWorkspaceGitWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, jsonFlag)
 		if err != nil {
@@ -516,6 +507,19 @@ func createInRepoBootstrapWorktrees(layout teamBootstrapLayout, plans []teamBoot
 		}
 	}
 	return nil
+}
+
+func teamBootstrapWorktreeName(plan teamBootstrapAgentPlan) (string, error) {
+	for _, candidate := range []string{plan.Alias, plan.Name, plan.Responsibility} {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		name := sanitizeSlug(candidate)
+		if name != "" {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("cannot derive worktree name for %s", plan.Responsibility)
 }
 
 func ensureInRepoBootstrapGitignore(layout teamBootstrapLayout) error {

@@ -172,7 +172,7 @@ Flags:
 - `--skip-roles Do not install the roles bundle`
 - `--team string BYOT team name/slug to create/use (required for one-step BYOT team bootstrap)`
 - `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--template-cache-dir string Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)`
+- `--template-cache-dir string Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)`
 - `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
 - `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
 - `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`

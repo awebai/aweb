@@ -263,6 +263,43 @@ func TestTeamBootstrapInRepoPlansUseHomeTemplateAndWorkBindings(t *testing.T) {
 	}
 }
 
+func TestTeamBootstrapInRepoSanitizesWorktreeAliasPath(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	spec, err := loadTeamBootstrapSpec(templateDir)
+	if err != nil {
+		t.Fatalf("loadTeamBootstrapSpec: %v", err)
+	}
+	agent := spec.Agents["implementation"]
+	agent.DefaultAlias = "../escape"
+	spec.Agents["implementation"] = agent
+	if err := validateTeamBootstrapSpec(templateDir, spec); err != nil {
+		t.Fatalf("validateTeamBootstrapSpec: %v", err)
+	}
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	layout := teamBootstrapLayout{
+		Mode:             teamBootstrapLayoutInRepo,
+		CustomerRepoRoot: repoRoot,
+		AgentsDirName:    "agents",
+		AgentsRoot:       filepath.Join(repoRoot, "agents"),
+	}
+	layout.HomeRoot = filepath.Join(layout.AgentsRoot, "home")
+	layout.WorktreesRoot = filepath.Join(layout.AgentsRoot, "worktrees")
+
+	plans, err := buildTeamBootstrapPlans(strings.NewReader(""), &bytes.Buffer{}, templateDir, layout.HomeRoot, spec, false)
+	if err != nil {
+		t.Fatalf("buildTeamBootstrapPlans: %v", err)
+	}
+	if err := applyInRepoBootstrapWorkBindings(layout, plans); err != nil {
+		t.Fatalf("applyInRepoBootstrapWorkBindings: %v", err)
+	}
+	got := plans[1].WorkDir
+	want := filepath.Join(layout.WorktreesRoot, "escape")
+	if got != want {
+		t.Fatalf("worktree path=%q want %q", got, want)
+	}
+}
+
 func TestTeamBootstrapInRepoDryRunDoesNotCreateAgentsDir(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	templateDir := writeInRepoTeamBootstrapFixture(t)
