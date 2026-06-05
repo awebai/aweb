@@ -70,10 +70,12 @@ WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
 SERVICE_CONTROLLER_DIR="$E2E_CWD/service-controller"
 SERVICE_ALPHA_DIR="$E2E_CWD/service-alpha"
 SERVICE_BETA_DIR="$E2E_CWD/service-beta"
+BOOTSTRAP_PROJECT_DIR="$E2E_CWD/bootstrap-project"
+BOOTSTRAP_TEMPLATE_DIR="$E2E_CWD/bootstrap-template"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
@@ -90,6 +92,8 @@ WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 SERVICE_CONTROLLER_DIR="$(canonicalize_dir "$SERVICE_CONTROLLER_DIR")"
 SERVICE_ALPHA_DIR="$(canonicalize_dir "$SERVICE_ALPHA_DIR")"
 SERVICE_BETA_DIR="$(canonicalize_dir "$SERVICE_BETA_DIR")"
+BOOTSTRAP_PROJECT_DIR="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR")"
+BOOTSTRAP_TEMPLATE_DIR="$(canonicalize_dir "$BOOTSTRAP_TEMPLATE_DIR")"
 
 pass=0
 fail=0
@@ -519,6 +523,164 @@ if [[ "$awid_status" != "ok" || "$aweb_status" != "ok" ]]; then
   cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs 2>&1 | tail -30
   exit 1
 fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 1b: Bootstrap project-local agents/ layout against Docker stack
+# ---------------------------------------------------------------------------
+echo "=== Phase 1b: Bootstrap in-repo agents/ layout ==="
+
+cat > "$BOOTSTRAP_TEMPLATE_DIR/team.yaml" <<'EOF'
+name: bootstrap-e2e
+instructions:
+  file: docs/team.md
+roles:
+  coordinator:
+    title: Coordinator
+    file: roles/coordinator.md
+  developer:
+    title: Developer
+    file: roles/developer.md
+  reviewer:
+    title: Reviewer
+    file: roles/reviewer.md
+agents:
+  coordinator:
+    role_name: coordinator
+    default_name: bootstrap-coord
+    default_alias: bcoord
+    home_template: home/coordinator
+    work: repo_root
+  developer:
+    role_name: developer
+    default_name: bootstrap-dev
+    default_alias: bdev
+    home_template: home/developer
+    work: git_worktree
+  reviewer:
+    role_name: reviewer
+    default_name: bootstrap-review
+    default_alias: breview
+    home_template: home/reviewer
+    work: git_worktree
+EOF
+mkdir -p "$BOOTSTRAP_TEMPLATE_DIR/docs" "$BOOTSTRAP_TEMPLATE_DIR/roles" "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator" "$BOOTSTRAP_TEMPLATE_DIR/home/developer" "$BOOTSTRAP_TEMPLATE_DIR/home/reviewer"
+printf '# Bootstrap team\n' > "$BOOTSTRAP_TEMPLATE_DIR/docs/team.md"
+printf '# Coordinator role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/coordinator.md"
+printf '# Developer role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/developer.md"
+printf '# Reviewer role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/reviewer.md"
+printf '# Coordinator home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator/AGENTS.md"
+printf 'visible blueprint\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator/README.md"
+printf '# Developer home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/developer/AGENTS.md"
+printf '# Reviewer home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/reviewer/AGENTS.md"
+
+git -C "$BOOTSTRAP_PROJECT_DIR" init >/dev/null
+git -C "$BOOTSTRAP_PROJECT_DIR" config user.email test@example.com
+git -C "$BOOTSTRAP_PROJECT_DIR" config user.name "Test User"
+printf '# bootstrap project\n' > "$BOOTSTRAP_PROJECT_DIR/README.md"
+git -C "$BOOTSTRAP_PROJECT_DIR" add README.md
+git -C "$BOOTSTRAP_PROJECT_DIR" commit -m init >/dev/null
+
+run_success "bootstrap namespace prepare" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace prepare-controller \
+  --domain bootstrap.local \
+  --registry "$AWID_URL"
+
+run_success "bootstrap dry-run" run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+  --dry-run \
+  --namespace bootstrap.local \
+  --team circle \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents" ]]; then
+  echo "  FAIL: bootstrap dry-run created agents directory"
+  fail=$((fail + 1))
+else
+  echo "  PASS: bootstrap dry-run created no agents directory"
+  pass=$((pass + 1))
+fi
+
+run_success "bootstrap apply" run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+  --namespace bootstrap.local \
+  --team circle \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+
+assert_file_exists "bootstrap copied team.yaml" "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"
+assert_file_exists "bootstrap coordinator workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/.aw/workspace.yaml"
+assert_file_exists "bootstrap developer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/.aw/workspace.yaml"
+assert_file_exists "bootstrap reviewer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/.aw/workspace.yaml"
+assert_file_exists "bootstrap copied home blueprint" "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/README.md"
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev/.git" ]]; then
+  echo "  PASS: bootstrap developer worktree exists"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: bootstrap developer worktree missing"
+  fail=$((fail + 1))
+fi
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview/.git" ]]; then
+  echo "  PASS: bootstrap reviewer worktree exists"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: bootstrap reviewer worktree missing"
+  fail=$((fail + 1))
+fi
+if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/work" ]]; then
+  coord_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/work")"
+  assert_eq "bootstrap coordinator work points to repo root" "$BOOTSTRAP_PROJECT_DIR" "$coord_work_target"
+else
+  echo "  FAIL: bootstrap coordinator work symlink missing"
+  fail=$((fail + 1))
+fi
+if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work" ]]; then
+  dev_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work")"
+  assert_eq "bootstrap developer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev" "$dev_work_target"
+else
+  echo "  FAIL: bootstrap developer work symlink missing"
+  fail=$((fail + 1))
+fi
+if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work" ]]; then
+  review_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work")"
+  assert_eq "bootstrap reviewer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview" "$review_work_target"
+else
+  echo "  FAIL: bootstrap reviewer work symlink missing"
+  fail=$((fail + 1))
+fi
+if grep -qx '/agents/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
+  echo "  FAIL: bootstrap gitignore hides all agents"
+  fail=$((fail + 1))
+else
+  echo "  PASS: bootstrap gitignore does not hide all agents"
+  pass=$((pass + 1))
+fi
+if grep -Fqx '/agents/home/*/.aw/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
+  echo "  PASS: bootstrap gitignore ignores .aw"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: bootstrap gitignore missing .aw pattern"
+  fail=$((fail + 1))
+fi
+if grep -Fqx '/agents/worktrees/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
+  echo "  PASS: bootstrap gitignore ignores worktrees"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: bootstrap gitignore missing worktrees pattern"
+  fail=$((fail + 1))
+fi
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/.aw" ]]; then
+  echo "  FAIL: bootstrap created repo-root .aw"
+  fail=$((fail + 1))
+else
+  echo "  PASS: bootstrap did not create repo-root .aw"
+  pass=$((pass + 1))
+fi
+
+rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+  --namespace bootstrap.local \
+  --team circle \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL" 2>&1 || true)"
+assert_contains "bootstrap rerun refuses existing agents dir" "$rerun_output" "agents directory already exists"
 echo ""
 
 # ---------------------------------------------------------------------------

@@ -135,23 +135,35 @@ The template repository is convention-first:
 
   docs/                  shared team/project instructions
   roles/                 role playbooks installed with aw roles set
-  agents/<responsibility>/AGENTS.md
+  home/<responsibility>/AGENTS.md
   team.yaml              maps agent responsibility dirs to aw role names
 
 team.yaml supplies the parts that cannot be inferred safely: role bundle
 metadata, each agent responsibility's role_name, and default identity names.
-Agent directory names are responsibilities (for example implementation or
-review), not fixed human/agent names. By default bootstrap uses the template's
-default identity names; pass --ask-for-agent-names when you want an interactive
-prompt to rename generated agents before provisioning.
+Agent directory names are responsibilities (for example coordinator,
+implementation, or review), not fixed human/agent names.
+
+By default bootstrap runs in the current project git repo and creates an
+agents/ convention directory:
+
+  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
+  agents/worktrees/<alias>/          generated git worktrees for worktree agents
+
+Use --agents-dir to choose a different project-local convention directory.
+Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
+
+By default bootstrap uses the template's default identity names; pass
+--ask-for-agent-names when you want an interactive prompt to rename generated
+agents before provisioning.
 
 Flags:
+- `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
 - `--ask-for-agent-names Prompt for generated agent names instead of using template defaults`
 - `--aweb-url string Aweb server base URL to connect each generated agent workspace`
 - `--dry-run Validate and print the bootstrap plan without changing files or team roles`
 - `--fork Fork the template repository with gh and clone the fork into the destination directory`
 - `-h, --help help for bootstrap`
-- `--home-root string Directory where agent workspaces are created (default: <template-dir>/agents)`
+- `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT team bootstrap)`
 - `--refresh-template Re-clone the template into the destination directory before using it`
@@ -162,8 +174,8 @@ Flags:
 - `--team-display-name string Optional team display name when creating a new BYOT team`
 - `--template-cache-dir string Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)`
 - `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
-- `--work-directory string Directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
-- `--work-repo-url string Git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
+- `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
+- `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
 
 ## `workspace`
 
@@ -173,6 +185,7 @@ Manage repo-local coordination workspaces
 
 Subcommands:
 - `add-worktree` Create a sibling git worktree and initialize a new coordination workspace in it
+- `delete` Delete a local workspace and its local identity
 - `migrate-multi-team` Rewrite a legacy single-team workspace into the canonical multi-team shape
 - `status` Show coordination status for the current workspace/identity and team
 
@@ -189,6 +202,15 @@ Create a sibling git worktree and initialize a new coordination workspace in it
 Flags:
 - `--alias string Override the default alias`
 - `-h, --help help for add-worktree`
+
+## `workspace delete`
+
+### `workspace delete`
+
+Delete a local workspace and its local identity
+
+Flags:
+- `-h, --help help for delete`
 
 ## `workspace migrate-multi-team`
 
@@ -827,6 +849,8 @@ Subcommands:
 - `listen` Wait for a message without sending
 - `open` Open a chat session
 - `pending` List pending chat sessions
+- `read` Mark chat messages read by session and message id
+- `send` Send a message to an exact chat session
 - `send-and-leave` Send a message and leave the conversation
 - `send-and-wait` Send a message and wait for a reply
 - `show-pending` Show pending messages for alias
@@ -854,6 +878,10 @@ Show chat history with alias
 
 Flags:
 - `-h, --help help for history`
+- `--limit int Maximum messages to fetch (default 1000)`
+- `--message-id string Fetch one message by id when using --session-id`
+- `--session-id string Fetch chat history by session id instead of alias`
+- `--unread-only Fetch unread messages only`
 
 ## `chat listen`
 
@@ -882,6 +910,32 @@ List pending chat sessions
 
 Flags:
 - `-h, --help help for pending`
+
+## `chat read`
+
+### `chat read`
+
+Mark chat messages read by session and message id
+
+Flags:
+- `-h, --help help for read`
+- `--message-id string Last delivered message id to mark read`
+- `--session-id string Chat session id`
+
+## `chat send`
+
+### `chat send`
+
+Send a message to an exact chat session
+
+Flags:
+- `--body string Body (mutually exclusive with --body-file)`
+- `--body-file string Read body from file`
+- `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
+- `-h, --help help for send`
+- `--leave Leave the conversation after sending`
+- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--session-id string Existing chat session id`
 
 ## `chat send-and-leave`
 
@@ -1082,6 +1136,7 @@ Flags:
 Agent messaging
 
 Subcommands:
+- `ack` Acknowledge one mail message as read
 - `inbox` List inbox messages (unread only by default)
 - `reply` Reply to an existing mail conversation
 - `send` Send a message to another agent
@@ -1090,6 +1145,15 @@ Subcommands:
 Flags:
 - `-h, --help help for mail`
 - `--team string Override the selected team_id for this command`
+
+## `mail ack`
+
+### `mail ack`
+
+Acknowledge one mail message as read
+
+Flags:
+- `-h, --help help for ack`
 
 ## `mail inbox`
 

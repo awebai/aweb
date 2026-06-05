@@ -1,6 +1,6 @@
 ---
 name: aweb-bootstrap
-description: This skill should be used when helping a human create or join an aweb team from a template (aw team bootstrap), choosing a template and team source (hosted new team, BYOT, API key, invite, or current workspace forwarding), selecting work-directory vs work-repo-url, provisioning optional worktree agents, and validating/re-running bootstrap safely.
+description: This skill should be used when helping a human create or join an aweb team from a template (aw team bootstrap), choosing a template and team source (hosted new team, BYOT, API key, invite, or current workspace forwarding), using the project-local agents/ layout or legacy work-directory/work-repo-url mode, provisioning optional worktree-bound agents, and validating/re-running bootstrap safely.
 allowed-tools: "Bash(aw *)"
 ---
 
@@ -20,27 +20,35 @@ Long-form reference: docs/team-bootstrap.md in the aweb repo.
 
 ## Mental model: what bootstrap is assembling
 
-`aw team bootstrap` combines four separate things that are easy to confuse:
+`aw team bootstrap` combines five separate things that are easy to confuse:
 
 1) Template repo — the blueprint.
 
-- Contains `team.yaml`, role playbooks, shared instructions, and `agents/<responsibility>/AGENTS.md` files.
+- Contains `team.yaml`, role playbooks, shared instructions, and `home/<responsibility>/AGENTS.md` files.
 - The template says what responsibilities should exist and which `role_name` each should use.
 
-2) Work directory or work repo — the thing agents work on.
+2) Generated project-local agents directory — where humans start agents.
 
-- `--work-directory` points at an existing folder.
-- `--work-repo-url` clones a repo into `<template>/worktrees/<derived-name>/` and uses that clone as the work directory.
-- Each responsibility workspace gets this directory symlinked as `./work`.
+- By default, run bootstrap from the root of the work repo.
+- Bootstrap creates `agents/` in that repo. Every live agent home is under `agents/home/<responsibility>/`.
+- The coordinator/global-style home normally has `work -> <repo-root>`.
+- Worktree-bound homes still live under `agents/home/<responsibility>/`; their `work` symlink points at `agents/worktrees/<alias-or-responsibility>/`.
+- Use `--agents-dir <name>` only when the repo already uses `agents/` for something else. If the target directory exists, bootstrap must fail before side effects.
 
-3) Team source — the authority/context the generated agents join.
+3) Legacy work directory or work repo — compatibility mode.
+
+- Passing `--work-directory` or `--work-repo-url` selects the old out-of-repo layout.
+- Do not combine `--agents-dir` with either legacy work flag.
+- Legacy mode is still supported for existing scripts/templates, but do not choose it for a new customer unless they explicitly need the old shape.
+
+4) Team source — the authority/context the generated agents join.
 
 - Hosted new team, existing hosted team via `AWEB_API_KEY`, explicit `--invite-token`, current workspace forwarding, or BYOT.
 - Exactly one explicit source is allowed. If no explicit source is set and cwd is already an aw workspace, bootstrap forwards that current team. If no current workspace exists and the run is interactive, bootstrap creates a hosted team. Non-interactive runs need an explicit source.
 
-4) Generated workspaces — the identities that will act.
+5) Generated workspaces — the identities that will act.
 
-- Each `agents/<responsibility>/` directory becomes an aw workspace with its own identity and team certificate.
+- Each `agents/home/<responsibility>/` directory becomes an aw workspace with its own identity and team certificate.
 - The **first generated plan** is the anchor: bootstrap connects it first, installs roles/instructions from that workspace's team context, then invites/connects the rest.
 - Do not assume a responsibility named `implementation` is special. The anchor is the first plan the CLI generated.
 
@@ -70,6 +78,9 @@ Do NOT bootstrap when:
 
 Canonical templates:
 
+- awebai/aweb-team-coord-worktrees (3 agents)
+  Use when you want a coordinator plus isolated developer/reviewer git worktrees in the current repo.
+
 - awebai/aweb-team-dev-review (2 agents)
   Use when you want the smallest meaningful team: implementation + review.
 
@@ -80,7 +91,7 @@ Fork/edit vs use-as-is:
 
 - Use as-is to learn the flow or to run a standard team.
 - Clone or fork when you want to customize roles, responsibilities, or instructions before provisioning.
-- It is safe to edit the template checkout before applying it; `aw team bootstrap` reads `team.yaml`, `roles/`, `docs/`, and `agents/` from the local template directory at run time.
+- It is safe to edit the template checkout before applying it; `aw team bootstrap` reads `team.yaml`, `roles/`, `docs/`, and `home/` from the local template directory at run time.
 
 ## Customizing a template before applying it
 
@@ -91,54 +102,87 @@ Typical safe flow:
 ```bash
 git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
 cd my-team-template
-# edit team.yaml, roles/*.md, docs/team.md, agents/<responsibility>/AGENTS.md
-aw team bootstrap . --dry-run --work-directory /path/to/work
-aw team bootstrap . --work-directory /path/to/work
+# edit team.yaml, roles/*.md, docs/team.md, home/<responsibility>/AGENTS.md
+cd /path/to/project-repo
+aw team bootstrap /path/to/my-team-template --dry-run
+aw team bootstrap /path/to/my-team-template --username alice
 ```
 
 What to edit:
 
 - `team.yaml` roles: add/remove role names and point each to a role file.
-- `team.yaml` agents: add/remove responsibility workspaces and set each `role_name`, `default_name`, and `default_alias`.
-- `team.yaml` worktrees: add/remove local git-worktree agents for code work.
+- `team.yaml` agents: add/remove responsibility workspaces and set each `role_name`, `default_name`, `default_alias`, optional `home_template`, and optional `work`.
+- Use `work: repo_root` for an agent whose `work` symlink points to the project repo root.
+- Use `work: git_worktree` for an agent whose `work` symlink points to a generated git worktree under `agents/worktrees/`.
 - `roles/*.md`: change operational playbooks installed with `aw roles`.
 - `docs/team.md`: change shared team instructions installed after the anchor connects.
-- `agents/<responsibility>/AGENTS.md`: change per-workspace startup context.
+- `home/<responsibility>/AGENTS.md`: change per-workspace startup context.
 
 Default agent names are accepted automatically. Only use `--ask-for-agent-names` when a human specifically wants an interactive rename prompt during bootstrap.
 
 ## Before running bootstrap (safety checks)
 
-1) Run bootstrap from a directory that is NOT already inside a git repo/worktree.
+1) For the default layout, run bootstrap from the root of the project git repo.
 
-- If you are inside a git repo/worktree and you are using a remote template ref, bootstrap will refuse to clone by default.
-- Use `--template-cache-dir` as the explicit escape hatch when you must run from inside a repo.
+- Bootstrap creates `agents/` there.
+- If `agents/` exists, stop. Do not ask bootstrap to adopt, merge, or overwrite it.
+- If the project already has a different `agents/` directory, ask the human for a different `--agents-dir <name>`.
 
-2) Decide the “work” directory model (see next section). This affects whether agents share one checkout or get isolated worktrees.
+2) Decide the team source. This affects whether bootstrap creates a new hosted team, joins an API-key/invite team, forwards the current team, or uses BYOT.
 
-## Exactly one of: work-directory OR work-repo-url (XOR)
+3) Use legacy work flags only for old out-of-repo bootstrap scripts.
 
-Bootstrap needs a directory to symlink into each agent workspace as ./work.
+## Default layout: project-local agents/
 
-You must provide exactly one of:
+New bootstrap runs should normally use the default layout:
 
-A) --work-directory PATH
+```bash
+cd /path/to/project-repo
+aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username alice
+```
 
-- Use when you already have a local directory you want agents to use as work.
-- For code teams with worktree agents (team.yaml worktrees:), PATH must be a git repo.
+Expected generated shape:
 
-B) --work-repo-url VALUE
+```text
+agents/
+  team.yaml
+  docs/
+  roles/
+  home/
+    coordinator/
+      .aw/
+      AGENTS.md
+      work -> ../../..
+    developer/
+      .aw/
+      AGENTS.md
+      work -> ../../worktrees/dev
+    reviewer/
+      .aw/
+      AGENTS.md
+      work -> ../../worktrees/review
+  worktrees/
+    dev/
+    review/
+```
 
-- Use when you want bootstrap to clone a repo for you.
-- VALUE can be a URL or a local path; bootstrap runs “git clone VALUE” into:
+The repo root itself is not an aw workspace. Start Codex, Claude Code, or Pi from an agent home, for example:
 
-  <template-checkout>/worktrees/<derived-name>/
+```bash
+cd agents/home/coordinator
+codex
+```
 
-  where <derived-name> matches git’s default directory naming (basename, .git stripped).
+Bootstrap writes scoped `.gitignore` entries for `agents/home/*/.aw/` and `agents/worktrees/`. It must not ignore the whole `agents/` directory.
 
-- That clone destination is then used as the effective work directory (symlinked as ./work in each agent workspace).
+## Legacy mode: work-directory OR work-repo-url (XOR)
 
-If both flags are set, treat it as a user error and stop.
+Use legacy mode only for existing scripts/templates that expect generated homes outside the work repo.
+
+- `--work-directory PATH`: use an existing local directory as each responsibility workspace's `./work`.
+- `--work-repo-url VALUE`: clone a repo into `<template-checkout>/worktrees/<derived-name>/` and use that clone as `./work`.
+
+If both flags are set, treat it as a user error and stop. If `--agents-dir` is combined with either legacy flag, treat it as a user error and stop.
 
 ## Team source policy
 
@@ -199,16 +243,17 @@ Policy guidance:
 - Prefer BYOT when you need local control over the team namespace/domain and routing.
 - Use `--dry-run` for planning only. It prints the resolved plan (template ref, work directory, team source, generated workspaces) without writing identities, files, or server state. Do not pair it with side-effecting flags expecting partial provisioning.
 
-## Worktree agents (team.yaml worktrees:)
+## Worktree-bound agents (`work: git_worktree`)
 
-Worktree agents are an OPTIONAL second layer for codebases where multiple agents will edit in parallel.
+Worktree-bound agents are for codebases where multiple agents will edit in parallel.
 
-- Responsibility workspaces live under agents/<responsibility>/.
-- Worktree agents live under worktrees/ and each has its own git worktree checkout and its own .aw/ identity state.
+- Every live home stays under `agents/home/<responsibility>/`.
+- A `work: git_worktree` agent gets a git checkout under `agents/worktrees/<alias-or-responsibility>/`.
+- Its home has `work -> ../../worktrees/<alias-or-responsibility>`.
 
-Turn worktree agents on when:
+Use `work: git_worktree` when:
 
-- The work directory is a git repo.
+- The project directory is a git repo.
 - Multiple agents will change files in parallel.
 - You want each agent’s edits isolated until you merge.
 
@@ -219,11 +264,11 @@ Leave it off when:
 
 Operational note:
 
-- Worktree agents are local-only identities by design; they are for parallel local work, not for global addressability.
+- Worktree-bound agents are local identities by default; they are for parallel local work, not for global addressability.
 
 ## After bootstrap: validate that the team is actually usable
 
-For each agent directory under agents/<responsibility>/:
+For each agent directory under `agents/home/<responsibility>/`:
 
 - Run `aw workspace status` to confirm:
   - the workspace is initialized
@@ -242,6 +287,7 @@ When iterating on templates or recovering from partial setup:
 - Use `--refresh-template` only when you intend to re-clone over a previous template checkout.
 - Treat identity/certificate state under .aw/ as the source of truth; do not delete it casually.
 - If you need to create a fresh workspace, do it in a new directory rather than mutating an existing identity in place.
+- If `agents/` already exists, do not retry over it. Pick a different `--agents-dir` or remove the existing directory only if the human confirms it is disposable.
 
 If bootstrap fails mid-way:
 

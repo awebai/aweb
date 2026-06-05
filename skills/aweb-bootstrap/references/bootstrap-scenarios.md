@@ -6,8 +6,9 @@ It is intentionally narrower than docs/team-bootstrap.md: it focuses on common d
 
 ## Quick mental model
 
-- Template repo = blueprint for roles, instructions, and responsibility directories.
-- Work directory/repo = the project/content agents see as `./work`.
+- Template repo = blueprint for roles, instructions, and agent home templates.
+- Default generated layout = project-local `agents/` directory containing `home/`, `worktrees/`, `roles/`, `docs/`, and `team.yaml`.
+- Work target = what each agent's `work` symlink points at: the repo root (`work: repo_root`) or a generated git worktree (`work: git_worktree`).
 - Team source = the authority the generated agents join.
 - First generated workspace = bootstrap anchor. It connects first; roles/instructions install through it; all other generated agents join through invites from that established team context.
 - BYOT means bring your own team, including your own namespace/domain and controller key. Do not present a separate domain-only bootstrap mode.
@@ -25,27 +26,28 @@ Goal: create a new aweb.ai team and provision agent workspaces from a template.
 
 Checklist:
 
-- Run from a directory that is not inside an existing git repo/worktree.
+- Run from the root of the project git repo.
+- Confirm the target agents directory does not already exist. Default: `agents/`.
 - Pick a template:
+  - awebai/aweb-team-coord-worktrees for coordinator + developer/reviewer worktrees.
   - awebai/aweb-team-dev-review for a minimal 2-agent setup.
   - awebai/aweb-team-company-surfaces for a 6-agent cross-functional setup.
 
-Example (using an existing local work directory):
+Example:
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username alice --work-directory /path/to/work
+  cd /path/to/project-repo
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username alice
 
-Example (clone the work repo into the template checkout):
+Example with a non-default agents directory:
 
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username alice --work-repo-url https://github.com/ORG/REPO.git
+  cd /path/to/project-repo
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username alice --agents-dir aweb-agents
 
 Notes:
 
-- work-directory and work-repo-url are XOR: set exactly one.
-- When work-repo-url is used, bootstrap clones into:
-
-  <template-checkout>/worktrees/<derived-name>/
-
-  where derived-name is the git-style repo directory name (basename with .git stripped).
+- Bootstrap creates `agents/home/<agent>/` for every live agent home.
+- Worktree-bound agents get checkouts under `agents/worktrees/<alias-or-agent>/`.
+- The repo root is not an aw workspace; humans should start Codex/Claude/Pi from `agents/home/<agent>/`.
 
 ## Scenario: customize the template before applying it
 
@@ -54,17 +56,18 @@ Goal: change roles, agent responsibilities, names, aliases, or instructions befo
 Checklist:
 
 - Clone or fork the template first.
-- Edit `team.yaml`, `roles/*.md`, `docs/team.md`, and `agents/<responsibility>/AGENTS.md` as needed.
-- Run `aw team bootstrap . --dry-run ...` from the template checkout to validate.
-- Bootstrap the local directory only after the plan looks right.
+- Edit `team.yaml`, `roles/*.md`, `docs/team.md`, and `home/<responsibility>/AGENTS.md` as needed.
+- Run `aw team bootstrap /path/to/template --dry-run` from the project repo root to validate.
+- Bootstrap the local template directory only after the plan looks right.
 
 Example:
 
   git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
   cd my-team-template
-  # edit team.yaml / roles / docs / agents
-  aw team bootstrap . --dry-run --work-directory /path/to/work
-  aw team bootstrap . --username alice --work-directory /path/to/work
+  # edit team.yaml / roles / docs / home
+  cd /path/to/project-repo
+  aw team bootstrap /path/to/my-team-template --dry-run
+  aw team bootstrap /path/to/my-team-template --username alice
 
 ## Scenario: BYOT (bring your own team)
 
@@ -80,8 +83,7 @@ Example shape (values are placeholders):
 
   aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git \
     --namespace example.com \
-    --team dev \
-    --work-directory /path/to/work
+    --team dev
 
 If you are also self-hosting the coordination stack, add:
 
@@ -101,7 +103,7 @@ Checklist:
 Example:
 
   AWEB_API_KEY=aw_sk_... \
-    aw team bootstrap /path/to/template --work-directory /path/to/work
+    aw team bootstrap /path/to/template
 
 ## Scenario: existing team via invite token
 
@@ -110,8 +112,7 @@ Goal: accept an invite into the first generated workspace and use it as the anch
 Example:
 
   aw team bootstrap /path/to/template \
-    --invite-token <token> \
-    --work-directory /path/to/work
+    --invite-token <token>
 
 ## Scenario: current workspace forwarding
 
@@ -129,22 +130,32 @@ Goal: validate the plan and see generated workspace commands without changing fi
 
 Example:
 
-  aw team bootstrap /path/to/template --dry-run --work-directory /path/to/work
+  aw team bootstrap /path/to/template --dry-run
 
-## Worktree agents: when to enable and what to expect
+## Legacy mode: old out-of-repo bootstrap
 
-Use worktree agents when multiple agents will edit code in parallel.
+Use legacy mode only for existing scripts/templates that still expect the old layout.
+
+- `--work-directory <path>` selects legacy work-directory mode.
+- `--work-repo-url <url-or-local-path>` selects legacy clone-then-bootstrap mode.
+- The two flags are XOR.
+- Do not combine `--agents-dir` with either legacy work flag.
+
+## Worktree-bound agents: when to enable and what to expect
+
+Use `work: git_worktree` when multiple agents will edit code in parallel.
 
 Requirements:
 
-- The work directory must be a git repo.
-- The template must declare a worktrees: block in team.yaml.
+- The project directory must be a git repo.
+- The template declares `work: git_worktree` for the relevant agent in `team.yaml`.
 
 What bootstrap does:
 
-- It creates template worktrees/ (if missing) and git-excludes it locally.
-- It creates one git worktree per entry.
-- Each worktree agent gets its own .aw/ state and local-scope identity.
+- It creates `agents/worktrees/` and writes scoped `.gitignore` entries.
+- It creates one git worktree per `work: git_worktree` agent.
+- The live agent home remains under `agents/home/<responsibility>/`.
+- Each worktree-bound agent gets its own `.aw/` state and local-scope identity.
 
 Common pitfall:
 
@@ -152,7 +163,7 @@ Common pitfall:
 
 ## Quick validation after bootstrap
 
-In each generated agent directory (agents/<responsibility>/):
+In each generated agent directory (`agents/home/<responsibility>/`):
 
 - aw workspace status
 - aw whoami

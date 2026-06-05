@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func writeTeamBootstrapFixture(t *testing.T) string {
@@ -53,6 +56,145 @@ worktrees:
 	return dir
 }
 
+func writeInRepoTeamBootstrapFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("team.yaml", `name: in-repo-team
+instructions:
+  file: docs/team.md
+roles:
+  coordinator:
+    title: Coordinator
+    file: roles/coordinator.md
+  developer:
+    title: Developer
+    file: roles/developer.md
+agents:
+  coordinator:
+    role_name: coordinator
+    default_name: coord
+    default_alias: coord
+    home_template: home/coordinator
+    work: repo_root
+  implementation:
+    role_name: developer
+    default_name: impl
+    default_alias: impl
+    home_template: home/implementation
+    work: git_worktree
+`)
+	mustWrite("docs/team.md", "# Team\n")
+	mustWrite("roles/coordinator.md", "# Coordinator\n")
+	mustWrite("roles/developer.md", "# Developer\n")
+	mustWrite("home/coordinator/AGENTS.md", "# Coordinator\n")
+	mustWrite("home/coordinator/README.md", "coordinator home\n")
+	mustWrite("home/implementation/AGENTS.md", "# Implementation\n")
+	return dir
+}
+
+func resetTeamBootstrapGlobals(t *testing.T) {
+	t.Helper()
+	prevHomeRoot := teamBootstrapHomeRoot
+	prevAgentsDir := teamBootstrapAgentsDir
+	prevWorkDir := teamBootstrapWorkDirectory
+	prevRepoURL := teamBootstrapWorkRepoURL
+	prevLegacy := teamBootstrapWorkRepo
+	prevCache := teamBootstrapTemplateCacheDir
+	prevRefresh := teamBootstrapRefreshTemplate
+	prevFork := teamBootstrapForkTemplate
+	prevUsername := teamBootstrapUsername
+	prevNamespace := teamBootstrapNamespace
+	prevTeam := teamBootstrapTeamName
+	prevDisplay := teamBootstrapTeamDisplayName
+	prevInvite := teamBootstrapInviteToken
+	prevRegistry := teamBootstrapRegistryURL
+	prevAweb := teamBootstrapAwebURL
+	prevDryRun := teamBootstrapDryRun
+	prevYes := teamBootstrapYes
+	prevAsk := teamBootstrapAskAgentNames
+	prevSkipRoles := teamBootstrapSkipRoles
+	prevSkipInstructions := teamBootstrapSkipInstructions
+	t.Cleanup(func() {
+		teamBootstrapHomeRoot = prevHomeRoot
+		teamBootstrapAgentsDir = prevAgentsDir
+		teamBootstrapWorkDirectory = prevWorkDir
+		teamBootstrapWorkRepoURL = prevRepoURL
+		teamBootstrapWorkRepo = prevLegacy
+		teamBootstrapTemplateCacheDir = prevCache
+		teamBootstrapRefreshTemplate = prevRefresh
+		teamBootstrapForkTemplate = prevFork
+		teamBootstrapUsername = prevUsername
+		teamBootstrapNamespace = prevNamespace
+		teamBootstrapTeamName = prevTeam
+		teamBootstrapTeamDisplayName = prevDisplay
+		teamBootstrapInviteToken = prevInvite
+		teamBootstrapRegistryURL = prevRegistry
+		teamBootstrapAwebURL = prevAweb
+		teamBootstrapDryRun = prevDryRun
+		teamBootstrapYes = prevYes
+		teamBootstrapAskAgentNames = prevAsk
+		teamBootstrapSkipRoles = prevSkipRoles
+		teamBootstrapSkipInstructions = prevSkipInstructions
+	})
+	teamBootstrapHomeRoot = ""
+	teamBootstrapAgentsDir = "agents"
+	teamBootstrapWorkDirectory = ""
+	teamBootstrapWorkRepoURL = ""
+	teamBootstrapWorkRepo = ""
+	teamBootstrapTemplateCacheDir = ""
+	teamBootstrapRefreshTemplate = false
+	teamBootstrapForkTemplate = false
+	teamBootstrapUsername = ""
+	teamBootstrapNamespace = ""
+	teamBootstrapTeamName = ""
+	teamBootstrapTeamDisplayName = ""
+	teamBootstrapInviteToken = ""
+	teamBootstrapRegistryURL = ""
+	teamBootstrapAwebURL = ""
+	teamBootstrapDryRun = false
+	teamBootstrapYes = false
+	teamBootstrapAskAgentNames = false
+	teamBootstrapSkipRoles = false
+	teamBootstrapSkipInstructions = false
+}
+
+func testTeamBootstrapCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "bootstrap"}
+	cmd.Flags().String("agents-dir", teamBootstrapAgentsDir, "")
+	return cmd
+}
+
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md")
+	run("commit", "-m", "init")
+}
+
 func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	spec, err := loadTeamBootstrapSpec(templateDir)
@@ -75,6 +217,138 @@ func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 	}
 	if plans[1].Responsibility != "review" || plans[1].RoleName != "reviewer" || plans[1].Name != "reviewer" {
 		t.Fatalf("review plan mismatch: %+v", plans[1])
+	}
+}
+
+func TestTeamBootstrapInRepoPlansUseHomeTemplateAndWorkBindings(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	spec, err := loadTeamBootstrapSpec(templateDir)
+	if err != nil {
+		t.Fatalf("loadTeamBootstrapSpec: %v", err)
+	}
+	if err := validateTeamBootstrapSpec(templateDir, spec); err != nil {
+		t.Fatalf("validateTeamBootstrapSpec: %v", err)
+	}
+	layout := teamBootstrapLayout{
+		Mode:             teamBootstrapLayoutInRepo,
+		CustomerRepoRoot: filepath.Join(t.TempDir(), "repo"),
+		AgentsDirName:    "agents",
+		AgentsRoot:       filepath.Join(t.TempDir(), "repo", "agents"),
+	}
+	layout.HomeRoot = filepath.Join(layout.AgentsRoot, "home")
+	layout.WorktreesRoot = filepath.Join(layout.AgentsRoot, "worktrees")
+
+	plans, err := buildTeamBootstrapPlans(strings.NewReader(""), &bytes.Buffer{}, templateDir, layout.HomeRoot, spec, false)
+	if err != nil {
+		t.Fatalf("buildTeamBootstrapPlans: %v", err)
+	}
+	if err := applyInRepoBootstrapWorkBindings(layout, plans); err != nil {
+		t.Fatalf("applyInRepoBootstrapWorkBindings: %v", err)
+	}
+	if plans[0].Responsibility != "coordinator" {
+		t.Fatalf("first plan=%s", plans[0].Responsibility)
+	}
+	if plans[0].SourceHome != filepath.Join(templateDir, "home", "coordinator") {
+		t.Fatalf("coordinator source home=%q", plans[0].SourceHome)
+	}
+	if plans[0].WorkDir != layout.CustomerRepoRoot {
+		t.Fatalf("coordinator work dir=%q", plans[0].WorkDir)
+	}
+	if plans[1].WorkDir != filepath.Join(layout.WorktreesRoot, "impl") {
+		t.Fatalf("implementation work dir=%q", plans[1].WorkDir)
+	}
+	if plans[1].Instructions != filepath.Join(plans[1].HomeDir, "AGENTS.md") {
+		t.Fatalf("implementation instructions=%q", plans[1].Instructions)
+	}
+}
+
+func TestTeamBootstrapInRepoDryRunDoesNotCreateAgentsDir(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	prevCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prevCwd) })
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	teamBootstrapDryRun = true
+	teamBootstrapSkipRoles = true
+	teamBootstrapSkipInstructions = true
+
+	var out bytes.Buffer
+	cmd := testTeamBootstrapCommand(t)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := runTeamBootstrap(cmd, []string{templateDir}); err != nil {
+		t.Fatalf("runTeamBootstrap: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "agents")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created agents dir or unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created .gitignore or unexpected stat error: %v", err)
+	}
+}
+
+func TestTeamBootstrapInRepoMissingSourceFailsBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	prevCwd, _ := os.Getwd()
+	prevStdin := os.Stdin
+	nonTTY, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prevCwd)
+		os.Stdin = prevStdin
+		_ = nonTTY.Close()
+	})
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = nonTTY
+	t.Setenv("AWEB_API_KEY", "")
+	teamBootstrapSkipRoles = true
+	teamBootstrapSkipInstructions = true
+
+	var out bytes.Buffer
+	cmd := testTeamBootstrapCommand(t)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err = runTeamBootstrap(cmd, []string{templateDir})
+	if err == nil || !strings.Contains(err.Error(), "requires a team source") {
+		t.Fatalf("expected missing source error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "agents")); !os.IsNotExist(err) {
+		t.Fatalf("missing-source run created agents dir or unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("missing-source run created .gitignore or unexpected stat error: %v", err)
+	}
+}
+
+func TestTeamBootstrapLayoutRejectsMixedAgentsDirAndLegacyWorkFlags(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	prevCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prevCwd) })
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	teamBootstrapWorkDirectory = filepath.Join(repoDir, "work")
+	cmd := testTeamBootstrapCommand(t)
+	if err := cmd.Flags().Set("agents-dir", "agents"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resolveTeamBootstrapLayoutPreflight(cmd); err == nil || !strings.Contains(err.Error(), "--agents-dir cannot be combined with --work-directory") {
+		t.Fatalf("expected mixed flag error, got %v", err)
 	}
 }
 

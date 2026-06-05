@@ -35,21 +35,33 @@ The template repository is convention-first:
 
   docs/                  shared team/project instructions
   roles/                 role playbooks installed with aw roles set
-  agents/<responsibility>/AGENTS.md
+  home/<responsibility>/AGENTS.md
   team.yaml              maps agent responsibility dirs to aw role names
 
 team.yaml supplies the parts that cannot be inferred safely: role bundle
 metadata, each agent responsibility's role_name, and default identity names.
-Agent directory names are responsibilities (for example implementation or
-review), not fixed human/agent names. By default bootstrap uses the template's
-default identity names; pass --ask-for-agent-names when you want an interactive
-prompt to rename generated agents before provisioning.`,
+Agent directory names are responsibilities (for example coordinator,
+implementation, or review), not fixed human/agent names.
+
+By default bootstrap runs in the current project git repo and creates an
+agents/ convention directory:
+
+  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
+  agents/worktrees/<alias>/          generated git worktrees for worktree agents
+
+Use --agents-dir to choose a different project-local convention directory.
+Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
+
+By default bootstrap uses the template's default identity names; pass
+--ask-for-agent-names when you want an interactive prompt to rename generated
+agents before provisioning.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamBootstrap,
 }
 
 var (
 	teamBootstrapHomeRoot         string
+	teamBootstrapAgentsDir        string
 	teamBootstrapWorkDirectory    string
 	teamBootstrapWorkRepoURL      string
 	teamBootstrapWorkRepo         string // deprecated alias for --work-directory
@@ -91,6 +103,8 @@ type teamBootstrapAgentSpec struct {
 	RoleName     string `yaml:"role_name"`
 	DefaultName  string `yaml:"default_name"`
 	DefaultAlias string `yaml:"default_alias"`
+	Work         string `yaml:"work"`
+	HomeTemplate string `yaml:"home_template"`
 }
 
 type teamBootstrapWorktreeAgentSpec struct {
@@ -105,7 +119,10 @@ type teamBootstrapAgentPlan struct {
 	Name           string `json:"name"`
 	Alias          string `json:"alias,omitempty"`
 	HomeDir        string `json:"home_dir"`
+	SourceHome     string `json:"-"`
 	Instructions   string `json:"instructions"`
+	WorkBinding    string `json:"work_binding,omitempty"`
+	WorkDir        string `json:"work_dir,omitempty"`
 }
 
 type teamBootstrapOutput struct {
@@ -119,16 +136,42 @@ type teamBootstrapOutput struct {
 	RolesInstalled        bool                     `json:"roles_installed"`
 	InstructionsInstalled bool                     `json:"instructions_installed"`
 	HomeRoot              string                   `json:"home_root"`
+	AgentsDir             string                   `json:"agents_dir,omitempty"`
+	LayoutMode            string                   `json:"layout_mode,omitempty"`
 	WorkDirectory         string                   `json:"work_directory"`
 	WorkRepoURL           string                   `json:"work_repo_url,omitempty"`
 	Agents                []teamBootstrapAgentPlan `json:"agents"`
 	NextCommands          []string                 `json:"next_commands,omitempty"`
 }
 
+type teamBootstrapLayoutMode string
+
+const (
+	teamBootstrapLayoutLegacy teamBootstrapLayoutMode = "legacy"
+	teamBootstrapLayoutInRepo teamBootstrapLayoutMode = "in-repo"
+)
+
+const (
+	teamBootstrapWorkRepoRoot    = "repo_root"
+	teamBootstrapWorkGitWorktree = "git_worktree"
+)
+
+type teamBootstrapLayout struct {
+	Mode             teamBootstrapLayoutMode
+	CustomerRepoRoot string
+	AgentsDirName    string
+	AgentsRoot       string
+	HomeRoot         string
+	WorktreesRoot    string
+	WorkDirectory    string
+	WorkRepoURL      string
+}
+
 func init() {
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Directory where agent workspaces are created (default: <template-dir>/agents)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkDirectory, "work-directory", "", "Directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapHomeRoot, "home-root", "", "Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAgentsDir, "agents-dir", "agents", "Project-local directory to create for in-repo bootstrap output")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkDirectory, "work-directory", "", "Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Deprecated alias for --work-directory (kept for one release cycle)")
 	_ = teamBootstrapCmd.Flags().MarkHidden("work-repo")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; defaults to cloning into the current directory)")
@@ -155,9 +198,17 @@ func init() {
 }
 
 func runTeamBootstrap(cmd *cobra.Command, args []string) error {
-	resolved, err := resolveTeamBootstrapTemplate(cmd, args[0])
+	layout, err := resolveTeamBootstrapLayoutPreflight(cmd)
 	if err != nil {
 		return err
+	}
+
+	resolved, err := resolveTeamBootstrapTemplate(cmd, args[0], layout.Mode)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(resolved.CleanupDir) != "" {
+		defer os.RemoveAll(resolved.CleanupDir)
 	}
 	spec, err := loadTeamBootstrapSpec(resolved.TemplateDir)
 	if err != nil {
@@ -167,23 +218,37 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	homeRoot := strings.TrimSpace(teamBootstrapHomeRoot)
-	if homeRoot == "" {
-		homeRoot = filepath.Join(resolved.TemplateDir, "agents")
-	}
-	homeRoot, err = filepath.Abs(homeRoot)
-	if err != nil {
-		return err
-	}
+	var workDirectory, workRepoURL string
+	homeRoot := layout.HomeRoot
+	if layout.Mode == teamBootstrapLayoutLegacy {
+		homeRoot = strings.TrimSpace(teamBootstrapHomeRoot)
+		if homeRoot == "" {
+			homeRoot = filepath.Join(resolved.TemplateDir, "agents")
+		}
+		homeRoot, err = filepath.Abs(homeRoot)
+		if err != nil {
+			return err
+		}
 
-	workDirectory, workRepoURL, err := resolveTeamBootstrapWorkDirectoryAndRepoURL(resolved.TemplateDir)
-	if err != nil {
-		return err
+		workDirectory, workRepoURL, err = resolveTeamBootstrapWorkDirectoryAndRepoURL(resolved.TemplateDir)
+		if err != nil {
+			return err
+		}
+		layout.HomeRoot = homeRoot
+		layout.WorkDirectory = workDirectory
+		layout.WorkRepoURL = workRepoURL
+	} else {
+		workDirectory = layout.CustomerRepoRoot
 	}
 
 	plans, err := buildTeamBootstrapPlans(cmd.InOrStdin(), cmd.ErrOrStderr(), resolved.TemplateDir, homeRoot, spec, teamBootstrapAskAgentNames)
 	if err != nil {
 		return err
+	}
+	if layout.Mode == teamBootstrapLayoutInRepo {
+		if err := applyInRepoBootstrapWorkBindings(layout, plans); err != nil {
+			return err
+		}
 	}
 
 	out := teamBootstrapOutput{
@@ -194,6 +259,8 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		TeamName:          spec.Name,
 		DryRun:            teamBootstrapDryRun,
 		HomeRoot:          homeRoot,
+		AgentsDir:         layout.AgentsRoot,
+		LayoutMode:        string(layout.Mode),
 		WorkDirectory:     workDirectory,
 		WorkRepoURL:       workRepoURL,
 		Agents:            plans,
@@ -210,17 +277,33 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if workRepoURL != "" {
+	if layout.Mode == teamBootstrapLayoutLegacy && workRepoURL != "" {
 		if err := ensureTeamBootstrapWorktreesGitIgnored(resolved.TemplateDir); err != nil {
 			return err
 		}
 	}
-	if err := ensureTeamBootstrapWorkRepoReady(workDirectory, workRepoURL, spec); err != nil {
-		return err
+	if layout.Mode == teamBootstrapLayoutLegacy {
+		if err := ensureTeamBootstrapWorkRepoReady(workDirectory, workRepoURL, spec); err != nil {
+			return err
+		}
+	} else {
+		if err := prepareInRepoBootstrapAgentsDir(layout, resolved.TemplateDir, plans); err != nil {
+			return err
+		}
+		if err := ensureInRepoBootstrapGitignore(layout); err != nil {
+			return err
+		}
+		if err := createInRepoBootstrapWorktrees(layout, plans); err != nil {
+			return err
+		}
 	}
 
 	for _, plan := range plans {
-		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, workDirectory); err != nil {
+		planWorkDirectory := workDirectory
+		if strings.TrimSpace(plan.WorkDir) != "" {
+			planWorkDirectory = plan.WorkDir
+		}
+		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, planWorkDirectory); err != nil {
 			return err
 		}
 	}
@@ -232,12 +315,250 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 	out.RolesInstalled = rolesInstalled
 	out.InstructionsInstalled = instructionsInstalled
 	out.NextCommands = nil
-	if err := bootstrapTeamBootstrapWorktreeAgents(cmd, resolved.TemplateDir, workDirectory, spec, plans); err != nil {
-		return err
+	if layout.Mode == teamBootstrapLayoutLegacy {
+		if err := bootstrapTeamBootstrapWorktreeAgents(cmd, resolved.TemplateDir, workDirectory, spec, plans); err != nil {
+			return err
+		}
 	}
 
 	printOutput(out, formatTeamBootstrapOutput)
 	return nil
+}
+
+func resolveTeamBootstrapLayoutPreflight(cmd *cobra.Command) (teamBootstrapLayout, error) {
+	hasWorkDirectory := strings.TrimSpace(teamBootstrapWorkDirectory) != "" || strings.TrimSpace(teamBootstrapWorkRepo) != ""
+	hasWorkRepoURL := strings.TrimSpace(teamBootstrapWorkRepoURL) != ""
+	agentsDirExplicit := cmd.Flags().Changed("agents-dir")
+
+	if agentsDirExplicit && hasWorkDirectory {
+		return teamBootstrapLayout{}, usageError("--agents-dir cannot be combined with --work-directory")
+	}
+	if agentsDirExplicit && hasWorkRepoURL {
+		return teamBootstrapLayout{}, usageError("--agents-dir cannot be combined with --work-repo-url")
+	}
+	if hasWorkDirectory || hasWorkRepoURL {
+		return teamBootstrapLayout{Mode: teamBootstrapLayoutLegacy}, nil
+	}
+	if strings.TrimSpace(teamBootstrapHomeRoot) != "" {
+		return teamBootstrapLayout{}, usageError("--home-root cannot be combined with in-repo bootstrap; use --agents-dir to choose the project-local agents directory")
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return teamBootstrapLayout{}, err
+	}
+	repoRoot, err := currentGitWorktreeRootFromDir(wd)
+	if err != nil {
+		return teamBootstrapLayout{}, usageError("in-repo team bootstrap must be run from inside a git repository; run from your project repo or pass --work-directory/--work-repo-url for legacy bootstrap")
+	}
+	agentsDir, err := validateTeamBootstrapAgentsDir(teamBootstrapAgentsDir)
+	if err != nil {
+		return teamBootstrapLayout{}, err
+	}
+	agentsRoot := filepath.Join(repoRoot, agentsDir)
+	if _, err := os.Stat(agentsRoot); err == nil {
+		return teamBootstrapLayout{}, teamBootstrapAgentsDirExistsError(agentsRoot, agentsDir)
+	} else if !os.IsNotExist(err) {
+		return teamBootstrapLayout{}, fmt.Errorf("stat agents directory %s: %w", agentsRoot, err)
+	}
+
+	return teamBootstrapLayout{
+		Mode:             teamBootstrapLayoutInRepo,
+		CustomerRepoRoot: repoRoot,
+		AgentsDirName:    agentsDir,
+		AgentsRoot:       agentsRoot,
+		HomeRoot:         filepath.Join(agentsRoot, "home"),
+		WorktreesRoot:    filepath.Join(agentsRoot, "worktrees"),
+	}, nil
+}
+
+func validateTeamBootstrapAgentsDir(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", usageError("--agents-dir must not be empty")
+	}
+	if filepath.IsAbs(value) {
+		return "", usageError("--agents-dir must be a relative path inside the current git repository")
+	}
+	clean := filepath.Clean(value)
+	if clean == "." {
+		return "", usageError("--agents-dir must name a directory, not .")
+	}
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == ".." {
+			return "", usageError("--agents-dir must not contain .. path traversal")
+		}
+	}
+	return clean, nil
+}
+
+func teamBootstrapAgentsDirExistsError(path, agentsDir string) error {
+	return usageError(
+		"agents directory already exists at %s.\n\n"+
+			"To create a new bootstrap here:\n"+
+			"  1. Pick a different name with --agents-dir <name>, or\n"+
+			"  2. Remove or rename the existing directory if you no longer need it.\n\n"+
+			"aw team bootstrap does not adopt, merge, or overwrite existing agents directories in v1. "+
+			"This prevents accidental data loss to existing agent identity state.",
+		path,
+	)
+}
+
+func prepareInRepoBootstrapAgentsDir(layout teamBootstrapLayout, templateDir string, plans []teamBootstrapAgentPlan) error {
+	if layout.Mode != teamBootstrapLayoutInRepo {
+		return nil
+	}
+	if _, err := os.Stat(layout.AgentsRoot); err == nil {
+		return teamBootstrapAgentsDirExistsError(layout.AgentsRoot, layout.AgentsDirName)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat agents directory %s: %w", layout.AgentsRoot, err)
+	}
+	if err := os.MkdirAll(layout.AgentsRoot, 0o755); err != nil {
+		return err
+	}
+	if err := copyFile(filepath.Join(templateDir, "team.yaml"), filepath.Join(layout.AgentsRoot, "team.yaml")); err != nil {
+		return err
+	}
+	for _, dir := range []string{"docs", "roles"} {
+		src := filepath.Join(templateDir, dir)
+		if info, err := os.Stat(src); err == nil && info.IsDir() {
+			if err := copyDir(src, filepath.Join(layout.AgentsRoot, dir)); err != nil {
+				return err
+			}
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	for _, plan := range plans {
+		if strings.TrimSpace(plan.SourceHome) == "" {
+			return fmt.Errorf("agent %s missing source home", plan.Responsibility)
+		}
+		if err := copyDir(plan.SourceHome, plan.HomeDir); err != nil {
+			return fmt.Errorf("copy home template for %s: %w", plan.Responsibility, err)
+		}
+	}
+	return nil
+}
+
+func applyInRepoBootstrapWorkBindings(layout teamBootstrapLayout, plans []teamBootstrapAgentPlan) error {
+	for i := range plans {
+		plans[i].Instructions = filepath.Join(plans[i].HomeDir, "AGENTS.md")
+		binding := strings.TrimSpace(plans[i].WorkBinding)
+		if binding == "" {
+			binding = teamBootstrapWorkRepoRoot
+			plans[i].WorkBinding = binding
+		}
+		switch binding {
+		case teamBootstrapWorkRepoRoot:
+			plans[i].WorkDir = layout.CustomerRepoRoot
+		case teamBootstrapWorkGitWorktree:
+			name := strings.TrimSpace(plans[i].Alias)
+			if name == "" {
+				name = sanitizeSlug(plans[i].Name)
+			}
+			if name == "" {
+				name = sanitizeSlug(plans[i].Responsibility)
+			}
+			if name == "" {
+				return fmt.Errorf("cannot derive worktree name for %s", plans[i].Responsibility)
+			}
+			plans[i].WorkDir = filepath.Join(layout.WorktreesRoot, name)
+		default:
+			return usageError("unsupported work binding %q for agent %s (expected repo_root or git_worktree)", binding, plans[i].Responsibility)
+		}
+	}
+	return nil
+}
+
+func createInRepoBootstrapWorktrees(layout teamBootstrapLayout, plans []teamBootstrapAgentPlan) error {
+	if layout.Mode != teamBootstrapLayoutInRepo {
+		return nil
+	}
+	needsWorktree := false
+	for _, plan := range plans {
+		if plan.WorkBinding == teamBootstrapWorkGitWorktree {
+			needsWorktree = true
+			break
+		}
+	}
+	if !needsWorktree {
+		return nil
+	}
+	if err := ensureAwebRuntimeUntrackedForAddWorktree(layout.CustomerRepoRoot); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(layout.WorktreesRoot, 0o755); err != nil {
+		return err
+	}
+	for _, plan := range plans {
+		if plan.WorkBinding != teamBootstrapWorkGitWorktree {
+			continue
+		}
+		if _, err := os.Stat(plan.WorkDir); err == nil {
+			return usageError("worktree path %s already exists", plan.WorkDir)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat worktree path %s: %w", plan.WorkDir, err)
+		}
+		branchName := strings.TrimSpace(plan.Alias)
+		if branchName == "" {
+			branchName = sanitizeSlug(plan.Name)
+		}
+		if branchName == "" {
+			branchName = sanitizeSlug(plan.Responsibility)
+		}
+		branchCreated, err := createWorkspaceGitWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, jsonFlag)
+		if err != nil {
+			return fmt.Errorf("failed to create git worktree for %s: %w", plan.Responsibility, err)
+		}
+		if err := ensureAwebRuntimeGitIgnored(plan.WorkDir); err != nil {
+			cleanupWorkspaceWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, branchCreated)
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureInRepoBootstrapGitignore(layout teamBootstrapLayout) error {
+	if layout.Mode != teamBootstrapLayoutInRepo {
+		return nil
+	}
+	gitignorePath := filepath.Join(layout.CustomerRepoRoot, ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read .gitignore: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	homePattern := "/" + filepath.ToSlash(filepath.Join(layout.AgentsDirName, "home", "*", ".aw")) + "/"
+	worktreesPattern := "/" + filepath.ToSlash(filepath.Join(layout.AgentsDirName, "worktrees")) + "/"
+	hasHome := false
+	hasWorktrees := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == homePattern {
+			hasHome = true
+		}
+		if trimmed == worktreesPattern {
+			hasWorktrees = true
+		}
+	}
+	if hasHome && hasWorktrees {
+		return nil
+	}
+	var addition string
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		addition += "\n"
+	}
+	if len(data) > 0 {
+		addition += "\n"
+	}
+	addition += "# Auto-written by aw team bootstrap (do not remove)\n"
+	if !hasHome {
+		addition += homePattern + "\n"
+	}
+	if !hasWorktrees {
+		addition += worktreesPattern + "\n"
+	}
+	return appendFile(gitignorePath, []byte(addition), 0o644)
 }
 
 func loadTeamBootstrapSpec(templateDir string) (*teamBootstrapSpec, error) {
@@ -256,9 +577,10 @@ type resolvedTeamBootstrapTemplate struct {
 	TemplateDir string
 	Cloned      bool
 	Refreshed   bool
+	CleanupDir  string
 }
 
-func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*resolvedTeamBootstrapTemplate, error) {
+func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string, mode teamBootstrapLayoutMode) (*resolvedTeamBootstrapTemplate, error) {
 	templateRef = strings.TrimSpace(templateRef)
 	if templateRef == "" {
 		return nil, usageError("missing template directory")
@@ -278,7 +600,7 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 	if err != nil {
 		return nil, err
 	}
-	destDir, err := resolveTeamBootstrapTemplateDestDir(cmd, slug)
+	destDir, cleanupDir, err := resolveTeamBootstrapTemplateDestDir(cmd, slug, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +619,7 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 			if err := runGHRepoForkClone(cmd, repoFullName, destDir); err != nil {
 				return nil, err
 			}
-			return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate}, nil
+			return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate, CleanupDir: cleanupDir}, nil
 		}
 		if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
 			return nil, err
@@ -305,43 +627,50 @@ func resolveTeamBootstrapTemplate(cmd *cobra.Command, templateRef string) (*reso
 		if err := runGitClone(cmd, cloneURL, destDir); err != nil {
 			return nil, err
 		}
-		return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate}, nil
+		return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: true, Refreshed: teamBootstrapRefreshTemplate, CleanupDir: cleanupDir}, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: false, Refreshed: false}, nil
+	return &resolvedTeamBootstrapTemplate{TemplateDir: destDir, Cloned: false, Refreshed: false, CleanupDir: cleanupDir}, nil
 }
 
-func resolveTeamBootstrapTemplateDestDir(cmd *cobra.Command, slug string) (string, error) {
+func resolveTeamBootstrapTemplateDestDir(cmd *cobra.Command, slug string, mode teamBootstrapLayoutMode) (string, string, error) {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
-		return "", fmt.Errorf("internal error: empty template slug")
+		return "", "", fmt.Errorf("internal error: empty template slug")
 	}
 	// Advanced override: clone into a dedicated cache directory.
 	if strings.TrimSpace(teamBootstrapTemplateCacheDir) != "" {
 		base, err := filepath.Abs(strings.TrimSpace(teamBootstrapTemplateCacheDir))
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return filepath.Join(base, slug), nil
+		return filepath.Join(base, slug), "", nil
+	}
+	if mode == teamBootstrapLayoutInRepo {
+		base, err := os.MkdirTemp("", "aw-team-bootstrap-template-*")
+		if err != nil {
+			return "", "", err
+		}
+		return filepath.Join(base, slug), base, nil
 	}
 
 	wd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	inside, err := isInsideGitWorktree(wd)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if inside {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"refusing to clone a template into an existing git worktree (%s). "+
 				"Run from an empty directory, or pass --template-cache-dir to clone elsewhere.",
 			wd,
 		)
 	}
-	return filepath.Join(wd, slug), nil
+	return filepath.Join(wd, slug), "", nil
 }
 
 func isInsideGitWorktree(dir string) (bool, error) {
@@ -1187,7 +1516,14 @@ func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) erro
 		if _, ok := spec.Roles[agent.RoleName]; !ok {
 			return fmt.Errorf("agent %q references unknown role_name %q", responsibility, agent.RoleName)
 		}
-		agentsMD := filepath.Join(templateDir, "agents", responsibility, "AGENTS.md")
+		if work := strings.TrimSpace(agent.Work); work != "" && work != teamBootstrapWorkRepoRoot && work != teamBootstrapWorkGitWorktree {
+			return fmt.Errorf("agent %q has unsupported work %q (expected repo_root or git_worktree)", responsibility, work)
+		}
+		sourceHome, err := teamBootstrapAgentSourceHome(templateDir, responsibility, agent)
+		if err != nil {
+			return err
+		}
+		agentsMD := filepath.Join(sourceHome, "AGENTS.md")
 		if _, err := os.Stat(agentsMD); err != nil {
 			return fmt.Errorf("agent %q instructions %q: %w", responsibility, agentsMD, err)
 		}
@@ -1208,6 +1544,44 @@ func validateTeamBootstrapSpec(templateDir string, spec *teamBootstrapSpec) erro
 	return nil
 }
 
+func teamBootstrapAgentSourceHome(templateDir, responsibility string, agent teamBootstrapAgentSpec) (string, error) {
+	if rel := strings.TrimSpace(agent.HomeTemplate); rel != "" {
+		clean, err := cleanTeamBootstrapTemplateRelPath("home_template", rel)
+		if err != nil {
+			return "", fmt.Errorf("agent %q %w", responsibility, err)
+		}
+		return filepath.Join(templateDir, clean), nil
+	}
+	candidate := filepath.Join(templateDir, "home", responsibility)
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	// Legacy template shape, kept for compatibility.
+	return filepath.Join(templateDir, "agents", responsibility), nil
+}
+
+func cleanTeamBootstrapTemplateRelPath(field, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", usageError("%s must not be empty", field)
+	}
+	if filepath.IsAbs(value) {
+		return "", usageError("%s must be a relative template path", field)
+	}
+	clean := filepath.Clean(value)
+	if clean == "." {
+		return "", usageError("%s must name a template directory", field)
+	}
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == ".." {
+			return "", usageError("%s must not contain .. path traversal", field)
+		}
+	}
+	return clean, nil
+}
+
 func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot string, spec *teamBootstrapSpec, askForAgentNames bool) ([]teamBootstrapAgentPlan, error) {
 	if askForAgentNames && !isTTY() {
 		return nil, usageError("--ask-for-agent-names requires an interactive terminal")
@@ -1221,6 +1595,10 @@ func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot 
 	plans := make([]teamBootstrapAgentPlan, 0, len(responsibilities))
 	for _, responsibility := range responsibilities {
 		agent := spec.Agents[responsibility]
+		sourceHome, err := teamBootstrapAgentSourceHome(templateDir, responsibility, agent)
+		if err != nil {
+			return nil, err
+		}
 		name := strings.TrimSpace(agent.DefaultName)
 		if name == "" {
 			name = responsibility
@@ -1238,7 +1616,9 @@ func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot 
 			Name:           name,
 			Alias:          strings.TrimSpace(agent.DefaultAlias),
 			HomeDir:        filepath.Join(homeRoot, responsibility),
-			Instructions:   filepath.Join(templateDir, "agents", responsibility, "AGENTS.md"),
+			SourceHome:     sourceHome,
+			Instructions:   filepath.Join(sourceHome, "AGENTS.md"),
+			WorkBinding:    strings.TrimSpace(agent.Work),
 		})
 	}
 	return plans, nil
@@ -1415,6 +1795,59 @@ func linkOrCopyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0o644)
 }
 
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode().Perm())
+}
+
+func copyDir(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", src)
+	}
+	if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		entryInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entryInfo.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if entryInfo.Mode()&os.ModeType != 0 {
+			return fmt.Errorf("unsupported special file in template: %s", srcPath)
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func plannedInitCommands(plans []teamBootstrapAgentPlan) []string {
 	commands := make([]string, 0, len(plans))
 	for _, plan := range plans {
@@ -1479,7 +1912,11 @@ func formatTeamBootstrapOutput(v any) string {
 		b.WriteString("Instructions: installed and activated\n")
 	}
 	if strings.TrimSpace(out.WorkDirectory) != "" {
-		b.WriteString(fmt.Sprintf("Work directory: %s\n", out.WorkDirectory))
+		if out.LayoutMode == string(teamBootstrapLayoutInRepo) {
+			b.WriteString(fmt.Sprintf("Project repo: %s\n", out.WorkDirectory))
+		} else {
+			b.WriteString(fmt.Sprintf("Work directory: %s\n", out.WorkDirectory))
+		}
 	}
 	if strings.TrimSpace(out.WorkRepoURL) != "" {
 		b.WriteString(fmt.Sprintf("Work repo url: %s\n", out.WorkRepoURL))
@@ -1490,7 +1927,14 @@ func formatTeamBootstrapOutput(v any) string {
 		if agent.Alias != "" {
 			alias = " alias=" + agent.Alias
 		}
-		b.WriteString(fmt.Sprintf("- %s: name=%s role=%s%s home=%s\n", agent.Responsibility, agent.Name, agent.RoleName, alias, agent.HomeDir))
+		work := ""
+		if strings.TrimSpace(agent.WorkDir) != "" {
+			work = " work=" + agent.WorkDir
+			if strings.TrimSpace(agent.WorkBinding) != "" {
+				work += " (" + agent.WorkBinding + ")"
+			}
+		}
+		b.WriteString(fmt.Sprintf("- %s: name=%s role=%s%s home=%s%s\n", agent.Responsibility, agent.Name, agent.RoleName, alias, agent.HomeDir, work))
 	}
 	if len(out.NextCommands) > 0 {
 		b.WriteString("\nInitialize/connect each agent workspace:\n")

@@ -66,23 +66,27 @@ sudo mv aw /usr/local/bin/
 
 ### 3. Bootstrap an agent team from a template
 
-Run from a directory that is **not already inside a git repo/worktree** (the command refuses to clone a template into an existing git worktree).
+Run from the root of the project git repo where agents should work.
 
 Happy path (bootstrap from the canonical template in one shot):
 
 ```bash
-aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
-# Clones ./aweb-team-dev-review and bootstraps each workspace in:
-#   ./aweb-team-dev-review/agents/<responsibility>/
+aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
+# Creates:
+#   ./agents/home/coordinator/
+#   ./agents/home/developer/
+#   ./agents/home/reviewer/
+# and generated worktrees under:
+#   ./agents/worktrees/
 ```
 
 Then start your agents:
 
 ```bash
-cd aweb-team-dev-review/agents/implementation
+cd agents/home/coordinator
 claude
 
-cd ../review
+cd ../developer
 codex
 ```
 
@@ -124,35 +128,39 @@ There are however solutions:
 
 #### Bootstrapping options
 
-- Place the agent workspaces somewhere else (instead of inside the template repo):
+- Run from the root of the project repo. Bootstrap creates `agents/` with all live homes under `agents/home/`:
 
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --home-root ./agents
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
+  cd agents/home/coordinator
+  ```
+- Choose a different generated directory if your repo already uses `agents/`:
+  ```bash
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username> --agents-dir aweb-agents
   ```
 - Use an existing local template directory:
   ```bash
-  aw team bootstrap /path/to/template --yes
+  aw team bootstrap /path/to/template --username <username>
   ```
 - Use a remote template (no fork required):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
   ```
 - Fork the template first (optional; requires GitHub CLI `gh`):
   ```bash
-  aw team bootstrap --fork gh:awebai/aweb-team-dev-review --yes
+  aw team bootstrap --fork gh:awebai/aweb-team-coord-worktrees --username <username>
   ```
-- Non-interactive username (skips the prompt; still validates availability):
+- Clone the template somewhere explicit (advanced cache override):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --username <username>
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username> --template-cache-dir /tmp/aw-templates
   ```
-- Clone the template somewhere else (escape hatch when you are inside a git repo):
+- Legacy out-of-repo mode is still available for existing scripts:
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --yes --template-cache-dir /tmp/aw-templates
+  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username <username> --work-directory /path/to/work
   ```
 - Bring Your Own Domain (BYOD, local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git \
-    --yes \
+  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
     --aweb-url http://localhost:8000 \
     --registry http://localhost:8010 \
     --namespace example.com \
