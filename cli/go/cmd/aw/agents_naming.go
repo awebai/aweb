@@ -166,7 +166,10 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 		return agentsNamingPlan{}, err
 	}
 	user := strings.TrimSpace(input.User)
-	if needsAgentsNamingUser(policy) {
+	if agentsNamingInputNeedsUser(policy, input.Agents) {
+		if user == "" {
+			return agentsNamingPlan{}, usageError("identity prefix is required for this agents layout because at least one naming pattern uses {user}; pass --identity-prefix or set AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER")
+		}
 		var userErr error
 		user, userErr = normalizeAgentsNamingField("user", user)
 		if userErr != nil {
@@ -468,15 +471,22 @@ func mergeAgentsNamingPolicy(policy agentsNamingPolicy) agentsNamingPolicy {
 	return policy
 }
 
-func needsAgentsNamingUser(policy agentsNamingPolicy) bool {
-	for _, pattern := range []string{
-		policy.LocalAliasPattern,
-		policy.GlobalAliasPattern,
-		policy.GlobalNamePattern,
-		policy.WorktreePattern,
-	} {
-		if strings.Contains(pattern, "{user}") {
-			return true
+func agentsNamingInputNeedsUser(policy agentsNamingPolicy, agents []agentsNamingAgentInput) bool {
+	for _, agent := range agents {
+		scope := strings.TrimSpace(agent.IdentityScope)
+		if scope == "" {
+			scope = agentsIdentityScopeLocal
+		}
+		patterns := []string{policy.WorktreePattern}
+		if scope == agentsIdentityScopeGlobal {
+			patterns = append(patterns, policy.GlobalAliasPattern, policy.GlobalNamePattern)
+		} else {
+			patterns = append(patterns, policy.LocalAliasPattern)
+		}
+		for _, pattern := range patterns {
+			if strings.Contains(pattern, "{user}") {
+				return true
+			}
 		}
 	}
 	return false

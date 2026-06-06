@@ -439,6 +439,86 @@ func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.
 	assertPathMissing(t, filepath.Join(repoDir, ".aw"))
 }
 
+func TestAgentsProvisionLocalOnlyLayoutAllowsMissingIdentityPrefix(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("AWEB_IDENTITY_PREFIX", "")
+	t.Setenv("AWEB_HUMAN", "")
+	t.Setenv("USER", "")
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+
+	out, _, _, _, err := buildAgentsProvisionOutput(&cobra.Command{Use: "plan"})
+	if err != nil {
+		t.Fatalf("buildAgentsProvisionOutput: %v", err)
+	}
+	if out.IdentityPrefix != "" {
+		t.Fatalf("identity_prefix=%q, want empty for local-only layout", out.IdentityPrefix)
+	}
+}
+
+func TestAgentsProvisionGlobalLayoutRequiresIdentityPrefix(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("AWEB_IDENTITY_PREFIX", "")
+	t.Setenv("AWEB_HUMAN", "")
+	t.Setenv("USER", "")
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	agentsDir := filepath.Join(repoDir, "agents")
+	if err := copyDir(templateDir, agentsDir); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	teamYAML := `name: in-repo-team
+instructions:
+  file: docs/team.md
+roles:
+  coordinator:
+    title: Coordinator
+    file: roles/coordinator.md
+agents:
+  coordinator:
+    role_name: coordinator
+    identity_scope: global
+    home_template: home/coordinator
+    work: repo_root
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "team.yaml"), []byte(teamYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+
+	_, _, _, _, err := buildAgentsProvisionOutput(&cobra.Command{Use: "plan"})
+	if err == nil {
+		t.Fatal("expected missing identity prefix to fail")
+	}
+	if !strings.Contains(err.Error(), "identity prefix is required") ||
+		!strings.Contains(err.Error(), "--identity-prefix") ||
+		!strings.Contains(err.Error(), "AWEB_IDENTITY_PREFIX") {
+		t.Fatalf("error=%q, want identity-prefix guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "coordinator", "CLAUDE.md"))
+}
+
+func TestAgentsProvisionRejectsUsernameSource(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	teamBootstrapUsername = "maria"
+
+	_, err := resolveAgentsProvisionSource()
+	if err == nil {
+		t.Fatal("expected --username to be rejected for provision")
+	}
+	if !strings.Contains(err.Error(), "does not create a hosted team from --username") ||
+		!strings.Contains(err.Error(), "--invite-token") {
+		t.Fatalf("error=%q, want provision username guidance", err)
+	}
+}
+
 func TestAgentsProvisionMissingSourceFailsBeforeMutation(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	repoDir := t.TempDir()

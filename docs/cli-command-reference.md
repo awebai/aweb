@@ -123,7 +123,10 @@ Flags:
 
 ### `agents plan`
 
-Plan repo-local agent names and paths
+Plan repo-local agent names and paths.
+
+For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
+registry to fail closed on existing team aliases and namespace addresses.
 
 Flags:
 - `--agents-dir string Project-local agents directory to read (default "agents")`

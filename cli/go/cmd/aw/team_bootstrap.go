@@ -72,8 +72,12 @@ agents before provisioning.`,
 var agentsPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Plan repo-local agent names and paths",
-	Args:  cobra.NoArgs,
-	RunE:  runAgentsPlan,
+	Long: `Plan repo-local agent names and paths.
+
+For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
+registry to fail closed on existing team aliases and namespace addresses.`,
+	Args: cobra.NoArgs,
+	RunE: runAgentsPlan,
 }
 
 var agentsProvisionCmd = &cobra.Command{
@@ -538,6 +542,8 @@ func buildAgentsProvisionOutput(cmd *cobra.Command) (agentsProvisionOutput, team
 	}
 	if source, err := resolveAgentsProvisionSource(); err == nil {
 		out.TeamSource = string(source.Kind)
+	} else if hasAgentsProvisionExplicitSource() {
+		return agentsProvisionOutput{}, teamBootstrapLayout{}, nil, nil, err
 	}
 	return out, layout, spec, plans, nil
 }
@@ -594,7 +600,7 @@ func resolveAgentsIdentityPrefix(cmd *cobra.Command) (string, error) {
 		}
 	}
 	if raw == "" {
-		raw = "user"
+		return "", nil
 	}
 	return normalizeAgentsNamingField("identity-prefix", raw)
 }
@@ -683,12 +689,20 @@ func resolveAgentsProvisionSource() (teamBootstrapSource, error) {
 		return teamBootstrapSource{Kind: teamBootstrapSourceBYOT}, nil
 	}
 	if hasUsername {
-		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
+		return teamBootstrapSource{}, usageError("aw agents provision does not create a hosted team from --username; use `aw agents bootstrap --username <name>` for first-time hosted setup, or ask an existing team member for an invite and run `aw agents provision --invite-token <token> --identity-prefix <you>`")
 	}
 	if currentHasTeamWorkspace() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceCurrent}, nil
 	}
 	return teamBootstrapSource{}, usageError("aw agents provision requires a team source before it can mutate files: set AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
+}
+
+func hasAgentsProvisionExplicitSource() bool {
+	return resolveInitAPIKey() != "" ||
+		strings.TrimSpace(teamBootstrapInviteToken) != "" ||
+		strings.TrimSpace(teamBootstrapNamespace) != "" ||
+		strings.TrimSpace(teamBootstrapTeamName) != "" ||
+		strings.TrimSpace(teamBootstrapUsername) != ""
 }
 
 func existingBYOTNamesForAgentsProvision(namespace, teamName string) (map[string]bool, map[string]bool, error) {
@@ -719,12 +733,12 @@ func existingBYOTNamesForAgentsProvision(namespace, teamName string) (map[string
 		return nil, nil, fmt.Errorf("list existing team certificates for preflight: %w", err)
 	}
 	for _, cert := range certs {
-		if alias := strings.TrimSpace(cert.Alias); alias != "" {
+		if alias := strings.ToLower(strings.TrimSpace(cert.Alias)); alias != "" {
 			aliases[alias] = true
 		}
 		if address := strings.TrimSpace(cert.MemberAddress); address != "" {
 			if _, name, ok := strings.Cut(address, "/"); ok && name != "" {
-				globalNames[name] = true
+				globalNames[strings.ToLower(strings.TrimSpace(name))] = true
 			}
 		}
 	}
