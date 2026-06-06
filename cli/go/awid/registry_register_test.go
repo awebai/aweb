@@ -30,6 +30,7 @@ type identityEntryVector struct {
 	Name                  string         `json:"name"`
 	EntryPayload          map[string]any `json:"entry_payload"`
 	CanonicalEntryPayload string         `json:"canonical_entry_payload"`
+	EntryHash             string         `json:"entry_hash"`
 	SignatureB64          string         `json:"signature_b64"`
 }
 
@@ -138,6 +139,41 @@ func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 	}
 	if got.Proof != entry.SignatureB64 {
 		t.Fatalf("signature:\n got:  %s\n want: %s", got.Proof, entry.SignatureB64)
+	}
+}
+
+func TestVerifyDidKeyResolutionAcceptsRegisterVector(t *testing.T) {
+	t.Parallel()
+
+	vectors := loadIdentityVector(t)
+	entry := identityVectorEntry(t, vectors, "register_did")
+	payload := entry.EntryPayload
+	res := &DidKeyResolution{
+		DIDAW:         vectors.Mapping.DIDAW,
+		CurrentDIDKey: vectors.Mapping.InitialDIDKey,
+		LogHead: &DidKeyEvidence{
+			Seq:            int(payload["seq"].(float64)),
+			Operation:      payload["operation"].(string),
+			PreviousDIDKey: nil,
+			NewDIDKey:      payload["new_did_key"].(string),
+			PrevEntryHash:  nil,
+			EntryHash:      entry.EntryHash,
+			StateHash:      payload["state_hash"].(string),
+			AuthorizedBy:   payload["authorized_by"].(string),
+			Signature:      entry.SignatureB64,
+			Timestamp:      payload["timestamp"].(string),
+		},
+	}
+
+	outcome, head, err := VerifyDidKeyResolution(res, nil, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != StableIdentityVerified {
+		t.Fatalf("outcome=%s", outcome)
+	}
+	if head == nil || head.EntryHash != entry.EntryHash {
+		t.Fatalf("head=%+v", head)
 	}
 }
 

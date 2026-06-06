@@ -146,6 +146,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "address_update": (30, 3600),
     "address_delete": (30, 3600),
     "address_reassign": (30, 3600),
+    "address_atomic_claim": (30, 3600),
     "custody_sign": (60, 60),
     "team_create": (10, 3600),
     "team_list": (60, 60),

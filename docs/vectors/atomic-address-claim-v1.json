@@ -1,0 +1,22 @@
+{
+  "operation": "claim_identity_address",
+  "domain": "example.com",
+  "address_name": "juan-coordinator",
+  "did_aw": "did:aw:zQmAtomicClaimFixtureStableID111111111111111111111",
+  "current_did_key": "did:key:z6MkhAtomicClaimFixtureCurrentKey1111111111111111111",
+  "registry_url": "https://api.awid.ai",
+  "registry_url_aliases": [
+    {
+      "input": "https://API.AWID.AI/api/",
+      "canonical": "https://api.awid.ai"
+    }
+  ],
+  "timestamp": "2026-06-06T09:30:00Z",
+  "dry_run": false,
+  "identity_custody": "self",
+  "namespace_custody": "self",
+  "identity_signature": "aWRlbnRpdHktc2lnbmF0dXJlLWZpeHR1cmUtNjQtYnl0ZXMhISEhISEhISEhISEhISEhISEhISEhISEhISEhIQ",
+  "identity_proof_hash": "sha256:+yw6vr6fIgaw3B6BBE/fMOCp29TM9YbKjGDr7BQB4Fw",
+  "identity_canonical": "{\"address_name\":\"juan-coordinator\",\"current_did_key\":\"did:key:z6MkhAtomicClaimFixtureCurrentKey1111111111111111111\",\"did_aw\":\"did:aw:zQmAtomicClaimFixtureStableID111111111111111111111\",\"domain\":\"example.com\",\"dry_run\":false,\"identity_custody\":\"self\",\"operation\":\"claim_identity_address\",\"registry_url\":\"https://api.awid.ai\",\"timestamp\":\"2026-06-06T09:30:00Z\"}",
+  "namespace_canonical": "{\"address_name\":\"juan-coordinator\",\"current_did_key\":\"did:key:z6MkhAtomicClaimFixtureCurrentKey1111111111111111111\",\"did_aw\":\"did:aw:zQmAtomicClaimFixtureStableID111111111111111111111\",\"domain\":\"example.com\",\"dry_run\":false,\"identity_proof_hash\":\"sha256:+yw6vr6fIgaw3B6BBE/fMOCp29TM9YbKjGDr7BQB4Fw\",\"namespace_custody\":\"self\",\"operation\":\"claim_identity_address\",\"registry_url\":\"https://api.awid.ai\",\"timestamp\":\"2026-06-06T09:30:00Z\"}"
+}

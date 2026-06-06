@@ -125,6 +125,12 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevSkipRoles := teamBootstrapSkipRoles
 	prevSkipInstructions := teamBootstrapSkipInstructions
 	prevIdentityPrefix := agentsIdentityPrefix
+	prevAddLocal := agentsAddLocal
+	prevAddGlobal := agentsAddGlobal
+	prevAddRole := agentsAddRole
+	prevAddLayoutOnly := agentsAddLayoutOnly
+	prevAddInitPrimary := agentsAddInitPrimaryAgent
+	prevAddInitAdditional := agentsAddInitAdditionalAgent
 	t.Cleanup(func() {
 		teamBootstrapHomeRoot = prevHomeRoot
 		teamBootstrapAgentsDir = prevAgentsDir
@@ -147,6 +153,12 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		teamBootstrapSkipRoles = prevSkipRoles
 		teamBootstrapSkipInstructions = prevSkipInstructions
 		agentsIdentityPrefix = prevIdentityPrefix
+		agentsAddLocal = prevAddLocal
+		agentsAddGlobal = prevAddGlobal
+		agentsAddRole = prevAddRole
+		agentsAddLayoutOnly = prevAddLayoutOnly
+		agentsAddInitPrimaryAgent = prevAddInitPrimary
+		agentsAddInitAdditionalAgent = prevAddInitAdditional
 	})
 	teamBootstrapHomeRoot = ""
 	teamBootstrapAgentsDir = "agents"
@@ -169,6 +181,12 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	teamBootstrapSkipRoles = false
 	teamBootstrapSkipInstructions = false
 	agentsIdentityPrefix = ""
+	agentsAddLocal = false
+	agentsAddGlobal = false
+	agentsAddRole = ""
+	agentsAddLayoutOnly = false
+	agentsAddInitPrimaryAgent = initTeamBootstrapPrimaryAgent
+	agentsAddInitAdditionalAgent = initTeamBootstrapAdditionalAgent
 }
 
 func testTeamBootstrapCommand(t *testing.T) *cobra.Command {
@@ -250,6 +268,13 @@ func agentsProvisionHasCheck(out agentsProvisionOutput, responsibility, field, v
 		}
 	}
 	return false
+}
+
+func assertPathExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected path to exist %s: %v", path, err)
+	}
 }
 
 func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
@@ -604,6 +629,193 @@ func TestAgentsProvisionRefusesMismatchedExistingAWState(t *testing.T) {
 	if !strings.Contains(err.Error(), "already belongs to alias") ||
 		!strings.Contains(err.Error(), "does not merge mismatched identity state") {
 		t.Fatalf("error=%q, want mismatch guidance", err)
+	}
+}
+
+func TestAgentsAddLayoutOnlyAddsLocalAgentBlueprint(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddLayoutOnly = true
+	agentsAddRole = "analyst"
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{Use: "add"}
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := runAgentsAdd(cmd, []string{"analyst"}); err != nil {
+		t.Fatalf("runAgentsAdd: %v\n%s", err, out.String())
+	}
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatalf("load spec: %v", err)
+	}
+	agent, ok := spec.Agents["analyst"]
+	if !ok {
+		t.Fatalf("analyst agent missing from spec: %#v", spec.Agents)
+	}
+	if agent.RoleName != "analyst" || agent.IdentityScope != agentsIdentityScopeLocal || agent.HomeTemplate != "home/analyst" || agent.Work != agentsWorkRepoRoot {
+		t.Fatalf("agent spec mismatch: %#v", agent)
+	}
+	role, ok := spec.Roles["analyst"]
+	if !ok || role.File != "roles/analyst.md" {
+		t.Fatalf("analyst role mismatch: %#v", spec.Roles["analyst"])
+	}
+	assertPathExists(t, filepath.Join(repoDir, "agents", "roles", "analyst.md"))
+	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "analyst", "AGENTS.md"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "analyst", ".aw"))
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "default_alias") || strings.Contains(string(data), "default_name") {
+		t.Fatalf("team.yaml contains legacy default identity fields:\n%s", string(data))
+	}
+}
+
+func TestAgentsAddLocalProvisionsAfterLayoutMaterialization(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	teamBootstrapInviteToken = "aw-invite-test-token"
+
+	var sawPlan teamBootstrapAgentPlan
+	var sawSource teamBootstrapSource
+	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
+		sawSource = source
+		sawPlan = plan
+		assertPathExists(t, filepath.Join(plan.HomeDir, "AGENTS.md"))
+		assertPathExists(t, filepath.Join(plan.HomeDir, "CLAUDE.md"))
+		assertPathExists(t, filepath.Join(plan.HomeDir, "work"))
+		if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
+			return err
+		}
+		return nil
+	}
+	agentsAddInitAdditionalAgent = func(primaryDir string, plan teamBootstrapAgentPlan) error {
+		t.Fatalf("additional-agent path should not run: primary=%s plan=%+v", primaryDir, plan)
+		return nil
+	}
+
+	if err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"}); err != nil {
+		t.Fatalf("runAgentsAdd: %v", err)
+	}
+	if sawSource.Kind != teamBootstrapSourceInvite {
+		t.Fatalf("source kind=%q want invite", sawSource.Kind)
+	}
+	if sawPlan.Responsibility != "support" || sawPlan.IdentityScope != agentsIdentityScopeLocal || sawPlan.GlobalAddress != "" {
+		t.Fatalf("plan mismatch: %+v", sawPlan)
+	}
+	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "support", ".aw"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["support"]; !ok {
+		t.Fatalf("support missing from team.yaml: %#v", spec.Agents)
+	}
+}
+
+func TestAgentsAddGlobalRequiresIdentityPrefixBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("AWEB_IDENTITY_PREFIX", "")
+	t.Setenv("AWEB_HUMAN", "")
+	t.Setenv("USER", "")
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsAddLayoutOnly = true
+	teamBootstrapNamespace = "example.com"
+
+	err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected missing identity prefix to fail")
+	}
+	if !strings.Contains(err.Error(), "identity prefix is required") {
+		t.Fatalf("error=%q, want identity-prefix guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "support") {
+		t.Fatalf("team.yaml mutated before prefix preflight failed:\n%s", string(data))
+	}
+}
+
+func TestAgentsAddGlobalProvisionRequiresAtomicClaimPrimitiveBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsIdentityPrefix = "juan"
+	teamBootstrapNamespace = "example.com"
+
+	err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected global add to require atomic AWID claim primitive")
+	}
+	if !strings.Contains(err.Error(), "atomic AWID identity/address claim") || !strings.Contains(err.Error(), "--layout-only") {
+		t.Fatalf("error=%q, want atomic-claim guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "support") {
+		t.Fatalf("team.yaml mutated before atomic-claim guard failed:\n%s", string(data))
+	}
+}
+
+func TestAgentsAddRejectsExistingHomeBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, "agents", "home", "support"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+	agentsAddLayoutOnly = true
+
+	err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected existing home to fail")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error=%q, want existing-home guidance", err)
+	}
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "support") {
+		t.Fatalf("team.yaml mutated despite existing home conflict:\n%s", string(data))
 	}
 }
 

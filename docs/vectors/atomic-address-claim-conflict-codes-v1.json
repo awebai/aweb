@@ -1,0 +1,17 @@
+{
+  "version": "atomic-address-claim-conflict-codes-v1",
+  "codes": [
+    "address_taken_different_owner",
+    "did_taken_different_key",
+    "namespace_authority_invalid",
+    "identity_signature_invalid",
+    "timestamp_stale",
+    "namespace_not_registered",
+    "payload_canonicalization_mismatch",
+    "custody_combination_unsupported",
+    "primitive_disabled",
+    "primitive_not_supported",
+    "did_log_proof_required",
+    "did_log_proof_invalid"
+  ]
+}

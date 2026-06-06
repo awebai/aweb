@@ -90,9 +90,8 @@ var agentsProvisionCmd = &cobra.Command{
 var agentsAddCmd = &cobra.Command{
 	Use:   "add <responsibility>",
 	Short: "Add a responsibility to the agents layout",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents add is tracked as aweb-aapz.5 and is not implemented yet; for now, extend the template team.yaml and run aw agents bootstrap on a fresh repo")
-	},
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAgentsAdd,
 }
 
 var agentsAddWorktreeCmd = &cobra.Command{
@@ -133,6 +132,12 @@ var (
 	teamBootstrapSkipRoles        bool
 	teamBootstrapSkipInstructions bool
 	agentsIdentityPrefix          string
+	agentsAddLocal                bool
+	agentsAddGlobal               bool
+	agentsAddRole                 string
+	agentsAddLayoutOnly           bool
+	agentsAddInitPrimaryAgent     = initTeamBootstrapPrimaryAgent
+	agentsAddInitAdditionalAgent  = initTeamBootstrapAdditionalAgent
 )
 
 type teamBootstrapSpec struct {
@@ -154,11 +159,11 @@ type teamBootstrapRoleSpec struct {
 
 type teamBootstrapAgentSpec struct {
 	RoleName      string `yaml:"role_name"`
-	DefaultName   string `yaml:"default_name"`
-	DefaultAlias  string `yaml:"default_alias"`
-	IdentityScope string `yaml:"identity_scope"`
-	Work          string `yaml:"work"`
-	HomeTemplate  string `yaml:"home_template"`
+	DefaultName   string `yaml:"default_name,omitempty"`
+	DefaultAlias  string `yaml:"default_alias,omitempty"`
+	IdentityScope string `yaml:"identity_scope,omitempty"`
+	Work          string `yaml:"work,omitempty"`
+	HomeTemplate  string `yaml:"home_template,omitempty"`
 }
 
 type teamBootstrapWorktreeAgentSpec struct {
@@ -241,6 +246,19 @@ type agentsProvisionCheck struct {
 	Source         string `json:"source"`
 }
 
+type agentsAddOutput struct {
+	DryRun         bool                   `json:"dry_run"`
+	LayoutOnly     bool                   `json:"layout_only"`
+	AgentsDir      string                 `json:"agents_dir"`
+	Responsibility string                 `json:"responsibility"`
+	RoleName       string                 `json:"role_name"`
+	RoleCreated    bool                   `json:"role_created"`
+	IdentityPrefix string                 `json:"identity_prefix,omitempty"`
+	Agent          teamBootstrapAgentPlan `json:"agent"`
+	Availability   []agentsProvisionCheck `json:"availability,omitempty"`
+	TeamSource     string                 `json:"team_source,omitempty"`
+}
+
 type agentsProvisionState int
 
 const (
@@ -274,6 +292,11 @@ func init() {
 
 	bindAgentsProvisionFlags(agentsPlanCmd)
 	bindAgentsProvisionFlags(agentsProvisionCmd)
+	bindAgentsProvisionFlags(agentsAddCmd)
+	agentsAddCmd.Flags().BoolVar(&agentsAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
+	agentsAddCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
+	agentsAddCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
+	agentsAddCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create local identity state")
 
 	agentsCmd.AddCommand(
 		teamBootstrapCmd,
@@ -497,6 +520,171 @@ func runAgentsProvision(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runAgentsAdd(cmd *cobra.Command, args []string) error {
+	out, layout, spec, plan, err := buildAgentsAddOutput(cmd, args[0])
+	if err != nil {
+		return err
+	}
+	if teamBootstrapDryRun {
+		out.DryRun = true
+		printOutput(out, formatAgentsAddOutput)
+		return nil
+	}
+	var source teamBootstrapSource
+	anchorDir := ""
+	if !agentsAddLayoutOnly {
+		anchorDir, err = findAgentsProvisionAnchor(layout, plan.HomeDir)
+		if err != nil {
+			return err
+		}
+		if anchorDir == "" {
+			source, err = resolveAgentsProvisionSource()
+			if err != nil {
+				return err
+			}
+			out.TeamSource = string(source.Kind)
+		} else {
+			out.TeamSource = string(teamBootstrapSourceCurrent)
+		}
+	}
+	if err := writeAgentsAddLayout(layout, spec, plan, out.RoleCreated); err != nil {
+		return err
+	}
+	if agentsAddLayoutOnly {
+		out.DryRun = false
+		printOutput(out, formatAgentsAddOutput)
+		return nil
+	}
+	if err := materializeTeamBootstrapAgent(layout.AgentsRoot, plan, layout.CustomerRepoRoot); err != nil {
+		return err
+	}
+	if anchorDir != "" {
+		if err := agentsAddInitAdditionalAgent(anchorDir, plan); err != nil {
+			return err
+		}
+	} else if err := agentsAddInitPrimaryAgent(cmd, source, plan); err != nil {
+		return err
+	}
+	out.DryRun = false
+	printOutput(out, formatAgentsAddOutput)
+	return nil
+}
+
+func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsAddOutput, teamBootstrapLayout, *teamBootstrapSpec, teamBootstrapAgentPlan, error) {
+	layout, err := resolveAgentsExistingLayoutPreflight()
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	spec, err := loadTeamBootstrapSpec(layout.AgentsRoot)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	if err := validateTeamBootstrapSpec(layout.AgentsRoot, spec); err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	responsibility, err := normalizeAgentsNamingField("responsibility", responsibilityRaw)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	if _, exists := spec.Agents[responsibility]; exists {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("agents layout already contains responsibility %q", responsibility)
+	}
+	scope, err := resolveAgentsAddScope()
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	if scope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("aw agents add --global requires atomic AWID identity/address claim support (aweb-aapz.13); use --layout-only to update the blueprint for now")
+	}
+	if scope == agentsIdentityScopeGlobal && strings.TrimSpace(teamBootstrapNamespace) == "" {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("--namespace is required when adding a global agent")
+	}
+	roleName, err := normalizeAgentsNamingField("role", firstNonEmpty(agentsAddRole, responsibility))
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	roleCreated := false
+	if spec.Roles == nil {
+		spec.Roles = map[string]teamBootstrapRoleSpec{}
+	}
+	if _, ok := spec.Roles[roleName]; !ok {
+		roleCreated = true
+		spec.Roles[roleName] = teamBootstrapRoleSpec{
+			Title: titleFromSlug(roleName),
+			File:  filepath.ToSlash(filepath.Join("roles", roleName+".md")),
+		}
+	}
+	spec.Agents[responsibility] = teamBootstrapAgentSpec{
+		RoleName:      roleName,
+		IdentityScope: scope,
+		HomeTemplate:  filepath.ToSlash(filepath.Join("home", responsibility)),
+		Work:          agentsWorkRepoRoot,
+	}
+	if err := ensureAgentsAddPathsAvailable(layout, spec, responsibility, roleName, roleCreated); err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	identityPrefix, err := resolveAgentsIdentityPrefix(cmd)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	namingInput, err := agentsAddNamingInput(layout, spec, responsibility, scope, identityPrefix)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	namingPlan, err := buildAgentsNamingPlan(namingInput)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	if len(namingPlan.Agents) != 1 {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, fmt.Errorf("internal error: add naming plan returned %d agents", len(namingPlan.Agents))
+	}
+	agentPlan := namingPlan.Agents[0]
+	plan := teamBootstrapAgentPlan{
+		Responsibility: responsibility,
+		RoleName:       roleName,
+		Name:           agentPlan.TeamAlias,
+		Alias:          agentPlan.TeamAlias,
+		IdentityScope:  agentPlan.IdentityScope,
+		GlobalAddress:  agentPlan.GlobalAddress,
+		HomeDir:        filepath.Join(layout.HomeRoot, responsibility),
+		SourceHome:     filepath.Join(layout.HomeRoot, responsibility),
+		Instructions:   filepath.Join(layout.HomeRoot, responsibility, "AGENTS.md"),
+		WorkBinding:    agentsWorkRepoRoot,
+		WorkDir:        layout.CustomerRepoRoot,
+	}
+	checks := make([]agentsProvisionCheck, 0, len(agentPlan.Availability))
+	for _, check := range agentPlan.Availability {
+		checks = append(checks, agentsProvisionCheck{
+			Responsibility: responsibility,
+			Field:          check.Field,
+			Value:          check.Value,
+			Status:         check.Status,
+			Source:         check.Source,
+		})
+	}
+	out := agentsAddOutput{
+		DryRun:         true,
+		LayoutOnly:     agentsAddLayoutOnly,
+		AgentsDir:      layout.AgentsRoot,
+		Responsibility: responsibility,
+		RoleName:       roleName,
+		RoleCreated:    roleCreated,
+		IdentityPrefix: identityPrefix,
+		Agent:          plan,
+		Availability:   checks,
+	}
+	if !agentsAddLayoutOnly {
+		if anchorDir, err := findAgentsProvisionAnchor(layout, plan.HomeDir); err == nil && anchorDir != "" {
+			out.TeamSource = string(teamBootstrapSourceCurrent)
+		} else if source, err := resolveAgentsProvisionSource(); err == nil {
+			out.TeamSource = string(source.Kind)
+		} else if hasAgentsProvisionExplicitSource() {
+			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+		}
+	}
+	return out, layout, spec, plan, nil
+}
+
 func buildAgentsProvisionOutput(cmd *cobra.Command) (agentsProvisionOutput, teamBootstrapLayout, *teamBootstrapSpec, []teamBootstrapAgentPlan, error) {
 	layout, err := resolveAgentsExistingLayoutPreflight()
 	if err != nil {
@@ -656,6 +844,209 @@ func expectedAgentsProvisionTeamID() (string, error) {
 		return "", err
 	}
 	return awid.BuildTeamID(normalizedNamespace, normalizedTeam), nil
+}
+
+func resolveAgentsAddScope() (string, error) {
+	if agentsAddLocal && agentsAddGlobal {
+		return "", usageError("--local and --global are mutually exclusive")
+	}
+	if agentsAddGlobal {
+		return agentsIdentityScopeGlobal, nil
+	}
+	return agentsIdentityScopeLocal, nil
+}
+
+func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, responsibility, scope, identityPrefix string) (agentsNamingInput, error) {
+	input := agentsNamingInput{
+		AgentsDir: layout.AgentsDirName,
+		Namespace: teamBootstrapNamespace,
+		User:      identityPrefix,
+		Agents: []agentsNamingAgentInput{{
+			Responsibility: responsibility,
+			IdentityScope:  scope,
+			WorkBinding:    agentsWorkRepoRoot,
+		}},
+		ExistingAliases:     map[string]bool{},
+		ExistingGlobalNames: map[string]bool{},
+		ExistingHomeNames:   map[string]bool{},
+	}
+	for existing := range spec.Agents {
+		if existing == responsibility {
+			continue
+		}
+		normalized, err := normalizeAgentsNamingField("existing responsibility", existing)
+		if err != nil {
+			return agentsNamingInput{}, err
+		}
+		input.ExistingHomeNames[normalized] = true
+	}
+	if entries, err := os.ReadDir(layout.HomeRoot); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || entry.Name() == responsibility {
+				continue
+			}
+			normalized, err := normalizeAgentsNamingField("existing home", entry.Name())
+			if err != nil {
+				return agentsNamingInput{}, err
+			}
+			input.ExistingHomeNames[normalized] = true
+		}
+	} else if !os.IsNotExist(err) {
+		return agentsNamingInput{}, fmt.Errorf("read existing agent homes: %w", err)
+	}
+	for _, membership := range existingAgentsMemberships(layout, responsibility) {
+		if alias := strings.ToLower(strings.TrimSpace(membership.Alias)); alias != "" {
+			input.ExistingAliases[alias] = true
+		}
+	}
+	if strings.TrimSpace(teamBootstrapNamespace) != "" && strings.TrimSpace(teamBootstrapTeamName) != "" {
+		aliases, globalNames, err := existingBYOTNamesForAgentsProvision(teamBootstrapNamespace, teamBootstrapTeamName)
+		if err != nil {
+			return agentsNamingInput{}, err
+		}
+		for alias := range aliases {
+			input.ExistingAliases[alias] = true
+		}
+		for name := range globalNames {
+			input.ExistingGlobalNames[name] = true
+		}
+	}
+	return input, nil
+}
+
+func existingAgentsMemberships(layout teamBootstrapLayout, skipResponsibility string) []awconfig.WorktreeMembership {
+	memberships := []awconfig.WorktreeMembership{}
+	for responsibility := range mapExistingAgentHomes(layout) {
+		if responsibility == skipResponsibility {
+			continue
+		}
+		home := filepath.Join(layout.HomeRoot, responsibility)
+		workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(home)
+		if err != nil || workspace == nil {
+			continue
+		}
+		for _, membership := range workspace.Memberships {
+			memberships = append(memberships, membership)
+		}
+	}
+	return memberships
+}
+
+func mapExistingAgentHomes(layout teamBootstrapLayout) map[string]bool {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(layout.HomeRoot)
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			out[entry.Name()] = true
+		}
+	}
+	return out
+}
+
+func ensureAgentsAddPathsAvailable(layout teamBootstrapLayout, spec *teamBootstrapSpec, responsibility, roleName string, roleCreated bool) error {
+	home := filepath.Join(layout.HomeRoot, responsibility)
+	if _, err := os.Stat(home); err == nil {
+		return usageError("agent home %s already exists; choose another responsibility or remove the existing directory after backing up any .aw state", home)
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat agent home %s: %w", home, err)
+	}
+	if roleCreated {
+		role := spec.Roles[roleName]
+		rolePath := filepath.Join(layout.AgentsRoot, filepath.FromSlash(strings.TrimSpace(role.File)))
+		if _, err := os.Stat(rolePath); err == nil {
+			return usageError("role file %s already exists but role %q is not declared in team.yaml; add the role explicitly or choose --role", rolePath, roleName)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("stat role file %s: %w", rolePath, err)
+		}
+	}
+	return nil
+}
+
+func findAgentsProvisionAnchor(layout teamBootstrapLayout, skipHome string) (string, error) {
+	entries, err := os.ReadDir(layout.HomeRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read agent homes: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		home := filepath.Join(layout.HomeRoot, entry.Name())
+		if filepath.Clean(home) == filepath.Clean(skipHome) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(home, ".aw")); err != nil {
+			continue
+		}
+		if _, err := resolveSelectionForDir(home); err == nil {
+			return home, nil
+		}
+	}
+	return "", nil
+}
+
+func writeAgentsAddLayout(layout teamBootstrapLayout, spec *teamBootstrapSpec, plan teamBootstrapAgentPlan, roleCreated bool) error {
+	teamYAMLPath := filepath.Join(layout.AgentsRoot, "team.yaml")
+	sanitizeTeamBootstrapSpecForWrite(spec)
+	data, err := yaml.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(teamYAMLPath, []byte(strings.TrimRight(string(data), "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", teamYAMLPath, err)
+	}
+	if roleCreated {
+		role := spec.Roles[plan.RoleName]
+		rolePath := filepath.Join(layout.AgentsRoot, filepath.FromSlash(strings.TrimSpace(role.File)))
+		if err := os.MkdirAll(filepath.Dir(rolePath), 0o755); err != nil {
+			return err
+		}
+		body := fmt.Sprintf("# %s\n\nRole playbook for %s.\n", titleFromSlug(plan.RoleName), plan.RoleName)
+		if err := os.WriteFile(rolePath, []byte(body), 0o644); err != nil {
+			return fmt.Errorf("write role file %s: %w", rolePath, err)
+		}
+	}
+	home := filepath.Join(layout.HomeRoot, plan.Responsibility)
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return err
+	}
+	agentsMD := filepath.Join(home, "AGENTS.md")
+	body := fmt.Sprintf("# %s\n\nRole: %s\n", titleFromSlug(plan.Responsibility), plan.RoleName)
+	if err := os.WriteFile(agentsMD, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", agentsMD, err)
+	}
+	return nil
+}
+
+func sanitizeTeamBootstrapSpecForWrite(spec *teamBootstrapSpec) {
+	if spec == nil {
+		return
+	}
+	for key, agent := range spec.Agents {
+		agent.DefaultName = ""
+		agent.DefaultAlias = ""
+		spec.Agents[key] = agent
+	}
+	if spec.Worktrees == nil {
+		spec.Worktrees = []teamBootstrapWorktreeAgentSpec{}
+	}
+}
+
+func titleFromSlug(slug string) string {
+	parts := strings.Split(strings.TrimSpace(slug), "-")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
 }
 
 func resolveAgentsProvisionSource() (teamBootstrapSource, error) {
@@ -2528,6 +2919,47 @@ func formatAgentsProvisionOutput(v any) string {
 		for _, agent := range out.Agents {
 			b.WriteString("  cd " + shellQuote(agent.HomeDir) + "\n")
 		}
+	}
+	return b.String()
+}
+
+func formatAgentsAddOutput(v any) string {
+	out := v.(agentsAddOutput)
+	var b strings.Builder
+	if out.DryRun {
+		b.WriteString("Agents add plan (dry run)\n")
+	} else {
+		b.WriteString("Agents add complete\n")
+	}
+	b.WriteString(fmt.Sprintf("Agents dir: %s\n", out.AgentsDir))
+	b.WriteString(fmt.Sprintf("Responsibility: %s\n", out.Responsibility))
+	b.WriteString(fmt.Sprintf("Role: %s", out.RoleName))
+	if out.RoleCreated {
+		b.WriteString(" (new)")
+	}
+	b.WriteString("\n")
+	if strings.TrimSpace(out.IdentityPrefix) != "" {
+		b.WriteString(fmt.Sprintf("Identity prefix: %s\n", out.IdentityPrefix))
+	}
+	if out.LayoutOnly {
+		b.WriteString("Mode: layout-only\n")
+	}
+	if strings.TrimSpace(out.TeamSource) != "" {
+		b.WriteString(fmt.Sprintf("Team source: %s\n", out.TeamSource))
+	}
+	b.WriteString("\nAgent:\n")
+	agent := out.Agent
+	scope := strings.TrimSpace(agent.IdentityScope)
+	if scope == "" {
+		scope = agentsIdentityScopeLocal
+	}
+	address := ""
+	if strings.TrimSpace(agent.GlobalAddress) != "" {
+		address = " address=" + agent.GlobalAddress
+	}
+	b.WriteString(fmt.Sprintf("- %s: scope=%s alias=%s%s home=%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, agent.WorkDir))
+	for _, check := range out.Availability {
+		b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
 	}
 	return b.String()
 }
