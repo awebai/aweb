@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,6 +136,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAddGlobal := agentsAddGlobal
 	prevAddRole := agentsAddRole
 	prevAddLayoutOnly := agentsAddLayoutOnly
+	prevAddMaterialize := agentsAddMaterializeAgent
 	prevAddInitPrimary := agentsAddInitPrimaryAgent
 	prevAddInitAdditional := agentsAddInitAdditionalAgent
 	prevAddClaim := agentsAddClaimIdentityAddress
@@ -166,6 +168,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		agentsAddGlobal = prevAddGlobal
 		agentsAddRole = prevAddRole
 		agentsAddLayoutOnly = prevAddLayoutOnly
+		agentsAddMaterializeAgent = prevAddMaterialize
 		agentsAddInitPrimaryAgent = prevAddInitPrimary
 		agentsAddInitAdditionalAgent = prevAddInitAdditional
 		agentsAddClaimIdentityAddress = prevAddClaim
@@ -197,6 +200,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	agentsAddGlobal = false
 	agentsAddRole = ""
 	agentsAddLayoutOnly = false
+	agentsAddMaterializeAgent = materializeTeamBootstrapAgent
 	agentsAddInitPrimaryAgent = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent = initTeamBootstrapAdditionalAgent
 	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
@@ -858,6 +862,121 @@ func TestAgentsAddWorktreePlansCollisionSuffixBeforeMutation(t *testing.T) {
 	}
 	if strings.Contains(string(data), "developer-2") {
 		t.Fatalf("team.yaml mutated during planning:\n%s", string(data))
+	}
+}
+
+func TestAgentsAddWorktreeMaterializeFailureRollsBackLayout(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	teamBootstrapInviteToken = "aw-invite-test-token"
+	agentsAddMaterializeAgent = func(templateDir string, plan teamBootstrapAgentPlan, workDirectory string) error {
+		return errors.New("materialize boom")
+	}
+	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
+		t.Fatal("provision should not run after materialize failure")
+		return nil
+	}
+
+	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected materialize failure")
+	}
+	if !strings.Contains(err.Error(), "materialize boom") {
+		t.Fatalf("error=%q, want materialize cause", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "support"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "roles", "support.md"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["support"]; ok {
+		t.Fatalf("support remained in team.yaml after rollback: %#v", spec.Agents["support"])
+	}
+	if _, ok := spec.Roles["support"]; ok {
+		t.Fatalf("support role remained in team.yaml after rollback: %#v", spec.Roles["support"])
+	}
+}
+
+func TestAgentsAddWorktreeProvisionFailureExplainsCleanup(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	teamBootstrapInviteToken = "aw-invite-test-token"
+	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
+		return errors.New("provision boom")
+	}
+
+	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"})
+	if err == nil {
+		t.Fatal("expected provisioning failure")
+	}
+	for _, want := range []string{
+		"identity provisioning failed",
+		"aw agents remove --remove-layout developer",
+		"rm -rf",
+		"git -C",
+		"worktree remove",
+		"branch -D developer",
+		"team.yaml",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error=%q, want %q", err, want)
+		}
+	}
+	assertPathExists(t, filepath.Join(repoDir, "agents", "worktrees", "developer"))
+	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "developer", "AGENTS.md"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["developer"]; !ok {
+		t.Fatalf("developer should remain in team.yaml for remove/recovery: %#v", spec.Agents)
+	}
+}
+
+func TestAgentsAddWorktreeRejectsGlobalBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsIdentityPrefix = "juan"
+	teamBootstrapNamespace = "example.com"
+	teamBootstrapTeamName = "circle"
+	teamBootstrapRegistryURL = agentsAddEmptyPreflightRegistry(t)
+
+	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected global add-worktree rejection")
+	}
+	if !strings.Contains(err.Error(), "add-worktree --global is not supported") {
+		t.Fatalf("error=%q, want global add-worktree guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "support"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "support") {
+		t.Fatalf("team.yaml mutated before global+worktree rejection:\n%s", string(data))
 	}
 }
 

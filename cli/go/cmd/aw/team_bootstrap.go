@@ -137,6 +137,7 @@ var (
 	agentsAddGlobal               bool
 	agentsAddRole                 string
 	agentsAddLayoutOnly           bool
+	agentsAddMaterializeAgent     = materializeTeamBootstrapAgent
 	agentsAddInitPrimaryAgent     = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent  = initTeamBootstrapAdditionalAgent
 	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
@@ -616,17 +617,26 @@ func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBind
 	if strings.TrimSpace(plan.WorkDir) != "" {
 		planWorkDirectory = plan.WorkDir
 	}
-	if err := materializeTeamBootstrapAgent(layout.AgentsRoot, plan, planWorkDirectory); err != nil {
+	if err := agentsAddMaterializeAgent(layout.AgentsRoot, plan, planWorkDirectory); err != nil {
 		if workBinding == agentsWorkGitWorktree {
 			cleanupAgentsAddGitWorktree(layout, plan, branchCreated)
+			if rollbackErr := revertAgentsAddLayoutMaterialization(layout, spec, plan, out.RoleCreated); rollbackErr != nil {
+				return fmt.Errorf("materialize agent home for %s: %w (rollback failed: %v)", plan.Responsibility, err, rollbackErr)
+			}
 		}
 		return err
 	}
 	if anchorDir != "" {
 		if err := agentsAddInitAdditionalAgent(anchorDir, plan); err != nil {
+			if workBinding == agentsWorkGitWorktree {
+				return agentsAddWorktreeProvisionFailureError(layout, plan, err)
+			}
 			return err
 		}
 	} else if err := agentsAddInitPrimaryAgent(cmd, source, plan); err != nil {
+		if workBinding == agentsWorkGitWorktree {
+			return agentsAddWorktreeProvisionFailureError(layout, plan, err)
+		}
 		return err
 	}
 	out.DryRun = false
@@ -1528,6 +1538,61 @@ func writeAgentsAddLayout(layout teamBootstrapLayout, spec *teamBootstrapSpec, p
 	return nil
 }
 
+func revertAgentsAddLayoutMaterialization(layout teamBootstrapLayout, spec *teamBootstrapSpec, plan teamBootstrapAgentPlan, roleCreated bool) error {
+	if spec == nil {
+		return nil
+	}
+	delete(spec.Agents, plan.Responsibility)
+	if roleCreated {
+		if role, ok := spec.Roles[plan.RoleName]; ok {
+			rolePath := filepath.Join(layout.AgentsRoot, filepath.FromSlash(strings.TrimSpace(role.File)))
+			if err := os.Remove(rolePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove generated role file %s: %w", rolePath, err)
+			}
+		}
+		delete(spec.Roles, plan.RoleName)
+	}
+	if err := os.RemoveAll(plan.HomeDir); err != nil {
+		return fmt.Errorf("remove generated home %s: %w", plan.HomeDir, err)
+	}
+	return writeAgentsAddLayoutYAML(layout, spec)
+}
+
+func writeAgentsAddLayoutYAML(layout teamBootstrapLayout, spec *teamBootstrapSpec) error {
+	teamYAMLPath := filepath.Join(layout.AgentsRoot, "team.yaml")
+	sanitizeTeamBootstrapSpecForWrite(spec)
+	data, err := yaml.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(teamYAMLPath, []byte(strings.TrimRight(string(data), "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", teamYAMLPath, err)
+	}
+	return nil
+}
+
+func agentsAddWorktreeProvisionFailureError(layout teamBootstrapLayout, plan teamBootstrapAgentPlan, err error) error {
+	branchName := ""
+	if computed, cerr := agentsAddGitWorktreeBranchName(plan); cerr == nil {
+		branchName = computed
+	}
+	if strings.TrimSpace(branchName) == "" {
+		branchName = plan.Responsibility
+	}
+	return fmt.Errorf("agent home was created but identity provisioning failed for %s: %w\n\nOnce `aw agents remove --remove-layout %s` is available, use it to clean up. Manual cleanup: rm -rf %s; git -C %s worktree remove %s; git -C %s branch -D %s; then edit %s to remove the %q responsibility entry",
+		plan.Responsibility,
+		err,
+		plan.Responsibility,
+		plan.HomeDir,
+		layout.CustomerRepoRoot,
+		plan.WorkDir,
+		layout.CustomerRepoRoot,
+		branchName,
+		filepath.Join(layout.AgentsRoot, "team.yaml"),
+		plan.Responsibility,
+	)
+}
+
 func sanitizeTeamBootstrapSpecForWrite(spec *teamBootstrapSpec) {
 	if spec == nil {
 		return
@@ -1773,7 +1838,7 @@ func createAgentsAddGitWorktree(layout teamBootstrapLayout, plan teamBootstrapAg
 	if err := os.MkdirAll(layout.WorktreesRoot, 0o755); err != nil {
 		return false, err
 	}
-	branchName, err := teamBootstrapWorktreeName(plan)
+	branchName, err := agentsAddGitWorktreeBranchName(plan)
 	if err != nil {
 		return false, err
 	}
@@ -1792,11 +1857,24 @@ func cleanupAgentsAddGitWorktree(layout teamBootstrapLayout, plan teamBootstrapA
 	if plan.WorkBinding != agentsWorkGitWorktree {
 		return
 	}
-	branchName, err := teamBootstrapWorktreeName(plan)
+	branchName, err := agentsAddGitWorktreeBranchName(plan)
 	if err != nil {
 		return
 	}
 	cleanupWorkspaceWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, branchCreated)
+}
+
+func agentsAddGitWorktreeBranchName(plan teamBootstrapAgentPlan) (string, error) {
+	if strings.TrimSpace(plan.WorkDir) != "" {
+		base := filepath.Base(filepath.Clean(plan.WorkDir))
+		if strings.TrimSpace(base) != "" && base != "." && base != string(filepath.Separator) {
+			name := sanitizeSlug(base)
+			if name != "" {
+				return name, nil
+			}
+		}
+	}
+	return teamBootstrapWorktreeName(plan)
 }
 
 func resolveTeamBootstrapLayoutPreflight(cmd *cobra.Command) (teamBootstrapLayout, error) {
