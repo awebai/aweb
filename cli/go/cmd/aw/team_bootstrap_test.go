@@ -195,6 +195,37 @@ func initGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "init")
 }
 
+func TestAgentsCommandSurfaceReplacesTeamBootstrap(t *testing.T) {
+	agents := findRootSubcommand("agents")
+	if agents == nil {
+		t.Fatal("root command missing aw agents")
+	}
+	if findRootSubcommand("team") != nil {
+		t.Fatal("root command should not expose aw team")
+	}
+	for _, name := range []string{"bootstrap", "plan", "provision", "add", "add-worktree", "remove"} {
+		if findSubcommand(agents, name) == nil {
+			t.Fatalf("aw agents missing %s subcommand", name)
+		}
+	}
+	if !strings.Contains(agents.Long, "repo root itself is not an aw identity") {
+		t.Fatalf("aw agents help should explain repo root identity boundary:\n%s", agents.Long)
+	}
+}
+
+func findRootSubcommand(name string) *cobra.Command {
+	return findSubcommand(rootCmd, name)
+}
+
+func findSubcommand(parent *cobra.Command, name string) *cobra.Command {
+	for _, cmd := range parent.Commands() {
+		if cmd.Name() == name {
+			return cmd
+		}
+	}
+	return nil
+}
+
 func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
 	templateDir := writeTeamBootstrapFixture(t)
 	spec, err := loadTeamBootstrapSpec(templateDir)

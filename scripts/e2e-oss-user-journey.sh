@@ -589,7 +589,7 @@ run_success "bootstrap namespace prepare" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id 
   --domain bootstrap.local \
   --registry "$AWID_URL"
 
-run_success "bootstrap dry-run" run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+run_success "bootstrap dry-run" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --dry-run \
   --namespace bootstrap.local \
   --team circle \
@@ -604,7 +604,7 @@ else
   pass=$((pass + 1))
 fi
 
-run_success "bootstrap apply" run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+run_success "bootstrap apply" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
   --aweb-url "$AWEB_URL" \
@@ -681,7 +681,7 @@ fi
 
 bootstrap_before_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -prune -o -print | LC_ALL=C sort)"
 bootstrap_before_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
-rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" team bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
+rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
   --aweb-url "http://127.0.0.1:9" \
@@ -723,7 +723,7 @@ git -C "$BOOTSTRAP_LEGACY_WORK_DIR" config user.name "Test User"
 git -C "$BOOTSTRAP_LEGACY_WORK_DIR" add README.md
 git -C "$BOOTSTRAP_LEGACY_WORK_DIR" commit -m init >/dev/null
 
-run_success "bootstrap legacy work-directory apply" run_aw_in "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" team bootstrap "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" \
+run_success "bootstrap legacy work-directory apply" run_aw_in "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" agents bootstrap "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
   --aweb-url "$AWEB_URL" \

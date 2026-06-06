@@ -21,15 +21,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var teamTopCmd = &cobra.Command{
-	Use:   "team",
-	Short: "Bootstrap agent teams from templates",
+var agentsCmd = &cobra.Command{
+	Use:   "agents",
+	Short: "Manage repo-local agent layouts and provisioning",
+	Long: `Manage repo-local agent layouts and provisioning.
+
+The agents command family manages the project-local agents/ convention:
+shared layout, agent homes, worktree-bound agents, and per-agent workspace
+provisioning. It does not manage AWID team authority in general; use aw id team
+for membership and team-controller operations.
+
+Run aw agents commands from the customer project repo root unless a subcommand
+explicitly says otherwise. The repo root itself is not an aw identity; generated
+agent homes live under agents/home/<responsibility>.`,
 }
 
 var teamBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap <template-dir>",
-	Short: "Bootstrap an agent team from a template repository",
-	Long: `Bootstrap an agent team from a template repository.
+	Short: "Bootstrap repo-local agents from a template repository",
+	Long: `Bootstrap repo-local agents from a template repository.
 
 The template repository is convention-first:
 
@@ -57,6 +67,46 @@ By default bootstrap uses the template's default identity names; pass
 agents before provisioning.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamBootstrap,
+}
+
+var agentsPlanCmd = &cobra.Command{
+	Use:   "plan",
+	Short: "Plan repo-local agent names and paths",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return usageError("aw agents plan is not implemented yet; use aw agents bootstrap --dry-run for the bootstrap plan")
+	},
+}
+
+var agentsProvisionCmd = &cobra.Command{
+	Use:   "provision",
+	Short: "Provision identities for an existing agents layout",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return usageError("aw agents provision is not implemented yet")
+	},
+}
+
+var agentsAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a responsibility to the agents layout",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return usageError("aw agents add is not implemented yet")
+	},
+}
+
+var agentsAddWorktreeCmd = &cobra.Command{
+	Use:   "add-worktree",
+	Short: "Add a worktree-bound agent to the agents layout",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return usageError("aw agents add-worktree is not implemented yet")
+	},
+}
+
+var agentsRemoveCmd = &cobra.Command{
+	Use:   "remove",
+	Short: "Remove or deprovision an agent responsibility",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return usageError("aw agents remove is not implemented yet")
+	},
 }
 
 var (
@@ -178,8 +228,8 @@ func init() {
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use (required for one-step BYOT team bootstrap)")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use (required for one-step BYOT team bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOT team")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapInviteToken, "invite-token", "", "Team invite token to accept into the first generated agent workspace")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
@@ -191,10 +241,17 @@ func init() {
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipInstructions, "skip-instructions", false, "Do not install shared team instructions")
 
-	teamTopCmd.AddCommand(teamBootstrapCmd)
-	rootCmd.AddCommand(teamTopCmd)
-	teamTopCmd.GroupID = groupWorkspace
-	bindTeamSelector(teamTopCmd)
+	agentsCmd.AddCommand(
+		teamBootstrapCmd,
+		agentsPlanCmd,
+		agentsProvisionCmd,
+		agentsAddCmd,
+		agentsAddWorktreeCmd,
+		agentsRemoveCmd,
+	)
+	rootCmd.AddCommand(agentsCmd)
+	agentsCmd.GroupID = groupWorkspace
+	bindTeamSelector(agentsCmd)
 }
 
 func runTeamBootstrap(cmd *cobra.Command, args []string) error {
@@ -349,7 +406,7 @@ func resolveTeamBootstrapLayoutPreflight(cmd *cobra.Command) (teamBootstrapLayou
 	}
 	repoRoot, err := currentGitWorktreeRootFromDir(wd)
 	if err != nil {
-		return teamBootstrapLayout{}, usageError("in-repo team bootstrap must be run from inside a git repository; run from your project repo or pass --work-directory/--work-repo-url for legacy bootstrap")
+		return teamBootstrapLayout{}, usageError("in-repo agents bootstrap must be run from inside a git repository; run from your project repo or pass --work-directory/--work-repo-url for legacy bootstrap")
 	}
 	agentsDir, err := validateTeamBootstrapAgentsDir(teamBootstrapAgentsDir)
 	if err != nil {
@@ -398,7 +455,7 @@ func teamBootstrapAgentsDirExistsError(path, agentsDir string) error {
 			"To create a new bootstrap here:\n"+
 			"  1. Pick a different name with --agents-dir <name>, or\n"+
 			"  2. Remove or rename the existing directory if you no longer need it.\n\n"+
-			"aw team bootstrap does not adopt, merge, or overwrite existing agents directories in v1. "+
+			"aw agents bootstrap does not adopt, merge, or overwrite existing agents directories in v1. "+
 			"This prevents accidental data loss to existing agent identity state.",
 		path,
 	)
@@ -555,7 +612,7 @@ func ensureInRepoBootstrapGitignore(layout teamBootstrapLayout) error {
 	if len(data) > 0 {
 		addition += "\n"
 	}
-	addition += "# Auto-written by aw team bootstrap (do not remove)\n"
+	addition += "# Auto-written by aw agents bootstrap (do not remove)\n"
 	if !hasHome {
 		addition += homePattern + "\n"
 	}
@@ -1190,7 +1247,7 @@ func resolveTeamBootstrapSource() (teamBootstrapSource, error) {
 	if isTTY() {
 		return teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, nil
 	}
-	return teamBootstrapSource{}, usageError("non-interactive team bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
+	return teamBootstrapSource{}, usageError("non-interactive agents bootstrap requires a team source: AWEB_API_KEY, --invite-token, --username, --namespace/--team, or run from an initialized aw workspace to forward its current team")
 }
 
 func currentHasTeamWorkspace() bool {
@@ -1249,7 +1306,7 @@ func initTeamBootstrapPrimaryAgent(cmd *cobra.Command, source teamBootstrapSourc
 		})
 		return err
 	default:
-		return fmt.Errorf("unsupported team bootstrap source %q", source.Kind)
+		return fmt.Errorf("unsupported agents bootstrap source %q", source.Kind)
 	}
 }
 
@@ -1377,10 +1434,10 @@ func createTeamBootstrapBYOTInvite() (teamBootstrapInvite, error) {
 	namespace := awconfig.NormalizeDomain(strings.TrimSpace(teamBootstrapNamespace))
 	teamName := strings.ToLower(strings.TrimSpace(teamBootstrapTeamName))
 	if namespace == "" {
-		return teamBootstrapInvite{}, usageError("--namespace is required for one-step team bootstrap")
+		return teamBootstrapInvite{}, usageError("--namespace is required for one-step agents bootstrap")
 	}
 	if teamName == "" {
-		return teamBootstrapInvite{}, usageError("--team is required for one-step team bootstrap")
+		return teamBootstrapInvite{}, usageError("--team is required for one-step agents bootstrap")
 	}
 
 	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
@@ -1886,9 +1943,9 @@ func formatTeamBootstrapOutput(v any) string {
 	out := v.(teamBootstrapOutput)
 	var b strings.Builder
 	if out.DryRun {
-		b.WriteString("Team bootstrap plan (dry run)\n")
+		b.WriteString("Agents bootstrap plan (dry run)\n")
 	} else {
-		b.WriteString("Team bootstrap complete\n")
+		b.WriteString("Agents bootstrap complete\n")
 	}
 	if strings.TrimSpace(out.TemplateRef) != "" {
 		b.WriteString(fmt.Sprintf("Template ref: %s\n", out.TemplateRef))
