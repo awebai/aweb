@@ -2,12 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/ed25519"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -131,6 +137,9 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAddLayoutOnly := agentsAddLayoutOnly
 	prevAddInitPrimary := agentsAddInitPrimaryAgent
 	prevAddInitAdditional := agentsAddInitAdditionalAgent
+	prevAddClaim := agentsAddClaimIdentityAddress
+	prevAddCert := agentsAddEnsureGlobalCertificate
+	prevAddConnect := agentsAddConnectGlobalAgent
 	t.Cleanup(func() {
 		teamBootstrapHomeRoot = prevHomeRoot
 		teamBootstrapAgentsDir = prevAgentsDir
@@ -159,6 +168,9 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		agentsAddLayoutOnly = prevAddLayoutOnly
 		agentsAddInitPrimaryAgent = prevAddInitPrimary
 		agentsAddInitAdditionalAgent = prevAddInitAdditional
+		agentsAddClaimIdentityAddress = prevAddClaim
+		agentsAddEnsureGlobalCertificate = prevAddCert
+		agentsAddConnectGlobalAgent = prevAddConnect
 	})
 	teamBootstrapHomeRoot = ""
 	teamBootstrapAgentsDir = "agents"
@@ -187,6 +199,11 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	agentsAddLayoutOnly = false
 	agentsAddInitPrimaryAgent = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent = initTeamBootstrapAdditionalAgent
+	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
+		return registry.ClaimIdentityAddressAt(ctx, registryURL, params)
+	}
+	agentsAddEnsureGlobalCertificate = ensureAgentsAddGlobalCertificate
+	agentsAddConnectGlobalAgent = initCertificateConnectWithOptions
 }
 
 func testTeamBootstrapCommand(t *testing.T) *cobra.Command {
@@ -759,7 +776,7 @@ func TestAgentsAddGlobalRequiresIdentityPrefixBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestAgentsAddGlobalProvisionRequiresAtomicClaimPrimitiveBeforeMutation(t *testing.T) {
+func TestAgentsAddGlobalProvisionRequiresTeamBeforeMutation(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -774,10 +791,10 @@ func TestAgentsAddGlobalProvisionRequiresAtomicClaimPrimitiveBeforeMutation(t *t
 
 	err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
 	if err == nil {
-		t.Fatal("expected global add to require atomic AWID claim primitive")
+		t.Fatal("expected global add to require team")
 	}
-	if !strings.Contains(err.Error(), "atomic AWID identity/address claim") || !strings.Contains(err.Error(), "--layout-only") {
-		t.Fatalf("error=%q, want atomic-claim guidance", err)
+	if !strings.Contains(err.Error(), "--team is required") {
+		t.Fatalf("error=%q, want --team guidance", err)
 	}
 	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
 	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
@@ -787,6 +804,253 @@ func TestAgentsAddGlobalProvisionRequiresAtomicClaimPrimitiveBeforeMutation(t *t
 	if strings.Contains(string(data), "support") {
 		t.Fatalf("team.yaml mutated before atomic-claim guard failed:\n%s", string(data))
 	}
+}
+
+func TestAgentsAddGlobalAtomicConflictCleansPendingStateBeforeLayoutMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("example.com", controllerKey); err != nil {
+		t.Fatalf("save controller key: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsIdentityPrefix = "juan"
+	teamBootstrapNamespace = "example.com"
+	teamBootstrapTeamName = "circle"
+	teamBootstrapRegistryURL = agentsAddEmptyPreflightRegistry(t)
+	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
+		return nil, &awid.AtomicAddressClaimConflictError{
+			StatusCode: 409,
+			Code:       awid.AtomicAddressClaimCodeAddressTakenDifferentOwner,
+			Message:    "taken",
+		}
+	}
+	agentsAddEnsureGlobalCertificate = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, controllerKey, signingKey ed25519.PrivateKey, pending *agentsAddGlobalPendingState, homeDir string) (*localTeamBootstrapResult, error) {
+		t.Fatal("certificate path should not run after atomic conflict")
+		return nil, nil
+	}
+
+	err = runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected atomic conflict")
+	}
+	if !strings.Contains(err.Error(), "already claimed") {
+		t.Fatalf("error=%q, want conflict recovery", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support", ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
+	data, err := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "support") {
+		t.Fatalf("team.yaml mutated before atomic conflict was reported:\n%s", string(data))
+	}
+}
+
+func TestAgentsAddGlobalProvisionsSelfCustodialAgent(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("example.com", controllerKey); err != nil {
+		t.Fatalf("save controller key: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsIdentityPrefix = "juan"
+	teamBootstrapNamespace = "example.com"
+	teamBootstrapTeamName = "circle"
+	teamBootstrapRegistryURL = agentsAddEmptyPreflightRegistry(t)
+
+	claimCalled := false
+	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
+		claimCalled = true
+		if params.Domain != "example.com" || params.AddressName != "juan-support" {
+			t.Fatalf("claim params=%+v", params)
+		}
+		if params.DIDAW == "" || params.CurrentDIDKey == "" || params.IdentitySigningKey == nil || params.NamespaceControllerSigningKey == nil {
+			t.Fatalf("incomplete claim params=%+v", params)
+		}
+		return &awid.AtomicAddressClaimResult{Status: "claimed", Domain: params.Domain, Name: params.AddressName, DIDAW: params.DIDAW, CurrentDIDKey: params.CurrentDIDKey}, nil
+	}
+	agentsAddEnsureGlobalCertificate = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, controllerKey, signingKey ed25519.PrivateKey, pending *agentsAddGlobalPendingState, homeDir string) (*localTeamBootstrapResult, error) {
+		_, teamKey, err := awid.GenerateKeypair()
+		if err != nil {
+			return nil, err
+		}
+		cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+			Team:          pending.TeamID,
+			MemberDIDKey:  pending.CurrentDIDKey,
+			MemberDIDAW:   pending.DIDAW,
+			MemberAddress: pending.GlobalAddress,
+			Alias:         pending.Alias,
+			IdentityScope: awid.IdentityModeGlobal,
+		})
+		if err != nil {
+			return nil, err
+		}
+		pending.Certificate = cert
+		pending.CertificateRegistered = true
+		if err := saveAgentsAddGlobalPending(homeDir, pending); err != nil {
+			return nil, err
+		}
+		return &localTeamBootstrapResult{TeamID: pending.TeamID, Certificate: cert}, nil
+	}
+	agentsAddConnectGlobalAgent = func(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
+		expected := filepath.Join(repoDir, "agents", "home", "support")
+		gotResolved, _ := filepath.EvalSymlinks(workingDir)
+		wantResolved, _ := filepath.EvalSymlinks(expected)
+		if filepath.Clean(firstNonEmpty(gotResolved, workingDir)) != filepath.Clean(firstNonEmpty(wantResolved, expected)) {
+			t.Fatalf("connect workingDir=%s", workingDir)
+		}
+		if opts.Role != "support" {
+			t.Fatalf("connect role=%q", opts.Role)
+		}
+		return connectOutput{}, nil
+	}
+
+	if err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"}); err != nil {
+		t.Fatalf("runAgentsAdd: %v", err)
+	}
+	if !claimCalled {
+		t.Fatal("atomic claim was not called")
+	}
+	home := filepath.Join(repoDir, "agents", "home", "support")
+	assertPathExists(t, filepath.Join(home, ".aw", "identity.yaml"))
+	assertPathExists(t, filepath.Join(home, ".aw", "signing.key"))
+	assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+	assertPathMissing(t, agentsAddGlobalPendingPath(home))
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("load identity: %v", err)
+	}
+	if identity.Address != "example.com/juan-support" || identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity=%+v", identity)
+	}
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Agents["support"].IdentityScope; got != agentsIdentityScopeGlobal {
+		t.Fatalf("support scope=%q", got)
+	}
+}
+
+func TestAgentsAddGlobalRetriesAfterPostClaimLocalFailure(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("example.com", controllerKey); err != nil {
+		t.Fatalf("save controller key: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsAddGlobal = true
+	agentsIdentityPrefix = "juan"
+	teamBootstrapNamespace = "example.com"
+	teamBootstrapTeamName = "circle"
+	teamBootstrapRegistryURL = agentsAddEmptyPreflightRegistry(t)
+
+	claimCalls := 0
+	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
+		claimCalls++
+		return &awid.AtomicAddressClaimResult{Status: "claimed", Domain: params.Domain, Name: params.AddressName, DIDAW: params.DIDAW, CurrentDIDKey: params.CurrentDIDKey}, nil
+	}
+	agentsAddEnsureGlobalCertificate = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, controllerKey, signingKey ed25519.PrivateKey, pending *agentsAddGlobalPendingState, homeDir string) (*localTeamBootstrapResult, error) {
+		if pending.Certificate == nil {
+			_, teamKey, err := awid.GenerateKeypair()
+			if err != nil {
+				return nil, err
+			}
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          pending.TeamID,
+				MemberDIDKey:  pending.CurrentDIDKey,
+				MemberDIDAW:   pending.DIDAW,
+				MemberAddress: pending.GlobalAddress,
+				Alias:         pending.Alias,
+				IdentityScope: awid.IdentityModeGlobal,
+			})
+			if err != nil {
+				return nil, err
+			}
+			pending.Certificate = cert
+		}
+		pending.CertificateRegistered = true
+		if err := saveAgentsAddGlobalPending(homeDir, pending); err != nil {
+			return nil, err
+		}
+		return &localTeamBootstrapResult{TeamID: pending.TeamID, Certificate: pending.Certificate}, nil
+	}
+	connectCalls := 0
+	agentsAddConnectGlobalAgent = func(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
+		connectCalls++
+		if connectCalls == 1 {
+			return connectOutput{}, os.ErrPermission
+		}
+		return connectOutput{}, nil
+	}
+
+	err = runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"})
+	if err == nil {
+		t.Fatal("expected first run to fail after claim")
+	}
+	if !strings.Contains(err.Error(), "Retry with:") {
+		t.Fatalf("error=%q, want retry guidance", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "support")
+	assertPathExists(t, agentsAddGlobalPendingPath(home))
+
+	if err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"}); err != nil {
+		t.Fatalf("retry runAgentsAdd: %v", err)
+	}
+	if claimCalls != 1 {
+		t.Fatalf("claimCalls=%d, want 1", claimCalls)
+	}
+	if connectCalls != 2 {
+		t.Fatalf("connectCalls=%d, want 2", connectCalls)
+	}
+	assertPathMissing(t, agentsAddGlobalPendingPath(home))
+	assertPathExists(t, filepath.Join(home, ".aw", "identity.yaml"))
+}
+
+func agentsAddEmptyPreflightRegistry(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/example.com/teams/circle/certificates" {
+			_, _ = w.Write([]byte(`{"certificates":[]}`))
+			return
+		}
+		t.Fatalf("unexpected preflight registry request: %s %s", r.Method, r.URL.String())
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }
 
 func TestAgentsAddRejectsExistingHomeBeforeMutation(t *testing.T) {

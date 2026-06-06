@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -138,6 +140,11 @@ var (
 	agentsAddLayoutOnly           bool
 	agentsAddInitPrimaryAgent     = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent  = initTeamBootstrapAdditionalAgent
+	agentsAddClaimIdentityAddress = func(ctx context.Context, registry *awid.RegistryClient, registryURL string, params awid.AtomicAddressClaimParams) (*awid.AtomicAddressClaimResult, error) {
+		return registry.ClaimIdentityAddressAt(ctx, registryURL, params)
+	}
+	agentsAddEnsureGlobalCertificate = ensureAgentsAddGlobalCertificate
+	agentsAddConnectGlobalAgent      = initCertificateConnectWithOptions
 )
 
 type teamBootstrapSpec struct {
@@ -257,6 +264,27 @@ type agentsAddOutput struct {
 	Agent          teamBootstrapAgentPlan `json:"agent"`
 	Availability   []agentsProvisionCheck `json:"availability,omitempty"`
 	TeamSource     string                 `json:"team_source,omitempty"`
+}
+
+type agentsAddGlobalPendingState struct {
+	Version               int                   `yaml:"version"`
+	Responsibility        string                `yaml:"responsibility"`
+	RoleName              string                `yaml:"role_name"`
+	Alias                 string                `yaml:"alias"`
+	GlobalAddress         string                `yaml:"global_address"`
+	IdentityPrefix        string                `yaml:"identity_prefix,omitempty"`
+	Domain                string                `yaml:"domain"`
+	AddressName           string                `yaml:"address_name"`
+	TeamName              string                `yaml:"team_name"`
+	TeamID                string                `yaml:"team_id"`
+	DIDAW                 string                `yaml:"did_aw"`
+	CurrentDIDKey         string                `yaml:"current_did_key"`
+	RegistryURL           string                `yaml:"registry_url"`
+	AwebURL               string                `yaml:"aweb_url"`
+	AtomicClaimApplied    bool                  `yaml:"atomic_claim_applied,omitempty"`
+	CertificateRegistered bool                  `yaml:"certificate_registered,omitempty"`
+	Certificate           *awid.TeamCertificate `yaml:"certificate,omitempty"`
+	CreatedAt             string                `yaml:"created_at"`
 }
 
 type agentsProvisionState int
@@ -530,6 +558,9 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 		printOutput(out, formatAgentsAddOutput)
 		return nil
 	}
+	if plan.IdentityScope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly {
+		return runAgentsAddGlobal(cmd, out, layout, spec, plan)
+	}
 	var source teamBootstrapSource
 	anchorDir := ""
 	if !agentsAddLayoutOnly {
@@ -570,6 +601,327 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runAgentsAddGlobal(cmd *cobra.Command, out agentsAddOutput, layout teamBootstrapLayout, spec *teamBootstrapSpec, plan teamBootstrapAgentPlan) error {
+	lock, err := awconfig.LockExclusive(agentsAddGlobalLockPath(plan.HomeDir))
+	if err != nil {
+		return fmt.Errorf("lock global add state: %w", err)
+	}
+	defer lock.Close()
+
+	pending, signingKey, pendingCreated, err := prepareAgentsAddGlobalPending(layout, out, plan)
+	if err != nil {
+		return err
+	}
+	registry, registryURL, controllerKey, err := resolveAgentsAddGlobalAuthority(pending)
+	if err != nil {
+		if pendingCreated {
+			cleanupNewAgentsAddGlobalPending(plan.HomeDir)
+		}
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if !pending.AtomicClaimApplied {
+		if _, err := agentsAddClaimIdentityAddress(ctx, registry, registryURL, awid.AtomicAddressClaimParams{
+			Domain:                        pending.Domain,
+			AddressName:                   pending.AddressName,
+			DIDAW:                         pending.DIDAW,
+			CurrentDIDKey:                 pending.CurrentDIDKey,
+			IdentitySigningKey:            signingKey,
+			NamespaceControllerSigningKey: controllerKey,
+			IdentityCustody:               string(awid.AddressClaimCustodySelf),
+			NamespaceCustody:              string(awid.AddressClaimCustodySelf),
+		}); err != nil {
+			if pendingCreated {
+				cleanupNewAgentsAddGlobalPending(plan.HomeDir)
+			}
+			return agentsAddGlobalClaimError(pending, err)
+		}
+		pending.AtomicClaimApplied = true
+		if err := saveAgentsAddGlobalPending(plan.HomeDir, pending); err != nil {
+			return agentsAddGlobalRetryError(plan.HomeDir, pending, fmt.Errorf("save pending atomic-claim state: %w", err))
+		}
+	}
+
+	if err := writeAgentsAddLayout(layout, spec, plan, out.RoleCreated); err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+	if err := materializeTeamBootstrapAgent(layout.AgentsRoot, plan, layout.CustomerRepoRoot); err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+
+	teamResult, err := agentsAddEnsureGlobalCertificate(ctx, registry, registryURL, controllerKey, signingKey, pending, plan.HomeDir)
+	if err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+	if err := saveAgentsAddGlobalLocalState(plan.HomeDir, pending, teamResult); err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(plan.HomeDir); err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+	if _, err := agentsAddConnectGlobalAgent(plan.HomeDir, pending.AwebURL, certificateConnectOptions{Role: strings.TrimSpace(plan.RoleName)}); err != nil {
+		return agentsAddGlobalRetryError(plan.HomeDir, pending, err)
+	}
+	_ = os.Remove(agentsAddGlobalPendingPath(plan.HomeDir))
+
+	out.DryRun = false
+	out.TeamSource = string(teamBootstrapSourceBYOT)
+	printOutput(out, formatAgentsAddOutput)
+	return nil
+}
+
+func agentsAddGlobalPendingPath(homeDir string) string {
+	return filepath.Join(filepath.Clean(homeDir), ".aw", "agents-add-global-pending.yaml")
+}
+
+func agentsAddGlobalLockPath(homeDir string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(homeDir)))
+	return filepath.Join(os.TempDir(), "aw-agents-add-global-"+hex.EncodeToString(sum[:8])+".lock")
+}
+
+func loadAgentsAddGlobalPending(homeDir string) (*agentsAddGlobalPendingState, error) {
+	path := agentsAddGlobalPendingPath(homeDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read pending global add state %s: %w", path, err)
+	}
+	var state agentsAddGlobalPendingState
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parse pending global add state %s: %w", path, err)
+	}
+	return &state, nil
+}
+
+func saveAgentsAddGlobalPending(homeDir string, state *agentsAddGlobalPendingState) error {
+	if state == nil {
+		return fmt.Errorf("pending global add state is required")
+	}
+	data, err := yaml.Marshal(state)
+	if err != nil {
+		return err
+	}
+	path := agentsAddGlobalPendingPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.TrimRight(string(data), "\n")+"\n"), 0o600)
+}
+
+func prepareAgentsAddGlobalPending(layout teamBootstrapLayout, out agentsAddOutput, plan teamBootstrapAgentPlan) (*agentsAddGlobalPendingState, ed25519.PrivateKey, bool, error) {
+	if existing, err := loadAgentsAddGlobalPending(plan.HomeDir); err != nil {
+		return nil, nil, false, err
+	} else if existing != nil {
+		signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(plan.HomeDir))
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("load pending global add signing key: %w", err)
+		}
+		if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != strings.TrimSpace(existing.CurrentDIDKey) {
+			return nil, nil, false, usageError("pending global add signing key does not match %s; restore the original .aw/signing.key or remove the pending state after backing it up", agentsAddGlobalPendingPath(plan.HomeDir))
+		}
+		return existing, signingKey, false, nil
+	}
+
+	domain, name, err := parseAddress(plan.GlobalAddress)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	teamID, err := expectedAgentsProvisionTeamID()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	namespace, teamName, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if domain != namespace {
+		return nil, nil, false, usageError("global address namespace %s does not match team namespace %s", domain, namespace)
+	}
+	awebURL := strings.TrimSpace(teamBootstrapAwebURL)
+	if awebURL == "" {
+		awebURL = DefaultAwebURL
+	}
+	awebURL, err = normalizeAwebBaseURL(awebURL)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("invalid --aweb-url: %w", err)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return nil, nil, false, err
+	}
+	registryURL := strings.TrimSpace(teamBootstrapRegistryURL)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return nil, nil, false, fmt.Errorf("invalid --registry: %w", err)
+		}
+	}
+	registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	pending := &agentsAddGlobalPendingState{
+		Version:        1,
+		Responsibility: strings.TrimSpace(plan.Responsibility),
+		RoleName:       strings.TrimSpace(plan.RoleName),
+		Alias:          strings.TrimSpace(plan.Alias),
+		GlobalAddress:  strings.TrimSpace(plan.GlobalAddress),
+		IdentityPrefix: strings.TrimSpace(out.IdentityPrefix),
+		Domain:         namespace,
+		AddressName:    name,
+		TeamName:       teamName,
+		TeamID:         teamID,
+		DIDAW:          awid.ComputeStableID(pub),
+		CurrentDIDKey:  awid.ComputeDIDKey(pub),
+		RegistryURL:    registryURL,
+		AwebURL:        awebURL,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
+		return nil, nil, false, err
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(plan.HomeDir), signingKey); err != nil {
+		cleanupNewAgentsAddGlobalPending(plan.HomeDir)
+		return nil, nil, false, err
+	}
+	if err := saveAgentsAddGlobalPending(plan.HomeDir, pending); err != nil {
+		cleanupNewAgentsAddGlobalPending(plan.HomeDir)
+		return nil, nil, false, err
+	}
+	return pending, signingKey, true, nil
+}
+
+func resolveAgentsAddGlobalAuthority(pending *agentsAddGlobalPendingState) (*awid.RegistryClient, string, ed25519.PrivateKey, error) {
+	if pending == nil {
+		return nil, "", nil, fmt.Errorf("pending global add state is required")
+	}
+	controllerKey, err := awconfig.LoadControllerKey(pending.Domain)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("load namespace controller key for %s: %w", pending.Domain, err)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if strings.TrimSpace(pending.RegistryURL) != "" {
+		if err := registry.SetFallbackRegistryURL(pending.RegistryURL); err != nil {
+			return nil, "", nil, err
+		}
+	}
+	return registry, strings.TrimSpace(registry.DefaultRegistryURL), controllerKey, nil
+}
+
+func cleanupNewAgentsAddGlobalPending(homeDir string) {
+	_ = os.RemoveAll(filepath.Join(filepath.Clean(homeDir), ".aw"))
+	_ = os.Remove(filepath.Clean(homeDir))
+}
+
+func agentsAddGlobalClaimError(pending *agentsAddGlobalPendingState, err error) error {
+	var conflict *awid.AtomicAddressClaimConflictError
+	if errors.As(err, &conflict) {
+		switch conflict.Code {
+		case awid.AtomicAddressClaimCodeAddressTakenDifferentOwner:
+			return usageError("global address %s is already claimed by another identity; rerun aw agents add --global with a different --identity-prefix or naming pattern", pending.GlobalAddress)
+		case awid.AtomicAddressClaimCodeDIDTakenDifferentKey:
+			return usageError("global identity %s is already registered to a different key; restore the original .aw/signing.key or choose a different global name", pending.DIDAW)
+		case awid.AtomicAddressClaimCodeNamespaceAuthorityInvalid:
+			return usageError("namespace controller key for %s does not match AWID; run aw id namespace check-txt --domain %s and restore the matching ~/.awid controller key", pending.Domain, pending.Domain)
+		case awid.AtomicAddressClaimCodeNamespaceNotRegistered:
+			return usageError("namespace %s is not registered at AWID; run aw id namespace prepare-controller, publish/check _awid, then retry", pending.Domain)
+		case awid.AtomicAddressClaimCodePrimitiveDisabled, awid.AtomicAddressClaimCodePrimitiveNotSupported:
+			return usageError("AWID registry at %s does not support atomic address claims; upgrade awid-service before using aw agents add --global", pending.RegistryURL)
+		default:
+			return usageError("atomic global address claim failed with %s: %s", conflict.Code, conflict.Message)
+		}
+	}
+	return fmt.Errorf("claim global address %s at AWID: %w", pending.GlobalAddress, err)
+}
+
+func agentsAddGlobalRetryError(homeDir string, pending *agentsAddGlobalPendingState, cause error) error {
+	return fmt.Errorf("%w\n\nAWID accepted the global address claim for %s. Retry with:\n  aw agents add --global %s --namespace %s --team %s\nDo not delete %s or .aw/signing.key unless you intentionally abandon this claim.",
+		cause,
+		pending.GlobalAddress,
+		pending.Responsibility,
+		pending.Domain,
+		pending.TeamName,
+		agentsAddGlobalPendingPath(homeDir),
+	)
+}
+
+func ensureAgentsAddGlobalCertificate(ctx context.Context, registry *awid.RegistryClient, registryURL string, controllerKey, signingKey ed25519.PrivateKey, pending *agentsAddGlobalPendingState, homeDir string) (*localTeamBootstrapResult, error) {
+	registration, err := ensureLocalTeamRegistered(ctx, registry, registryURL, pending.Domain, pending.TeamName, "", controllerKey)
+	if err != nil {
+		return nil, err
+	}
+	if pending.Certificate == nil {
+		cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
+			Team:          registration.TeamID,
+			MemberDIDKey:  pending.CurrentDIDKey,
+			MemberDIDAW:   pending.DIDAW,
+			MemberAddress: pending.GlobalAddress,
+			Alias:         pending.Alias,
+			IdentityScope: awid.IdentityModeGlobal,
+		})
+		if err != nil {
+			return nil, err
+		}
+		pending.Certificate = cert
+		if err := saveAgentsAddGlobalPending(homeDir, pending); err != nil {
+			return nil, err
+		}
+	}
+	if !pending.CertificateRegistered {
+		if err := registry.RegisterCertificate(ctx, registryURL, pending.Domain, pending.TeamName, pending.Certificate, registration.TeamKey); err != nil {
+			if !strings.Contains(err.Error(), "Certificate already registered") {
+				return nil, fmt.Errorf("register team certificate: %w", err)
+			}
+		}
+		pending.CertificateRegistered = true
+		if err := saveAgentsAddGlobalPending(homeDir, pending); err != nil {
+			return nil, err
+		}
+	}
+	return &localTeamBootstrapResult{
+		TeamID:      registration.TeamID,
+		TeamDIDKey:  registration.TeamDIDKey,
+		TeamKeyPath: registration.TeamKeyPath,
+		Certificate: pending.Certificate,
+	}, nil
+}
+
+func saveAgentsAddGlobalLocalState(homeDir string, pending *agentsAddGlobalPendingState, teamResult *localTeamBootstrapResult) error {
+	if pending == nil || teamResult == nil || teamResult.Certificate == nil {
+		return fmt.Errorf("global add local state is incomplete")
+	}
+	certPath, err := awconfig.SaveTeamCertificateForTeam(homeDir, pending.TeamID, teamResult.Certificate)
+	if err != nil {
+		return err
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(homeDir, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
+		DID:            pending.CurrentDIDKey,
+		StableID:       pending.DIDAW,
+		Address:        pending.GlobalAddress,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    pending.RegistryURL,
+		RegistryStatus: "registered",
+		CreatedAt:      pending.CreatedAt,
+	}); err != nil {
+		return err
+	}
+	return upsertAcceptedTeamMembershipState(homeDir, &teamAcceptInviteOutput{
+		Status:   "installed",
+		TeamID:   pending.TeamID,
+		Alias:    pending.Alias,
+		CertPath: certPath,
+	}, teamResult.Certificate, pending.RegistryURL, pending.AwebURL, true)
+}
+
 func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsAddOutput, teamBootstrapLayout, *teamBootstrapSpec, teamBootstrapAgentPlan, error) {
 	layout, err := resolveAgentsExistingLayoutPreflight()
 	if err != nil {
@@ -586,46 +938,91 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 	if err != nil {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
 	}
-	if _, exists := spec.Agents[responsibility]; exists {
-		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("agents layout already contains responsibility %q", responsibility)
-	}
 	scope, err := resolveAgentsAddScope()
 	if err != nil {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
 	}
-	if scope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly {
-		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("aw agents add --global requires atomic AWID identity/address claim support (aweb-aapz.13); use --layout-only to update the blueprint for now")
+	pending, err := loadAgentsAddGlobalPending(filepath.Join(layout.HomeRoot, responsibility))
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	existingSpec, exists := spec.Agents[responsibility]
+	resumeGlobal := exists && scope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly && pending != nil
+	if exists && !resumeGlobal {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("agents layout already contains responsibility %q", responsibility)
 	}
 	if scope == agentsIdentityScopeGlobal && strings.TrimSpace(teamBootstrapNamespace) == "" {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("--namespace is required when adding a global agent")
 	}
-	roleName, err := normalizeAgentsNamingField("role", firstNonEmpty(agentsAddRole, responsibility))
-	if err != nil {
-		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	if scope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly && strings.TrimSpace(teamBootstrapTeamName) == "" {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("--team is required when adding a global agent")
 	}
 	roleCreated := false
-	if spec.Roles == nil {
-		spec.Roles = map[string]teamBootstrapRoleSpec{}
-	}
-	if _, ok := spec.Roles[roleName]; !ok {
-		roleCreated = true
-		spec.Roles[roleName] = teamBootstrapRoleSpec{
-			Title: titleFromSlug(roleName),
-			File:  filepath.ToSlash(filepath.Join("roles", roleName+".md")),
+	roleName := ""
+	if resumeGlobal {
+		roleName = strings.TrimSpace(pending.RoleName)
+		if roleName == "" {
+			roleName = strings.TrimSpace(existingSpec.RoleName)
 		}
-	}
-	spec.Agents[responsibility] = teamBootstrapAgentSpec{
-		RoleName:      roleName,
-		IdentityScope: scope,
-		HomeTemplate:  filepath.ToSlash(filepath.Join("home", responsibility)),
-		Work:          agentsWorkRepoRoot,
-	}
-	if err := ensureAgentsAddPathsAvailable(layout, spec, responsibility, roleName, roleCreated); err != nil {
-		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+		if roleName == "" {
+			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("pending global add for %q is missing role_name", responsibility)
+		}
+	} else {
+		roleName, err = normalizeAgentsNamingField("role", firstNonEmpty(agentsAddRole, responsibility))
+		if err != nil {
+			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+		}
+		if spec.Roles == nil {
+			spec.Roles = map[string]teamBootstrapRoleSpec{}
+		}
+		if _, ok := spec.Roles[roleName]; !ok {
+			roleCreated = true
+			spec.Roles[roleName] = teamBootstrapRoleSpec{
+				Title: titleFromSlug(roleName),
+				File:  filepath.ToSlash(filepath.Join("roles", roleName+".md")),
+			}
+		}
+		spec.Agents[responsibility] = teamBootstrapAgentSpec{
+			RoleName:      roleName,
+			IdentityScope: scope,
+			HomeTemplate:  filepath.ToSlash(filepath.Join("home", responsibility)),
+			Work:          agentsWorkRepoRoot,
+		}
+		if err := ensureAgentsAddPathsAvailable(layout, spec, responsibility, roleName, roleCreated); err != nil {
+			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+		}
 	}
 	identityPrefix, err := resolveAgentsIdentityPrefix(cmd)
 	if err != nil {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+	}
+	if resumeGlobal {
+		identityPrefix = strings.TrimSpace(pending.IdentityPrefix)
+		plan := teamBootstrapAgentPlan{
+			Responsibility: responsibility,
+			RoleName:       roleName,
+			Name:           strings.TrimSpace(pending.Alias),
+			Alias:          strings.TrimSpace(pending.Alias),
+			IdentityScope:  agentsIdentityScopeGlobal,
+			GlobalAddress:  strings.TrimSpace(pending.GlobalAddress),
+			HomeDir:        filepath.Join(layout.HomeRoot, responsibility),
+			SourceHome:     filepath.Join(layout.HomeRoot, responsibility),
+			Instructions:   filepath.Join(layout.HomeRoot, responsibility, "AGENTS.md"),
+			WorkBinding:    agentsWorkRepoRoot,
+			WorkDir:        layout.CustomerRepoRoot,
+		}
+		out := agentsAddOutput{
+			DryRun:         true,
+			LayoutOnly:     false,
+			AgentsDir:      layout.AgentsRoot,
+			Responsibility: responsibility,
+			RoleName:       roleName,
+			RoleCreated:    false,
+			IdentityPrefix: identityPrefix,
+			Agent:          plan,
+			TeamSource:     string(teamBootstrapSourceBYOT),
+		}
+		return out, layout, spec, plan, nil
 	}
 	namingInput, err := agentsAddNamingInput(layout, spec, responsibility, scope, identityPrefix)
 	if err != nil {
