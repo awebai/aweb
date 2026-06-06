@@ -141,6 +141,20 @@ Global address deletion requires namespace-controller authority. Team
 certificate revocation requires team-controller authority or the service path
 that legitimately holds that authority. A repo file cannot grant either.
 
+Authority resolution must respect custody mode:
+
+| Operation | Self-custodial namespace/team | Hosted custodial namespace/team |
+| --- | --- | --- |
+| Delete global namespace address | Local namespace controller key under `~/.awid/` | Hosted service session/API authority that legitimately controls the managed namespace |
+| Revoke team certificate | Local team controller key under `~/.awid/` or signed BYOT authority flow | Hosted service session/API authority that legitimately controls the hosted team |
+| Create team invite/cert | Local team key or namespace/team controller path | Hosted service invite/cert authority |
+
+The CLI must detect which authority model applies from the selected team
+source and existing state. Missing authority errors must name the correct
+recovery path. A hosted custodial user must not be told only to find a local
+namespace controller key; a self-custodial user must not be told that the
+server can delete their namespace address without their controller authority.
+
 ## Repo Root Invariant
 
 In-repo `aw agents` commands run from the customer repo root or a directory
@@ -310,9 +324,18 @@ agents:
 If `identity_scope` is omitted, default to `local`.
 
 `default_alias` and `default_name` from the previous bootstrap contract are
-not final identity values in this contract. They may be removed or treated as
-legacy hints only. Do not use them as committed public addresses or mandatory
-team aliases for all users.
+removed from the current schema. Templates that still contain them should
+parse with a deprecation warning for one transition release and the values must
+be ignored by the planner. CI guardrails should fail canonical templates that
+continue to use those fields after the transition. Do not treat
+`default_alias` or `default_name` as public addresses or mandatory team
+aliases for all users.
+
+After every `aw agents` command, committed `agents/team.yaml` remains
+identity-free. It must not be rewritten with final aliases, global addresses,
+DIDs, cert paths, workspace ids, or any per-human state. Runtime state belongs
+under ignored `agents/home/<responsibility>/.aw/` or approved user key
+locations only.
 
 ## Naming Grammar
 
@@ -335,12 +358,27 @@ Supported pattern fields:
 
 Pattern rules:
 
+- Each expanded source field must pass slug rules before substitution.
 - Unknown fields fail before side effects.
 - Empty expansions fail before side effects.
 - Final generated names must pass the relevant slug rules.
 - Patterns must not contain path separators or path traversal.
 - The same generated final alias/address/worktree name must not appear twice
   inside one plan.
+
+Both checks are required: validate each source field independently and validate
+the final expanded result. This applies to:
+
+- explicit `--identity-prefix`;
+- hosted username used as `{user}`;
+- `AWEB_IDENTITY_PREFIX`, `AWEB_HUMAN`, and `$USER`;
+- template responsibility keys;
+- classic-name and star-name sequence entries;
+- namespace and team slugs where they are reused in derived names;
+- explicit pattern strings and the expanded pattern result.
+
+Values such as `../escape`, `alice/ops`, `.`, and empty strings must fail
+before any filesystem, git, registry, service, or local state mutation.
 
 Default naming policy:
 
@@ -423,6 +461,15 @@ If a candidate is unavailable, the planner may try the next candidate in the
 selected sequence. It must stop with an actionable error when no valid
 candidate is found within the bounded search space.
 
+Successful preflight is necessary but not sufficient for mutation success.
+Another human or process can allocate the same team alias, namespace address,
+branch, or path after preflight and before mutation. Hosted-side or AWID-side
+conflict responses such as 409 must be treated as a re-plan/fail-actionable
+condition, not as a panic or silent fallback. The failing command must not
+leave local `.aw` state from a half-committed identity creation; it should
+report the conflict and tell the user to rerun plan/provision with a different
+prefix, pattern, or sequence.
+
 ## Fail Before Side Effects
 
 Mutating `aw agents` commands must complete preflight before any observable
@@ -440,6 +487,9 @@ No mutation before preflight:
 - encryption key creation;
 - DID/AWID identity registration;
 - namespace address registration/delete/reassign;
+- DNS verification record writes;
+- namespace verification API calls to third-party DNS resolvers;
+- hosted namespace registry registration calls;
 - team cert registration/revocation;
 - invite creation/acceptance;
 - API-key hosted onboarding calls;
@@ -508,6 +558,13 @@ Behavior:
 - Provisions identities unless `--layout-only`.
 - Does not create `.aw` at repo root.
 
+V1 does not auto-adopt or resume partial `<agents-dir>` bootstrap output. If
+`<agents-dir>` exists, even partially, bootstrap fails before side effects with
+manual cleanup guidance. The error must tell the user to inspect/back up any
+`.aw` identity state before removing the directory, then remove or rename
+`<agents-dir>` or use the approved remove command once available. Automatic
+merge/resume requires a later contract with explicit idempotency markers.
+
 ### aw agents plan
 
 Reads an existing layout or a template and prints what would happen.
@@ -554,6 +611,12 @@ Behavior:
 - Creates E2EE encryption keys for every new identity path.
 - Connects to service where the selected source requires service connection.
 - Installs roles/instructions only after the anchor identity is established.
+
+V1 provision does not auto-recover partial `.aw` state. If a previous run left
+a signing key without a certificate, a certificate without matching workspace
+state, or otherwise incomplete local state, fail before further mutation with
+actionable move-aside/repair instructions. Do not silently continue from
+ambiguous partial identity state.
 
 ### aw agents add
 
@@ -616,6 +679,12 @@ Removal modes:
   revocation. Requires namespace-controller authority. Without this flag,
   preserve the global address by default.
 
+`--delete-global-address` authority follows the custody matrix in the
+Authority Model section. For self-custodial namespaces, use the local
+namespace controller key. For hosted custodial namespaces, use the hosted
+session/API authority. If the needed authority is unavailable, fail with a
+message specific to that custody mode.
+
 Destructive filesystem behavior should move aside to a timestamped backup
 under the agents dir or another contract-approved safe location. Do not unlink
 private key material silently.
@@ -671,6 +740,17 @@ Those are separate effects. Do not bundle global address deletion into ordinary
 remove. Do not remove shared layout by default when the user only wants to
 deprovision their local agent.
 
+`--remove-layout` is a shared-blueprint change only. It removes the
+responsibility from committed layout going forward; it does not revoke other
+humans' existing certificates, delete their global addresses, delete their
+private keys, or invalidate their local `.aw` state. If Maria provisioned
+`reviewer` and Juan later commits a layout removal for `reviewer`, Maria's
+existing local identity remains under her ignored `.aw` state until she
+explicitly deprovisions it or the certificate expires/revokes through normal
+authority. Commands run from a home whose responsibility no longer exists in
+the pulled layout should show a stale-layout notice and must not auto-remove
+anything.
+
 ## Existing State Handling
 
 Existing matching state:
@@ -724,9 +804,37 @@ Minimum release-blocking tests:
     and explicit address deletion are covered.
 13. Existing standalone `aw workspace add-worktree` behavior remains green.
 14. Skills/docs examples execute or are covered by smoke tests.
+15. CI guardrail scans docs, skills, generated CLI reference, and source for
+    stale `aw team bootstrap` recommendations. Historical/changelog mentions
+    may be allowlisted explicitly; current guidance must use `aw agents`.
+16. Path-traversal injection fails before side effects for inputs including
+    `--identity-prefix '../escape'`, malicious responsibility keys,
+    `--namespace`/`--team` values reused in derived names, and
+    `--global-name-pattern '{user}/escape'`. Tests assert no files are created
+    under `<agents-dir>` or sibling escape paths.
+17. Concurrent allocation/TOCTOU: two runs against the same team with the same
+    identity prefix are serialized to force a mutation-time conflict. One
+    succeeds; the other fails actionably on conflict without leaving local
+    `.aw` state in the failing branch.
+18. Custodial vs self-custodial removal: `aw agents remove
+    --delete-global-address` succeeds with the correct authority for both
+    local controller-key namespaces and hosted custodial namespaces, and fails
+    with the correct custody-specific recovery message when authority is
+    absent.
+19. Partial-bootstrap recovery: simulate a crash after the canonical
+    `.gitignore` block is written but before homes are created. A retry must
+    produce the v1 manual-cleanup error and must not silently merge/resume.
+20. Multi-human identity-free layout: after Human A bootstraps/commits and
+    Human B provisions, Human B's git diff contains no changes to committed
+    `agents/team.yaml`, source homes, docs, or roles. Only ignored state may
+    differ.
 
 Docker-backed e2e must include the multi-human same-repo journey and a
-fail-before-side-effects collision journey.
+fail-before-side-effects collision journey. Tests 16 and 17 belong in the
+Docker-backed matrix because they need realistic filesystem and service/AWID
+boundaries. Test 15 is a PR-time guardrail. Tests 18 and 19 may be unit or
+integration if they exercise the custody/error and partial-state semantics
+directly.
 
 ## Release Requirements
 
