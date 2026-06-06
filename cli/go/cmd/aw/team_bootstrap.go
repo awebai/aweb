@@ -207,6 +207,7 @@ type teamBootstrapAgentPlan struct {
 	SourceHome     string `json:"-"`
 	Instructions   string `json:"instructions"`
 	WorkBinding    string `json:"work_binding,omitempty"`
+	WorktreeName   string `json:"worktree_name,omitempty"`
 	WorkDir        string `json:"work_dir,omitempty"`
 }
 
@@ -2136,6 +2137,7 @@ func applyAgentsNamingPlanToBootstrapPlans(plans []teamBootstrapAgentPlan, namin
 		plans[i].Alias = named.TeamAlias
 		plans[i].IdentityScope = named.IdentityScope
 		plans[i].GlobalAddress = named.GlobalAddress
+		plans[i].WorktreeName = named.WorktreeName
 		for _, check := range named.Availability {
 			checks = append(checks, agentsProvisionCheck{
 				Responsibility: plans[i].Responsibility,
@@ -2478,7 +2480,7 @@ func createInRepoBootstrapWorktrees(layout teamBootstrapLayout, plans []teamBoot
 }
 
 func teamBootstrapWorktreeName(plan teamBootstrapAgentPlan) (string, error) {
-	for _, candidate := range []string{plan.Alias, plan.Name, plan.Responsibility} {
+	for _, candidate := range []string{plan.WorktreeName, plan.Alias, plan.Name, plan.Responsibility} {
 		if strings.TrimSpace(candidate) == "" {
 			continue
 		}

@@ -488,6 +488,13 @@ func TestTeamBootstrapDryRunUsesTemplateNamingPolicy(t *testing.T) {
 	if !strings.Contains(text, "coordinator: scope=local name=sirius role=coordinator alias=sirius") {
 		t.Fatalf("bootstrap output did not use star-name naming policy:\n%s", text)
 	}
+	expectedRepoDir, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "work="+filepath.Join(expectedRepoDir, "agents", "worktrees", "implementation")+" (git_worktree)") {
+		t.Fatalf("bootstrap output did not use responsibility worktree naming policy:\n%s", text)
+	}
 	if !strings.Contains(text, "team_alias: available") {
 		t.Fatalf("bootstrap output missing availability checks:\n%s", text)
 	}
@@ -534,6 +541,9 @@ func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.
 	}
 	if got := byResponsibility["coordinator"].HomeDir; got != filepath.Join(expectedRepoDir, "agents", "home", "coordinator") {
 		t.Fatalf("coordinator home=%q", got)
+	}
+	if got := byResponsibility["implementation"].WorkDir; got != filepath.Join(expectedRepoDir, "agents", "worktrees", "implementation") {
+		t.Fatalf("implementation workdir=%q, want responsibility-based worktree path", got)
 	}
 	if !agentsProvisionHasCheck(out, "implementation", "worktree", "implementation", "available") {
 		t.Fatalf("implementation worktree availability missing: %#v", out.Availability)
