@@ -37,7 +37,7 @@ agent homes live under agents/home/<responsibility>.`,
 }
 
 var teamBootstrapCmd = &cobra.Command{
-	Use:   "bootstrap <template-dir>",
+	Use:   "bootstrap <template>",
 	Short: "Bootstrap repo-local agents from a template repository",
 	Long: `Bootstrap repo-local agents from a template repository.
 
@@ -81,31 +81,31 @@ var agentsProvisionCmd = &cobra.Command{
 	Use:   "provision",
 	Short: "Provision identities for an existing agents layout",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents provision is not implemented yet")
+		return usageError("aw agents provision is tracked as aweb-aapz.4 and is not implemented yet; for now, use aw agents bootstrap on a fresh repo, or run the identity/team commands from each agents/home/<responsibility> directory")
 	},
 }
 
 var agentsAddCmd = &cobra.Command{
-	Use:   "add",
+	Use:   "add <responsibility>",
 	Short: "Add a responsibility to the agents layout",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents add is not implemented yet")
+		return usageError("aw agents add is tracked as aweb-aapz.5 and is not implemented yet; for now, extend the template team.yaml and run aw agents bootstrap on a fresh repo")
 	},
 }
 
 var agentsAddWorktreeCmd = &cobra.Command{
-	Use:   "add-worktree",
+	Use:   "add-worktree <responsibility>",
 	Short: "Add a worktree-bound agent to the agents layout",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents add-worktree is not implemented yet")
+		return usageError("aw agents add-worktree is tracked as aweb-aapz.6 and is not implemented yet; for ad-hoc worktree-bound workspaces, use aw workspace add-worktree from an initialized agent home")
 	},
 }
 
 var agentsRemoveCmd = &cobra.Command{
-	Use:   "remove",
+	Use:   "remove <responsibility>",
 	Short: "Remove or deprovision an agent responsibility",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents remove is not implemented yet")
+		return usageError("aw agents remove is tracked as aweb-aapz.7 and is not implemented yet; for now, back up local .aw state, remove files manually, and use aw id team remove-member when certificate revocation is required")
 	},
 }
 

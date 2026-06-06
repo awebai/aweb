@@ -203,9 +203,23 @@ func TestAgentsCommandSurfaceReplacesTeamBootstrap(t *testing.T) {
 	if findRootSubcommand("team") != nil {
 		t.Fatal("root command should not expose aw team")
 	}
-	for _, name := range []string{"bootstrap", "plan", "provision", "add", "add-worktree", "remove"} {
-		if findSubcommand(agents, name) == nil {
-			t.Fatalf("aw agents missing %s subcommand", name)
+	for _, tt := range []struct {
+		name string
+		use  string
+	}{
+		{"bootstrap", "bootstrap <template>"},
+		{"plan", "plan"},
+		{"provision", "provision"},
+		{"add", "add <responsibility>"},
+		{"add-worktree", "add-worktree <responsibility>"},
+		{"remove", "remove <responsibility>"},
+	} {
+		cmd := findSubcommand(agents, tt.name)
+		if cmd == nil {
+			t.Fatalf("aw agents missing %s subcommand", tt.name)
+		}
+		if cmd.Use != tt.use {
+			t.Fatalf("aw agents %s Use=%q, want %q", tt.name, cmd.Use, tt.use)
 		}
 	}
 	if !strings.Contains(agents.Long, "repo root itself is not an aw identity") {
