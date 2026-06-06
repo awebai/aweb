@@ -88,28 +88,6 @@ type preparedIDCreate struct {
 	ControllerKey ed25519.PrivateKey
 }
 
-type idCreatePartialRegistryError struct {
-	err error
-	msg string
-}
-
-func (e *idCreatePartialRegistryError) Error() string {
-	if e == nil {
-		return ""
-	}
-	if e.err == nil {
-		return e.msg
-	}
-	return e.msg + ": " + e.err.Error()
-}
-
-func (e *idCreatePartialRegistryError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.err
-}
-
 func runIDCreate(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(idCreateName) == "" {
 		return usageError("--name is required")
@@ -168,21 +146,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	registryStatus := "registered"
 	registryErr := ""
 	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
-		var partial *idCreatePartialRegistryError
-		if errors.As(err, &partial) {
-			registryStatus = "pending"
-			registryErr = err.Error()
-		} else if !isRegistryUnavailableError(err) {
-			return idCreateOutput{}, err
-		} else {
-			registryStatus = "pending"
-			registryErr = err.Error()
-		}
-		warnWriter := opts.PromptOut
-		if warnWriter == nil {
-			warnWriter = os.Stderr
-		}
-		fmt.Fprintf(warnWriter, "Warning: could not finish registry setup at %s: %v\n", plan.RegistryURL, err)
+		return idCreateOutput{}, idCreateAtomicClaimError(plan, err)
 	}
 
 	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -444,20 +408,18 @@ func ensureStandaloneRegistryRegistration(
 	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
 		return err
 	}
-	if err := ensureStandaloneDID(ctx, registry, plan, identityKey); err != nil {
+	_, err := registry.ClaimIdentityAddressAt(ctx, plan.RegistryURL, awid.AtomicAddressClaimParams{
+		Domain:                        plan.Domain,
+		AddressName:                   plan.Name,
+		DIDAW:                         plan.DIDAW,
+		CurrentDIDKey:                 plan.DIDKey,
+		IdentitySigningKey:            identityKey,
+		NamespaceControllerSigningKey: controllerKey,
+		IdentityCustody:               string(awid.AddressClaimCustodySelf),
+		NamespaceCustody:              string(awid.AddressClaimCustodySelf),
+	})
+	if err != nil {
 		return err
-	}
-	if err := ensureStandaloneAddress(ctx, registry, plan, controllerKey); err != nil {
-		return &idCreatePartialRegistryError{
-			err: err,
-			msg: fmt.Sprintf(
-				"did:aw %s is registered, but address %s was not claimed; rerun `aw id create --name %s --domain %s` to retry the address claim",
-				plan.DIDAW,
-				plan.Address,
-				plan.Name,
-				plan.Domain,
-			),
-		}
 	}
 	return nil
 }
@@ -498,64 +460,41 @@ func ensureStandaloneNamespace(
 	return nil
 }
 
-func ensureStandaloneAddress(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	plan *idCreatePlan,
-	controllerKey ed25519.PrivateKey,
-) error {
-	signingDir := awconfig.WorktreeRootFromIdentityPath(plan.IdentityPath)
-	if strings.TrimSpace(signingDir) == "" {
-		signingDir = filepath.Dir(filepath.Dir(plan.SigningKeyPath))
-	}
-	signingKey, loadErr := loadOptionalWorktreeSigningKey(signingDir)
-	if loadErr != nil {
-		return loadErr
-	}
-	var address *awid.RegistryAddress
-	var err error
-	if signingKey != nil {
-		address, _, err = registry.GetNamespaceAddressAtSigned(ctx, plan.RegistryURL, plan.Domain, plan.Name, signingKey)
-	} else {
-		address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
-	}
-	if err == nil {
-		if strings.TrimSpace(address.DIDAW) != plan.DIDAW {
-			return fmt.Errorf("address %s is already assigned to %s", plan.Address, address.DIDAW)
-		}
-		if strings.TrimSpace(address.CurrentDIDKey) != plan.DIDKey {
-			return fmt.Errorf("address %s is already pinned to %s", plan.Address, address.CurrentDIDKey)
-		}
-		return nil
-	}
-	if code, ok := registryStatusCode(err); !ok || code != http.StatusNotFound {
+func idCreateAtomicClaimError(plan *idCreatePlan, err error) error {
+	if plan == nil || err == nil {
 		return err
 	}
-	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, controllerKey)
-	if err != nil {
-		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
-			if signingKey != nil {
-				address, _, err = registry.GetNamespaceAddressAtSigned(ctx, plan.RegistryURL, plan.Domain, plan.Name, signingKey)
-			} else {
-				address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
-			}
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(address.DIDAW) != plan.DIDAW {
-				return fmt.Errorf("address %s is already assigned to %s", plan.Address, address.DIDAW)
-			}
-			if strings.TrimSpace(address.CurrentDIDKey) != plan.DIDKey {
-				return fmt.Errorf("address %s is already pinned to %s", plan.Address, address.CurrentDIDKey)
-			}
-			return nil
+	var conflict *awid.AtomicAddressClaimConflictError
+	if errors.As(err, &conflict) {
+		switch conflict.Code {
+		case awid.AtomicAddressClaimCodeAddressTakenDifferentOwner:
+			return usageError("address %s is already claimed by another identity; choose a different --name or inspect the namespace address before retrying", plan.Address)
+		case awid.AtomicAddressClaimCodeDIDTakenDifferentKey:
+			return usageError("did:aw %s already exists with a different key; use a clean directory or restore the original .aw/signing.key before retrying", plan.DIDAW)
+		case awid.AtomicAddressClaimCodeNamespaceAuthorityInvalid:
+			return usageError("namespace authority for %s is invalid; run `aw id namespace check-txt --domain %s`, then restore the matching ~/.awid controller key before retrying", plan.Domain, plan.Domain)
+		case awid.AtomicAddressClaimCodeNamespaceNotRegistered:
+			return usageError("namespace %s is not registered at AWID; run `aw id namespace prepare-controller --domain %s`, publish and verify _awid with `aw id namespace check-txt --domain %s`, then retry", plan.Domain, plan.Domain, plan.Domain)
+		case awid.AtomicAddressClaimCodePrimitiveDisabled, awid.AtomicAddressClaimCodePrimitiveNotSupported:
+			return usageError("AWID server at %s does not support atomic identity/address claims; upgrade awid-service before running `aw id create`", plan.RegistryURL)
+		case awid.AtomicAddressClaimCodeIdentitySignatureInvalid,
+			awid.AtomicAddressClaimCodeTimestampStale,
+			awid.AtomicAddressClaimCodePayloadCanonicalization,
+			awid.AtomicAddressClaimCodeCustodyCombinationUnsupported,
+			awid.AtomicAddressClaimCodeDIDLogProofRequired,
+			awid.AtomicAddressClaimCodeDIDLogProofInvalid:
+			return usageError("atomic identity/address claim for %s failed with %s: %s", plan.Address, conflict.Code, strings.TrimSpace(conflict.Message))
+		default:
+			return usageError("atomic identity/address claim for %s failed with %s: %s", plan.Address, conflict.Code, strings.TrimSpace(conflict.Message))
 		}
-		return err
 	}
-	if strings.TrimSpace(address.DIDAW) != plan.DIDAW {
-		return fmt.Errorf("address %s registered unexpected did:aw %s", plan.Address, address.DIDAW)
+	if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
+		return usageError("AWID server at %s does not support atomic identity/address claims; upgrade awid-service before running `aw id create`", plan.RegistryURL)
 	}
-	return nil
+	if isRegistryUnavailableError(err) {
+		return usageError("could not reach AWID registry at %s for atomic identity/address claim; no local .aw identity was written: %v", plan.RegistryURL, err)
+	}
+	return err
 }
 
 func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed25519.PrivateKey, string, bool, error) {
@@ -607,23 +546,6 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 		return nil, "", false, err
 	}
 	return key, controllerDID, true, nil
-}
-
-func ensureStandaloneDID(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	plan *idCreatePlan,
-	signingKey ed25519.PrivateKey,
-) error {
-	_, err := registry.RegisterIdentity(ctx, plan.RegistryURL, plan.DIDKey, plan.DIDAW, signingKey)
-	if already := new(awid.AlreadyRegisteredError); errors.As(err, &already) {
-		if strings.TrimSpace(already.ExistingDIDKey) != plan.DIDKey {
-			return fmt.Errorf("did:aw %s is already registered to %s", already.DIDAW, already.ExistingDIDKey)
-		}
-	} else if err != nil {
-		return err
-	}
-	return nil
 }
 
 func ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath string) error {

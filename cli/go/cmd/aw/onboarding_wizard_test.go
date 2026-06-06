@@ -1720,8 +1720,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 
 	var gotNamespacePayload map[string]any
-	var gotAddressPayload map[string]any
-	var gotDIDPayload map[string]any
+	var gotAtomicClaimPayload map[string]any
 	var gotTeamPayload map[string]any
 	var gotCertPayload map[string]any
 
@@ -1741,38 +1740,39 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 				"last_verified_at":    "2026-04-07T00:00:00Z",
 				"created_at":          "2026-04-07T00:00:00Z",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses":
-			if err := json.NewDecoder(r.Body).Decode(&gotAddressPayload); err != nil {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses/claims":
+			if err := json.NewDecoder(r.Body).Decode(&gotAtomicClaimPayload); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address_id":      "addr-1",
-				"domain":          "acme.com",
-				"name":            "alice",
-				"did_aw":          gotAddressPayload["did_aw"],
-				"current_did_key": gotAddressPayload["current_did_key"],
-				"reachability":    gotAddressPayload["reachability"],
-				"created_at":      "2026-04-07T00:00:00Z",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
-				t.Fatal(err)
+			if gotAtomicClaimPayload["operation"] != awid.AtomicAddressClaimOperation {
+				t.Fatalf("operation=%v", gotAtomicClaimPayload["operation"])
 			}
-			for _, field := range []string{"did_key", "server", "address", "handle"} {
-				if _, ok := gotDIDPayload[field]; ok {
-					t.Fatalf("register_did payload unexpectedly carried %q", field)
-				}
+			if gotAtomicClaimPayload["address_name"] != "alice" {
+				t.Fatalf("address_name=%v", gotAtomicClaimPayload["address_name"])
 			}
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			if gotAtomicClaimPayload["did_log_proof"] == nil {
+				t.Fatalf("did_log_proof missing: %+v", gotAtomicClaimPayload)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": gotDIDPayload["new_did_key"],
-				"created_at":      "2026-04-07T00:00:00Z",
-				"updated_at":      "2026-04-07T00:00:00Z",
+				"status":            "claimed",
+				"dry_run":           false,
+				"domain":            "acme.com",
+				"name":              "alice",
+				"did_aw":            gotAtomicClaimPayload["did_aw"],
+				"current_did_key":   gotAtomicClaimPayload["current_did_key"],
+				"identity_custody":  "self",
+				"namespace_custody": "self",
+				"did_status":        "created",
+				"address_status":    "created",
+				"address": map[string]any{
+					"address_id":      "addr-1",
+					"domain":          "acme.com",
+					"name":            "alice",
+					"did_aw":          gotAtomicClaimPayload["did_aw"],
+					"current_did_key": gotAtomicClaimPayload["current_did_key"],
+					"reachability":    "public",
+					"created_at":      "2026-04-07T00:00:00Z",
+				},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
 			if err := json.NewDecoder(r.Body).Decode(&gotTeamPayload); err != nil {
@@ -1854,19 +1854,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if gotNamespacePayload["domain"] != "acme.com" {
 		t.Fatalf("namespace domain=%v", gotNamespacePayload["domain"])
 	}
-	if gotAddressPayload["name"] != "alice" {
-		t.Fatalf("address name=%v", gotAddressPayload["name"])
-	}
-	for _, field := range []string{"did_key", "server", "address", "handle"} {
-		if _, ok := gotDIDPayload[field]; ok {
-			t.Fatalf("did registration unexpectedly carried %q", field)
-		}
-	}
-	if gotAddressPayload["did_aw"] != gotDIDPayload["did_aw"] {
-		t.Fatalf("address did_aw=%v want %v", gotAddressPayload["did_aw"], gotDIDPayload["did_aw"])
-	}
-	if gotAddressPayload["current_did_key"] != gotDIDPayload["new_did_key"] {
-		t.Fatalf("address current_did_key=%v want %v", gotAddressPayload["current_did_key"], gotDIDPayload["new_did_key"])
+	if gotAtomicClaimPayload["address_name"] != "alice" {
+		t.Fatalf("address name=%v", gotAtomicClaimPayload["address_name"])
 	}
 	if gotTeamPayload["name"] != "default" {
 		t.Fatalf("team name=%v", gotTeamPayload["name"])
@@ -1942,8 +1931,7 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 
 	var gotNamespacePayload map[string]any
-	var gotAddressPayload map[string]any
-	var gotDIDPayload map[string]any
+	var gotAtomicClaimPayload map[string]any
 	var gotTeamPayload map[string]any
 	var gotCertPayload map[string]any
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1962,38 +1950,39 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 				"last_verified_at":    "2026-04-07T00:00:00Z",
 				"created_at":          "2026-04-07T00:00:00Z",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses":
-			if err := json.NewDecoder(r.Body).Decode(&gotAddressPayload); err != nil {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses/claims":
+			if err := json.NewDecoder(r.Body).Decode(&gotAtomicClaimPayload); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address_id":      "addr-1",
-				"domain":          "acme.com",
-				"name":            "alice",
-				"did_aw":          gotAddressPayload["did_aw"],
-				"current_did_key": gotAddressPayload["current_did_key"],
-				"reachability":    gotAddressPayload["reachability"],
-				"created_at":      "2026-04-07T00:00:00Z",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
-				t.Fatal(err)
+			if gotAtomicClaimPayload["operation"] != awid.AtomicAddressClaimOperation {
+				t.Fatalf("operation=%v", gotAtomicClaimPayload["operation"])
 			}
-			for _, field := range []string{"did_key", "server", "address", "handle"} {
-				if _, ok := gotDIDPayload[field]; ok {
-					t.Fatalf("register_did payload unexpectedly carried %q", field)
-				}
+			if gotAtomicClaimPayload["address_name"] != "alice" {
+				t.Fatalf("address_name=%v", gotAtomicClaimPayload["address_name"])
 			}
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			if gotAtomicClaimPayload["did_log_proof"] == nil {
+				t.Fatalf("did_log_proof missing: %+v", gotAtomicClaimPayload)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": gotDIDPayload["new_did_key"],
-				"created_at":      "2026-04-07T00:00:00Z",
-				"updated_at":      "2026-04-07T00:00:00Z",
+				"status":            "claimed",
+				"dry_run":           false,
+				"domain":            "acme.com",
+				"name":              "alice",
+				"did_aw":            gotAtomicClaimPayload["did_aw"],
+				"current_did_key":   gotAtomicClaimPayload["current_did_key"],
+				"identity_custody":  "self",
+				"namespace_custody": "self",
+				"did_status":        "created",
+				"address_status":    "created",
+				"address": map[string]any{
+					"address_id":      "addr-1",
+					"domain":          "acme.com",
+					"name":            "alice",
+					"did_aw":          gotAtomicClaimPayload["did_aw"],
+					"current_did_key": gotAtomicClaimPayload["current_did_key"],
+					"reachability":    "public",
+					"created_at":      "2026-04-07T00:00:00Z",
+				},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
 			if err := json.NewDecoder(r.Body).Decode(&gotTeamPayload); err != nil {
@@ -2092,16 +2081,8 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	if gotNamespacePayload["domain"] != "acme.com" {
 		t.Fatalf("namespace domain=%v", gotNamespacePayload["domain"])
 	}
-	for _, field := range []string{"did_key", "server", "address", "handle"} {
-		if _, ok := gotDIDPayload[field]; ok {
-			t.Fatalf("did registration unexpectedly carried %q", field)
-		}
-	}
-	if gotAddressPayload["did_aw"] != gotDIDPayload["did_aw"] {
-		t.Fatalf("address did_aw=%v want %v", gotAddressPayload["did_aw"], gotDIDPayload["did_aw"])
-	}
-	if gotAddressPayload["current_did_key"] != gotDIDPayload["new_did_key"] {
-		t.Fatalf("address current_did_key=%v want %v", gotAddressPayload["current_did_key"], gotDIDPayload["new_did_key"])
+	if gotAtomicClaimPayload["address_name"] != "alice" {
+		t.Fatalf("address name=%v", gotAtomicClaimPayload["address_name"])
 	}
 	if gotCertPayload["member_address"] != "acme.com/alice" {
 		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])
