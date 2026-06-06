@@ -743,6 +743,124 @@ func TestAgentsAddLocalProvisionsAfterLayoutMaterialization(t *testing.T) {
 	}
 }
 
+func TestAgentsAddWorktreeCreatesGitWorktreeAndHomeState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	repoRoot, err := currentGitWorktreeRootFromDir(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamBootstrapInviteToken = "aw-invite-test-token"
+
+	var sawPlan teamBootstrapAgentPlan
+	var sawSource teamBootstrapSource
+	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
+		sawSource = source
+		sawPlan = plan
+		assertPathExists(t, filepath.Join(plan.HomeDir, "AGENTS.md"))
+		assertPathExists(t, filepath.Join(plan.HomeDir, "CLAUDE.md"))
+		workLink := filepath.Join(plan.HomeDir, "work")
+		assertPathExists(t, workLink)
+		target, err := os.Readlink(workLink)
+		if err != nil {
+			t.Fatalf("read work symlink: %v", err)
+		}
+		if target != plan.WorkDir {
+			t.Fatalf("work symlink target=%q want %q", target, plan.WorkDir)
+		}
+		if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
+			return err
+		}
+		return nil
+	}
+	agentsAddInitAdditionalAgent = func(primaryDir string, plan teamBootstrapAgentPlan) error {
+		t.Fatalf("additional-agent path should not run: primary=%s plan=%+v", primaryDir, plan)
+		return nil
+	}
+
+	if err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"}); err != nil {
+		t.Fatalf("runAgentsAddWorktree: %v", err)
+	}
+	if sawSource.Kind != teamBootstrapSourceInvite {
+		t.Fatalf("source kind=%q want invite", sawSource.Kind)
+	}
+	if sawPlan.Responsibility != "developer" || sawPlan.WorkBinding != agentsWorkGitWorktree {
+		t.Fatalf("plan mismatch: %+v", sawPlan)
+	}
+	if sawPlan.WorkDir != filepath.Join(repoRoot, "agents", "worktrees", "developer") {
+		t.Fatalf("work_dir=%q", sawPlan.WorkDir)
+	}
+	assertPathExists(t, filepath.Join(repoRoot, "agents", "worktrees", "developer", "README.md"))
+	assertPathExists(t, filepath.Join(repoRoot, "agents", "home", "developer", ".aw"))
+
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := spec.Agents["developer"]
+	if !ok {
+		t.Fatalf("developer missing from team.yaml: %#v", spec.Agents)
+	}
+	if agent.Work != agentsWorkGitWorktree {
+		t.Fatalf("agent work=%q want git_worktree", agent.Work)
+	}
+}
+
+func TestAgentsAddWorktreePlansCollisionSuffixBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("branch", "developer")
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	repoRoot, err := currentGitWorktreeRootFromDir(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, _, plan, err := buildAgentsAddOutput(&cobra.Command{Use: "add-worktree"}, "developer", agentsWorkGitWorktree)
+	if err != nil {
+		t.Fatalf("buildAgentsAddOutput: %v", err)
+	}
+	if plan.WorkDir != filepath.Join(repoRoot, "agents", "worktrees", "developer-2") {
+		t.Fatalf("work_dir=%q", plan.WorkDir)
+	}
+	foundWorktreeCheck := false
+	for _, check := range out.Availability {
+		if check.Field == "worktree" && check.Value == "developer-2" {
+			foundWorktreeCheck = true
+		}
+	}
+	if !foundWorktreeCheck {
+		t.Fatalf("availability missing developer-2 worktree check: %+v", out.Availability)
+	}
+	assertPathMissing(t, filepath.Join(repoRoot, "agents", "worktrees", "developer-2"))
+	data, err := os.ReadFile(filepath.Join(repoRoot, "agents", "team.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "developer-2") {
+		t.Fatalf("team.yaml mutated during planning:\n%s", string(data))
+	}
+}
+
 func TestAgentsAddGlobalRequiresIdentityPrefixBeforeMutation(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	t.Setenv("AWEB_IDENTITY_PREFIX", "")

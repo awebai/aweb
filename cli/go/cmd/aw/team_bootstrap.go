@@ -99,9 +99,8 @@ var agentsAddCmd = &cobra.Command{
 var agentsAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree <responsibility>",
 	Short: "Add a worktree-bound agent to the agents layout",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents add-worktree is tracked as aweb-aapz.6 and is not implemented yet; for ad-hoc worktree-bound workspaces, use aw workspace add-worktree from an initialized agent home")
-	},
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAgentsAddWorktree,
 }
 
 var agentsRemoveCmd = &cobra.Command{
@@ -325,6 +324,11 @@ func init() {
 	agentsAddCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
 	agentsAddCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
 	agentsAddCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create local identity state")
+	bindAgentsProvisionFlags(agentsAddWorktreeCmd)
+	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
+	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent (not supported for worktree-bound agents in v1)")
+	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
+	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create the git worktree or local identity state")
 
 	agentsCmd.AddCommand(
 		teamBootstrapCmd,
@@ -549,7 +553,15 @@ func runAgentsProvision(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentsAdd(cmd *cobra.Command, args []string) error {
-	out, layout, spec, plan, err := buildAgentsAddOutput(cmd, args[0])
+	return runAgentsAddWithWorkBinding(cmd, args[0], agentsWorkRepoRoot)
+}
+
+func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
+	return runAgentsAddWithWorkBinding(cmd, args[0], agentsWorkGitWorktree)
+}
+
+func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBinding string) error {
+	out, layout, spec, plan, err := buildAgentsAddOutput(cmd, responsibilityRaw, workBinding)
 	if err != nil {
 		return err
 	}
@@ -559,6 +571,9 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if plan.IdentityScope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly {
+		if workBinding == agentsWorkGitWorktree {
+			return usageError("aw agents add-worktree --global is not supported in v1; use `aw agents add --global` for a repo-root global agent, or add a local worktree-bound agent")
+		}
 		return runAgentsAddGlobal(cmd, out, layout, spec, plan)
 	}
 	var source teamBootstrapSource
@@ -578,7 +593,18 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 			out.TeamSource = string(teamBootstrapSourceCurrent)
 		}
 	}
+	branchCreated := false
+	if !agentsAddLayoutOnly && workBinding == agentsWorkGitWorktree {
+		var err error
+		branchCreated, err = createAgentsAddGitWorktree(layout, plan)
+		if err != nil {
+			return err
+		}
+	}
 	if err := writeAgentsAddLayout(layout, spec, plan, out.RoleCreated); err != nil {
+		if workBinding == agentsWorkGitWorktree {
+			cleanupAgentsAddGitWorktree(layout, plan, branchCreated)
+		}
 		return err
 	}
 	if agentsAddLayoutOnly {
@@ -586,7 +612,14 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 		printOutput(out, formatAgentsAddOutput)
 		return nil
 	}
-	if err := materializeTeamBootstrapAgent(layout.AgentsRoot, plan, layout.CustomerRepoRoot); err != nil {
+	planWorkDirectory := layout.CustomerRepoRoot
+	if strings.TrimSpace(plan.WorkDir) != "" {
+		planWorkDirectory = plan.WorkDir
+	}
+	if err := materializeTeamBootstrapAgent(layout.AgentsRoot, plan, planWorkDirectory); err != nil {
+		if workBinding == agentsWorkGitWorktree {
+			cleanupAgentsAddGitWorktree(layout, plan, branchCreated)
+		}
 		return err
 	}
 	if anchorDir != "" {
@@ -922,7 +955,7 @@ func saveAgentsAddGlobalLocalState(homeDir string, pending *agentsAddGlobalPendi
 	}, teamResult.Certificate, pending.RegistryURL, pending.AwebURL, true)
 }
 
-func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsAddOutput, teamBootstrapLayout, *teamBootstrapSpec, teamBootstrapAgentPlan, error) {
+func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding string) (agentsAddOutput, teamBootstrapLayout, *teamBootstrapSpec, teamBootstrapAgentPlan, error) {
 	layout, err := resolveAgentsExistingLayoutPreflight()
 	if err != nil {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
@@ -957,6 +990,13 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 	if scope == agentsIdentityScopeGlobal && !agentsAddLayoutOnly && strings.TrimSpace(teamBootstrapTeamName) == "" {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("--team is required when adding a global agent")
 	}
+	workBinding = strings.TrimSpace(workBinding)
+	if workBinding == "" {
+		workBinding = agentsWorkRepoRoot
+	}
+	if workBinding != agentsWorkRepoRoot && workBinding != agentsWorkGitWorktree {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, usageError("unsupported agents add work binding %q", workBinding)
+	}
 	roleCreated := false
 	roleName := ""
 	if resumeGlobal {
@@ -986,7 +1026,7 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 			RoleName:      roleName,
 			IdentityScope: scope,
 			HomeTemplate:  filepath.ToSlash(filepath.Join("home", responsibility)),
-			Work:          agentsWorkRepoRoot,
+			Work:          workBinding,
 		}
 		if err := ensureAgentsAddPathsAvailable(layout, spec, responsibility, roleName, roleCreated); err != nil {
 			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
@@ -1024,7 +1064,7 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 		}
 		return out, layout, spec, plan, nil
 	}
-	namingInput, err := agentsAddNamingInput(layout, spec, responsibility, scope, identityPrefix)
+	namingInput, err := agentsAddNamingInput(layout, spec, responsibility, scope, identityPrefix, workBinding)
 	if err != nil {
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
 	}
@@ -1036,6 +1076,13 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, fmt.Errorf("internal error: add naming plan returned %d agents", len(namingPlan.Agents))
 	}
 	agentPlan := namingPlan.Agents[0]
+	workDir := layout.CustomerRepoRoot
+	if workBinding == agentsWorkGitWorktree {
+		if strings.TrimSpace(agentPlan.WorktreeName) == "" {
+			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, fmt.Errorf("internal error: worktree add did not allocate a worktree name")
+		}
+		workDir = filepath.Join(layout.WorktreesRoot, agentPlan.WorktreeName)
+	}
 	plan := teamBootstrapAgentPlan{
 		Responsibility: responsibility,
 		RoleName:       roleName,
@@ -1046,8 +1093,8 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw string) (agentsA
 		HomeDir:        filepath.Join(layout.HomeRoot, responsibility),
 		SourceHome:     filepath.Join(layout.HomeRoot, responsibility),
 		Instructions:   filepath.Join(layout.HomeRoot, responsibility, "AGENTS.md"),
-		WorkBinding:    agentsWorkRepoRoot,
-		WorkDir:        layout.CustomerRepoRoot,
+		WorkBinding:    workBinding,
+		WorkDir:        workDir,
 	}
 	checks := make([]agentsProvisionCheck, 0, len(agentPlan.Availability))
 	for _, check := range agentPlan.Availability {
@@ -1253,7 +1300,7 @@ func resolveAgentsAddScope() (string, error) {
 	return agentsIdentityScopeLocal, nil
 }
 
-func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, responsibility, scope, identityPrefix string) (agentsNamingInput, error) {
+func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, responsibility, scope, identityPrefix, workBinding string) (agentsNamingInput, error) {
 	input := agentsNamingInput{
 		AgentsDir: layout.AgentsDirName,
 		Namespace: teamBootstrapNamespace,
@@ -1261,7 +1308,7 @@ func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, r
 		Agents: []agentsNamingAgentInput{{
 			Responsibility: responsibility,
 			IdentityScope:  scope,
-			WorkBinding:    agentsWorkRepoRoot,
+			WorkBinding:    workBinding,
 		}},
 		ExistingAliases:     map[string]bool{},
 		ExistingGlobalNames: map[string]bool{},
@@ -1308,7 +1355,67 @@ func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, r
 			input.ExistingGlobalNames[name] = true
 		}
 	}
+	if workBinding == agentsWorkGitWorktree {
+		worktrees, err := existingAgentsWorktreeNames(layout)
+		if err != nil {
+			return agentsNamingInput{}, err
+		}
+		branches, err := existingAgentsBranchNames(layout)
+		if err != nil {
+			return agentsNamingInput{}, err
+		}
+		input.ExistingWorktrees = worktrees
+		input.ExistingBranches = branches
+	}
 	return input, nil
+}
+
+func existingAgentsWorktreeNames(layout teamBootstrapLayout) (map[string]bool, error) {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(layout.WorktreesRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("read existing agent worktrees: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name, err := normalizeAgentsNamingField("existing worktree", entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, nil
+}
+
+func existingAgentsBranchNames(layout teamBootstrapLayout) (map[string]bool, error) {
+	out := map[string]bool{}
+	if strings.TrimSpace(layout.CustomerRepoRoot) == "" {
+		return out, nil
+	}
+	cmd := exec.Command("git", "-C", layout.CustomerRepoRoot, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	data, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list git branches: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, err := normalizeAgentsNamingField("existing branch", line)
+		if err != nil {
+			// Generated worktree branches are slug-only, so branch names with
+			// slashes or other git-specific punctuation cannot collide.
+			continue
+		}
+		out[name] = true
+	}
+	return out, nil
 }
 
 func existingAgentsMemberships(layout teamBootstrapLayout, skipResponsibility string) []awconfig.WorktreeMembership {
@@ -1643,6 +1750,53 @@ func ensureInRepoProvisionWorktrees(layout teamBootstrapLayout, plans []teamBoot
 		}
 	}
 	return nil
+}
+
+func createAgentsAddGitWorktree(layout teamBootstrapLayout, plan teamBootstrapAgentPlan) (bool, error) {
+	if plan.WorkBinding != agentsWorkGitWorktree {
+		return false, nil
+	}
+	if strings.TrimSpace(plan.WorkDir) == "" {
+		return false, fmt.Errorf("agent %s missing worktree path", plan.Responsibility)
+	}
+	if err := ensureAwebRuntimeUntrackedForAddWorktree(layout.CustomerRepoRoot); err != nil {
+		return false, err
+	}
+	if err := ensureInRepoBootstrapGitignore(layout); err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(plan.WorkDir); err == nil {
+		return false, usageError("worktree path %s already exists", plan.WorkDir)
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat worktree path %s: %w", plan.WorkDir, err)
+	}
+	if err := os.MkdirAll(layout.WorktreesRoot, 0o755); err != nil {
+		return false, err
+	}
+	branchName, err := teamBootstrapWorktreeName(plan)
+	if err != nil {
+		return false, err
+	}
+	branchCreated, err := createWorkspaceGitWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, jsonFlag)
+	if err != nil {
+		return false, fmt.Errorf("failed to create git worktree for %s: %w", plan.Responsibility, err)
+	}
+	if err := ensureAwebRuntimeGitIgnored(plan.WorkDir); err != nil {
+		cleanupWorkspaceWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, branchCreated)
+		return false, err
+	}
+	return branchCreated, nil
+}
+
+func cleanupAgentsAddGitWorktree(layout teamBootstrapLayout, plan teamBootstrapAgentPlan, branchCreated bool) {
+	if plan.WorkBinding != agentsWorkGitWorktree {
+		return
+	}
+	branchName, err := teamBootstrapWorktreeName(plan)
+	if err != nil {
+		return
+	}
+	cleanupWorkspaceWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, branchCreated)
 }
 
 func resolveTeamBootstrapLayoutPreflight(cmd *cobra.Command) (teamBootstrapLayout, error) {
