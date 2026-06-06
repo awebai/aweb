@@ -27,6 +27,60 @@ type addressRegisterRequest struct {
 	CurrentDIDKey string `json:"current_did_key"`
 }
 
+type AtomicAddressClaimParams struct {
+	Domain                        string
+	AddressName                   string
+	DIDAW                         string
+	CurrentDIDKey                 string
+	IdentitySigningKey            ed25519.PrivateKey
+	NamespaceControllerSigningKey ed25519.PrivateKey
+	DryRun                        bool
+	IdentityCustody               string
+	NamespaceCustody              string
+}
+
+type atomicAddressClaimRequest struct {
+	Operation          string                 `json:"operation"`
+	AddressName        string                 `json:"address_name"`
+	DIDAW              string                 `json:"did_aw"`
+	CurrentDIDKey      string                 `json:"current_did_key"`
+	RegistryURL        string                 `json:"registry_url"`
+	Timestamp          string                 `json:"timestamp"`
+	DryRun             bool                   `json:"dry_run"`
+	IdentityCustody    string                 `json:"identity_custody"`
+	NamespaceCustody   string                 `json:"namespace_custody"`
+	IdentitySignature  string                 `json:"identity_signature"`
+	NamespaceSignature string                 `json:"namespace_signature"`
+	DIDLogProof        atomicClaimDIDLogProof `json:"did_log_proof"`
+}
+
+type atomicClaimDIDLogProof struct {
+	DIDAW          string  `json:"did_aw"`
+	Seq            int     `json:"seq"`
+	Operation      string  `json:"operation"`
+	PreviousDIDKey *string `json:"previous_did_key"`
+	NewDIDKey      string  `json:"new_did_key"`
+	PrevEntryHash  *string `json:"prev_entry_hash"`
+	StateHash      string  `json:"state_hash"`
+	AuthorizedBy   string  `json:"authorized_by"`
+	Timestamp      string  `json:"timestamp"`
+	Signature      string  `json:"signature"`
+}
+
+type AtomicAddressClaimResult struct {
+	Status           string           `json:"status"`
+	DryRun           bool             `json:"dry_run"`
+	Domain           string           `json:"domain"`
+	Name             string           `json:"name"`
+	DIDAW            string           `json:"did_aw"`
+	CurrentDIDKey    string           `json:"current_did_key"`
+	IdentityCustody  string           `json:"identity_custody"`
+	NamespaceCustody string           `json:"namespace_custody"`
+	DIDStatus        string           `json:"did_status"`
+	AddressStatus    string           `json:"address_status"`
+	Address          *RegistryAddress `json:"address,omitempty"`
+}
+
 type deleteReasonRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
@@ -350,6 +404,131 @@ func (c *RegistryClient) RegisterAddressAt(
 		&out,
 	); err != nil {
 		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *RegistryClient) ClaimIdentityAddressAt(
+	ctx context.Context,
+	registryURL string,
+	params AtomicAddressClaimParams,
+) (*AtomicAddressClaimResult, error) {
+	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	if err != nil {
+		return nil, fmt.Errorf("registry_url: %w", err)
+	}
+	params.Domain = canonicalizeDomain(params.Domain)
+	params.AddressName = strings.ToLower(strings.TrimSpace(params.AddressName))
+	params.DIDAW = strings.TrimSpace(params.DIDAW)
+	params.CurrentDIDKey = strings.TrimSpace(params.CurrentDIDKey)
+	if params.Domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if params.AddressName == "" {
+		return nil, fmt.Errorf("address name is required")
+	}
+	if !strings.HasPrefix(params.DIDAW, "did:aw:") {
+		return nil, fmt.Errorf("did_aw must start with did:aw:")
+	}
+	if !strings.HasPrefix(params.CurrentDIDKey, "did:key:") {
+		return nil, fmt.Errorf("current_did_key must start with did:key:")
+	}
+	if params.IdentitySigningKey == nil {
+		return nil, fmt.Errorf("identity signing key is required")
+	}
+	if params.NamespaceControllerSigningKey == nil {
+		return nil, fmt.Errorf("namespace controller signing key is required")
+	}
+	if did := ComputeDIDKey(params.IdentitySigningKey.Public().(ed25519.PublicKey)); did != params.CurrentDIDKey {
+		return nil, fmt.Errorf("identity signing key does not match current_did_key")
+	}
+	if stableID := ComputeStableID(params.IdentitySigningKey.Public().(ed25519.PublicKey)); stableID != params.DIDAW {
+		return nil, fmt.Errorf("identity signing key does not match did_aw")
+	}
+	identityCustody := strings.TrimSpace(params.IdentityCustody)
+	if identityCustody == "" {
+		identityCustody = string(AddressClaimCustodySelf)
+	}
+	namespaceCustody := strings.TrimSpace(params.NamespaceCustody)
+	if namespaceCustody == "" {
+		namespaceCustody = string(AddressClaimCustodySelf)
+	}
+
+	timestamp := registryNow().UTC().Format(time.RFC3339)
+	fields := AtomicAddressClaimFields{
+		Operation:        AtomicAddressClaimOperation,
+		Domain:           params.Domain,
+		AddressName:      params.AddressName,
+		DIDAW:            params.DIDAW,
+		CurrentDIDKey:    params.CurrentDIDKey,
+		RegistryURL:      registryURL,
+		Timestamp:        timestamp,
+		DryRun:           params.DryRun,
+		IdentityCustody:  identityCustody,
+		NamespaceCustody: namespaceCustody,
+	}
+	identityCanonical, err := AtomicAddressClaimIdentityCanonical(fields)
+	if err != nil {
+		return nil, err
+	}
+	identitySignature := base64.RawStdEncoding.EncodeToString(
+		ed25519.Sign(params.IdentitySigningKey, []byte(identityCanonical)),
+	)
+	identityProofHash, err := AtomicAddressClaimIdentityProofHash(identityCanonical, identitySignature)
+	if err != nil {
+		return nil, err
+	}
+	namespaceCanonical, err := AtomicAddressClaimNamespaceCanonical(fields, identityProofHash)
+	if err != nil {
+		return nil, err
+	}
+	namespaceSignature := base64.RawStdEncoding.EncodeToString(
+		ed25519.Sign(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
+	)
+
+	stateHash := stableIdentityStateHash(params.DIDAW, params.CurrentDIDKey)
+	didLogPayload := CanonicalDidLogPayload(params.DIDAW, &DidKeyEvidence{
+		Seq:            1,
+		Operation:      "register_did",
+		PreviousDIDKey: nil,
+		NewDIDKey:      params.CurrentDIDKey,
+		PrevEntryHash:  nil,
+		StateHash:      stateHash,
+		AuthorizedBy:   params.CurrentDIDKey,
+		Timestamp:      timestamp,
+	})
+	body := atomicAddressClaimRequest{
+		Operation:          AtomicAddressClaimOperation,
+		AddressName:        params.AddressName,
+		DIDAW:              params.DIDAW,
+		CurrentDIDKey:      params.CurrentDIDKey,
+		RegistryURL:        registryURL,
+		Timestamp:          timestamp,
+		DryRun:             params.DryRun,
+		IdentityCustody:    identityCustody,
+		NamespaceCustody:   namespaceCustody,
+		IdentitySignature:  identitySignature,
+		NamespaceSignature: namespaceSignature,
+		DIDLogProof: atomicClaimDIDLogProof{
+			DIDAW:          params.DIDAW,
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      params.CurrentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   params.CurrentDIDKey,
+			Timestamp:      timestamp,
+			Signature: base64.RawStdEncoding.EncodeToString(
+				ed25519.Sign(params.IdentitySigningKey, []byte(didLogPayload)),
+			),
+		},
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(params.Domain) + "/addresses/claims"
+	var out AtomicAddressClaimResult
+	if err := c.requestJSON(ctx, http.MethodPost, registryURL, path, nil, body, &out); err != nil {
+		return nil, atomicAddressClaimConflictFromError(err)
 	}
 	return &out, nil
 }

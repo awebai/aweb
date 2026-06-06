@@ -5,11 +5,13 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
@@ -105,6 +107,220 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 	}
 	if address.CurrentDIDKey != subjectDID {
 		t.Fatalf("CurrentDIDKey=%s want %s", address.CurrentDIDKey, subjectDID)
+	}
+}
+
+func TestClaimIdentityAddressAtPostsAtomicSignedPayload(t *testing.T) {
+	t.Parallel()
+
+	subjectPub, subjectPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectDID := ComputeDIDKey(subjectPub)
+	subjectStableID := ComputeStableID(subjectPub)
+
+	controllerPub, controllerPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 6, 6, 9, 30, 0, 0, time.UTC)
+	oldNow := registryNow
+	registryNow = func() time.Time { return now }
+	t.Cleanup(func() { registryNow = oldNow })
+
+	var got atomicAddressClaimRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/did" || r.URL.Path == "/v1/namespaces/acme.com/addresses" {
+			t.Fatalf("legacy split endpoint was called: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Path != "/v1/namespaces/acme.com/addresses/claims" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method=%s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		fields := AtomicAddressClaimFields{
+			Operation:        got.Operation,
+			Domain:           "acme.com",
+			AddressName:      got.AddressName,
+			DIDAW:            got.DIDAW,
+			CurrentDIDKey:    got.CurrentDIDKey,
+			RegistryURL:      got.RegistryURL,
+			Timestamp:        got.Timestamp,
+			DryRun:           got.DryRun,
+			IdentityCustody:  got.IdentityCustody,
+			NamespaceCustody: got.NamespaceCustody,
+		}
+		identityCanonical, err := AtomicAddressClaimIdentityCanonical(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identitySig, err := base64.RawStdEncoding.DecodeString(got.IdentitySignature)
+		if err != nil {
+			t.Fatalf("identity signature decode: %v", err)
+		}
+		if !ed25519.Verify(subjectPub, []byte(identityCanonical), identitySig) {
+			t.Fatalf("invalid identity signature for %s", identityCanonical)
+		}
+		identityProofHash, err := AtomicAddressClaimIdentityProofHash(identityCanonical, got.IdentitySignature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		namespaceCanonical, err := AtomicAddressClaimNamespaceCanonical(fields, identityProofHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		namespaceSig, err := base64.RawStdEncoding.DecodeString(got.NamespaceSignature)
+		if err != nil {
+			t.Fatalf("namespace signature decode: %v", err)
+		}
+		if !ed25519.Verify(controllerPub, []byte(namespaceCanonical), namespaceSig) {
+			t.Fatalf("invalid namespace signature for %s", namespaceCanonical)
+		}
+		logPayload := CanonicalDidLogPayload(got.DIDAW, &DidKeyEvidence{
+			Seq:            got.DIDLogProof.Seq,
+			Operation:      got.DIDLogProof.Operation,
+			PreviousDIDKey: got.DIDLogProof.PreviousDIDKey,
+			NewDIDKey:      got.DIDLogProof.NewDIDKey,
+			PrevEntryHash:  got.DIDLogProof.PrevEntryHash,
+			StateHash:      got.DIDLogProof.StateHash,
+			AuthorizedBy:   got.DIDLogProof.AuthorizedBy,
+			Timestamp:      got.DIDLogProof.Timestamp,
+		})
+		logSig, err := base64.RawStdEncoding.DecodeString(got.DIDLogProof.Signature)
+		if err != nil {
+			t.Fatalf("did log signature decode: %v", err)
+		}
+		if !ed25519.Verify(subjectPub, []byte(logPayload), logSig) {
+			t.Fatalf("invalid did log proof signature for %s", logPayload)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":            "available",
+			"dry_run":           got.DryRun,
+			"domain":            "acme.com",
+			"name":              got.AddressName,
+			"did_aw":            got.DIDAW,
+			"current_did_key":   got.CurrentDIDKey,
+			"identity_custody":  got.IdentityCustody,
+			"namespace_custody": got.NamespaceCustody,
+			"did_status":        "would_create",
+			"address_status":    "would_create",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	result, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, AtomicAddressClaimParams{
+		Domain:                        "acme.com",
+		AddressName:                   "alice",
+		DIDAW:                         subjectStableID,
+		CurrentDIDKey:                 subjectDID,
+		IdentitySigningKey:            subjectPriv,
+		NamespaceControllerSigningKey: controllerPriv,
+		DryRun:                        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "available" || !result.DryRun || result.Address != nil {
+		t.Fatalf("result=%+v", result)
+	}
+	if got.RegistryURL != server.URL {
+		t.Fatalf("registry_url=%q want %q", got.RegistryURL, server.URL)
+	}
+	if got.DIDLogProof.Operation != "register_did" || got.DIDLogProof.StateHash == "" {
+		t.Fatalf("did_log_proof=%+v", got.DIDLogProof)
+	}
+}
+
+func TestClaimIdentityAddressAtDecodesKnownAtomicConflictCode(t *testing.T) {
+	t.Parallel()
+
+	params := atomicClaimTestParams(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": map[string]any{
+				"code":    AtomicAddressClaimCodeAddressTakenDifferentOwner,
+				"message": "address is already bound to a different did:aw",
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	var conflict *AtomicAddressClaimConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error %T %[1]v is not AtomicAddressClaimConflictError", err)
+	}
+	if conflict.StatusCode != http.StatusConflict {
+		t.Fatalf("status=%d", conflict.StatusCode)
+	}
+	if conflict.Code != AtomicAddressClaimCodeAddressTakenDifferentOwner {
+		t.Fatalf("code=%q", conflict.Code)
+	}
+	if conflict.Message == "" {
+		t.Fatal("expected conflict message")
+	}
+}
+
+func TestClaimIdentityAddressAtLeavesUnknownAtomicConflictGeneric(t *testing.T) {
+	t.Parallel()
+
+	params := atomicClaimTestParams(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": map[string]any{
+				"code":    "new_server_code",
+				"message": "server knows a code this client does not",
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	var conflict *AtomicAddressClaimConflictError
+	if errors.As(err, &conflict) {
+		t.Fatalf("unknown code should not be treated as known conflict: %+v", conflict)
+	}
+	var registryErr *RegistryError
+	if !errors.As(err, &registryErr) {
+		t.Fatalf("error %T %[1]v is not RegistryError", err)
+	}
+}
+
+func atomicClaimTestParams(t *testing.T) AtomicAddressClaimParams {
+	t.Helper()
+	subjectPub, subjectPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, controllerPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return AtomicAddressClaimParams{
+		Domain:                        "acme.com",
+		AddressName:                   "alice",
+		DIDAW:                         ComputeStableID(subjectPub),
+		CurrentDIDKey:                 ComputeDIDKey(subjectPub),
+		IdentitySigningKey:            subjectPriv,
+		NamespaceControllerSigningKey: controllerPriv,
+		DryRun:                        true,
 	}
 }
 

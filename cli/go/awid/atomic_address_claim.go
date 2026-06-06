@@ -3,6 +3,8 @@ package awid
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -45,6 +47,54 @@ var AtomicAddressClaimConflictCodes = []string{
 	AtomicAddressClaimCodePrimitiveNotSupported,
 	AtomicAddressClaimCodeDIDLogProofRequired,
 	AtomicAddressClaimCodeDIDLogProofInvalid,
+}
+
+type AtomicAddressClaimConflictError struct {
+	StatusCode int
+	Code       string
+	Message    string
+}
+
+func (e *AtomicAddressClaimConflictError) Error() string {
+	if strings.TrimSpace(e.Message) == "" {
+		return fmt.Sprintf("atomic address claim failed: %s", e.Code)
+	}
+	return fmt.Sprintf("atomic address claim failed: %s: %s", e.Code, e.Message)
+}
+
+func atomicAddressClaimConflictFromError(err error) error {
+	var registryErr *RegistryError
+	if !errors.As(err, &registryErr) {
+		return err
+	}
+	var envelope struct {
+		Detail struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal([]byte(registryErr.Detail), &envelope) != nil {
+		return err
+	}
+	code := strings.TrimSpace(envelope.Detail.Code)
+	if !knownAtomicAddressClaimConflictCode(code) {
+		return err
+	}
+	return &AtomicAddressClaimConflictError{
+		StatusCode: registryErr.StatusCode,
+		Code:       code,
+		Message:    strings.TrimSpace(envelope.Detail.Message),
+	}
+}
+
+func knownAtomicAddressClaimConflictCode(code string) bool {
+	code = strings.TrimSpace(code)
+	for _, known := range AtomicAddressClaimConflictCodes {
+		if code == known {
+			return true
+		}
+	}
+	return false
 }
 
 type AtomicAddressClaimFields struct {
