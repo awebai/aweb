@@ -757,6 +757,37 @@ func TestAgentsAddLocalProvisionsAfterLayoutMaterialization(t *testing.T) {
 	}
 }
 
+func TestAgentsAddUsesTemplateNamingPolicy(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	teamYAML := filepath.Join(repoDir, "agents", "team.yaml")
+	data, err := os.ReadFile(teamYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "agents:\n", "naming:\n  local_alias:\n    sequence: star-name\n    pattern: \"{star-name}\"\nagents:\n", 1)
+	if err := os.WriteFile(teamYAML, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+
+	out, _, _, plan, err := buildAgentsAddOutput(&cobra.Command{Use: "add"}, "support", agentsWorkRepoRoot)
+	if err != nil {
+		t.Fatalf("buildAgentsAddOutput: %v", err)
+	}
+	if plan.Alias != "sirius" {
+		t.Fatalf("alias=%q want template star-name policy first candidate sirius", plan.Alias)
+	}
+	if !agentsProvisionHasCheck(agentsProvisionOutput{Availability: out.Availability}, "support", "team_alias", "sirius", "available") {
+		t.Fatalf("availability missing sirius team_alias check: %+v", out.Availability)
+	}
+}
+
 func TestAgentsAddWorktreeCreatesGitWorktreeAndHomeState(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	repoDir := t.TempDir()

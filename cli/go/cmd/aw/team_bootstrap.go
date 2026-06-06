@@ -153,6 +153,7 @@ type teamBootstrapSpec struct {
 	Name         string                            `yaml:"name"`
 	Instructions teamBootstrapInstructionsSpec     `yaml:"instructions"`
 	Roles        map[string]teamBootstrapRoleSpec  `yaml:"roles"`
+	Naming       teamBootstrapNamingSpec           `yaml:"naming,omitempty"`
 	Agents       map[string]teamBootstrapAgentSpec `yaml:"agents"`
 	Worktrees    []teamBootstrapWorktreeAgentSpec  `yaml:"worktrees"`
 }
@@ -164,6 +165,18 @@ type teamBootstrapInstructionsSpec struct {
 type teamBootstrapRoleSpec struct {
 	Title string `yaml:"title"`
 	File  string `yaml:"file"`
+}
+
+type teamBootstrapNamingSpec struct {
+	LocalAlias  teamBootstrapNamingRuleSpec `yaml:"local_alias,omitempty"`
+	GlobalAlias teamBootstrapNamingRuleSpec `yaml:"global_alias,omitempty"`
+	GlobalName  teamBootstrapNamingRuleSpec `yaml:"global_name,omitempty"`
+	Worktree    teamBootstrapNamingRuleSpec `yaml:"worktree,omitempty"`
+}
+
+type teamBootstrapNamingRuleSpec struct {
+	Sequence string `yaml:"sequence,omitempty"`
+	Pattern  string `yaml:"pattern,omitempty"`
 }
 
 type teamBootstrapAgentSpec struct {
@@ -1614,6 +1627,7 @@ func agentsNamingInputFromBootstrapPlans(layout teamBootstrapLayout, spec *teamB
 		AgentsDir: layout.AgentsDirName,
 		Namespace: teamBootstrapNamespace,
 		User:      identityPrefix,
+		Policy:    agentsNamingPolicyFromBootstrapSpec(spec),
 		Agents:    make([]agentsNamingAgentInput, 0, len(plans)),
 	}
 	if strings.TrimSpace(teamBootstrapNamespace) != "" && strings.TrimSpace(teamBootstrapTeamName) != "" {
@@ -1637,6 +1651,22 @@ func agentsNamingInputFromBootstrapPlans(layout teamBootstrapLayout, spec *teamB
 		})
 	}
 	return input, nil
+}
+
+func agentsNamingPolicyFromBootstrapSpec(spec *teamBootstrapSpec) agentsNamingPolicy {
+	if spec == nil {
+		return agentsNamingPolicy{}
+	}
+	return agentsNamingPolicy{
+		LocalAliasSequence:  strings.TrimSpace(spec.Naming.LocalAlias.Sequence),
+		LocalAliasPattern:   strings.TrimSpace(spec.Naming.LocalAlias.Pattern),
+		GlobalAliasSequence: strings.TrimSpace(spec.Naming.GlobalAlias.Sequence),
+		GlobalAliasPattern:  strings.TrimSpace(spec.Naming.GlobalAlias.Pattern),
+		GlobalNameSequence:  strings.TrimSpace(spec.Naming.GlobalName.Sequence),
+		GlobalNamePattern:   strings.TrimSpace(spec.Naming.GlobalName.Pattern),
+		WorktreeSequence:    strings.TrimSpace(spec.Naming.Worktree.Sequence),
+		WorktreePattern:     strings.TrimSpace(spec.Naming.Worktree.Pattern),
+	}
 }
 
 func expectedAgentsProvisionTeamID() (string, error) {
@@ -1677,6 +1707,7 @@ func agentsAddNamingInput(layout teamBootstrapLayout, spec *teamBootstrapSpec, r
 		AgentsDir: layout.AgentsDirName,
 		Namespace: teamBootstrapNamespace,
 		User:      identityPrefix,
+		Policy:    agentsNamingPolicyFromBootstrapSpec(spec),
 		Agents: []agentsNamingAgentInput{{
 			Responsibility: responsibility,
 			IdentityScope:  scope,
