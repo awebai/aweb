@@ -31,6 +31,21 @@ func TestAgentsSequenceCandidateClassicAndStar(t *testing.T) {
 	}
 }
 
+func TestAgentsSequenceListsAreGolden(t *testing.T) {
+	wantClassic := []string{
+		"alice", "bob", "charlie", "dave", "eve", "frank", "grace", "henry", "ivy", "jack", "kate", "leo", "mia", "noah", "olivia", "peter", "quinn", "rose", "sam", "tara", "uma", "victor", "wendy", "xavier", "yara", "zoe",
+	}
+	wantStar := []string{
+		"sirius", "vega", "altair", "deneb", "rigel", "polaris", "arcturus", "capella", "antares", "spica", "aldebaran", "procyon", "regulus", "bellatrix", "castor", "pollux", "mira", "achernar", "hadar", "shaula", "avior", "alnair", "mintaka", "merak", "dubhe", "algol",
+	}
+	if strings.Join(agentsClassicNames, ",") != strings.Join(wantClassic, ",") {
+		t.Fatalf("classic sequence changed:\ngot  %v\nwant %v", agentsClassicNames, wantClassic)
+	}
+	if strings.Join(agentsStarNames, ",") != strings.Join(wantStar, ",") {
+		t.Fatalf("star sequence changed:\ngot  %v\nwant %v", agentsStarNames, wantStar)
+	}
+}
+
 func TestBuildAgentsNamingPlanDefaults(t *testing.T) {
 	plan, err := buildAgentsNamingPlan(agentsNamingInput{
 		AgentsDir: "agents",
@@ -146,6 +161,16 @@ func TestBuildAgentsNamingPlanRejectsExpandedFieldTraversalBeforeMutation(t *tes
 	assertPathMissing(t, filepath.Join(root, "escape"))
 }
 
+func TestNormalizeAgentsNamingFieldRejectsContractBadValues(t *testing.T) {
+	for _, value := range []string{"../escape", "alice/ops", ".", "..", "", "Juan", "juan_user"} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := normalizeAgentsNamingField("test field", value); err == nil {
+				t.Fatalf("normalizeAgentsNamingField(%q) succeeded, want failure", value)
+			}
+		})
+	}
+}
+
 func TestBuildAgentsNamingPlanRejectsAgentsDirTraversal(t *testing.T) {
 	_, err := buildAgentsNamingPlan(agentsNamingInput{
 		AgentsDir: "../agents",
@@ -159,6 +184,40 @@ func TestBuildAgentsNamingPlanRejectsAgentsDirTraversal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "path separators or path traversal") {
 		t.Fatalf("error=%q, want path traversal message", err)
+	}
+}
+
+func TestBuildAgentsNamingPlanRejectsNamespaceTraversal(t *testing.T) {
+	_, err := buildAgentsNamingPlan(agentsNamingInput{
+		AgentsDir: "agents",
+		Namespace: "../escape.com",
+		User:      "juan",
+		Agents: []agentsNamingAgentInput{
+			{Responsibility: "coordinator", IdentityScope: agentsIdentityScopeGlobal},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected namespace traversal to fail")
+	}
+	if !strings.Contains(err.Error(), "path separators or path traversal") {
+		t.Fatalf("error=%q, want path traversal message", err)
+	}
+}
+
+func TestBuildAgentsNamingPlanRejectsMalformedExistingEntries(t *testing.T) {
+	_, err := buildAgentsNamingPlan(agentsNamingInput{
+		AgentsDir: "agents",
+		User:      "juan",
+		Agents: []agentsNamingAgentInput{
+			{Responsibility: "developer", IdentityScope: agentsIdentityScopeLocal},
+		},
+		ExistingAliases: map[string]bool{"Bob": true},
+	})
+	if err == nil {
+		t.Fatal("expected malformed existing alias to fail")
+	}
+	if !strings.Contains(err.Error(), "existing team alias") || !strings.Contains(err.Error(), "must be a slug") {
+		t.Fatalf("error=%q, want existing team alias slug message", err)
 	}
 }
 
@@ -286,21 +345,82 @@ func TestBuildAgentsNamingPlanRejectsDuplicateResponsibilities(t *testing.T) {
 	}
 }
 
-func TestBuildAgentsNamingPlanRejectsWorktreeCollision(t *testing.T) {
-	_, err := buildAgentsNamingPlan(agentsNamingInput{
+func TestBuildAgentsNamingPlanSuffixesWorktreeCollision(t *testing.T) {
+	plan, err := buildAgentsNamingPlan(agentsNamingInput{
 		AgentsDir: "agents",
 		User:      "juan",
 		Agents: []agentsNamingAgentInput{
 			{Responsibility: "developer", IdentityScope: agentsIdentityScopeLocal, WorkBinding: agentsWorkGitWorktree},
 		},
-		ExistingWorktrees: map[string]bool{"developer": true},
+		ExistingWorktrees: map[string]bool{"developer": true, "developer-2": true},
+	})
+	if err != nil {
+		t.Fatalf("buildAgentsNamingPlan: %v", err)
+	}
+	if got := plan.Agents[0].WorktreeName; got != "developer-3" {
+		t.Fatalf("worktree=%q, want developer-3", got)
+	}
+	if got := plan.Agents[0].BranchName; got != "developer-3" {
+		t.Fatalf("branch=%q, want developer-3", got)
+	}
+}
+
+func TestBuildAgentsNamingPlanSupportsWorktreeSequencePattern(t *testing.T) {
+	plan, err := buildAgentsNamingPlan(agentsNamingInput{
+		AgentsDir: "agents",
+		User:      "juan",
+		Policy: agentsNamingPolicy{
+			WorktreeSequence: agentsSequenceStar,
+			WorktreePattern:  "{responsibility}-{star-name}",
+		},
+		Agents: []agentsNamingAgentInput{
+			{Responsibility: "developer", IdentityScope: agentsIdentityScopeLocal, WorkBinding: agentsWorkGitWorktree},
+			{Responsibility: "reviewer", IdentityScope: agentsIdentityScopeLocal, WorkBinding: agentsWorkGitWorktree},
+		},
+		ExistingWorktrees: map[string]bool{"developer-sirius": true},
+	})
+	if err != nil {
+		t.Fatalf("buildAgentsNamingPlan: %v", err)
+	}
+	byResponsibility := map[string]agentsNamingAgentPlan{}
+	for _, agent := range plan.Agents {
+		byResponsibility[agent.Responsibility] = agent
+	}
+	if got := byResponsibility["developer"].WorktreeName; got != "developer-vega" {
+		t.Fatalf("developer worktree=%q, want developer-vega", got)
+	}
+	if got := byResponsibility["reviewer"].WorktreeName; got != "reviewer-altair" {
+		t.Fatalf("reviewer worktree=%q, want reviewer-altair", got)
+	}
+}
+
+func TestBuildAgentsNamingPlanIsPureOnSuccessAndFailure(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	_, err := buildAgentsNamingPlan(agentsNamingInput{
+		AgentsDir: "agents",
+		User:      "juan",
+		Agents: []agentsNamingAgentInput{
+			{Responsibility: "coordinator", IdentityScope: agentsIdentityScopeGlobal},
+			{Responsibility: "developer", IdentityScope: agentsIdentityScopeLocal, WorkBinding: agentsWorkGitWorktree},
+		},
+	})
+	if err != nil {
+		t.Fatalf("success plan: %v", err)
+	}
+	assertPathMissing(t, filepath.Join(root, "agents"))
+	_, err = buildAgentsNamingPlan(agentsNamingInput{
+		AgentsDir: "agents",
+		User:      "../escape",
+		Agents: []agentsNamingAgentInput{
+			{Responsibility: "developer", IdentityScope: agentsIdentityScopeGlobal},
+		},
 	})
 	if err == nil {
-		t.Fatal("expected worktree collision to fail")
+		t.Fatal("expected failure plan to fail")
 	}
-	if !strings.Contains(err.Error(), "worktree name") || !strings.Contains(err.Error(), "already in use") {
-		t.Fatalf("error=%q, want worktree already in use", err)
-	}
+	assertPathMissing(t, filepath.Join(root, "agents"))
+	assertPathMissing(t, filepath.Join(root, "escape"))
 }
 
 func assertPathMissing(t *testing.T, path string) {

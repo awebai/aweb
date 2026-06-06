@@ -23,6 +23,7 @@ const (
 
 var (
 	agentsSlugPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	agentsLabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	agentsFieldPattern = regexp.MustCompile(`\{([a-z0-9-]+)\}`)
 )
 
@@ -91,6 +92,7 @@ type agentsNamingPolicy struct {
 	GlobalAliasPattern  string
 	GlobalNameSequence  string
 	GlobalNamePattern   string
+	WorktreeSequence    string
 	WorktreePattern     string
 }
 
@@ -141,6 +143,7 @@ func defaultAgentsNamingPolicy() agentsNamingPolicy {
 		GlobalAliasSequence: agentsSequenceClassic,
 		GlobalAliasPattern:  "{user}-{classic-name}",
 		GlobalNamePattern:   "{user}-{responsibility}",
+		WorktreeSequence:    agentsSequenceClassic,
 		WorktreePattern:     "{responsibility}",
 	}
 }
@@ -151,7 +154,10 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 	if err != nil {
 		return agentsNamingPlan{}, err
 	}
-	namespace := awconfig.NormalizeDomain(input.Namespace)
+	namespace, err := normalizeAgentsNamespace(input.Namespace)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
 	user := strings.TrimSpace(input.User)
 	if needsAgentsNamingUser(policy) {
 		var userErr error
@@ -161,11 +167,26 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 		}
 	}
 
-	existingAliases := normalizeAgentsNameSet(input.ExistingAliases)
-	existingGlobalNames := normalizeAgentsNameSet(input.ExistingGlobalNames)
-	existingHomeNames := normalizeAgentsNameSet(input.ExistingHomeNames)
-	existingWorktrees := normalizeAgentsNameSet(input.ExistingWorktrees)
-	existingBranches := normalizeAgentsNameSet(input.ExistingBranches)
+	existingAliases, err := normalizeAgentsNameSet("existing team alias", input.ExistingAliases)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
+	existingGlobalNames, err := normalizeAgentsNameSet("existing global name", input.ExistingGlobalNames)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
+	existingHomeNames, err := normalizeAgentsNameSet("existing home name", input.ExistingHomeNames)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
+	existingWorktrees, err := normalizeAgentsNameSet("existing worktree name", input.ExistingWorktrees)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
+	existingBranches, err := normalizeAgentsNameSet("existing branch name", input.ExistingBranches)
+	if err != nil {
+		return agentsNamingPlan{}, err
+	}
 
 	usedAliases := map[string]bool{}
 	usedGlobalNames := map[string]bool{}
@@ -255,10 +276,11 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			plan.GlobalAddress = namespace + "/" + globalName
 		}
 		if workBinding == agentsWorkGitWorktree {
-			worktreeName, err := nextAvailableAgentsName(agentsNameRequest{
-				Field:   "worktree name",
-				Pattern: policy.WorktreePattern,
-				Fields:  fields,
+			worktreeName, err := nextAvailableAgentsWorktreeName(agentsNameRequest{
+				Field:        "worktree name",
+				Pattern:      policy.WorktreePattern,
+				SequenceName: policy.WorktreeSequence,
+				Fields:       fields,
 				Existing: mergeAgentsNameSets(
 					existingWorktrees,
 					existingBranches,
@@ -360,6 +382,35 @@ func nextAvailableAgentsName(req agentsNameRequest) (string, error) {
 	return "", usageError("%s candidates exhausted for sequence %s", req.Field, sequenceName)
 }
 
+func nextAvailableAgentsWorktreeName(req agentsNameRequest) (string, error) {
+	if agentsPatternNeedsSequence(req.Pattern) {
+		return nextAvailableAgentsName(req)
+	}
+	base, err := nextAvailableAgentsName(req)
+	if err == nil {
+		return base, nil
+	}
+	if !strings.Contains(err.Error(), "already in use") {
+		return "", err
+	}
+	expanded, expandErr := expandAgentsNamingPattern(req.Field, req.Pattern, req.Fields)
+	if expandErr != nil {
+		return "", expandErr
+	}
+	for suffix := 2; suffix <= 1000; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", expanded, suffix)
+		candidate, err = normalizeAgentsNamingField(req.Field, candidate)
+		if err != nil {
+			return "", err
+		}
+		if req.Existing[candidate] || req.Used[candidate] {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", usageError("%s candidates exhausted for base %q", req.Field, expanded)
+}
+
 func mergeAgentsNamingPolicy(policy agentsNamingPolicy) agentsNamingPolicy {
 	defaults := defaultAgentsNamingPolicy()
 	if strings.TrimSpace(policy.LocalAliasSequence) == "" {
@@ -379,6 +430,9 @@ func mergeAgentsNamingPolicy(policy agentsNamingPolicy) agentsNamingPolicy {
 	}
 	if strings.TrimSpace(policy.WorktreePattern) == "" {
 		policy.WorktreePattern = defaults.WorktreePattern
+	}
+	if strings.TrimSpace(policy.WorktreeSequence) == "" {
+		policy.WorktreeSequence = defaults.WorktreeSequence
 	}
 	return policy
 }
@@ -454,6 +508,29 @@ func normalizeAgentsNamingField(field, value string) (string, error) {
 	return value, nil
 }
 
+func normalizeAgentsNamespace(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	normalized := awconfig.NormalizeDomain(trimmed)
+	if normalized == "" {
+		return "", usageError("namespace must not be empty")
+	}
+	if strings.Contains(normalized, "/") || strings.Contains(normalized, "\\") || strings.Contains(normalized, "..") {
+		return "", usageError("namespace %q must not contain path separators or path traversal", value)
+	}
+	if strings.HasPrefix(normalized, ".") || strings.HasSuffix(normalized, ".") {
+		return "", usageError("namespace %q must not start or end with a dot", value)
+	}
+	for _, label := range strings.Split(normalized, ".") {
+		if !agentsLabelPattern.MatchString(label) {
+			return "", usageError("namespace %q must contain valid DNS labels", value)
+		}
+	}
+	return normalized, nil
+}
+
 func validateAgentsSequence(sequence string) error {
 	switch sequence {
 	case agentsSequenceClassic, agentsSequenceStar:
@@ -495,19 +572,19 @@ func agentsSequenceLimit(sequence string) int {
 	}
 }
 
-func normalizeAgentsNameSet(values map[string]bool) map[string]bool {
+func normalizeAgentsNameSet(field string, values map[string]bool) (map[string]bool, error) {
 	out := map[string]bool{}
 	for value, ok := range values {
 		if !ok {
 			continue
 		}
-		normalized, err := normalizeAgentsNamingField("existing name", value)
+		normalized, err := normalizeAgentsNamingField(field, value)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		out[normalized] = true
 	}
-	return out
+	return out, nil
 }
 
 func mergeAgentsNameSets(sets ...map[string]bool) map[string]bool {
