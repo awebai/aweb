@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -136,6 +137,9 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAddGlobal := agentsAddGlobal
 	prevAddRole := agentsAddRole
 	prevAddLayoutOnly := agentsAddLayoutOnly
+	prevRemoveDeprovision := agentsRemoveDeprovisionLocal
+	prevRemoveLayout := agentsRemoveRemoveLayout
+	prevRemoveDeleteAddress := agentsRemoveDeleteAddress
 	prevAddMaterialize := agentsAddMaterializeAgent
 	prevAddInitPrimary := agentsAddInitPrimaryAgent
 	prevAddInitAdditional := agentsAddInitAdditionalAgent
@@ -168,6 +172,9 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		agentsAddGlobal = prevAddGlobal
 		agentsAddRole = prevAddRole
 		agentsAddLayoutOnly = prevAddLayoutOnly
+		agentsRemoveDeprovisionLocal = prevRemoveDeprovision
+		agentsRemoveRemoveLayout = prevRemoveLayout
+		agentsRemoveDeleteAddress = prevRemoveDeleteAddress
 		agentsAddMaterializeAgent = prevAddMaterialize
 		agentsAddInitPrimaryAgent = prevAddInitPrimary
 		agentsAddInitAdditionalAgent = prevAddInitAdditional
@@ -200,6 +207,9 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	agentsAddGlobal = false
 	agentsAddRole = ""
 	agentsAddLayoutOnly = false
+	agentsRemoveDeprovisionLocal = false
+	agentsRemoveRemoveLayout = false
+	agentsRemoveDeleteAddress = false
 	agentsAddMaterializeAgent = materializeTeamBootstrapAgent
 	agentsAddInitPrimaryAgent = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent = initTeamBootstrapAdditionalAgent
@@ -978,6 +988,237 @@ func TestAgentsAddWorktreeRejectsGlobalBeforeMutation(t *testing.T) {
 	if strings.Contains(string(data), "support") {
 		t.Fatalf("team.yaml mutated before global+worktree rejection:\n%s", string(data))
 	}
+}
+
+func TestAgentsRemoveDryRunDoesNotMutate(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveRemoveLayout = true
+	teamBootstrapDryRun = true
+
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "coordinator", "AGENTS.md"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["coordinator"]; !ok {
+		t.Fatalf("coordinator removed during dry-run: %#v", spec.Agents)
+	}
+}
+
+func TestAgentsRemoveWorktreeDeprovisionMovesLocalStateAndRemovesWorktree(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	teamBootstrapInviteToken = "aw-invite-test-token"
+	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
+		if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(plan.HomeDir, ".aw", "marker"), []byte("secret"), 0o600)
+	}
+	if err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"}); err != nil {
+		t.Fatalf("runAgentsAddWorktree: %v", err)
+	}
+
+	agentsRemoveDeprovisionLocal = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"developer"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "developer", ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "developer"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["developer"]; !ok {
+		t.Fatalf("deprovision-local should preserve layout entry: %#v", spec.Agents)
+	}
+	backupRoot, err := awconfig.PathInAWIDState("agents-remove-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(backupRoot, "*-developer-*", ".aw", "marker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one moved .aw marker under %s, got %v", backupRoot, matches)
+	}
+}
+
+func TestAgentsRemoveLayoutMovesHomeAndRemovesSpec(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveRemoveLayout = true
+
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"implementation"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "implementation"))
+	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.Agents["implementation"]; ok {
+		t.Fatalf("implementation remained in team.yaml after remove-layout: %#v", spec.Agents["implementation"])
+	}
+	backupRoot, err := awconfig.PathInAWIDState("agents-remove-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(backupRoot, "*-implementation-*", "implementation", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected moved home under %s, got %v", backupRoot, matches)
+	}
+}
+
+func TestAgentsRemoveMissingTeamKeyFailsBeforeMovingLocalState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	_, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  "did:key:ztest",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   cert.Team,
+			Alias:    cert.Alias,
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+
+	err = runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"})
+	if err == nil {
+		t.Fatal("expected missing team key to fail")
+	}
+	if !strings.Contains(err.Error(), "team controller key is unavailable") {
+		t.Fatalf("error=%q, want team-controller guidance", err)
+	}
+	assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+	assertPathExists(t, awconfig.TeamCertificatePath(home, "circle:example.com"))
+}
+
+func TestAgentsRemoveDeprovisionRevokesBeforeMovingLocalState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	homeRoot := t.TempDir()
+	t.Setenv("HOME", homeRoot)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, homeRoot, "example.com", "circle", teamKey)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  "did:key:ztest",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:      cert.Team,
+			Alias:       cert.Alias,
+			CertPath:    awconfig.TeamCertificateRelativePath(cert.Team),
+			RegistryURL: "override-by-test",
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+	var gotRevoke map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/namespaces/example.com/teams/circle/certificates/revoke" {
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+		assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+		if err := json.NewDecoder(r.Body).Decode(&gotRevoke); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	teamState, err := awconfig.LoadTeamState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamState.Memberships[0].RegistryURL = server.URL
+	if err := awconfig.SaveTeamState(home, teamState); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	if gotRevoke["certificate_id"] != cert.CertificateID {
+		t.Fatalf("revoke certificate_id=%v want %s", gotRevoke["certificate_id"], cert.CertificateID)
+	}
+	assertPathMissing(t, filepath.Join(home, ".aw"))
 }
 
 func TestAgentsAddGlobalRequiresIdentityPrefixBeforeMutation(t *testing.T) {

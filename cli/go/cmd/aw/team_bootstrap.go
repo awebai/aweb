@@ -106,9 +106,8 @@ var agentsAddWorktreeCmd = &cobra.Command{
 var agentsRemoveCmd = &cobra.Command{
 	Use:   "remove <responsibility>",
 	Short: "Remove or deprovision an agent responsibility",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return usageError("aw agents remove is tracked as aweb-aapz.7 and is not implemented yet; for now, back up local .aw state, remove files manually, and use aw id team remove-member when certificate revocation is required")
-	},
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAgentsRemove,
 }
 
 var (
@@ -137,6 +136,9 @@ var (
 	agentsAddGlobal               bool
 	agentsAddRole                 string
 	agentsAddLayoutOnly           bool
+	agentsRemoveDeprovisionLocal  bool
+	agentsRemoveRemoveLayout      bool
+	agentsRemoveDeleteAddress     bool
 	agentsAddMaterializeAgent     = materializeTeamBootstrapAgent
 	agentsAddInitPrimaryAgent     = initTeamBootstrapPrimaryAgent
 	agentsAddInitAdditionalAgent  = initTeamBootstrapAdditionalAgent
@@ -266,6 +268,27 @@ type agentsAddOutput struct {
 	TeamSource     string                 `json:"team_source,omitempty"`
 }
 
+type agentsRemoveOutput struct {
+	DryRun               bool                 `json:"dry_run"`
+	AgentsDir            string               `json:"agents_dir"`
+	Responsibility       string               `json:"responsibility"`
+	HomeDir              string               `json:"home_dir"`
+	WorkBinding          string               `json:"work_binding,omitempty"`
+	WorkDir              string               `json:"work_dir,omitempty"`
+	TeamID               string               `json:"team_id,omitempty"`
+	MemberAddress        string               `json:"member_address,omitempty"`
+	GlobalAddressDeleted bool                 `json:"global_address_deleted,omitempty"`
+	LocalBackupDir       string               `json:"local_backup_dir,omitempty"`
+	Actions              []agentsRemoveAction `json:"actions"`
+	Warnings             []string             `json:"warnings,omitempty"`
+}
+
+type agentsRemoveAction struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type agentsAddGlobalPendingState struct {
 	Version               int                   `yaml:"version"`
 	Responsibility        string                `yaml:"responsibility"`
@@ -330,6 +353,11 @@ func init() {
 	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent (not supported for worktree-bound agents in v1)")
 	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
 	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create the git worktree or local identity state")
+
+	agentsRemoveCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Show the remove/deprovision plan without mutating local, git, or registry state")
+	agentsRemoveCmd.Flags().BoolVar(&agentsRemoveDeprovisionLocal, "deprovision-local", false, "Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout")
+	agentsRemoveCmd.Flags().BoolVar(&agentsRemoveRemoveLayout, "remove-layout", false, "Remove the shared responsibility from agents/team.yaml and move aside generated home source files")
+	agentsRemoveCmd.Flags().BoolVar(&agentsRemoveDeleteAddress, "delete-global-address", false, "Also delete the global namespace address after membership revocation; preserves global addresses by default")
 
 	agentsCmd.AddCommand(
 		teamBootstrapCmd,
@@ -559,6 +587,340 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 
 func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
 	return runAgentsAddWithWorkBinding(cmd, args[0], agentsWorkGitWorktree)
+}
+
+func runAgentsRemove(cmd *cobra.Command, args []string) error {
+	plan, err := buildAgentsRemovePlan(args[0])
+	if err != nil {
+		return err
+	}
+	if teamBootstrapDryRun {
+		plan.Output.DryRun = true
+		printOutput(plan.Output, formatAgentsRemoveOutput)
+		return nil
+	}
+	if !agentsRemoveDeprovisionLocal && !agentsRemoveRemoveLayout && !agentsRemoveDeleteAddress {
+		return usageError("choose at least one remove effect: --deprovision-local, --remove-layout, or --delete-global-address. Use --dry-run to inspect the current state.")
+	}
+	if agentsRemoveDeleteAddress && !agentsRemoveDeprovisionLocal {
+		return usageError("--delete-global-address must be paired with --deprovision-local so membership is revoked before the address is deleted")
+	}
+
+	if agentsRemoveDeprovisionLocal {
+		if err := executeAgentsRemoveRevokeMembership(plan); err != nil {
+			return err
+		}
+	}
+	if agentsRemoveDeleteAddress {
+		if err := executeAgentsRemoveDeleteAddress(plan); err != nil {
+			return err
+		}
+		plan.Output.GlobalAddressDeleted = true
+	}
+
+	if agentsRemoveDeprovisionLocal {
+		if err := executeAgentsRemoveLocal(plan); err != nil {
+			return err
+		}
+	}
+	if agentsRemoveRemoveLayout {
+		if err := executeAgentsRemoveLayout(plan); err != nil {
+			return err
+		}
+	}
+
+	printOutput(plan.Output, formatAgentsRemoveOutput)
+	return nil
+}
+
+type agentsRemovePlan struct {
+	Layout     teamBootstrapLayout
+	Spec       *teamBootstrapSpec
+	Agent      teamBootstrapAgentSpec
+	Output     agentsRemoveOutput
+	Identity   *awconfig.WorktreeIdentity
+	TeamState  *awconfig.TeamState
+	Membership *awconfig.TeamMembership
+	Cert       *awid.TeamCertificate
+}
+
+func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) {
+	layout, err := resolveAgentsExistingLayoutPreflight()
+	if err != nil {
+		return nil, err
+	}
+	spec, err := loadTeamBootstrapSpec(layout.AgentsRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTeamBootstrapSpec(layout.AgentsRoot, spec); err != nil {
+		return nil, err
+	}
+	responsibility, err := normalizeAgentsNamingField("responsibility", responsibilityRaw)
+	if err != nil {
+		return nil, err
+	}
+	agent, ok := spec.Agents[responsibility]
+	if !ok {
+		return nil, usageError("agents layout does not contain responsibility %q", responsibility)
+	}
+	homeDir := filepath.Join(layout.HomeRoot, responsibility)
+	workBinding := strings.TrimSpace(agent.Work)
+	if workBinding == "" {
+		workBinding = agentsWorkRepoRoot
+	}
+	workDir := layout.CustomerRepoRoot
+	if workBinding == agentsWorkGitWorktree {
+		workDir = filepath.Join(layout.WorktreesRoot, responsibility)
+		if target, err := os.Readlink(filepath.Join(homeDir, "work")); err == nil && strings.TrimSpace(target) != "" {
+			workDir = target
+		}
+	}
+
+	identity, _, _ := awconfig.LoadWorktreeIdentityFromDir(homeDir)
+	teamState, _ := awconfig.LoadTeamState(homeDir)
+	var membership *awconfig.TeamMembership
+	var cert *awid.TeamCertificate
+	teamID := ""
+	memberAddress := ""
+	if teamState != nil {
+		membership = teamState.ActiveMembership()
+		if membership != nil {
+			teamID = strings.TrimSpace(membership.TeamID)
+			if loaded, err := awconfig.LoadTeamCertificateForTeam(homeDir, teamID); err == nil {
+				cert = loaded
+			}
+		}
+	}
+	if cert != nil {
+		if teamID == "" {
+			teamID = strings.TrimSpace(cert.Team)
+		}
+		memberAddress = strings.TrimSpace(cert.MemberAddress)
+	}
+	if identity != nil {
+		if memberAddress == "" {
+			memberAddress = strings.TrimSpace(identity.Address)
+		}
+	}
+
+	out := agentsRemoveOutput{
+		AgentsDir:      layout.AgentsRoot,
+		Responsibility: responsibility,
+		HomeDir:        homeDir,
+		WorkBinding:    workBinding,
+		WorkDir:        workDir,
+		TeamID:         teamID,
+		MemberAddress:  memberAddress,
+	}
+	if strings.TrimSpace(memberAddress) != "" && !agentsRemoveDeleteAddress {
+		out.Warnings = append(out.Warnings, "global address is preserved by default; pass --delete-global-address to delete it after membership revocation")
+	}
+	if agentsRemoveDeprovisionLocal {
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "revoke_membership", Status: agentsRemovePlannedOrSkipped(cert != nil), Detail: teamID})
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "move_local_aw", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(filepath.Join(homeDir, ".aw"))), Detail: filepath.Join(homeDir, ".aw")})
+		if workBinding == agentsWorkGitWorktree {
+			out.Actions = append(out.Actions, agentsRemoveAction{Name: "remove_git_worktree", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(workDir)), Detail: workDir})
+		}
+	}
+	if agentsRemoveDeleteAddress {
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "delete_global_address", Status: agentsRemovePlannedOrSkipped(strings.TrimSpace(memberAddress) != ""), Detail: memberAddress})
+	}
+	if agentsRemoveRemoveLayout {
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "remove_layout", Status: "planned", Detail: filepath.Join(layout.AgentsRoot, "team.yaml")})
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "move_home", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(homeDir)), Detail: homeDir})
+	}
+	if len(out.Actions) == 0 {
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "none", Status: "pending_flags", Detail: "choose --deprovision-local, --remove-layout, or --delete-global-address"})
+	}
+
+	return &agentsRemovePlan{
+		Layout:     layout,
+		Spec:       spec,
+		Agent:      agent,
+		Output:     out,
+		Identity:   identity,
+		TeamState:  teamState,
+		Membership: membership,
+		Cert:       cert,
+	}, nil
+}
+
+func agentsRemovePlannedOrSkipped(ok bool) string {
+	if ok {
+		return "planned"
+	}
+	return "skipped"
+}
+
+func agentsRemovePathExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func executeAgentsRemoveRevokeMembership(plan *agentsRemovePlan) error {
+	if plan == nil || plan.Cert == nil {
+		return nil
+	}
+	teamID := strings.TrimSpace(plan.Output.TeamID)
+	domain, team, err := splitAWIDTeamID(teamID)
+	if err != nil {
+		return err
+	}
+	teamKey, err := awconfig.LoadTeamKey(domain, team)
+	if err != nil {
+		return usageError("cannot revoke team certificate for %s: self-custodial team controller key is unavailable (%v). Restore the matching ~/.awid/team-keys/%s/%s.key, use the hosted dashboard/session revocation path for hosted custodial teams, or rerun without --deprovision-local to leave local state untouched.", teamID, err, domain, team)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := agentsRemoveRegistryURL(plan)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, plan.Cert.CertificateID, teamKey); err != nil {
+		return fmt.Errorf("revoke team certificate for %s: %w. Local state was not moved; retry after revocation succeeds or rerun without --deprovision-local if you only intend a layout change.", plan.Output.Responsibility, err)
+	}
+	agentsRemoveMarkAction(&plan.Output, "revoke_membership", "done", plan.Cert.CertificateID)
+	return nil
+}
+
+func executeAgentsRemoveDeleteAddress(plan *agentsRemovePlan) error {
+	address := strings.TrimSpace(plan.Output.MemberAddress)
+	if address == "" {
+		return usageError("--delete-global-address requested but no global member address was found in %s/.aw; local state was not moved", plan.Output.HomeDir)
+	}
+	domain, name, err := parseAddress(address)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := executeIDNamespaceDeleteAddress(ctx, idNamespaceDeleteAddressOptions{
+		Domain:      domain,
+		Name:        name,
+		RegistryURL: agentsRemoveRegistryURL(plan),
+		Reason:      "aw agents remove --delete-global-address",
+	}); err != nil {
+		return fmt.Errorf("delete global address %s: %w. Local state was not moved; for self-custodial namespaces restore the matching ~/.awid controller key, for hosted custodial namespaces use the hosted session/API deletion path.", address, err)
+	}
+	agentsRemoveMarkAction(&plan.Output, "delete_global_address", "done", address)
+	return nil
+}
+
+func executeAgentsRemoveLocal(plan *agentsRemovePlan) error {
+	backupRoot, err := agentsRemoveBackupRoot(plan.Layout, plan.Output.Responsibility)
+	if err != nil {
+		return err
+	}
+	awDir := filepath.Join(plan.Output.HomeDir, ".aw")
+	if agentsRemovePathExists(awDir) {
+		dst, err := movePathIntoBackup(awDir, backupRoot)
+		if err != nil {
+			return err
+		}
+		plan.Output.LocalBackupDir = backupRoot
+		agentsRemoveMarkAction(&plan.Output, "move_local_aw", "done", dst)
+	}
+	if plan.Output.WorkBinding == agentsWorkGitWorktree && strings.TrimSpace(plan.Output.WorkDir) != "" {
+		branchName, err := agentsAddGitWorktreeBranchName(teamBootstrapAgentPlan{
+			Responsibility: plan.Output.Responsibility,
+			WorkBinding:    agentsWorkGitWorktree,
+			WorkDir:        plan.Output.WorkDir,
+		})
+		if err != nil {
+			return err
+		}
+		cleanupWorkspaceWorktree(plan.Layout.CustomerRepoRoot, plan.Output.WorkDir, branchName, true)
+		agentsRemoveMarkAction(&plan.Output, "remove_git_worktree", "done", plan.Output.WorkDir)
+	}
+	return nil
+}
+
+func executeAgentsRemoveLayout(plan *agentsRemovePlan) error {
+	backupRoot, err := agentsRemoveBackupRoot(plan.Layout, plan.Output.Responsibility)
+	if err != nil {
+		return err
+	}
+	if agentsRemovePathExists(plan.Output.HomeDir) {
+		dst, err := movePathIntoBackup(plan.Output.HomeDir, backupRoot)
+		if err != nil {
+			return err
+		}
+		plan.Output.LocalBackupDir = backupRoot
+		agentsRemoveMarkAction(&plan.Output, "move_home", "done", dst)
+	}
+	delete(plan.Spec.Agents, plan.Output.Responsibility)
+	if err := writeAgentsAddLayoutYAML(plan.Layout, plan.Spec); err != nil {
+		return err
+	}
+	agentsRemoveMarkAction(&plan.Output, "remove_layout", "done", filepath.Join(plan.Layout.AgentsRoot, "team.yaml"))
+	return nil
+}
+
+func agentsRemoveBackupRoot(layout teamBootstrapLayout, responsibility string) (string, error) {
+	sum := sha256.Sum256([]byte(filepath.Clean(layout.CustomerRepoRoot)))
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	safeResponsibility := sanitizeSlug(responsibility)
+	if safeResponsibility == "" {
+		safeResponsibility = "agent"
+	}
+	return awconfig.PathInAWIDState("agents-remove-backups", hex.EncodeToString(sum[:6])+"-"+safeResponsibility+"-"+stamp)
+}
+
+func movePathIntoBackup(src, backupRoot string) (string, error) {
+	if err := os.MkdirAll(backupRoot, 0o700); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(backupRoot, filepath.Base(filepath.Clean(src)))
+	for i := 2; agentsRemovePathExists(dst); i++ {
+		dst = filepath.Join(backupRoot, fmt.Sprintf("%s-%d", filepath.Base(filepath.Clean(src)), i))
+	}
+	if err := os.Rename(src, dst); err != nil {
+		return "", fmt.Errorf("move %s to %s: %w", src, dst, err)
+	}
+	return dst, nil
+}
+
+func agentsRemoveRegistryURL(plan *agentsRemovePlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.Membership != nil && strings.TrimSpace(plan.Membership.RegistryURL) != "" {
+		return strings.TrimSpace(plan.Membership.RegistryURL)
+	}
+	if plan.Identity != nil && strings.TrimSpace(plan.Identity.RegistryURL) != "" {
+		return strings.TrimSpace(plan.Identity.RegistryURL)
+	}
+	return strings.TrimSpace(teamBootstrapRegistryURL)
+}
+
+func agentsRemoveMarkAction(out *agentsRemoveOutput, name, status, detail string) {
+	if out == nil {
+		return
+	}
+	for i := range out.Actions {
+		if out.Actions[i].Name == name {
+			out.Actions[i].Status = status
+			out.Actions[i].Detail = detail
+			return
+		}
+	}
+	out.Actions = append(out.Actions, agentsRemoveAction{Name: name, Status: status, Detail: detail})
+}
+
+func splitAWIDTeamID(teamID string) (string, string, error) {
+	team, domain, ok := strings.Cut(strings.TrimSpace(teamID), ":")
+	if !ok || strings.TrimSpace(team) == "" || strings.TrimSpace(domain) == "" {
+		return "", "", usageError("team_id %q is not in <team>:<namespace> form", teamID)
+	}
+	return awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(team)), nil
 }
 
 func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBinding string) error {
@@ -3589,6 +3951,50 @@ func formatAgentsAddOutput(v any) string {
 	b.WriteString(fmt.Sprintf("- %s: scope=%s alias=%s%s home=%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, agent.WorkDir))
 	for _, check := range out.Availability {
 		b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
+	}
+	return b.String()
+}
+
+func formatAgentsRemoveOutput(v any) string {
+	out := v.(agentsRemoveOutput)
+	var b strings.Builder
+	if out.DryRun {
+		b.WriteString("Agents remove plan (dry run)\n")
+	} else {
+		b.WriteString("Agents remove complete\n")
+	}
+	b.WriteString(fmt.Sprintf("Agents dir: %s\n", out.AgentsDir))
+	b.WriteString(fmt.Sprintf("Responsibility: %s\n", out.Responsibility))
+	b.WriteString(fmt.Sprintf("Home: %s\n", out.HomeDir))
+	if strings.TrimSpace(out.WorkDir) != "" {
+		b.WriteString(fmt.Sprintf("Work: %s", out.WorkDir))
+		if strings.TrimSpace(out.WorkBinding) != "" {
+			b.WriteString(" (" + out.WorkBinding + ")")
+		}
+		b.WriteString("\n")
+	}
+	if strings.TrimSpace(out.TeamID) != "" {
+		b.WriteString(fmt.Sprintf("Team: %s\n", out.TeamID))
+	}
+	if strings.TrimSpace(out.MemberAddress) != "" {
+		b.WriteString(fmt.Sprintf("Member address: %s\n", out.MemberAddress))
+	}
+	if strings.TrimSpace(out.LocalBackupDir) != "" {
+		b.WriteString(fmt.Sprintf("Local backup: %s\n", out.LocalBackupDir))
+	}
+	if len(out.Warnings) > 0 {
+		b.WriteString("\nWarnings:\n")
+		for _, warning := range out.Warnings {
+			b.WriteString("- " + warning + "\n")
+		}
+	}
+	b.WriteString("\nActions:\n")
+	for _, action := range out.Actions {
+		b.WriteString(fmt.Sprintf("- %s: %s", action.Name, action.Status))
+		if strings.TrimSpace(action.Detail) != "" {
+			b.WriteString(" (" + action.Detail + ")")
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

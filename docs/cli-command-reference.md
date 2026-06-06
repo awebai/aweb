@@ -203,7 +203,11 @@ Flags:
 Remove or deprovision an agent responsibility
 
 Flags:
+- `--delete-global-address Also delete the global namespace address after membership revocation; preserves global addresses by default`
+- `--deprovision-local Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout`
+- `--dry-run Show the remove/deprovision plan without mutating local, git, or registry state`
 - `-h, --help help for remove`
+- `--remove-layout Remove the shared responsibility from agents/team.yaml and move aside generated home source files`
 
 ## `claim-human`
 
