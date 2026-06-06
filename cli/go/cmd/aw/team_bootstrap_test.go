@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -440,6 +441,57 @@ func TestTeamBootstrapInRepoDryRunDoesNotCreateAgentsDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created .gitignore or unexpected stat error: %v", err)
 	}
+}
+
+func TestTeamBootstrapDryRunUsesTemplateNamingPolicy(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	teamYAML := filepath.Join(templateDir, "team.yaml")
+	data, err := os.ReadFile(teamYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "agents:\n", "naming:\n  local_alias:\n    sequence: star-name\n    pattern: \"{star-name}\"\nagents:\n", 1)
+	if err := os.WriteFile(teamYAML, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	t.Chdir(repoDir)
+	teamBootstrapDryRun = true
+	teamBootstrapSkipRoles = true
+	teamBootstrapSkipInstructions = true
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+		_ = r.Close()
+		_ = w.Close()
+	})
+
+	err = runTeamBootstrap(testTeamBootstrapCommand(t), []string{templateDir})
+	_ = w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatalf("runTeamBootstrap: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "coordinator: scope=local name=sirius role=coordinator alias=sirius") {
+		t.Fatalf("bootstrap output did not use star-name naming policy:\n%s", text)
+	}
+	if !strings.Contains(text, "team_alias: available") {
+		t.Fatalf("bootstrap output missing availability checks:\n%s", text)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents"))
 }
 
 func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.T) {

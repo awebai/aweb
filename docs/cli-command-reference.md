@@ -113,9 +113,9 @@ The template repository is convention-first:
   team.yaml              maps agent responsibility dirs to aw role names
 
 team.yaml supplies the parts that cannot be inferred safely: role bundle
-metadata, each agent responsibility's role_name, and default identity names.
-Agent directory names are responsibilities (for example coordinator,
-implementation, or review), not fixed human/agent names.
+metadata, each agent responsibility's role_name, work binding, identity scope,
+and optional naming policy. Agent directory names are responsibilities (for
+example coordinator, implementation, or review), not fixed human/agent names.
 
 By default bootstrap runs in the current project git repo and creates an
 agents/ convention directory:
@@ -126,18 +126,21 @@ agents/ convention directory:
 Use --agents-dir to choose a different project-local convention directory.
 Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
 
-By default bootstrap uses the template's default identity names; pass
---ask-for-agent-names when you want an interactive prompt to rename generated
-agents before provisioning.
+Bootstrap allocates per-human aliases and global addresses from the template
+naming policy. If the layout uses {user}, pass --identity-prefix or set
+AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
+Pass --ask-for-agent-names only when you want an interactive prompt to override
+generated display names before provisioning.
 
 Flags:
 - `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
-- `--ask-for-agent-names Prompt for generated agent names instead of using template defaults`
+- `--ask-for-agent-names Prompt for generated display names instead of using template responsibilities`
 - `--aweb-url string Aweb server base URL to connect each generated agent workspace`
 - `--dry-run Validate and print the bootstrap plan without changing files or team roles`
 - `--fork Fork the template repository with gh and clone the fork into the destination directory`
 - `-h, --help help for bootstrap`
 - `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
 - `--refresh-template Re-clone the template into the destination directory before using it`

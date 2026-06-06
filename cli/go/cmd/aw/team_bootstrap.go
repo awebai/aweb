@@ -51,9 +51,9 @@ The template repository is convention-first:
   team.yaml              maps agent responsibility dirs to aw role names
 
 team.yaml supplies the parts that cannot be inferred safely: role bundle
-metadata, each agent responsibility's role_name, and default identity names.
-Agent directory names are responsibilities (for example coordinator,
-implementation, or review), not fixed human/agent names.
+metadata, each agent responsibility's role_name, work binding, identity scope,
+and optional naming policy. Agent directory names are responsibilities (for
+example coordinator, implementation, or review), not fixed human/agent names.
 
 By default bootstrap runs in the current project git repo and creates an
 agents/ convention directory:
@@ -64,9 +64,11 @@ agents/ convention directory:
 Use --agents-dir to choose a different project-local convention directory.
 Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
 
-By default bootstrap uses the template's default identity names; pass
---ask-for-agent-names when you want an interactive prompt to rename generated
-agents before provisioning.`,
+Bootstrap allocates per-human aliases and global addresses from the template
+naming policy. If the layout uses {user}, pass --identity-prefix or set
+AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
+Pass --ask-for-agent-names only when you want an interactive prompt to override
+generated display names before provisioning.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamBootstrap,
 }
@@ -223,6 +225,8 @@ type teamBootstrapOutput struct {
 	LayoutMode            string                   `json:"layout_mode,omitempty"`
 	WorkDirectory         string                   `json:"work_directory"`
 	WorkRepoURL           string                   `json:"work_repo_url,omitempty"`
+	IdentityPrefix        string                   `json:"identity_prefix,omitempty"`
+	Availability          []agentsProvisionCheck   `json:"availability,omitempty"`
 	Agents                []teamBootstrapAgentPlan `json:"agents"`
 	NextCommands          []string                 `json:"next_commands,omitempty"`
 }
@@ -341,6 +345,7 @@ func init() {
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
+	teamBootstrapCmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOT team")
@@ -348,9 +353,9 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
-	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Deprecated no-op; default agent names are used unless --ask-for-agent-names is set")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Deprecated no-op; template naming policy is used unless --ask-for-agent-names is set")
 	_ = teamBootstrapCmd.Flags().MarkHidden("yes")
-	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapAskAgentNames, "ask-for-agent-names", false, "Prompt for generated agent names instead of using template defaults")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapAskAgentNames, "ask-for-agent-names", false, "Prompt for generated display names instead of using template responsibilities")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipRoles, "skip-roles", false, "Do not install the roles bundle")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapSkipInstructions, "skip-instructions", false, "Do not install shared team instructions")
 
@@ -448,6 +453,22 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	identityPrefix, err := resolveAgentsIdentityPrefix(cmd)
+	if err != nil {
+		return err
+	}
+	namingInput, err := agentsNamingInputFromBootstrapPlans(layout, spec, plans, identityPrefix)
+	if err != nil {
+		return err
+	}
+	namingPlan, err := buildAgentsNamingPlan(namingInput)
+	if err != nil {
+		return err
+	}
+	plans, availability, err := applyAgentsNamingPlanToBootstrapPlans(plans, namingPlan)
+	if err != nil {
+		return err
+	}
 	if layout.Mode == teamBootstrapLayoutInRepo {
 		if err := applyInRepoBootstrapWorkBindings(layout, plans); err != nil {
 			return err
@@ -466,6 +487,8 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		LayoutMode:        string(layout.Mode),
 		WorkDirectory:     workDirectory,
 		WorkRepoURL:       workRepoURL,
+		IdentityPrefix:    identityPrefix,
+		Availability:      availability,
 		Agents:            plans,
 	}
 
@@ -3852,6 +3875,9 @@ func formatTeamBootstrapOutput(v any) string {
 		b.WriteString(fmt.Sprintf("Team template: %s\n", out.TeamName))
 	}
 	b.WriteString(fmt.Sprintf("Agent home root: %s\n", out.HomeRoot))
+	if strings.TrimSpace(out.IdentityPrefix) != "" {
+		b.WriteString(fmt.Sprintf("Identity prefix: %s\n", out.IdentityPrefix))
+	}
 	if out.RolesInstalled {
 		b.WriteString("Roles: installed and activated\n")
 	} else if !teamBootstrapSkipRoles {
@@ -3876,6 +3902,14 @@ func formatTeamBootstrapOutput(v any) string {
 		if agent.Alias != "" {
 			alias = " alias=" + agent.Alias
 		}
+		scope := strings.TrimSpace(agent.IdentityScope)
+		if scope == "" {
+			scope = agentsIdentityScopeLocal
+		}
+		address := ""
+		if strings.TrimSpace(agent.GlobalAddress) != "" {
+			address = " address=" + agent.GlobalAddress
+		}
 		work := ""
 		if strings.TrimSpace(agent.WorkDir) != "" {
 			work = " work=" + agent.WorkDir
@@ -3883,7 +3917,13 @@ func formatTeamBootstrapOutput(v any) string {
 				work += " (" + agent.WorkBinding + ")"
 			}
 		}
-		b.WriteString(fmt.Sprintf("- %s: name=%s role=%s%s home=%s%s\n", agent.Responsibility, agent.Name, agent.RoleName, alias, agent.HomeDir, work))
+		b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s role=%s%s%s home=%s%s\n", agent.Responsibility, scope, agent.Name, agent.RoleName, alias, address, agent.HomeDir, work))
+		for _, check := range out.Availability {
+			if check.Responsibility != agent.Responsibility {
+				continue
+			}
+			b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
+		}
 	}
 	if len(out.NextCommands) > 0 {
 		b.WriteString("\nInitialize/connect each agent workspace:\n")
