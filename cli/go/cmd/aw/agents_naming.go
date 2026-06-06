@@ -127,9 +127,11 @@ type agentsNamingAgentPlan struct {
 	HomeName       string `json:"home_name"`
 	HomePath       string `json:"home_path"`
 	WorkBinding    string `json:"work_binding"`
+	WorkPath       string `json:"work_path"`
 	WorktreeName   string `json:"worktree_name,omitempty"`
 	WorktreePath   string `json:"worktree_path,omitempty"`
 	BranchName     string `json:"branch_name,omitempty"`
+	CollisionState string `json:"collision_state"`
 }
 
 func defaultAgentsNamingPolicy() agentsNamingPolicy {
@@ -246,6 +248,8 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			HomeName:       responsibility,
 			HomePath:       filepath.ToSlash(filepath.Join(agentsDir, "home", responsibility)),
 			WorkBinding:    workBinding,
+			WorkPath:       ".",
+			CollisionState: "available",
 		}
 		if globalName != "" && namespace != "" {
 			plan.GlobalAddress = namespace + "/" + globalName
@@ -273,6 +277,7 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			plan.WorktreeName = worktreeName
 			plan.BranchName = worktreeName
 			plan.WorktreePath = filepath.ToSlash(filepath.Join(agentsDir, "worktrees", worktreeName))
+			plan.WorkPath = plan.WorktreePath
 		}
 		plans = append(plans, plan)
 	}
@@ -280,6 +285,22 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 		return plans[i].Responsibility < plans[j].Responsibility
 	})
 	return agentsNamingPlan{Agents: plans}, nil
+}
+
+func renderAgentsNamingPlanHuman(plan agentsNamingPlan) string {
+	var out strings.Builder
+	for _, agent := range plan.Agents {
+		fmt.Fprintf(&out, "%s\n", agent.Responsibility)
+		fmt.Fprintf(&out, "  Scope:      %s\n", agent.IdentityScope)
+		fmt.Fprintf(&out, "  Alias:      %s\n", agent.TeamAlias)
+		if agent.GlobalAddress != "" {
+			fmt.Fprintf(&out, "  Address:    %s\n", agent.GlobalAddress)
+		}
+		fmt.Fprintf(&out, "  Home:       %s\n", agent.HomePath)
+		fmt.Fprintf(&out, "  Work:       %s\n", agent.WorkPath)
+		fmt.Fprintf(&out, "  Collision:  %s\n", agent.CollisionState)
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 type agentsNameRequest struct {

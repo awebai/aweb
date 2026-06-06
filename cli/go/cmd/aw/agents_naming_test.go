@@ -71,6 +71,31 @@ func TestBuildAgentsNamingPlanDefaults(t *testing.T) {
 	if got := byResponsibility["developer"].WorktreePath; got != "agents/worktrees/developer" {
 		t.Fatalf("developer worktree=%q, want agents/worktrees/developer", got)
 	}
+	if got := byResponsibility["developer"].WorkPath; got != "agents/worktrees/developer" {
+		t.Fatalf("developer work path=%q, want agents/worktrees/developer", got)
+	}
+	if got := byResponsibility["coordinator"].WorkPath; got != "." {
+		t.Fatalf("coordinator work path=%q, want .", got)
+	}
+	for _, agent := range plan.Agents {
+		if agent.CollisionState != "available" {
+			t.Fatalf("%s collision=%q, want available", agent.Responsibility, agent.CollisionState)
+		}
+	}
+	rendered := renderAgentsNamingPlanHuman(plan)
+	for _, want := range []string{
+		"coordinator",
+		"  Scope:      global",
+		"  Alias:      juan-alice",
+		"  Address:    juanreyero.com/juan-coordinator",
+		"  Home:       agents/home/coordinator",
+		"  Work:       agents/worktrees/developer",
+		"  Collision:  available",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered plan missing %q:\n%s", want, rendered)
+		}
+	}
 }
 
 func TestBuildAgentsNamingPlanGlobalStarPatternSkipsUnavailable(t *testing.T) {
