@@ -1657,6 +1657,29 @@ func agentsAddEmptyPreflightRegistry(t *testing.T) string {
 	return server.URL
 }
 
+func TestExistingBYOTNamesAllowsFreshMissingTeam(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/bootstrap.local/teams/circle/certificates" {
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.String())
+		}
+		if got := r.URL.Query().Get("active_only"); got != "true" {
+			t.Fatalf("active_only=%q want true", got)
+		}
+		http.Error(w, "Team not found", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	teamBootstrapRegistryURL = server.URL
+
+	aliases, globalNames, err := existingBYOTNamesForAgentsProvision("Bootstrap.Local", "circle")
+	if err != nil {
+		t.Fatalf("existingBYOTNamesForAgentsProvision: %v", err)
+	}
+	if len(aliases) != 0 || len(globalNames) != 0 {
+		t.Fatalf("fresh missing team should produce empty availability, aliases=%v globalNames=%v", aliases, globalNames)
+	}
+}
+
 func TestAgentsAddRejectsExistingHomeBeforeMutation(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	repoDir := t.TempDir()

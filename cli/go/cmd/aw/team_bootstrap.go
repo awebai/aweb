@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -2107,6 +2108,9 @@ func existingBYOTNamesForAgentsProvision(namespace, teamName string) (map[string
 	defer cancel()
 	certs, err := registry.ListCertificates(ctx, registryURL, namespace, teamName, true)
 	if err != nil {
+		if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
+			return aliases, globalNames, nil
+		}
 		return nil, nil, fmt.Errorf("list existing team certificates for preflight: %w", err)
 	}
 	for _, cert := range certs {
@@ -2503,19 +2507,24 @@ func ensureInRepoBootstrapGitignore(layout teamBootstrapLayout) error {
 	}
 	lines := strings.Split(string(data), "\n")
 	homePattern := "/" + filepath.ToSlash(filepath.Join(layout.AgentsDirName, "home", "*", ".aw")) + "/"
+	workLinkPattern := "/" + filepath.ToSlash(filepath.Join(layout.AgentsDirName, "home", "*", "work"))
 	worktreesPattern := "/" + filepath.ToSlash(filepath.Join(layout.AgentsDirName, "worktrees")) + "/"
 	hasHome := false
+	hasWorkLink := false
 	hasWorktrees := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == homePattern {
 			hasHome = true
 		}
+		if trimmed == workLinkPattern {
+			hasWorkLink = true
+		}
 		if trimmed == worktreesPattern {
 			hasWorktrees = true
 		}
 	}
-	if hasHome && hasWorktrees {
+	if hasHome && hasWorkLink && hasWorktrees {
 		return nil
 	}
 	var addition string
@@ -2525,9 +2534,12 @@ func ensureInRepoBootstrapGitignore(layout teamBootstrapLayout) error {
 	if len(data) > 0 {
 		addition += "\n"
 	}
-	addition += "# Auto-written by aw agents bootstrap (do not remove)\n"
+	addition += "# Auto-written by aw agents (do not remove)\n"
 	if !hasHome {
 		addition += homePattern + "\n"
+	}
+	if !hasWorkLink {
+		addition += workLinkPattern + "\n"
 	}
 	if !hasWorktrees {
 		addition += worktreesPattern + "\n"

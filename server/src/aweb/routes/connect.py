@@ -314,7 +314,10 @@ async def _ensure_repo(
     repo_origin: str,
 ) -> uuid.UUID:
     """Find or create a repo row. Returns repo id."""
-    canonical = canonicalize_git_url(repo_origin)
+    try:
+        canonical = canonicalize_git_url(repo_origin)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
     name = canonical.rsplit("/", 1)[-1] if "/" in canonical else canonical
 
     repo_id = uuid.uuid4()

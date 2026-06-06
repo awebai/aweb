@@ -120,14 +120,17 @@ aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
 Bootstrap writes scoped `.gitignore` entries:
 
 ```gitignore
-# Auto-written by aw team bootstrap (do not remove)
+# Auto-written by aw agents (do not remove)
 /agents/home/*/.aw/
+/agents/home/*/work
 /agents/worktrees/
 ```
 
 It does not ignore the whole `agents/` directory. The visible
 `team.yaml`, `docs/`, `roles/`, and home blueprint files are meant
-to be inspectable and committable.
+to be inspectable and committable. Each agent home's `work` symlink is
+generated local state and is ignored so a second human's provision run can
+regenerate it for their checkout.
 
 ## Template Anatomy
 

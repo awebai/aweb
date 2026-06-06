@@ -548,23 +548,29 @@ roles:
   reviewer:
     title: Reviewer
     file: roles/reviewer.md
+naming:
+  local_alias:
+    sequence: classic-name
+    pattern: "{user}-{classic-name}"
+  global_alias:
+    sequence: classic-name
+    pattern: "{user}-{classic-name}"
+  global_name:
+    pattern: "{user}-{responsibility}"
 agents:
   coordinator:
     role_name: coordinator
-    default_name: bootstrap-coord
-    default_alias: bcoord
+    identity_scope: local
     home_template: home/coordinator
     work: repo_root
   developer:
     role_name: developer
-    default_name: bootstrap-dev
-    default_alias: bdev
+    identity_scope: local
     home_template: home/developer
     work: git_worktree
   reviewer:
     role_name: reviewer
-    default_name: bootstrap-review
-    default_alias: breview
+    identity_scope: local
     home_template: home/reviewer
     work: git_worktree
 EOF
@@ -593,6 +599,7 @@ run_success "bootstrap dry-run" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootst
   --dry-run \
   --namespace bootstrap.local \
   --team circle \
+  --identity-prefix bootstrap \
   --aweb-url "$AWEB_URL" \
   --registry "$AWID_URL"
 
@@ -607,6 +614,7 @@ fi
 run_success "bootstrap apply" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
+  --identity-prefix bootstrap \
   --aweb-url "$AWEB_URL" \
   --registry "$AWID_URL"
 
@@ -615,14 +623,21 @@ assert_file_exists "bootstrap coordinator workspace" "$BOOTSTRAP_PROJECT_DIR/age
 assert_file_exists "bootstrap developer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/.aw/workspace.yaml"
 assert_file_exists "bootstrap reviewer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/.aw/workspace.yaml"
 assert_file_exists "bootstrap copied home blueprint" "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/README.md"
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev/.git" ]]; then
+bootstrap_team_id="circle:bootstrap.local"
+bootstrap_coord_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
+bootstrap_dev_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
+bootstrap_review_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
+assert_eq "bootstrap coordinator generated alias" "bootstrap-alice" "$bootstrap_coord_alias"
+assert_eq "bootstrap developer generated alias" "bootstrap-bob" "$bootstrap_dev_alias"
+assert_eq "bootstrap reviewer generated alias" "bootstrap-charlie" "$bootstrap_review_alias"
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.git" ]]; then
   echo "  PASS: bootstrap developer worktree exists"
   pass=$((pass + 1))
 else
   echo "  FAIL: bootstrap developer worktree missing"
   fail=$((fail + 1))
 fi
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview/.git" ]]; then
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.git" ]]; then
   echo "  PASS: bootstrap reviewer worktree exists"
   pass=$((pass + 1))
 else
@@ -638,14 +653,14 @@ else
 fi
 if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work" ]]; then
   dev_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work")"
-  assert_eq "bootstrap developer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bdev" "$dev_work_target"
+  assert_eq "bootstrap developer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer" "$dev_work_target"
 else
   echo "  FAIL: bootstrap developer work symlink missing"
   fail=$((fail + 1))
 fi
 if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work" ]]; then
   review_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work")"
-  assert_eq "bootstrap reviewer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/breview" "$review_work_target"
+  assert_eq "bootstrap reviewer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer" "$review_work_target"
 else
   echo "  FAIL: bootstrap reviewer work symlink missing"
   fail=$((fail + 1))
@@ -662,6 +677,13 @@ if grep -Fqx '/agents/home/*/.aw/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
   pass=$((pass + 1))
 else
   echo "  FAIL: bootstrap gitignore missing .aw pattern"
+  fail=$((fail + 1))
+fi
+if grep -Fqx '/agents/home/*/work' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
+  echo "  PASS: bootstrap gitignore ignores work symlinks"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: bootstrap gitignore missing work symlink pattern"
   fail=$((fail + 1))
 fi
 if grep -Fqx '/agents/worktrees/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
@@ -684,6 +706,7 @@ bootstrap_before_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1
 rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
   --namespace bootstrap.local \
   --team circle \
+  --identity-prefix bootstrap \
   --aweb-url "http://127.0.0.1:9" \
   --registry "http://127.0.0.1:9" 2>&1 || true)"
 assert_contains "bootstrap rerun refuses existing agents dir" "$rerun_output" "agents directory already exists"
@@ -691,6 +714,87 @@ bootstrap_after_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -pr
 bootstrap_after_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
 assert_eq "bootstrap rerun leaves filesystem snapshot unchanged" "$bootstrap_before_tree" "$bootstrap_after_tree"
 assert_eq "bootstrap rerun leaves git status unchanged" "$bootstrap_before_status" "$bootstrap_after_status"
+
+run_success "agents add local support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add support \
+  --identity-prefix bootstrap \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+assert_file_exists "agents add local support workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/workspace.yaml"
+bootstrap_support_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
+assert_eq "agents add local support generated next alias" "bootstrap-dave" "$bootstrap_support_alias"
+if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/support/work" ]]; then
+  support_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/support/work")"
+  assert_eq "agents add support work points to repo root" "$BOOTSTRAP_PROJECT_DIR" "$support_work_target"
+else
+  echo "  FAIL: agents add support work symlink missing"
+  fail=$((fail + 1))
+fi
+
+run_success "agents remove local support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove support \
+  --deprovision-local \
+  --remove-layout
+if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/support" ]]; then
+  echo "  PASS: agents remove support moved home away"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents remove support left home in layout"
+  fail=$((fail + 1))
+fi
+if grep -q '^  support:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
+  echo "  FAIL: agents remove support left team.yaml entry"
+  fail=$((fail + 1))
+else
+  echo "  PASS: agents remove support removed team.yaml entry"
+  pass=$((pass + 1))
+fi
+
+run_success "agents add-worktree qa" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add-worktree qa \
+  --identity-prefix bootstrap2 \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+assert_file_exists "agents add-worktree qa workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/qa/.aw/workspace.yaml"
+bootstrap_qa_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/qa/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
+assert_eq "agents add-worktree qa generated alias with second prefix" "bootstrap2-alice" "$bootstrap_qa_alias"
+if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/qa/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/qa/.git" ]]; then
+  echo "  PASS: agents add-worktree qa checkout exists"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents add-worktree qa checkout missing"
+  fail=$((fail + 1))
+fi
+if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/qa/work" ]]; then
+  qa_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/qa/work")"
+  assert_eq "agents add-worktree qa work points to checkout" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/qa" "$qa_work_target"
+else
+  echo "  FAIL: agents add-worktree qa work symlink missing"
+  fail=$((fail + 1))
+fi
+
+run_success "agents remove worktree qa" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove qa \
+  --deprovision-local \
+  --remove-layout
+if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/qa" ]]; then
+  echo "  PASS: agents remove qa moved home away"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents remove qa left home in layout"
+  fail=$((fail + 1))
+fi
+if [[ ! -e "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/qa" ]]; then
+  echo "  PASS: agents remove qa removed worktree checkout"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents remove qa left worktree checkout"
+  fail=$((fail + 1))
+fi
+if grep -q '^  qa:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
+  echo "  FAIL: agents remove qa left team.yaml entry"
+  fail=$((fail + 1))
+else
+  echo "  PASS: agents remove qa removed team.yaml entry"
+  pass=$((pass + 1))
+fi
+
 echo ""
 
 # ---------------------------------------------------------------------------

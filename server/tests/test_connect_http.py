@@ -163,6 +163,44 @@ async def test_connect_http_first_time(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_connect_http_invalid_repo_origin_returns_422(aweb_cloud_db):
+    """Invalid repo_origin is user input and must not surface as a 500."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="global",
+    )
+    cert_header = _encode_certificate(cert)
+
+    body = {
+        "hostname": "Mac.local",
+        "workspace_path": "/Users/alice/project",
+        "repo_origin": "/tmp/local-path-origin",
+        "role": "developer",
+        "human_name": "Alice",
+        "agent_type": "agent",
+    }
+
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+
+    assert resp.status_code == 422, resp.text
+    assert "invalid repo_origin" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
     """Missing role should not fall back to the certificate alias."""
     team_sk, _, team_did_key = _make_keypair()

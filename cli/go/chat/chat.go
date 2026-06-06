@@ -1230,6 +1230,7 @@ func shouldProbeExistingSession(target string) bool {
 func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpener, resp sendResponse, myAlias string, targets []string, message string, resolvedWait int, opts SendOptions, after *time.Time, callback StatusCallback) (*SendResult, error) {
 	result := &SendResult{
 		SessionID:   resp.SessionID,
+		MessageID:   resp.MessageID,
 		Status:      "sent",
 		TargetAgent: strings.Join(targets, ", "),
 		Events:      []Event{},

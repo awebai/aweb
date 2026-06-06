@@ -1192,6 +1192,9 @@ func TestSendWithLeavingReusesExistingSession(t *testing.T) {
 	if result.SessionID != "s1" {
 		t.Fatalf("session_id=%s, want s1", result.SessionID)
 	}
+	if result.MessageID != "m1" {
+		t.Fatalf("message_id=%s, want m1", result.MessageID)
+	}
 	if !gotBody.Leaving {
 		t.Fatal("leaving=false, want true")
 	}
