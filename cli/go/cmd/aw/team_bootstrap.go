@@ -59,7 +59,7 @@ By default bootstrap runs in the current project git repo and creates an
 agents/ convention directory:
 
   agents/home/<responsibility>/      agent homes; run Codex/Claude from here
-  agents/worktrees/<alias>/          generated git worktrees for worktree agents
+  agents/worktrees/<worktree-name>/  generated git worktrees for worktree agents
 
 Use --agents-dir to choose a different project-local convention directory.
 Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
@@ -3211,7 +3211,7 @@ func initTeamBootstrapPrimaryAgent(cmd *cobra.Command, source teamBootstrapSourc
 			Username:           strings.TrimSpace(teamBootstrapUsername),
 			Alias:              alias,
 			Role:               primary.RoleName,
-			Persistent:         false,
+			Persistent:         strings.TrimSpace(primary.IdentityScope) == agentsIdentityScopeGlobal,
 			InjectAgentDocs:    false,
 			DoNotTouchAgentsMD: true,
 			AskPostCreateSetup: false,

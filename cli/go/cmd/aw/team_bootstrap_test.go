@@ -557,6 +557,39 @@ func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.
 	assertPathMissing(t, filepath.Join(repoDir, ".aw"))
 }
 
+func TestTeamBootstrapHostedPrimaryGlobalRequestsPersistentIdentity(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	home := filepath.Join(t.TempDir(), "coordinator")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldWizard := guidedOnboardingWizard
+	t.Cleanup(func() { guidedOnboardingWizard = oldWizard })
+	var got guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		got = req
+		return &guidedOnboardingResult{}, nil
+	}
+
+	err := initTeamBootstrapPrimaryAgent(&cobra.Command{}, teamBootstrapSource{Kind: teamBootstrapSourceHostedNew}, teamBootstrapAgentPlan{
+		HomeDir:        home,
+		Alias:          "juan-alice",
+		RoleName:       "coordinator",
+		IdentityScope:  agentsIdentityScopeGlobal,
+		GlobalAddress:  "juan.aweb.ai/juan-coordinator",
+		Responsibility: "coordinator",
+	})
+	if err != nil {
+		t.Fatalf("initTeamBootstrapPrimaryAgent: %v", err)
+	}
+	if !got.Persistent {
+		t.Fatalf("hosted global primary did not request persistent identity: %+v", got)
+	}
+	if got.Alias != "juan-alice" || got.Role != "coordinator" {
+		t.Fatalf("unexpected onboarding request: %+v", got)
+	}
+}
+
 func TestAgentsProvisionLocalOnlyLayoutAllowsMissingIdentityPrefix(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	t.Setenv("AWEB_IDENTITY_PREFIX", "")
