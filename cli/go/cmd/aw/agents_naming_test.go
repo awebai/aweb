@@ -92,10 +92,11 @@ func TestBuildAgentsNamingPlanDefaults(t *testing.T) {
 	if got := byResponsibility["coordinator"].WorkPath; got != "." {
 		t.Fatalf("coordinator work path=%q, want .", got)
 	}
-	for _, agent := range plan.Agents {
-		if agent.CollisionState != "available" {
-			t.Fatalf("%s collision=%q, want available", agent.Responsibility, agent.CollisionState)
-		}
+	if !agentsPlanHasAvailability(byResponsibility["developer"], "worktree", "developer", "available") {
+		t.Fatalf("developer missing worktree availability: %#v", byResponsibility["developer"].Availability)
+	}
+	if !agentsPlanHasAvailability(byResponsibility["coordinator"], "global_name", "juan-coordinator", "available") {
+		t.Fatalf("coordinator missing global-name availability: %#v", byResponsibility["coordinator"].Availability)
 	}
 	rendered := renderAgentsNamingPlanHuman(plan)
 	for _, want := range []string{
@@ -105,7 +106,9 @@ func TestBuildAgentsNamingPlanDefaults(t *testing.T) {
 		"  Address:    juanreyero.com/juan-coordinator",
 		"  Home:       agents/home/coordinator",
 		"  Work:       agents/worktrees/developer",
-		"  Collision:  available",
+		"  Availability:",
+		"    team_alias: available",
+		"    worktree: available",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered plan missing %q:\n%s", want, rendered)
@@ -430,4 +433,13 @@ func assertPathMissing(t *testing.T, path string) {
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat %s: %v", path, err)
 	}
+}
+
+func agentsPlanHasAvailability(plan agentsNamingAgentPlan, field, value, status string) bool {
+	for _, check := range plan.Availability {
+		if check.Field == field && check.Value == value && check.Status == status {
+			return true
+		}
+	}
+	return false
 }

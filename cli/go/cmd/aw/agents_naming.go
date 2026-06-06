@@ -121,19 +121,26 @@ type agentsNamingPlan struct {
 }
 
 type agentsNamingAgentPlan struct {
-	Responsibility string `json:"responsibility"`
-	IdentityScope  string `json:"identity_scope"`
-	TeamAlias      string `json:"team_alias"`
-	GlobalName     string `json:"global_name,omitempty"`
-	GlobalAddress  string `json:"global_address,omitempty"`
-	HomeName       string `json:"home_name"`
-	HomePath       string `json:"home_path"`
-	WorkBinding    string `json:"work_binding"`
-	WorkPath       string `json:"work_path"`
-	WorktreeName   string `json:"worktree_name,omitempty"`
-	WorktreePath   string `json:"worktree_path,omitempty"`
-	BranchName     string `json:"branch_name,omitempty"`
-	CollisionState string `json:"collision_state"`
+	Responsibility string                          `json:"responsibility"`
+	IdentityScope  string                          `json:"identity_scope"`
+	TeamAlias      string                          `json:"team_alias"`
+	GlobalName     string                          `json:"global_name,omitempty"`
+	GlobalAddress  string                          `json:"global_address,omitempty"`
+	HomeName       string                          `json:"home_name"`
+	HomePath       string                          `json:"home_path"`
+	WorkBinding    string                          `json:"work_binding"`
+	WorkPath       string                          `json:"work_path"`
+	WorktreeName   string                          `json:"worktree_name,omitempty"`
+	WorktreePath   string                          `json:"worktree_path,omitempty"`
+	BranchName     string                          `json:"branch_name,omitempty"`
+	Availability   []agentsNamingAvailabilityCheck `json:"availability"`
+}
+
+type agentsNamingAvailabilityCheck struct {
+	Field  string `json:"field"`
+	Value  string `json:"value"`
+	Status string `json:"status"`
+	Source string `json:"source"`
 }
 
 func defaultAgentsNamingPolicy() agentsNamingPolicy {
@@ -270,10 +277,18 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			HomePath:       filepath.ToSlash(filepath.Join(agentsDir, "home", responsibility)),
 			WorkBinding:    workBinding,
 			WorkPath:       ".",
-			CollisionState: "available",
+			Availability: []agentsNamingAvailabilityCheck{
+				agentsAvailableCheck("team_alias", alias, "existing team aliases and current plan"),
+				agentsAvailableCheck("home", responsibility, "existing home paths and current plan"),
+			},
 		}
 		if globalName != "" && namespace != "" {
 			plan.GlobalAddress = namespace + "/" + globalName
+		}
+		if globalName != "" {
+			plan.Availability = append(plan.Availability,
+				agentsAvailableCheck("global_name", globalName, "existing namespace addresses and current plan"),
+			)
 		}
 		if workBinding == agentsWorkGitWorktree {
 			worktreeName, err := nextAvailableAgentsWorktreeName(agentsNameRequest{
@@ -300,6 +315,10 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			plan.BranchName = worktreeName
 			plan.WorktreePath = filepath.ToSlash(filepath.Join(agentsDir, "worktrees", worktreeName))
 			plan.WorkPath = plan.WorktreePath
+			plan.Availability = append(plan.Availability,
+				agentsAvailableCheck("worktree", worktreeName, "existing worktrees and current plan"),
+				agentsAvailableCheck("branch", worktreeName, "existing branches and current plan"),
+			)
 		}
 		plans = append(plans, plan)
 	}
@@ -320,9 +339,21 @@ func renderAgentsNamingPlanHuman(plan agentsNamingPlan) string {
 		}
 		fmt.Fprintf(&out, "  Home:       %s\n", agent.HomePath)
 		fmt.Fprintf(&out, "  Work:       %s\n", agent.WorkPath)
-		fmt.Fprintf(&out, "  Collision:  %s\n", agent.CollisionState)
+		fmt.Fprintf(&out, "  Availability:\n")
+		for _, check := range agent.Availability {
+			fmt.Fprintf(&out, "    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value)
+		}
 	}
 	return strings.TrimRight(out.String(), "\n")
+}
+
+func agentsAvailableCheck(field, value, source string) agentsNamingAvailabilityCheck {
+	return agentsNamingAvailabilityCheck{
+		Field:  field,
+		Value:  value,
+		Status: "available",
+		Source: source,
+	}
 }
 
 type agentsNameRequest struct {
