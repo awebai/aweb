@@ -9,7 +9,7 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `claim-human`, `init`, `reset`, `service`, `team`, `workspace` |
+| Workspace Setup | `agents`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `whoami` |
 | Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
@@ -21,6 +21,154 @@ to refresh it.
 - `-h, --help help for aw`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
+
+## `agents`
+
+### `agents`
+
+Manage repo-local agent layouts and provisioning.
+
+The agents command family manages the project-local agents/ convention:
+shared layout, agent homes, worktree-bound agents, and per-agent workspace
+provisioning. It does not manage AWID team authority in general; use aw id team
+for membership and team-controller operations.
+
+Run aw agents commands from the customer project repo root unless a subcommand
+explicitly says otherwise. The repo root itself is not an aw identity; generated
+agent homes live under agents/home/<responsibility>.
+
+Subcommands:
+- `add` Add a responsibility to the agents layout
+- `add-worktree` Add a worktree-bound agent to the agents layout
+- `bootstrap` Bootstrap repo-local agents from a template repository
+- `plan` Plan repo-local agent names and paths
+- `provision` Provision identities for an existing agents layout
+- `remove` Remove or deprovision an agent responsibility
+
+Flags:
+- `-h, --help help for agents`
+- `--team string Override the selected team_id for this command`
+
+## `agents add`
+
+### `agents add`
+
+Add a responsibility to the agents layout
+
+Flags:
+- `-h, --help help for add`
+
+## `agents add-worktree`
+
+### `agents add-worktree`
+
+Add a worktree-bound agent to the agents layout
+
+Flags:
+- `-h, --help help for add-worktree`
+
+## `agents bootstrap`
+
+### `agents bootstrap`
+
+Bootstrap repo-local agents from a template repository.
+
+The template repository is convention-first:
+
+  docs/                  shared team/project instructions
+  roles/                 role playbooks installed with aw roles set
+  home/<responsibility>/AGENTS.md
+  team.yaml              maps agent responsibility dirs to aw role names
+
+team.yaml supplies the parts that cannot be inferred safely: role bundle
+metadata, each agent responsibility's role_name, and default identity names.
+Agent directory names are responsibilities (for example coordinator,
+implementation, or review), not fixed human/agent names.
+
+By default bootstrap runs in the current project git repo and creates an
+agents/ convention directory:
+
+  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
+  agents/worktrees/<alias>/          generated git worktrees for worktree agents
+
+Use --agents-dir to choose a different project-local convention directory.
+Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
+
+By default bootstrap uses the template's default identity names; pass
+--ask-for-agent-names when you want an interactive prompt to rename generated
+agents before provisioning.
+
+Flags:
+- `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
+- `--ask-for-agent-names Prompt for generated agent names instead of using template defaults`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the bootstrap plan without changing files or team roles`
+- `--fork Fork the template repository with gh and clone the fork into the destination directory`
+- `-h, --help help for bootstrap`
+- `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
+- `--refresh-template Re-clone the template into the destination directory before using it`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--template-cache-dir string Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)`
+- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
+- `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
+
+## `agents plan`
+
+### `agents plan`
+
+Plan repo-local agent names and paths
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the provisioning plan without changing files or team roles`
+- `-h, --help help for plan`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+
+## `agents provision`
+
+### `agents provision`
+
+Provision identities for an existing agents layout
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the provisioning plan without changing files or team roles`
+- `-h, --help help for provision`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+
+## `agents remove`
+
+### `agents remove`
+
+Remove or deprovision an agent responsibility
+
+Flags:
+- `-h, --help help for remove`
 
 ## `claim-human`
 
@@ -111,71 +259,6 @@ Flags:
 - `--role string Optional role name for this workspace`
 - `--service string Service URL to connect to`
 - `--team string Canonical AWID team id to activate before connecting`
-
-## `team`
-
-### `team`
-
-Bootstrap agent teams from templates
-
-Subcommands:
-- `bootstrap` Bootstrap an agent team from a template repository
-
-Flags:
-- `-h, --help help for team`
-- `--team string Override the selected team_id for this command`
-
-## `team bootstrap`
-
-### `team bootstrap`
-
-Bootstrap an agent team from a template repository.
-
-The template repository is convention-first:
-
-  docs/                  shared team/project instructions
-  roles/                 role playbooks installed with aw roles set
-  home/<responsibility>/AGENTS.md
-  team.yaml              maps agent responsibility dirs to aw role names
-
-team.yaml supplies the parts that cannot be inferred safely: role bundle
-metadata, each agent responsibility's role_name, and default identity names.
-Agent directory names are responsibilities (for example coordinator,
-implementation, or review), not fixed human/agent names.
-
-By default bootstrap runs in the current project git repo and creates an
-agents/ convention directory:
-
-  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
-  agents/worktrees/<alias>/          generated git worktrees for worktree agents
-
-Use --agents-dir to choose a different project-local convention directory.
-Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
-
-By default bootstrap uses the template's default identity names; pass
---ask-for-agent-names when you want an interactive prompt to rename generated
-agents before provisioning.
-
-Flags:
-- `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
-- `--ask-for-agent-names Prompt for generated agent names instead of using template defaults`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the bootstrap plan without changing files or team roles`
-- `--fork Fork the template repository with gh and clone the fork into the destination directory`
-- `-h, --help help for bootstrap`
-- `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT team bootstrap)`
-- `--refresh-template Re-clone the template into the destination directory before using it`
-- `--registry string AWID registry URL override`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use (required for one-step BYOT team bootstrap)`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--template-cache-dir string Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
-- `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
-- `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
 
 ## `workspace`
 

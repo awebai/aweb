@@ -124,6 +124,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAsk := teamBootstrapAskAgentNames
 	prevSkipRoles := teamBootstrapSkipRoles
 	prevSkipInstructions := teamBootstrapSkipInstructions
+	prevIdentityPrefix := agentsIdentityPrefix
 	t.Cleanup(func() {
 		teamBootstrapHomeRoot = prevHomeRoot
 		teamBootstrapAgentsDir = prevAgentsDir
@@ -145,6 +146,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		teamBootstrapAskAgentNames = prevAsk
 		teamBootstrapSkipRoles = prevSkipRoles
 		teamBootstrapSkipInstructions = prevSkipInstructions
+		agentsIdentityPrefix = prevIdentityPrefix
 	})
 	teamBootstrapHomeRoot = ""
 	teamBootstrapAgentsDir = "agents"
@@ -166,6 +168,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	teamBootstrapAskAgentNames = false
 	teamBootstrapSkipRoles = false
 	teamBootstrapSkipInstructions = false
+	agentsIdentityPrefix = ""
 }
 
 func testTeamBootstrapCommand(t *testing.T) *cobra.Command {
@@ -238,6 +241,15 @@ func findSubcommand(parent *cobra.Command, name string) *cobra.Command {
 		}
 	}
 	return nil
+}
+
+func agentsProvisionHasCheck(out agentsProvisionOutput, responsibility, field, value, status string) bool {
+	for _, check := range out.Availability {
+		if check.Responsibility == responsibility && check.Field == field && check.Value == value && check.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTeamBootstrapSpecPlansUseResponsibilityDirsAndRoleNames(t *testing.T) {
@@ -371,6 +383,147 @@ func TestTeamBootstrapInRepoDryRunDoesNotCreateAgentsDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created .gitignore or unexpected stat error: %v", err)
+	}
+}
+
+func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsIdentityPrefix = "maria"
+
+	out, layout, _, plans, err := buildAgentsProvisionOutput(&cobra.Command{Use: "plan"})
+	if err != nil {
+		t.Fatalf("buildAgentsProvisionOutput: %v", err)
+	}
+	expectedRepoDir, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.CustomerRepoRoot != expectedRepoDir {
+		t.Fatalf("repo root=%q, want %q", layout.CustomerRepoRoot, expectedRepoDir)
+	}
+	if out.IdentityPrefix != "maria" {
+		t.Fatalf("identity_prefix=%q, want maria", out.IdentityPrefix)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plans=%d, want 2", len(plans))
+	}
+	byResponsibility := map[string]teamBootstrapAgentPlan{}
+	for _, plan := range plans {
+		byResponsibility[plan.Responsibility] = plan
+	}
+	if got := byResponsibility["coordinator"].Alias; got != "alice" {
+		t.Fatalf("coordinator alias=%q, want alice", got)
+	}
+	if got := byResponsibility["implementation"].Alias; got != "bob" {
+		t.Fatalf("implementation alias=%q, want bob", got)
+	}
+	if got := byResponsibility["coordinator"].HomeDir; got != filepath.Join(expectedRepoDir, "agents", "home", "coordinator") {
+		t.Fatalf("coordinator home=%q", got)
+	}
+	if !agentsProvisionHasCheck(out, "implementation", "worktree", "implementation", "available") {
+		t.Fatalf("implementation worktree availability missing: %#v", out.Availability)
+	}
+	formatted := formatAgentsProvisionOutput(out)
+	if !strings.Contains(formatted, "Agents provision plan (dry run)") ||
+		!strings.Contains(formatted, "Identity prefix: maria") ||
+		!strings.Contains(formatted, "worktree: available") {
+		t.Fatalf("formatted provision plan missing expected content:\n%s", formatted)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, ".aw"))
+}
+
+func TestAgentsProvisionMissingSourceFailsBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+
+	cmd := &cobra.Command{Use: "provision"}
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetErr(&bytes.Buffer{})
+	err := runAgentsProvision(cmd, nil)
+	if err == nil {
+		t.Fatal("expected missing team source to fail")
+	}
+	if !strings.Contains(err.Error(), "requires a team source") {
+		t.Fatalf("error=%q, want team-source guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "coordinator", "CLAUDE.md"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "coordinator", "work"))
+}
+
+func TestAgentsProvisionAcceptsMatchingExistingAWState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	root := t.TempDir()
+	coordinator := filepath.Join(root, "agents", "home", "coordinator")
+	developer := filepath.Join(root, "agents", "home", "developer")
+	writeWorkspaceBindingForTest(t, coordinator, workspaceBinding("https://app.example", "circle:example.com", "alice", "workspace-alice"))
+	writeWorkspaceBindingForTest(t, developer, workspaceBinding("https://app.example", "circle:example.com", "bob", "workspace-bob"))
+
+	state, err := assessAgentsProvisionState([]teamBootstrapAgentPlan{
+		{Responsibility: "coordinator", HomeDir: coordinator, Alias: "alice"},
+		{Responsibility: "developer", HomeDir: developer, Alias: "bob"},
+	}, "circle:example.com")
+	if err != nil {
+		t.Fatalf("assessAgentsProvisionState: %v", err)
+	}
+	if state != agentsProvisionStateAlreadyProvisioned {
+		t.Fatalf("state=%v, want already provisioned", state)
+	}
+}
+
+func TestAgentsProvisionRefusesPartialAWState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	root := t.TempDir()
+	coordinator := filepath.Join(root, "agents", "home", "coordinator")
+	developer := filepath.Join(root, "agents", "home", "developer")
+	writeWorkspaceBindingForTest(t, coordinator, workspaceBinding("https://app.example", "circle:example.com", "alice", "workspace-alice"))
+	if err := os.MkdirAll(developer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := assessAgentsProvisionState([]teamBootstrapAgentPlan{
+		{Responsibility: "coordinator", HomeDir: coordinator, Alias: "alice"},
+		{Responsibility: "developer", HomeDir: developer, Alias: "bob"},
+	}, "circle:example.com")
+	if err == nil {
+		t.Fatal("expected partial .aw state to fail")
+	}
+	if !strings.Contains(err.Error(), "partially provisioned") ||
+		!strings.Contains(err.Error(), "does not auto-recover partial state") {
+		t.Fatalf("error=%q, want partial-state guidance", err)
+	}
+}
+
+func TestAgentsProvisionRefusesMismatchedExistingAWState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	home := filepath.Join(t.TempDir(), "agents", "home", "developer")
+	writeWorkspaceBindingForTest(t, home, workspaceBinding("https://app.example", "circle:example.com", "charlie", "workspace-charlie"))
+
+	_, err := assessAgentsProvisionState([]teamBootstrapAgentPlan{{
+		Responsibility: "developer",
+		HomeDir:        home,
+		Alias:          "bob",
+	}}, "circle:example.com")
+	if err == nil {
+		t.Fatal("expected mismatched .aw state to fail")
+	}
+	if !strings.Contains(err.Error(), "already belongs to alias") ||
+		!strings.Contains(err.Error(), "does not merge mismatched identity state") {
+		t.Fatalf("error=%q, want mismatch guidance", err)
 	}
 }
 
