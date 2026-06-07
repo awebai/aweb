@@ -235,6 +235,29 @@ Delete a global address when you have the required namespace authority:
 `.aw/` state and certificates continue until they deprovision or the
 certs expire/revoke separately.
 
+`--deprovision-local` uses local team-controller authority for self-custodial
+teams. Hosted-managed cert-only agents may self-deprovision through the hosted
+service using their own signing key and active team certificate. That hosted
+path applies only to the same agent and must not be described as dashboard
+authority over BYOT members.
+
+`--delete-global-address` is opt-in. Self-custodial namespaces require the
+local namespace controller key. Hosted-managed global agents can delete only
+hosted-managed addresses through hosted self-deprovision; unmanaged/BYOT
+addresses remain customer-controller-owned.
+
+Hosted self-deprovision errors are actionable:
+
+- `hosted_team_controller_required`: use/restore the self-custodial team
+  controller key; this is not a hosted-managed team.
+- `global_address_not_hosted_managed`: delete the address with the customer
+  namespace controller; the hosted service must not delete BYOT/unmanaged
+  addresses.
+- `delete_global_address_required`: rerun with `--delete-global-address` for a
+  hosted-managed global agent.
+- `local_identity_has_no_global_address`: rerun without
+  `--delete-global-address`; local identities do not have global addresses.
+
 ## Legacy mode: old out-of-repo bootstrap
 
 Use legacy mode only for existing scripts/templates that still expect

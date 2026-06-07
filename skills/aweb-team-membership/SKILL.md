@@ -84,7 +84,7 @@ aw init   # if the joining directory still needs server binding
 
 No token round-trip. Direct controller-mint. Available only for hosted teams because BYOT controller keys aren't held by aweb.
 
-**Path 3 — CLI invite-token, for hosted local-worktree only.** Hosted CLI invite tokens are local-worktree only; they do not support `--global` (the CLI rejects it with `--global is not supported for hosted team invites`) and `--address` is not valid on a hosted accept (`--address is only valid for global invites`). Use this when the owner wants to invite a new local-workspace identity by token:
+**Path 3 — CLI invite-token, for hosted self-custodial local or global identities.** Hosted CLI invite tokens are redeemed through the cloud, but the accepting directory keeps its own signing key. Use the default form when the owner wants to invite a new local-workspace identity by token:
 
 ```bash
 # Owner side (in a workspace with the necessary authority):
@@ -97,7 +97,14 @@ aw id team accept-invite <token> --alias <alias>
 aw init                        # finish wiring the new workspace
 ```
 
-`accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local self-custodial identity in the target directory before requesting the certificate. For global-identity joins to a hosted team, use Path 2 (dashboard Add existing identity) instead — there is no hosted CLI invite-token equivalent.
+`accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local self-custodial identity in the target directory before requesting the certificate. For a hosted global identity, accept the hosted token with `--address <domain>/<name>`:
+
+```bash
+aw id team accept-invite <token> --address <domain>/<name>
+aw init                        # finish wiring the new workspace
+```
+
+In the hosted `--address` case, the CLI creates a fresh self-custodial global identity for the address, registers it through the hosted service, and installs the hosted team certificate. The hosted service signs the team certificate; it does not receive the accepting directory's private signing key. If the user already has a global identity and only needs a certificate for an existing hosted team, Path 2 (dashboard Add existing identity + `fetch-cert`) remains valid.
 
 This is **not** the cross-machine BYOT path. Do not present it as the normal way to join a BYOT team from another machine.
 
@@ -161,7 +168,7 @@ This is the local-controller convenience case only. For cross-machine BYOT joins
 
 Two distinct local actions install a membership:
 
-- **`aw id team accept-invite <token>`** — redeems a CLI invite token. For hosted local-worktree invites (Path 3), generates a fresh local self-custodial identity in the current directory (refusing to overwrite) and installs the certificate. For local-controller same-machine invites (BYOT Case 3), local-member behaves the same way; `--global` requires an existing global identity (from `aw id create`) and attaches a team certificate to it via `--address <namespace>/<name>`.
+- **`aw id team accept-invite <token>`** — redeems a CLI invite token. For hosted invites (Path 3), generates a fresh self-custodial identity in the current directory (refusing to overwrite) and installs the certificate; default is local, while `--address <domain>/<name>` creates/registers a fresh global identity through the hosted service before certificate install. For local-controller same-machine invites (BYOT Case 3), local-member behaves the same way as hosted local; global accepts require an existing global identity (from `aw id create`) and attach a team certificate to it via `--address <namespace>/<name>`.
 - **`aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
 
 If you have a token, use `accept-invite`. If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.

@@ -715,10 +715,13 @@ Accept a team invite and receive a membership certificate.
 Hosted aw_inv_ tokens are redeemed through the cloud, generate a fresh local
 identity, and refuse to overwrite an existing .aw identity in the target
 directory. After accepting, run `aw init` in that directory to connect the
-workspace.
+workspace. When a hosted invite is accepted with --address <domain>/<name>,
+the CLI creates a fresh self-custodial global identity for that address,
+registers it through the service, and installs the hosted team certificate.
 
 Local-controller invite tokens are same-machine helpers: they require the
-local invite record and local team controller key. For cross-machine BYOT
+local invite record and local team controller key. Local-controller global
+invites require an existing global identity plus --address. For cross-machine BYOT
 joins, use `aw id team request`, have the controller run
 `aw id team add-member`, then install with `aw id team fetch-cert` on the
 joining machine.

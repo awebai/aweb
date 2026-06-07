@@ -287,6 +287,7 @@ type agentsAddOutput struct {
 	Agent          teamBootstrapAgentPlan `json:"agent"`
 	Availability   []agentsProvisionCheck `json:"availability,omitempty"`
 	TeamSource     string                 `json:"team_source,omitempty"`
+	Warnings       []string               `json:"warnings,omitempty"`
 }
 
 type agentsRemoveOutput struct {
@@ -685,14 +686,15 @@ func runAgentsRemove(cmd *cobra.Command, args []string) error {
 }
 
 type agentsRemovePlan struct {
-	Layout     teamBootstrapLayout
-	Spec       *teamBootstrapSpec
-	Agent      teamBootstrapAgentSpec
-	Output     agentsRemoveOutput
-	Identity   *awconfig.WorktreeIdentity
-	TeamState  *awconfig.TeamState
-	Membership *awconfig.TeamMembership
-	Cert       *awid.TeamCertificate
+	Layout                   teamBootstrapLayout
+	Spec                     *teamBootstrapSpec
+	Agent                    teamBootstrapAgentSpec
+	Output                   agentsRemoveOutput
+	Identity                 *awconfig.WorktreeIdentity
+	TeamState                *awconfig.TeamState
+	Membership               *awconfig.TeamMembership
+	Cert                     *awid.TeamCertificate
+	HostedDeprovisionApplied bool
 }
 
 func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) {
@@ -813,7 +815,13 @@ func agentsRemovePathExists(path string) bool {
 }
 
 func executeAgentsRemoveRevokeMembership(plan *agentsRemovePlan) error {
-	if plan == nil || plan.Cert == nil {
+	if plan == nil {
+		return nil
+	}
+	if plan.Cert == nil {
+		if agentsRemoveDeleteAddress {
+			return usageError("cannot delete global address for %s: no active team certificate was found in %s/.aw, so membership cannot be revoked first. Restore the matching team certificate or rerun without --delete-global-address.", plan.Output.Responsibility, plan.Output.HomeDir)
+		}
 		return nil
 	}
 	teamID := strings.TrimSpace(plan.Output.TeamID)
@@ -823,7 +831,11 @@ func executeAgentsRemoveRevokeMembership(plan *agentsRemovePlan) error {
 	}
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
-		return usageError("cannot revoke team certificate for %s: self-custodial team controller key is unavailable (%v). Restore the matching ~/.awid/team-keys/%s/%s.key, use the hosted dashboard/session revocation path for hosted custodial teams, or rerun without --deprovision-local to leave local state untouched.", teamID, err, domain, team)
+		if hostedErr := executeAgentsRemoveHostedDeprovision(plan); hostedErr == nil {
+			return nil
+		} else {
+			return usageError("cannot revoke team certificate for %s: self-custodial team controller key is unavailable (%v), and hosted self-deprovision failed (%v). Restore the matching ~/.awid/team-keys/%s/%s.key for customer-controlled teams, or ensure this hosted workspace has a valid aweb_url, .aw/signing.key, and active team certificate before retrying.", teamID, err, hostedErr, domain, team)
+		}
 	}
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -842,7 +854,79 @@ func executeAgentsRemoveRevokeMembership(plan *agentsRemovePlan) error {
 	return nil
 }
 
+type agentsRemoveHostedDeprovisionRequest struct {
+	DeleteGlobalAddress bool `json:"delete_global_address"`
+}
+
+type agentsRemoveHostedDeprovisionResponse struct {
+	AgentID string `json:"agent_id"`
+	Status  string `json:"status"`
+}
+
+func executeAgentsRemoveHostedDeprovision(plan *agentsRemovePlan) error {
+	if plan == nil || plan.Cert == nil {
+		return fmt.Errorf("missing active team certificate in local .aw state")
+	}
+	awebURL := agentsRemoveAwebURL(plan)
+	if awebURL == "" {
+		return fmt.Errorf("missing hosted service URL in .aw/teams.yaml")
+	}
+	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(plan.Output.HomeDir))
+	if err != nil {
+		return fmt.Errorf("load local signing key for hosted self-deprovision: %w", err)
+	}
+	client, err := awid.NewWithCertificate(awebURL, signingKey, plan.Cert)
+	if err != nil {
+		return fmt.Errorf("create hosted certificate client: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var out agentsRemoveHostedDeprovisionResponse
+	req := agentsRemoveHostedDeprovisionRequest{DeleteGlobalAddress: agentsRemoveDeleteAddress}
+	if err := client.Post(ctx, "/api/v1/agents/me/deprovision", req, &out); err != nil {
+		if agentsRemoveHostedAlreadyDeprovisioned(err) {
+			plan.HostedDeprovisionApplied = true
+			agentsRemoveMarkAction(&plan.Output, "revoke_membership", "done", "hosted self-deprovision already applied")
+			if agentsRemoveDeleteAddress {
+				agentsRemoveMarkAction(&plan.Output, "delete_global_address", "done", strings.TrimSpace(plan.Output.MemberAddress))
+			}
+			return nil
+		}
+		return fmt.Errorf("hosted self-deprovision: %w", err)
+	}
+	status := strings.TrimSpace(out.Status)
+	if status == "" {
+		status = "done"
+	}
+	plan.HostedDeprovisionApplied = true
+	agentsRemoveMarkAction(&plan.Output, "revoke_membership", "done", "hosted self-deprovision "+status)
+	if agentsRemoveDeleteAddress {
+		agentsRemoveMarkAction(&plan.Output, "delete_global_address", "done", strings.TrimSpace(plan.Output.MemberAddress))
+	}
+	return nil
+}
+
+func agentsRemoveHostedAlreadyDeprovisioned(err error) bool {
+	status, ok := awid.HTTPStatusCode(err)
+	if !ok || status != http.StatusBadRequest && status != http.StatusNotFound {
+		return false
+	}
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return false
+	}
+	body = strings.ToLower(body)
+	return strings.Contains(body, "agent not found") ||
+		strings.Contains(body, "only active agents can be deprovisioned")
+}
+
 func executeAgentsRemoveDeleteAddress(plan *agentsRemovePlan) error {
+	if plan != nil && plan.HostedDeprovisionApplied {
+		if strings.TrimSpace(plan.Output.MemberAddress) != "" {
+			agentsRemoveMarkAction(&plan.Output, "delete_global_address", "done", strings.TrimSpace(plan.Output.MemberAddress))
+		}
+		return nil
+	}
 	address := strings.TrimSpace(plan.Output.MemberAddress)
 	if address == "" {
 		return usageError("--delete-global-address requested but no global member address was found in %s/.aw; local state was not moved", plan.Output.HomeDir)
@@ -952,6 +1036,18 @@ func agentsRemoveRegistryURL(plan *agentsRemovePlan) string {
 	return strings.TrimSpace(teamBootstrapRegistryURL)
 }
 
+func agentsRemoveAwebURL(plan *agentsRemovePlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.Membership != nil {
+		if u := strings.TrimSpace(plan.Membership.AwebURL); u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
 func agentsRemoveMarkAction(out *agentsRemoveOutput, name, status, detail string) {
 	if out == nil {
 		return
@@ -975,6 +1071,17 @@ func splitAWIDTeamID(teamID string) (string, string, error) {
 }
 
 func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBinding string) error {
+	if !teamBootstrapDryRun {
+		layout, err := resolveAgentsExistingLayoutPreflight()
+		if err != nil {
+			return err
+		}
+		lock, err := awconfig.LockExclusive(agentsAddLayoutLockPath(layout.AgentsRoot))
+		if err != nil {
+			return fmt.Errorf("lock agents layout: %w", err)
+		}
+		defer lock.Close()
+	}
 	out, layout, spec, plan, err := buildAgentsAddOutput(cmd, responsibilityRaw, workBinding)
 	if err != nil {
 		return err
@@ -1055,6 +1162,11 @@ func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBind
 	out.DryRun = false
 	printOutput(out, formatAgentsAddOutput)
 	return nil
+}
+
+func agentsAddLayoutLockPath(agentsRoot string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(agentsRoot)))
+	return filepath.Join(os.TempDir(), "aw-agents-layout-"+hex.EncodeToString(sum[:8])+".lock")
 }
 
 func runAgentsAddGlobal(cmd *cobra.Command, out agentsAddOutput, layout teamBootstrapLayout, spec *teamBootstrapSpec, plan teamBootstrapAgentPlan) error {
@@ -1277,6 +1389,24 @@ func cleanupNewAgentsAddGlobalPending(homeDir string) {
 	_ = os.Remove(filepath.Clean(homeDir))
 }
 
+var agentsAddGlobalSpecificConflictCodes = map[string]bool{
+	awid.AtomicAddressClaimCodeAddressTakenDifferentOwner: true,
+	awid.AtomicAddressClaimCodeDIDTakenDifferentKey:       true,
+	awid.AtomicAddressClaimCodeNamespaceAuthorityInvalid:  true,
+	awid.AtomicAddressClaimCodeNamespaceNotRegistered:     true,
+	awid.AtomicAddressClaimCodePrimitiveDisabled:          true,
+	awid.AtomicAddressClaimCodePrimitiveNotSupported:      true,
+}
+
+var agentsAddGlobalDefaultConflictCodes = map[string]bool{
+	awid.AtomicAddressClaimCodeIdentitySignatureInvalid:      true,
+	awid.AtomicAddressClaimCodeTimestampStale:                true,
+	awid.AtomicAddressClaimCodePayloadCanonicalization:       true,
+	awid.AtomicAddressClaimCodeCustodyCombinationUnsupported: true,
+	awid.AtomicAddressClaimCodeDIDLogProofRequired:           true,
+	awid.AtomicAddressClaimCodeDIDLogProofInvalid:            true,
+}
+
 func agentsAddGlobalClaimError(pending *agentsAddGlobalPendingState, err error) error {
 	var conflict *awid.AtomicAddressClaimConflictError
 	if errors.As(err, &conflict) {
@@ -1456,12 +1586,18 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding str
 			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
 		}
 	}
-	identityPrefix, err := resolveAgentsIdentityPrefix(cmd)
-	if err != nil {
-		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
-	}
 	if resumeGlobal {
-		identityPrefix = strings.TrimSpace(pending.IdentityPrefix)
+		identityPrefix := strings.TrimSpace(pending.IdentityPrefix)
+		warnings := []string{}
+		if cmd != nil && cmd.Flags().Changed("identity-prefix") {
+			requestedPrefix, err := normalizeAgentsNamingField("identity-prefix", agentsIdentityPrefix)
+			if err != nil {
+				return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
+			}
+			if requestedPrefix != "" && requestedPrefix != identityPrefix {
+				warnings = append(warnings, fmt.Sprintf("using pending identity prefix %s; --identity-prefix %s is ignored on retry", identityPrefix, requestedPrefix))
+			}
+		}
 		plan := teamBootstrapAgentPlan{
 			Responsibility: responsibility,
 			RoleName:       roleName,
@@ -1485,8 +1621,13 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding str
 			IdentityPrefix: identityPrefix,
 			Agent:          plan,
 			TeamSource:     string(teamBootstrapSourceBYOT),
+			Warnings:       warnings,
 		}
 		return out, layout, spec, plan, nil
+	}
+	identityPrefix, err := resolveAgentsIdentityPrefix(cmd)
+	if err != nil {
+		return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, err
 	}
 	namingInput, err := agentsAddNamingInput(layout, spec, responsibility, scope, identityPrefix, workBinding)
 	if err != nil {
@@ -4039,6 +4180,12 @@ func formatAgentsAddOutput(v any) string {
 	}
 	if strings.TrimSpace(out.TeamSource) != "" {
 		b.WriteString(fmt.Sprintf("Team source: %s\n", out.TeamSource))
+	}
+	if len(out.Warnings) > 0 {
+		b.WriteString("\nWarnings:\n")
+		for _, warning := range out.Warnings {
+			b.WriteString("- " + warning + "\n")
+		}
 	}
 	b.WriteString("\nAgent:\n")
 	agent := out.Agent

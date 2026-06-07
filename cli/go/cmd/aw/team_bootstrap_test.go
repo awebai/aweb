@@ -1311,6 +1311,215 @@ func TestAgentsRemoveMissingTeamKeyFailsBeforeMovingLocalState(t *testing.T) {
 	assertPathExists(t, awconfig.TeamCertificatePath(home, "circle:example.com"))
 }
 
+func TestAgentsRemoveDeleteAddressRequiresCertificateBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
+		DID:       "did:key:ztest",
+		StableID:  "did:aw:test-global",
+		Address:   "example.com/juan-coordinator",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.IdentityModeGlobal,
+		CreatedAt: "2026-06-07T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: "circle:example.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "circle:example.com",
+			Alias:    "juan-coordinator",
+			CertPath: awconfig.TeamCertificateRelativePath("circle:example.com"),
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	agentsRemoveDeleteAddress = true
+	err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"})
+	if err == nil {
+		t.Fatal("expected missing certificate to fail before deleting address")
+	}
+	if !strings.Contains(err.Error(), "no active team certificate") {
+		t.Fatalf("error=%q, want missing certificate guidance", err)
+	}
+	assertPathExists(t, filepath.Join(home, ".aw", "identity.yaml"))
+	assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+}
+
+func TestAgentsRemoveHostedCertOnlyDeprovisionUsesServiceEndpoint(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(home), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		MemberDIDAW:   "did:aw:test-hosted-global",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
+		DID:       cert.MemberDIDKey,
+		StableID:  cert.MemberDIDAW,
+		Address:   cert.MemberAddress,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.IdentityModeGlobal,
+		CreatedAt: "2026-06-07T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents/me/deprovision" {
+			t.Fatalf("unexpected hosted request: %s %s", r.Method, r.URL.Path)
+		}
+		if strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")) == "" {
+			t.Fatal("missing hosted team certificate header")
+		}
+		if auth := strings.TrimSpace(r.Header.Get("Authorization")); !strings.HasPrefix(auth, "DIDKey "+cert.MemberDIDKey+" ") {
+			t.Fatalf("Authorization=%q, want DIDKey for %s", auth, cert.MemberDIDKey)
+		}
+		assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"agent_id": "agent-hosted-global",
+			"status":   "archived",
+		})
+	}))
+	t.Cleanup(server.Close)
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   cert.Team,
+			Alias:    cert.Alias,
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			AwebURL:  server.URL,
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	agentsRemoveDeleteAddress = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	if gotBody["delete_global_address"] != true {
+		t.Fatalf("delete_global_address=%v, want true", gotBody["delete_global_address"])
+	}
+	assertPathMissing(t, filepath.Join(home, ".aw"))
+}
+
+func TestAgentsRemoveHostedAlreadyDeprovisionedMovesLocalState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(home), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		MemberDIDAW:   "did:aw:test-hosted-global",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
+		DID:       cert.MemberDIDKey,
+		StableID:  cert.MemberDIDAW,
+		Address:   cert.MemberAddress,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.IdentityModeGlobal,
+		CreatedAt: "2026-06-07T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents/me/deprovision" {
+			t.Fatalf("unexpected hosted request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Agent not found"})
+	}))
+	t.Cleanup(server.Close)
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   cert.Team,
+			Alias:    cert.Alias,
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			AwebURL:  server.URL,
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	agentsRemoveDeleteAddress = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	assertPathMissing(t, filepath.Join(home, ".aw"))
+}
+
 func TestAgentsRemoveDeprovisionRevokesBeforeMovingLocalState(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	homeRoot := t.TempDir()
@@ -1667,7 +1876,24 @@ func TestAgentsAddGlobalRetriesAfterPostClaimLocalFailure(t *testing.T) {
 	home := filepath.Join(repoDir, "agents", "home", "support")
 	assertPathExists(t, agentsAddGlobalPendingPath(home))
 
-	if err := runAgentsAdd(&cobra.Command{Use: "add"}, []string{"support"}); err != nil {
+	agentsIdentityPrefix = "maria"
+	retryCmd := &cobra.Command{Use: "add"}
+	retryCmd.Flags().String("identity-prefix", "", "")
+	if err := retryCmd.Flags().Set("identity-prefix", "maria"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _, _, err := buildAgentsAddOutput(retryCmd, "support", agentsWorkRepoRoot)
+	if err != nil {
+		t.Fatalf("build retry add output: %v", err)
+	}
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "using pending identity prefix juan") || !strings.Contains(out.Warnings[0], "--identity-prefix maria is ignored") {
+		t.Fatalf("retry warnings=%v, want pending-prefix warning", out.Warnings)
+	}
+	if out.IdentityPrefix != "juan" {
+		t.Fatalf("retry identity prefix=%q, want pending juan", out.IdentityPrefix)
+	}
+
+	if err := runAgentsAdd(retryCmd, []string{"support"}); err != nil {
 		t.Fatalf("retry runAgentsAdd: %v", err)
 	}
 	if claimCalls != 1 {
@@ -1678,6 +1904,49 @@ func TestAgentsAddGlobalRetriesAfterPostClaimLocalFailure(t *testing.T) {
 	}
 	assertPathMissing(t, agentsAddGlobalPendingPath(home))
 	assertPathExists(t, filepath.Join(home, ".aw", "identity.yaml"))
+}
+
+func TestAgentsAddGlobalConflictCodeCoverage(t *testing.T) {
+	for _, code := range awid.AtomicAddressClaimConflictCodes {
+		if agentsAddGlobalSpecificConflictCodes[code] && agentsAddGlobalDefaultConflictCodes[code] {
+			t.Fatalf("conflict code %s is both specifically handled and default-handled", code)
+		}
+		if !agentsAddGlobalSpecificConflictCodes[code] && !agentsAddGlobalDefaultConflictCodes[code] {
+			t.Fatalf("conflict code %s is not covered by agents add --global consumer maps", code)
+		}
+	}
+	known := map[string]bool{}
+	for _, code := range awid.AtomicAddressClaimConflictCodes {
+		known[code] = true
+	}
+	for code := range agentsAddGlobalSpecificConflictCodes {
+		if !known[code] {
+			t.Fatalf("specific conflict map contains unknown code %s", code)
+		}
+	}
+	for code := range agentsAddGlobalDefaultConflictCodes {
+		if !known[code] {
+			t.Fatalf("default conflict map contains unknown code %s", code)
+		}
+	}
+}
+
+func TestAgentsAddLayoutLockPathStableAndRepoScoped(t *testing.T) {
+	a := agentsAddLayoutLockPath(filepath.Join("tmp", "repo", "agents"))
+	b := agentsAddLayoutLockPath(filepath.Join("tmp", "repo", "agents"))
+	c := agentsAddLayoutLockPath(filepath.Join("tmp", "other", "agents"))
+	if a == "" || b == "" || c == "" {
+		t.Fatal("lock path must not be empty")
+	}
+	if a != b {
+		t.Fatalf("same agents root lock path changed: %q vs %q", a, b)
+	}
+	if a == c {
+		t.Fatalf("different agents roots share lock path %q", a)
+	}
+	if !strings.HasPrefix(filepath.Base(a), "aw-agents-layout-") {
+		t.Fatalf("lock path=%q, want aw-agents-layout prefix", a)
+	}
 }
 
 func agentsAddEmptyPreflightRegistry(t *testing.T) string {

@@ -276,9 +276,12 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"Hosted aw_inv_ tokens are redeemed through the cloud, generate a fresh local\n" +
 		"identity, and refuse to overwrite an existing .aw identity in the target\n" +
 		"directory. After accepting, run `aw init` in that directory to connect the\n" +
-		"workspace.\n\n" +
+		"workspace. When a hosted invite is accepted with --address <domain>/<name>,\n" +
+		"the CLI creates a fresh self-custodial global identity for that address,\n" +
+		"registers it through the service, and installs the hosted team certificate.\n\n" +
 		"Local-controller invite tokens are same-machine helpers: they require the\n" +
-		"local invite record and local team controller key. For cross-machine BYOT\n" +
+		"local invite record and local team controller key. Local-controller global\n" +
+		"invites require an existing global identity plus --address. For cross-machine BYOT\n" +
 		"joins, use `aw id team request`, have the controller run\n" +
 		"`aw id team add-member`, then install with `aw id team fetch-cert` on the\n" +
 		"joining machine.",

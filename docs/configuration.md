@@ -210,7 +210,7 @@ aw workspace add-worktree <role>
 ```
 
 - `aw init` writes or refreshes `workspace.yaml`, `context`, and related local binding state
-- `aw id team accept-invite` writes a team certificate under `team-certs/`; hosted invite tokens also create a fresh local signing key and refuse to overwrite an existing `.aw` identity
+- `aw id team accept-invite` writes a team certificate under `team-certs/`; hosted invite tokens create a fresh self-custodial signing key, refuse to overwrite an existing `.aw` identity, and can create a hosted global identity when accepted with `--address <domain>/<name>`
 - `aw workspace add-worktree` creates a sibling worktree with its own `.aw/` state
 
 ## Injected Coordination Docs

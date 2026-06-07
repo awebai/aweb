@@ -697,9 +697,11 @@ Removal modes:
 
 `--delete-global-address` authority follows the custody matrix in the
 Authority Model section. For self-custodial namespaces, use the local
-namespace controller key. For hosted custodial namespaces, use the hosted
-session/API authority. If the needed authority is unavailable, fail with a
-message specific to that custody mode.
+namespace controller key. For hosted-managed agents, use hosted
+self-deprovision with the agent's own signing key and active team certificate;
+global address deletion is allowed only for addresses managed by that hosted
+service. If the needed authority is unavailable, fail with a message specific
+to that custody mode.
 
 Destructive filesystem behavior should move aside to a timestamped backup
 under the agents dir or another contract-approved safe location. Do not unlink

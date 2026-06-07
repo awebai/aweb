@@ -1036,7 +1036,7 @@ namespace family.
    → returns invite token
 
 3. Alice accepts:
-   aw id team accept-invite <token>
+   aw id team accept-invite <token> --address acme.com/alice
    → team controller signs certificate for alice's did:key
    → certificate saved under .aw/team-certs/<team>.pem
 

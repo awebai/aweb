@@ -359,6 +359,31 @@ aw agents remove support --delete-global-address
 `--remove-layout` is a shared blueprint change only. It does not revoke
 other humans' certificates or delete their local `.aw/` state.
 
+`--deprovision-local` uses the local team controller key when this is a
+self-custodial team. For hosted-managed cert-only agents, it can instead use
+the agent's own signing key and active team certificate to ask the hosted
+service to deprovision that exact agent. It does not give the hosted service
+authority over customer-controlled BYOT team members.
+
+`--delete-global-address` is opt-in. For self-custodial namespaces it requires
+the local namespace controller key. For hosted-managed global agents it is
+handled by the hosted self-deprovision path only when the address is managed by
+that hosted service; BYOT/unmanaged addresses remain controlled by the
+customer's namespace controller.
+
+Hosted self-deprovision returns structured errors that map to specific
+recovery:
+
+- `hosted_team_controller_required`: this team is not hosted-managed by the
+  service. Use/restore the self-custodial team controller key.
+- `global_address_not_hosted_managed`: the global address is BYOT/unmanaged.
+  Delete it with the customer namespace controller, not the hosted service.
+- `delete_global_address_required`: hosted-managed global deprovision must be
+  rerun with `--delete-global-address`; the service cannot archive the hosted
+  agent while preserving its managed address.
+- `local_identity_has_no_global_address`: local identities have no global
+  namespace address; rerun without `--delete-global-address`.
+
 ## Legacy Mode
 
 The old out-of-repo layout remains supported only for compatibility. It
