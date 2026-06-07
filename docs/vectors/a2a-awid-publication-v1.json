@@ -1,0 +1,91 @@
+{
+  "version": "a2a-awid-publication-v1",
+  "canonicalization": "awid.CanonicalJSONValue",
+  "encoding": {
+    "signatures": "base64 raw standard without padding",
+    "payload_hashes": "sha256:<base64 raw standard without padding>",
+    "card_digest": "sha256:<lowercase hex>"
+  },
+  "publication": {
+    "payload": {
+      "operation": "publish_a2a_route",
+      "assertion_id": "pub_01JZ0000000000000000000001",
+      "address": "acme.com/help",
+      "did_aw": "did:aw:zQmA2APublicationStableID1111111111111111111111",
+      "current_did_key": "did:key:z6MkhA2APublicationCurrentKey111111111111111111",
+      "signer_did": "did:key:z6MkhA2APublicationCurrentKey111111111111111111",
+      "signer_kid": "did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519",
+      "card_url": "https://acme.com/a2a/agents/r_help_01/agent-card.json",
+      "rpc_url": "https://acme.com/a2a/agents/r_help_01/rpc",
+      "route_id": "r_help_01",
+      "gateway_identity": "did:aw:zQmA2AGatewayStableID111111111111111111111111",
+      "delegation_id": "del_01JZ0000000000000000000001",
+      "delegation_digest": "sha256:/WWctvffZ4ypKMMXhWF6gWIGFTKSw1/ZeGKBfgHqagY",
+      "card_digest_alg": "sha256",
+      "card_digest": "sha256:ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd",
+      "card_revision": "2026-06-07.1",
+      "default_for_host": false,
+      "status": "active",
+      "published_at": "2026-06-07T20:00:00Z",
+      "expires_at": "2026-07-07T20:00:00Z",
+      "registry_url": "https://api.awid.ai",
+      "identity_custody": "self",
+      "authority_source": "self_identity_key"
+    },
+    "canonical": "{\"address\":\"acme.com/help\",\"assertion_id\":\"pub_01JZ0000000000000000000001\",\"authority_source\":\"self_identity_key\",\"card_digest\":\"sha256:ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd\",\"card_digest_alg\":\"sha256\",\"card_revision\":\"2026-06-07.1\",\"card_url\":\"https://acme.com/a2a/agents/r_help_01/agent-card.json\",\"current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"default_for_host\":false,\"delegation_digest\":\"sha256:/WWctvffZ4ypKMMXhWF6gWIGFTKSw1/ZeGKBfgHqagY\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"identity_custody\":\"self\",\"operation\":\"publish_a2a_route\",\"published_at\":\"2026-06-07T20:00:00Z\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_help_01\",\"rpc_url\":\"https://acme.com/a2a/agents/r_help_01/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
+    "signature": "cHVibGljYXRpb24tc2lnbmF0dXJlLWZpeHR1cmUtNjQtYnl0ZXMhISEhISEhISEhISEhISEhISEhISEhISE"
+  },
+  "delegation": {
+    "payload": {
+      "operation": "delegate_a2a_bridge",
+      "delegation_id": "del_01JZ0000000000000000000001",
+      "delegator_did_aw": "did:aw:zQmA2APublicationStableID1111111111111111111111",
+      "delegator_current_did_key": "did:key:z6MkhA2APublicationCurrentKey111111111111111111",
+      "delegated_gateway_identity": "did:aw:zQmA2AGatewayStableID111111111111111111111111",
+      "address": "acme.com/help",
+      "route_id": "r_help_01",
+      "card_url": "https://acme.com/a2a/agents/r_help_01/agent-card.json",
+      "rpc_url": "https://acme.com/a2a/agents/r_help_01/rpc",
+      "allowed_operations": [
+        "send_task",
+        "receive_reply",
+        "cancel_task",
+        "serve_card"
+      ],
+      "card_digest_alg": "sha256",
+      "card_digest": "sha256:ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd",
+      "custody_mode": "self_to_delegated_bridge",
+      "authority_source": "self_identity_key",
+      "signer_did": "did:key:z6MkhA2APublicationCurrentKey111111111111111111",
+      "signer_kid": "did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519",
+      "issued_at": "2026-06-07T19:55:00Z",
+      "expires_at": "2026-07-07T20:00:00Z",
+      "status": "active",
+      "registry_url": "https://api.awid.ai"
+    },
+    "canonical": "{\"address\":\"acme.com/help\",\"allowed_operations\":[\"send_task\",\"receive_reply\",\"cancel_task\",\"serve_card\"],\"authority_source\":\"self_identity_key\",\"card_digest\":\"sha256:ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd\",\"card_digest_alg\":\"sha256\",\"card_url\":\"https://acme.com/a2a/agents/r_help_01/agent-card.json\",\"custody_mode\":\"self_to_delegated_bridge\",\"delegated_gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"delegator_current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"delegator_did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"issued_at\":\"2026-06-07T19:55:00Z\",\"operation\":\"delegate_a2a_bridge\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_help_01\",\"rpc_url\":\"https://acme.com/a2a/agents/r_help_01/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
+    "signature": "ZGVsZWdhdGlvbi1zaWduYXR1cmUtZml4dHVyZS02NC1ieXRlcyEhISEhISEhISEhISEhISEhISEhISE"
+  },
+  "conflict_codes": [
+    "a2a_publication_exists_different_digest",
+    "a2a_publication_exists_different_gateway",
+    "a2a_delegation_missing",
+    "a2a_delegation_digest_mismatch",
+    "a2a_delegation_expired",
+    "a2a_delegation_revoked",
+    "a2a_card_digest_mismatch",
+    "a2a_card_url_invalid",
+    "a2a_rpc_url_invalid",
+    "a2a_route_id_invalid",
+    "a2a_identity_signature_invalid",
+    "a2a_delegation_signature_invalid",
+    "a2a_timestamp_stale",
+    "a2a_namespace_not_registered",
+    "a2a_address_not_registered",
+    "a2a_custody_combination_unsupported",
+    "a2a_authority_source_invalid",
+    "a2a_payload_canonicalization_mismatch",
+    "a2a_primitive_disabled",
+    "a2a_primitive_not_supported"
+  ]
+}

@@ -377,6 +377,22 @@ type a2aReplyCase struct {
 	ExpectedTaskState string `json:"expected_task_state"`
 }
 
+type a2aAWIDPublicationVector struct {
+	Version          string `json:"version"`
+	Canonicalization string `json:"canonicalization"`
+	Publication      struct {
+		Payload   map[string]any `json:"payload"`
+		Canonical string         `json:"canonical"`
+		Signature string         `json:"signature"`
+	} `json:"publication"`
+	Delegation struct {
+		Payload   map[string]any `json:"payload"`
+		Canonical string         `json:"canonical"`
+		Signature string         `json:"signature"`
+	} `json:"delegation"`
+	ConflictCodes []string `json:"conflict_codes"`
+}
+
 func TestA2AV1AgentCardVectors(t *testing.T) {
 	vector := readA2AVector(t)
 
@@ -735,6 +751,76 @@ func TestA2AV1BridgeReplyVectors(t *testing.T) {
 	}
 }
 
+func TestA2AAWIDPublicationVectors(t *testing.T) {
+	data := readRootVector(t, "a2a-awid-publication-v1.json")
+	var vector a2aAWIDPublicationVector
+	if err := json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	if vector.Version != "a2a-awid-publication-v1" {
+		t.Fatalf("version: got %q", vector.Version)
+	}
+	if vector.Canonicalization != "awid.CanonicalJSONValue" {
+		t.Fatalf("canonicalization: got %q", vector.Canonicalization)
+	}
+
+	publicationCanonical, err := awid.CanonicalJSONValue(vector.Publication.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publicationCanonical != vector.Publication.Canonical {
+		t.Fatalf("publication canonical mismatch:\n got: %s\nwant: %s", publicationCanonical, vector.Publication.Canonical)
+	}
+
+	delegationCanonical, err := awid.CanonicalJSONValue(vector.Delegation.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delegationCanonical != vector.Delegation.Canonical {
+		t.Fatalf("delegation canonical mismatch:\n got: %s\nwant: %s", delegationCanonical, vector.Delegation.Canonical)
+	}
+
+	delegationDigest, err := signedPayloadDigest(delegationCanonical, vector.Delegation.Signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stringValue(vector.Publication.Payload["delegation_digest"]); got != delegationDigest {
+		t.Fatalf("publication delegation_digest: got %s, want %s", got, delegationDigest)
+	}
+	if _, ok := vector.Delegation.Payload["publication_digest"]; ok {
+		t.Fatalf("delegation payload must not include publication_digest; v1 avoids mutual digest cycles")
+	}
+	if _, ok := vector.Delegation.Payload["publication_assertion_id"]; ok {
+		t.Fatalf("delegation payload must not include publication_assertion_id; v1 avoids mutual digest cycles")
+	}
+
+	expectedCodes := []string{
+		"a2a_publication_exists_different_digest",
+		"a2a_publication_exists_different_gateway",
+		"a2a_delegation_missing",
+		"a2a_delegation_digest_mismatch",
+		"a2a_delegation_expired",
+		"a2a_delegation_revoked",
+		"a2a_card_digest_mismatch",
+		"a2a_card_url_invalid",
+		"a2a_rpc_url_invalid",
+		"a2a_route_id_invalid",
+		"a2a_identity_signature_invalid",
+		"a2a_delegation_signature_invalid",
+		"a2a_timestamp_stale",
+		"a2a_namespace_not_registered",
+		"a2a_address_not_registered",
+		"a2a_custody_combination_unsupported",
+		"a2a_authority_source_invalid",
+		"a2a_payload_canonicalization_mismatch",
+		"a2a_primitive_disabled",
+		"a2a_primitive_not_supported",
+	}
+	if strings.Join(vector.ConflictCodes, "\n") != strings.Join(expectedCodes, "\n") {
+		t.Fatalf("conflict codes mismatch:\n got: %v\nwant: %v", vector.ConflictCodes, expectedCodes)
+	}
+}
+
 func readA2AVector(t *testing.T) a2aVector {
 	t.Helper()
 	data := readRootVector(t, "a2a-v1.json")
@@ -1031,6 +1117,24 @@ func TestRotationAnnouncementVectors(t *testing.T) {
 func strField(m map[string]interface{}, key string) string {
 	if v, ok := m[key].(string); ok {
 		return v
+	}
+	return ""
+}
+
+func signedPayloadDigest(canonical, signature string) (string, error) {
+	signatureBytes, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte(canonical))
+	_, _ = h.Write(signatureBytes)
+	return "sha256:" + base64.RawStdEncoding.EncodeToString(h.Sum(nil)), nil
+}
+
+func stringValue(value any) string {
+	if out, ok := value.(string); ok {
+		return out
 	}
 	return ""
 }
