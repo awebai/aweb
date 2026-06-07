@@ -57,6 +57,8 @@ https://{host}/.well-known/agent-card.json
 
 An Agent Card declares skills, supported interfaces, protocol binding, protocol version, capabilities, input/output media types, and auth requirements. A2A v1.0 supports multiple protocol bindings; this contract targets **JSON-RPC** first.
 
+The gateway ingress contract is strict A2A v1.0. It does not silently accept pre-1.0 method aliases such as `message/send` or lowercase task-state values. Any compatibility mode for older event harnesses or SDKs must be explicit, separately tested, and not mixed into the product-trusted v1.0 contract.
+
 The JSON-RPC method names in this contract use the A2A v1.0 names:
 
 - `SendMessage`
@@ -71,6 +73,7 @@ Task states in wire-level examples use the A2A v1.0 enum names:
 - `TASK_STATE_SUBMITTED`
 - `TASK_STATE_WORKING`
 - `TASK_STATE_INPUT_REQUIRED`
+- `TASK_STATE_AUTH_REQUIRED`
 - `TASK_STATE_COMPLETED`
 - `TASK_STATE_FAILED`
 - `TASK_STATE_CANCELED`
@@ -217,7 +220,32 @@ Generated cards MUST use A2A v1.0 field names and media-type input/output modes.
 
 Cards MAY include additional A2A v1.0 fields. Implementation MUST validate generated cards against pinned A2A schema/proto fixtures before release.
 
-### 5.2 Root Router Card
+`AgentCard.version` is the card/service contract version. `supportedInterfaces[].protocolVersion` is the A2A protocol version. Generated cards must not use a top-level `protocolVersion` or `url`; endpoint and protocol version live under `supportedInterfaces[]`.
+
+### 5.2 Pinned Source and Digest Fixtures
+
+The implementation contract is pinned to:
+
+```text
+repo: https://github.com/a2aproject/A2A
+tag: v1.0.1
+commit: 3303592588e388e62e0f69f701af531d2f4e3991
+proto: specification/a2a.proto
+spec: docs/specification.md
+```
+
+Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/internal/conformance`.
+
+`card_digest` is computed as:
+
+1. Remove the top-level `signatures` field from the Agent Card if present.
+2. Canonicalize the remaining Agent Card object with `awid.CanonicalJSONValue`-compatible canonical JSON.
+3. Compute SHA-256 over the UTF-8 canonical JSON bytes.
+4. Encode as `sha256:<lowercase-hex>`.
+
+This digest is the byte contract used by AWID A2A publication assertions. A later change to the A2A source version, card field shape, digest bytes, or canonicalization rule must update the fixture and receive Athena review before implementation follows it.
+
+### 5.3 Root Router Card
 
 When a host has multiple bridged addresses and no explicit default, the root card can describe a router:
 
@@ -348,7 +376,7 @@ Verifiers MUST NOT blindly trust arbitrary `jku` URLs in a card signature.
 Aweb-aware verification derives or allowlists JWKS location from AWID/directory state:
 
 1. Fetch card.
-2. Compute card digest.
+2. Compute card digest according to `docs/vectors/a2a-v1.json`.
 3. Resolve address/card publication through AWID.
 4. Verify digest, signer, delegation, expiry, and key history.
 5. Only then fetch/accept the expected JWKS or public key material.
@@ -512,7 +540,7 @@ When implemented, `SendStreamingMessage` uses the same task row and event stream
 
 - stream `TASK_STATE_SUBMITTED` / `TASK_STATE_WORKING`;
 - stream agent intermediate messages if the aweb side emits them;
-- end with `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_FAILED`, or `TASK_STATE_REJECTED`.
+- end with `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, or `TASK_STATE_REJECTED`.
 
 Streaming is not a separate execution path.
 
@@ -763,13 +791,11 @@ Subdomains are compatibility fallback, not the default product model.
 
 ## 16. Open Questions
 
-1. Exact A2A v1.0 schema source and generated fixture tooling.
-2. Exact canonical digest bytes for `card_digest`.
-3. Whether `ListTasks` is required by the event harness.
-4. Whether first deployment uses mail threads or chat threads as the durable aweb primitive.
-5. Exact gateway wake path for Hetzner agents.
-6. Auth mode for public event routes.
-7. Minimal AWID publication implementation needed before product launch.
+1. Whether `ListTasks` is required by the event harness.
+2. Whether first deployment uses mail threads or chat threads as the durable aweb primitive.
+3. Exact gateway wake path for Hetzner agents.
+4. Auth mode for public event routes.
+5. Minimal AWID publication implementation needed before product launch.
 
 ## Appendix A: Product Examples
 

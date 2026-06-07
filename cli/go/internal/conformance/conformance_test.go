@@ -313,6 +313,315 @@ func nullableString(value any) string {
 	return ""
 }
 
+// --- a2a-v1 ---
+
+type a2aVector struct {
+	Source             a2aSource     `json:"source"`
+	CardDigestContract a2aCardDigest `json:"card_digest_contract"`
+	AgentCards         []a2aCardCase `json:"agent_cards"`
+	JSONRPC            []a2aRPCCase  `json:"jsonrpc"`
+}
+
+type a2aSource struct {
+	Name      string   `json:"name"`
+	Repo      string   `json:"repo"`
+	Tag       string   `json:"tag"`
+	Commit    string   `json:"commit"`
+	ProtoPath string   `json:"proto_path"`
+	SpecPath  string   `json:"spec_path"`
+	Notes     []string `json:"normative_notes"`
+}
+
+type a2aCardDigest struct {
+	Algorithm        string   `json:"algorithm"`
+	Encoding         string   `json:"encoding"`
+	Canonicalization string   `json:"canonicalization"`
+	ExcludedFields   []string `json:"excluded_fields"`
+}
+
+type a2aCardCase struct {
+	Name                 string         `json:"name"`
+	Path                 string         `json:"path"`
+	CanonicalNoSignature string         `json:"canonical_no_signatures"`
+	Digest               string         `json:"digest"`
+	Card                 map[string]any `json:"card"`
+}
+
+type a2aRPCCase struct {
+	Name    string         `json:"name"`
+	Kind    string         `json:"kind"`
+	Method  string         `json:"method"`
+	Payload map[string]any `json:"payload"`
+}
+
+func TestA2AV1AgentCardVectors(t *testing.T) {
+	vector := readA2AVector(t)
+
+	if vector.Source.Repo != "https://github.com/a2aproject/A2A" ||
+		vector.Source.Tag != "v1.0.1" ||
+		vector.Source.Commit != "3303592588e388e62e0f69f701af531d2f4e3991" ||
+		vector.Source.ProtoPath != "specification/a2a.proto" {
+		t.Fatalf("unexpected A2A source pin: %+v", vector.Source)
+	}
+	if vector.CardDigestContract.Algorithm != "sha256" {
+		t.Fatalf("digest algorithm: got %q, want sha256", vector.CardDigestContract.Algorithm)
+	}
+	if vector.CardDigestContract.Encoding != "sha256:<lowercase-hex>" {
+		t.Fatalf("digest encoding: got %q", vector.CardDigestContract.Encoding)
+	}
+	if len(vector.CardDigestContract.ExcludedFields) != 1 || vector.CardDigestContract.ExcludedFields[0] != "signatures" {
+		t.Fatalf("digest excluded fields: got %#v, want [signatures]", vector.CardDigestContract.ExcludedFields)
+	}
+
+	for _, tc := range vector.AgentCards {
+		t.Run(tc.Name, func(t *testing.T) {
+			requireA2ACardHasNoLegacyFields(t, tc.Card)
+			requireA2ACardVersionDistinction(t, tc.Card)
+			requireA2ACardModesAreMediaTypes(t, tc.Card)
+			requireA2ACardCapabilitiesAreV1(t, tc.Card)
+			requireA2ACardInterfaces(t, tc)
+
+			cardForDigest := cloneMap(tc.Card)
+			delete(cardForDigest, "signatures")
+			canonical, err := awid.CanonicalJSONValue(cardForDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if canonical != tc.CanonicalNoSignature {
+				t.Fatalf("canonical_no_signatures:\n got:  %s\n want: %s", canonical, tc.CanonicalNoSignature)
+			}
+			sum := sha256.Sum256([]byte(canonical))
+			if got := "sha256:" + hex.EncodeToString(sum[:]); got != tc.Digest {
+				t.Fatalf("digest: got %s, want %s", got, tc.Digest)
+			}
+		})
+	}
+}
+
+func TestA2AV1JSONRPCVectors(t *testing.T) {
+	vector := readA2AVector(t)
+	allowedMethods := map[string]bool{
+		"SendMessage":          true,
+		"SendStreamingMessage": true,
+		"GetTask":              true,
+		"ListTasks":            true,
+		"CancelTask":           true,
+		"SubscribeToTask":      true,
+	}
+	allowedStates := map[string]bool{
+		"TASK_STATE_SUBMITTED":      true,
+		"TASK_STATE_WORKING":        true,
+		"TASK_STATE_INPUT_REQUIRED": true,
+		"TASK_STATE_AUTH_REQUIRED":  true,
+		"TASK_STATE_COMPLETED":      true,
+		"TASK_STATE_FAILED":         true,
+		"TASK_STATE_CANCELED":       true,
+		"TASK_STATE_REJECTED":       true,
+	}
+
+	seen := map[string]a2aRPCCase{}
+	for _, tc := range vector.JSONRPC {
+		t.Run(tc.Name, func(t *testing.T) {
+			seen[tc.Name] = tc
+			if tc.Payload["jsonrpc"] != "2.0" {
+				t.Fatalf("jsonrpc: got %v, want 2.0", tc.Payload["jsonrpc"])
+			}
+			if !allowedMethods[tc.Method] {
+				t.Fatalf("fixture method %q is not an A2A v1 JSON-RPC method", tc.Method)
+			}
+			if strings.Contains(tc.Method, "/") {
+				t.Fatalf("legacy slash method name %q", tc.Method)
+			}
+			switch tc.Kind {
+			case "request":
+				if tc.Payload["method"] != tc.Method {
+					t.Fatalf("request method: got %v, want %s", tc.Payload["method"], tc.Method)
+				}
+			case "response":
+				if _, ok := tc.Payload["method"]; ok {
+					t.Fatalf("response must not contain method")
+				}
+			default:
+				t.Fatalf("unknown JSON-RPC fixture kind %q", tc.Kind)
+			}
+			for _, state := range collectA2AStates(tc.Payload) {
+				if !allowedStates[state] {
+					t.Fatalf("state %q is not in the A2A v1 task state set", state)
+				}
+			}
+		})
+	}
+
+	immediate, ok := seen["send_message_immediate_request"]
+	if !ok {
+		t.Fatalf("missing send_message_immediate_request fixture")
+	}
+	config, ok := nestedMap(immediate.Payload, "params", "configuration")
+	if !ok {
+		t.Fatalf("send_message_immediate_request missing params.configuration")
+	}
+	if config["returnImmediately"] != true {
+		t.Fatalf("returnImmediately: got %v, want true", config["returnImmediately"])
+	}
+
+	timeout, ok := seen["send_message_wait_timeout_failed_response"]
+	if !ok {
+		t.Fatalf("missing send_message_wait_timeout_failed_response fixture")
+	}
+	states := collectA2AStates(timeout.Payload)
+	if !containsString(states, "TASK_STATE_FAILED") {
+		t.Fatalf("wait-timeout fixture must return TASK_STATE_FAILED, got %#v", states)
+	}
+	if containsString(states, "TASK_STATE_WORKING") {
+		t.Fatalf("wait-timeout fixture must not leave task in TASK_STATE_WORKING")
+	}
+}
+
+func readA2AVector(t *testing.T) a2aVector {
+	t.Helper()
+	data := readRootVector(t, "a2a-v1.json")
+	var vector a2aVector
+	if err := json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	return vector
+}
+
+func requireA2ACardHasNoLegacyFields(t *testing.T, card map[string]any) {
+	t.Helper()
+	for _, field := range []string{"protocolVersion", "url", "stateTransitionHistory", "security"} {
+		if _, ok := card[field]; ok {
+			t.Fatalf("AgentCard must not contain legacy/non-v1 top-level field %q", field)
+		}
+	}
+}
+
+func requireA2ACardVersionDistinction(t *testing.T, card map[string]any) {
+	t.Helper()
+	version, ok := card["version"].(string)
+	if !ok || version == "" {
+		t.Fatalf("AgentCard missing service/card version")
+	}
+	if version == "1.0" {
+		t.Fatalf("AgentCard.version %q looks like the A2A protocol version; supportedInterfaces[].protocolVersion carries protocol version", version)
+	}
+}
+
+func requireA2ACardModesAreMediaTypes(t *testing.T, card map[string]any) {
+	t.Helper()
+	for _, field := range []string{"defaultInputModes", "defaultOutputModes"} {
+		values, ok := card[field].([]any)
+		if !ok || len(values) == 0 {
+			t.Fatalf("AgentCard %s must be a non-empty array", field)
+		}
+		for _, value := range values {
+			mode, ok := value.(string)
+			if !ok || !strings.Contains(mode, "/") {
+				t.Fatalf("AgentCard %s value %v is not a media type", field, value)
+			}
+		}
+	}
+}
+
+func requireA2ACardCapabilitiesAreV1(t *testing.T, card map[string]any) {
+	t.Helper()
+	capabilities, ok := card["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("AgentCard missing capabilities object")
+	}
+	allowed := map[string]bool{
+		"streaming":         true,
+		"pushNotifications": true,
+		"extensions":        true,
+		"extendedAgentCard": true,
+	}
+	for field := range capabilities {
+		if !allowed[field] {
+			t.Fatalf("AgentCard capabilities contains non-v1 field %q", field)
+		}
+	}
+}
+
+func requireA2ACardInterfaces(t *testing.T, tc a2aCardCase) {
+	t.Helper()
+	interfaces, ok := tc.Card["supportedInterfaces"].([]any)
+	if !ok || len(interfaces) == 0 {
+		t.Fatalf("AgentCard missing supportedInterfaces")
+	}
+	for _, value := range interfaces {
+		iface, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("supportedInterfaces entry is not an object: %v", value)
+		}
+		if iface["protocolBinding"] != "JSONRPC" {
+			t.Fatalf("protocolBinding: got %v, want JSONRPC", iface["protocolBinding"])
+		}
+		if iface["protocolVersion"] != "1.0" {
+			t.Fatalf("protocolVersion: got %v, want 1.0", iface["protocolVersion"])
+		}
+		urlValue, ok := iface["url"].(string)
+		if !ok || urlValue == "" {
+			t.Fatalf("supported interface missing url")
+		}
+		if strings.HasPrefix(tc.Path, "/a2a/agents/") {
+			routePrefix := strings.TrimSuffix(tc.Path, "/agent-card.json")
+			if !strings.HasSuffix(urlValue, routePrefix+"/rpc") {
+				t.Fatalf("per-address rpc URL %q does not match card path %q", urlValue, tc.Path)
+			}
+			if _, ok := iface["tenant"]; ok {
+				t.Fatalf("direct per-address card must omit supportedInterfaces[].tenant by default")
+			}
+		} else if tc.Path != "/.well-known/agent-card.json" {
+			t.Fatalf("unexpected card path %q", tc.Path)
+		}
+	}
+}
+
+func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
+	current := root
+	for _, key := range keys {
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func collectA2AStates(value any) []string {
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch typed := v.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if key == "state" {
+					if state, ok := child.(string); ok && strings.HasPrefix(state, "TASK_STATE_") {
+						out = append(out, state)
+					}
+				}
+				walk(child)
+			}
+		case []any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(value)
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 // --- rotation-announcements-v1 ---
 
 type rotationVector struct {
