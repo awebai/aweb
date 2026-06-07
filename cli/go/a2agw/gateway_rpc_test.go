@@ -259,6 +259,9 @@ func TestGatewayRPCBridgeNotConfiguredFailsClosed(t *testing.T) {
 	if gw.Health().TaskExecution {
 		t.Fatal("task execution should be false when bridge is not configured")
 	}
+	if len(gw.tasks.tasks) != 0 {
+		t.Fatalf("nil bridge must fail before task creation, got %d tasks", len(gw.tasks.tasks))
+	}
 }
 
 func rpcEnvelope(id, method string, params any) map[string]any {

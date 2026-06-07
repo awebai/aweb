@@ -119,6 +119,9 @@ func (g *Gateway) handleRPCMethod(ctx context.Context, route Route, req rpcReque
 }
 
 func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
+	if !g.taskExecution {
+		return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})
+	}
 	var params sendMessageParams
 	if err := parseRawObject(raw, &params); err != nil {
 		return nil, jsonRPCError(-32602, "invalid params", requestID, map[string]any{"detail": err.Error()})
