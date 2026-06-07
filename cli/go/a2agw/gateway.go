@@ -24,6 +24,7 @@ type Config struct {
 	DefaultRouteID string
 	RouterCard     RouterCard
 	Routes         []Route
+	Bridge         Bridge
 }
 
 type Route struct {
@@ -78,10 +79,13 @@ type AWIDPublicationExpectation struct {
 }
 
 type Gateway struct {
-	config       Config
-	rootCard     a2a.Card
-	routeCards   map[string]a2a.Card
-	routeConfigs map[string]Route
+	config        Config
+	rootCard      a2a.Card
+	routeCards    map[string]a2a.Card
+	routeConfigs  map[string]Route
+	bridge        Bridge
+	tasks         *taskStore
+	taskExecution bool
 }
 
 type Health struct {
@@ -206,7 +210,13 @@ func New(config Config) (*Gateway, error) {
 		return nil, fmt.Errorf("root card validation: %w", err)
 	}
 	config.RootCardMode = mode
-	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs}, nil
+	bridge := config.Bridge
+	taskExecution := true
+	if bridge == nil {
+		bridge = notReadyBridge{}
+		taskExecution = false
+	}
+	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), taskExecution: taskExecution}, nil
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -231,14 +241,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "route_not_found"})
 			return
 		}
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "jsonrpc_not_ready", "message": "A2A task execution is implemented by aweb-aaqa.4"})
+		g.serveRPC(w, r, routeID)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 	}
 }
 
 func (g *Gateway) Health() Health {
-	return Health{Status: "ok", Host: g.config.Host, RootCardMode: g.config.RootCardMode, Routes: len(g.routeCards), TaskExecution: false}
+	return Health{Status: "ok", Host: g.config.Host, RootCardMode: g.config.RootCardMode, Routes: len(g.routeCards), TaskExecution: g.taskExecution}
 }
 
 func (g *Gateway) Diagnostics() Diagnostics {
@@ -262,7 +272,15 @@ func (g *Gateway) Diagnostics() Diagnostics {
 			VerificationTier: "unsigned",
 		})
 	}
-	return Diagnostics{Host: g.config.Host, RootCardMode: g.config.RootCardMode, DefaultRouteID: g.config.DefaultRouteID, TaskExecution: false, Routes: routes}
+	return Diagnostics{Host: g.config.Host, RootCardMode: g.config.RootCardMode, DefaultRouteID: g.config.DefaultRouteID, TaskExecution: g.taskExecution, Routes: routes}
+}
+
+func (g *Gateway) ApplyBridgeReply(reply BridgeReply) (Task, bool, error) {
+	record, ok, err := g.tasks.applyReply(reply)
+	if err != nil || !ok {
+		return Task{}, ok, err
+	}
+	return record.Task, true, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

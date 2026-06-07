@@ -70,7 +70,7 @@ func TestGatewayMultiRouteMissingRootFails(t *testing.T) {
 	}
 }
 
-func TestGatewayDiagnosticsAndNotReadyRPC(t *testing.T) {
+func TestGatewayDiagnosticsAndRPCMethodGuard(t *testing.T) {
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Routes: []Route{supportRoute("r_support")}})
 	health := fetchJSON(t, gw, "/health", http.StatusOK)
 	if health["task_execution"] != false {
@@ -80,8 +80,8 @@ func TestGatewayDiagnosticsAndNotReadyRPC(t *testing.T) {
 	if diag["task_execution"] != false {
 		t.Fatalf("config task_execution: got %v, want false", diag["task_execution"])
 	}
-	rpc := fetchJSON(t, gw, "/a2a/agents/r_support/rpc", http.StatusNotImplemented)
-	if rpc["error"] != "jsonrpc_not_ready" {
+	rpc := fetchJSON(t, gw, "/a2a/agents/r_support/rpc", http.StatusMethodNotAllowed)
+	if rpc["error"] != "method_not_allowed" {
 		t.Fatalf("rpc error: got %v", rpc["error"])
 	}
 	missing := fetchJSON(t, gw, "/a2a/agents/missing/rpc", http.StatusNotFound)
