@@ -22,6 +22,7 @@ from awid.a2a_publication import (
     normalize_a2a_delegation_fields,
     normalize_a2a_publication_fields,
     signed_assertion_digest,
+    validate_route_id,
 )
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -57,6 +58,14 @@ def test_a2a_publication_vector_canonical_bytes_and_conflict_codes():
         vector["delegation"]["signature"],
     )
     assert vector["publication"]["payload"]["delegation_digest"] == delegation_digest
+
+
+def test_a2a_route_id_validation_matches_gateway_path_safe_subset():
+    for route_id in ("r_Help_01", "r.help.01", "R_help", "r-help_01"):
+        assert validate_route_id(route_id) == route_id
+    for route_id in ("", ".", "..", "a..b", "bad/route", "bad route"):
+        with pytest.raises(ValueError):
+            validate_route_id(route_id)
 
 
 async def _register_namespace(client, signing_key, controller_did, domain="example.com"):
@@ -261,6 +270,18 @@ async def test_a2a_delegation_bad_signature_fails_before_writes(client, awid_db_
         seed,
         signature_override=sign_message(other_signing_key, b"not the canonical payload"),
     )
+
+    resp = await client.post("/v1/a2a/delegations", json=delegation)
+
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"]["code"] == "a2a_delegation_signature_invalid"
+    assert await _counts(awid_db_infra) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_a2a_delegation_malformed_signature_fails_structured(client, awid_db_infra, controller_identity):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    delegation = _delegation_body(seed, signature_override="not*base64")
 
     resp = await client.post("/v1/a2a/delegations", json=delegation)
 

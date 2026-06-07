@@ -50,7 +50,7 @@ A2A_CONFLICT_CODES = (
     "a2a_primitive_not_supported",
 )
 
-_ROUTE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
+_ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _ASSERTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _DIGEST_HEX_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIGEST_B64_RE = re.compile(r"^sha256:[A-Za-z0-9+/]+$")
@@ -119,6 +119,8 @@ def decode_raw_standard_b64(value: str, *, field_name: str) -> bytes:
     value = (value or "").strip()
     if not value:
         raise ValueError(f"{field_name} must not be empty")
+    if "=" in value:
+        raise ValueError(f"{field_name} must be standard base64 without padding")
     try:
         return base64.b64decode(value + "=" * (-len(value) % 4), validate=True)
     except Exception as exc:
@@ -171,8 +173,8 @@ def normalize_https_url(value: str, *, field_name: str) -> str:
 
 def validate_route_id(route_id: str) -> str:
     route_id = (route_id or "").strip()
-    if not _ROUTE_RE.match(route_id):
-        raise ValueError("route_id must be a URL-safe opaque route id")
+    if route_id in {".", ".."} or ".." in route_id or not _ROUTE_RE.match(route_id):
+        raise ValueError("route_id must be a non-empty path-safe segment")
     return route_id
 
 
