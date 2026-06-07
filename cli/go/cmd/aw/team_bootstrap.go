@@ -662,7 +662,7 @@ func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if anchorDir == "" {
-		return usageError("aw agents add-worktree requires an existing provisioned agent in this layout; run `aw agents bootstrap` or `aw agents provision` first")
+		return usageError("aw agents add-worktree requires an existing provisioned agent in this agents layout for team-join authority; run `aw agents bootstrap` or `aw agents provision` first, or use `aw workspace add-worktree` outside an agents layout")
 	}
 	client, _, err := resolveClientSelectionForDir(anchorDir)
 	if err != nil {
@@ -944,8 +944,13 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 		}
 	}
 	workspaceDir := homeDir
+	legacyWorktreeState := false
 	if workBinding == agentsWorkGitWorktree && strings.TrimSpace(workDir) != "" {
 		workspaceDir = workDir
+		if !agentsRemovePathExists(filepath.Join(workspaceDir, ".aw")) && agentsRemovePathExists(filepath.Join(homeDir, ".aw")) {
+			workspaceDir = homeDir
+			legacyWorktreeState = true
+		}
 	}
 
 	identity, _, _ := awconfig.LoadWorktreeIdentityFromDir(workspaceDir)
@@ -987,6 +992,9 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 	}
 	if strings.TrimSpace(memberAddress) != "" && !agentsRemoveDeleteAddress {
 		out.Warnings = append(out.Warnings, "global address is preserved by default; pass --delete-global-address to delete it after membership revocation")
+	}
+	if legacyWorktreeState {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("legacy worktree .aw state found at %s/.aw; this command will deprovision that state, then remove the git worktree. Run aw agents provision after upgrading to recreate worktree-bound runtime state under %s/.aw.", homeDir, workDir))
 	}
 	if agentsRemoveRemoveLayout && !agentsRemoveDeprovisionLocal && agentsRemovePathExists(filepath.Join(workspaceDir, ".aw")) {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("--remove-layout will leave active local .aw state for %s in %s without revoking membership; add --deprovision-local first if this agent should stop acting in the team", responsibility, workspaceDir))

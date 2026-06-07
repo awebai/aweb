@@ -1220,6 +1220,69 @@ func TestAgentsRemoveWorktreeDeprovisionMovesLocalStateAndRemovesWorktree(t *tes
 	}
 }
 
+func TestAgentsRemoveWorktreeDeprovisionHandlesLegacyHomeState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	worktreePath := filepath.Join(repoDir, "agents", "worktrees", "implementation")
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	branchCreated, err := createWorkspaceGitWorktree(repoDir, worktreePath, "implementation", true)
+	if err != nil {
+		t.Fatalf("create fixture worktree: %v", err)
+	}
+	if !branchCreated {
+		t.Fatal("expected fixture worktree branch to be created")
+	}
+	legacyAWDir := filepath.Join(repoDir, "agents", "home", "implementation", ".aw")
+	if err := os.MkdirAll(legacyAWDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAWDir, "marker"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildAgentsRemovePlan("implementation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedLegacyHome, err := filepath.EvalSymlinks(filepath.Join(repoDir, "agents", "home", "implementation"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Output.WorkspaceDir != expectedLegacyHome {
+		t.Fatalf("workspace_dir=%q want legacy home %q", plan.Output.WorkspaceDir, expectedLegacyHome)
+	}
+	if len(plan.Output.Warnings) == 0 || !strings.Contains(strings.Join(plan.Output.Warnings, "\n"), "legacy worktree .aw state") {
+		t.Fatalf("warnings=%v, want legacy migration warning", plan.Output.Warnings)
+	}
+
+	agentsRemoveDeprovisionLocal = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"implementation"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "implementation", ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "implementation"))
+	backupRoot, err := awconfig.PathInAWIDState("agents-remove-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(backupRoot, "*-implementation-*", ".aw", "marker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one moved legacy .aw marker under %s, got %v", backupRoot, matches)
+	}
+}
+
 func TestAgentsRemoveLayoutMovesHomeAndRemovesSpec(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	t.Setenv("HOME", t.TempDir())
