@@ -130,9 +130,6 @@ Canonical templates:
 - awebai/aweb-team-coord-worktrees
   Use when you want a coordinator plus isolated developer/reviewer git
   worktrees in the current repo.
-- awebai/aweb-team-dev-review
-  Use when you want the smallest meaningful team: implementation +
-  review.
 - awebai/aweb-team-company-surfaces
   Use when you want a cross-functional team: direction/engineering/
   operations/support/outreach/analytics.
@@ -156,7 +153,7 @@ directory.
 Typical safe flow:
 
 ```bash
-git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
+git clone https://github.com/awebai/aweb-team-coord-worktrees.git my-team-template
 cd my-team-template
 # edit team.yaml, roles/*.md, docs/team.md, home/<responsibility>/AGENTS.md
 cd /path/to/project-repo

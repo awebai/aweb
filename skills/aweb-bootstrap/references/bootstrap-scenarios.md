@@ -118,7 +118,7 @@ Checklist:
 
 Example:
 
-  git clone https://github.com/awebai/aweb-team-dev-review.git my-team-template
+  git clone https://github.com/awebai/aweb-team-coord-worktrees.git my-team-template
   cd my-team-template
   # edit team.yaml / roles / docs / home
   cd /path/to/project-repo
@@ -140,7 +140,7 @@ Checklist:
 
 Example shape:
 
-  aw agents bootstrap https://github.com/awebai/aweb-team-dev-review.git \
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
     --namespace example.com \
     --team dev \
     --identity-prefix juan
