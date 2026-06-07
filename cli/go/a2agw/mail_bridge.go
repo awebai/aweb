@@ -121,7 +121,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		RouteID:         task.RouteID,
 		TargetAddress:   task.Address,
 		GatewayIdentity: b.gatewayIdentity,
-		CallerScope:     task.CallerScope,
+		CallerScope:     bridgeVisibleCallerScope(task.CallerScope),
 		State:           TaskStateWorking,
 		RequestID:       task.RequestID,
 	}, task.Text)
@@ -259,6 +259,14 @@ func (b *MailBridge) send(ctx context.Context, req *awid.SendMessageRequest) (*a
 		return b.client.SendMessageByIdentity(ctx, req)
 	}
 	return b.client.SendMessage(ctx, req)
+}
+
+func bridgeVisibleCallerScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if strings.HasPrefix(scope, "auth:") {
+		return "auth:" + auditHash(strings.TrimPrefix(scope, "auth:"))
+	}
+	return scope
 }
 
 func (b *MailBridge) thread(taskID string) *mailBridgeThread {

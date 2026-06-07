@@ -59,6 +59,30 @@ func TestMailBridgeSendIngestReplyAndGetCompletedTask(t *testing.T) {
 	assertAuditRedacted(t, audit.events, "Where is order 1234?")
 }
 
+func TestMailBridgeDoesNotLeakAuthorizationToRecipient(t *testing.T) {
+	transport := &fakeMailTransport{}
+	bridge := newTestMailBridge(t, transport, nil)
+	route := supportRoute("r_support")
+	route.Auth.Mode = "bearer"
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{route}})
+	bridge.SetReplyApplier(gw)
+
+	postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
+		"message":       testUserMessage("msg-1", "ctx-1", "hello"),
+		"configuration": map[string]any{"returnImmediately": true},
+	}), map[string]string{"Authorization": "Bearer s3cret-jwt-do-not-leak"}, 200)
+	if len(transport.sent) != 1 {
+		t.Fatalf("sent=%d, want 1", len(transport.sent))
+	}
+	body := transport.sent[0].Body
+	if strings.Contains(body, "s3cret-jwt-do-not-leak") || strings.Contains(body, "Bearer ") {
+		t.Fatalf("bridge leaked Authorization header to recipient:\n%s", body)
+	}
+	if !strings.Contains(body, `"caller_scope": "auth:`) {
+		t.Fatalf("bridge body should preserve opaque auth caller scope:\n%s", body)
+	}
+}
+
 func TestMailBridgeReplyStatesAndMalformedBlocks(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
