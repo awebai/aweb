@@ -21,7 +21,7 @@ Diagnose and fix the aweb channel setup for this project.
    Tell the user to run:
 
    ```bash
-   aw run claude
+   aw init --setup-channel
    ```
 
    Or use the explicit invite flow:
