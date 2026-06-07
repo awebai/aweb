@@ -33,9 +33,11 @@ The fixture `docs/vectors/a2a-awid-publication-v1.json` contains release-blockin
 
 - `publication.canonical`
 - `delegation.canonical`
-- `publication_delegation_hash`
+- `publication.payload.delegation_digest`
 
 Go producer tests and AWID/Python verifier tests must assert the same bytes before implementation release.
+
+The v1 fixture is a canonical/digest fixture, not a cryptographic verification fixture: its `signature` values are deterministic placeholder bytes used only to pin signed-payload digest bytes. Before any verifier release, `.8` must add real Ed25519 verification fixtures with valid `did:key` material and signatures for both publication and delegation assertions.
 
 ## Publication Assertion
 
@@ -73,7 +75,7 @@ Exact signed payload fields:
 | `published_at` | yes | Signed timestamp. |
 | `expires_at` | yes | Expiry timestamp. |
 | `registry_url` | yes | Canonical registry origin, e.g. `https://api.awid.ai`. |
-| `identity_custody` | yes | `self`, `hosted_custodial`, or `delegated_bridge`. |
+| `identity_custody` | yes | Identity private-key custody only: `self` or `hosted_custodial`. Bridge/delegation custody is represented by the delegation assertion's `custody_mode`, not this field. |
 | `authority_source` | yes | Machine value naming how authority was presented. |
 
 The wire object also carries `signature`, but `signature` is not part of the signed payload.
@@ -126,6 +128,8 @@ sha256:<base64-raw-std-no-padding>(SHA256(canonical_delegation_bytes || decoded_
 ```
 
 V1 intentionally avoids a mutual digest cycle. The delegation assertion independently authorizes `address`, `route_id`, `card_url`, `rpc_url`, allowed operations, gateway identity, expiry, and custody mode. The publication assertion may then bind that delegation by `delegation_id` and `delegation_digest`. A delegation assertion must not require a digest of the publication assertion that already embeds the delegation digest.
+
+`allowed_operations` array order is signed and therefore semantically significant. V1 uses the product order shown in this contract and fixture: `send_task`, `receive_reply`, `cancel_task`, `serve_card`. Implementations must emit that order for the minimum set and append later operations only through a contract amendment; they must not sort or reorder the array ad hoc.
 
 ## Custody and Authority Matrix
 
@@ -211,7 +215,6 @@ Anonymous read/discovery is allowed. Minimum response for aweb-aware discovery:
     "card_url": "https://acme.com/a2a/agents/r_help_01/agent-card.json",
     "rpc_url": "https://acme.com/a2a/agents/r_help_01/rpc",
     "route_id": "r_help_01",
-    "tenant": "",
     "gateway_identity": "did:aw:...",
     "card_digest_alg": "sha256",
     "card_digest": "sha256:...",

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -378,8 +379,10 @@ type a2aReplyCase struct {
 }
 
 type a2aAWIDPublicationVector struct {
-	Version          string `json:"version"`
-	Canonicalization string `json:"canonicalization"`
+	Version          string   `json:"version"`
+	FixtureKind      string   `json:"fixture_kind"`
+	Notes            []string `json:"notes"`
+	Canonicalization string   `json:"canonicalization"`
 	Publication      struct {
 		Payload   map[string]any `json:"payload"`
 		Canonical string         `json:"canonical"`
@@ -760,9 +763,13 @@ func TestA2AAWIDPublicationVectors(t *testing.T) {
 	if vector.Version != "a2a-awid-publication-v1" {
 		t.Fatalf("version: got %q", vector.Version)
 	}
+	if vector.FixtureKind != "canonical_digest_only_non_verifying_signatures" {
+		t.Fatalf("fixture_kind: got %q", vector.FixtureKind)
+	}
 	if vector.Canonicalization != "awid.CanonicalJSONValue" {
 		t.Fatalf("canonicalization: got %q", vector.Canonicalization)
 	}
+	requireA2AAWIDCardDigestMatchesCardVector(t, vector.Publication.Payload)
 
 	publicationCanonical, err := awid.CanonicalJSONValue(vector.Publication.Payload)
 	if err != nil {
@@ -819,6 +826,32 @@ func TestA2AAWIDPublicationVectors(t *testing.T) {
 	if strings.Join(vector.ConflictCodes, "\n") != strings.Join(expectedCodes, "\n") {
 		t.Fatalf("conflict codes mismatch:\n got: %v\nwant: %v", vector.ConflictCodes, expectedCodes)
 	}
+}
+
+func requireA2AAWIDCardDigestMatchesCardVector(t *testing.T, payload map[string]any) {
+	t.Helper()
+	cardURL := stringValue(payload["card_url"])
+	if cardURL == "" {
+		t.Fatalf("publication payload missing card_url")
+	}
+	parsed, err := url.Parse(cardURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cardDigest := stringValue(payload["card_digest"])
+	if cardDigest == "" {
+		t.Fatalf("publication payload missing card_digest")
+	}
+	a2aVector := readA2AVector(t)
+	for _, cardCase := range a2aVector.AgentCards {
+		if cardCase.Path == parsed.Path {
+			if cardCase.Digest != cardDigest {
+				t.Fatalf("card_digest for %s: got %s, want %s from a2a-v1 vector", parsed.Path, cardDigest, cardCase.Digest)
+			}
+			return
+		}
+	}
+	t.Fatalf("no a2a-v1 card vector found for path %s", parsed.Path)
 }
 
 func readA2AVector(t *testing.T) a2aVector {
