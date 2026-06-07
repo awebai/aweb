@@ -748,6 +748,85 @@ else
   pass=$((pass + 1))
 fi
 
+run_success "agents add global support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add support \
+  --global \
+  --namespace bootstrap.local \
+  --team circle \
+  --identity-prefix global \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+assert_file_exists "agents add global support identity" "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/identity.yaml"
+if grep -Fq 'address: bootstrap.local/global-support' "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/identity.yaml"; then
+  echo "  PASS: agents add global support address"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents add global support address missing"
+  fail=$((fail + 1))
+fi
+run_success "agents add global support address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global-support --json
+
+run_success "agents remove global support preserves address" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove support \
+  --deprovision-local \
+  --remove-layout
+if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/support" ]]; then
+  echo "  PASS: agents remove global support moved home away"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents remove global support left home in layout"
+  fail=$((fail + 1))
+fi
+if grep -q '^  support:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
+  echo "  FAIL: agents remove global support left team.yaml entry"
+  fail=$((fail + 1))
+else
+  echo "  PASS: agents remove global support removed team.yaml entry"
+  pass=$((pass + 1))
+fi
+run_success "agents remove global support preserved address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global-support --json
+
+run_success "agents add global outreach" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add outreach \
+  --global \
+  --role coordinator \
+  --namespace bootstrap.local \
+  --team circle \
+  --identity-prefix global2 \
+  --aweb-url "$AWEB_URL" \
+  --registry "$AWID_URL"
+assert_file_exists "agents add global outreach identity" "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach/.aw/identity.yaml"
+if grep -Fq 'address: bootstrap.local/global2-outreach' "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach/.aw/identity.yaml"; then
+  echo "  PASS: agents add global outreach address"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents add global outreach address missing"
+  fail=$((fail + 1))
+fi
+run_success "agents add global outreach address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global2-outreach --json
+
+capture_success agents_global_outreach_remove "agents remove global outreach deletes address" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove outreach \
+  --deprovision-local \
+  --delete-global-address \
+  --remove-layout \
+  --json
+global_outreach_deleted="$(echo "$agents_global_outreach_remove" | jq_field global_address_deleted)"
+assert_eq "agents remove global outreach reports address deleted" "True" "$global_outreach_deleted"
+capture_success agents_global_outreach_resolve_deleted "agents remove global outreach deleted address resolve envelope" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global2-outreach --json
+global_outreach_deleted_resolve="$(echo "$agents_global_outreach_resolve_deleted" | python3 -c "import sys,json; d=json.load(sys.stdin); p=d.get('payload',{}); e=p.get('error') or {}; print(f\"{p.get('status','')}:{e.get('code','')}\")" 2>/dev/null || echo "")"
+assert_eq "agents remove global outreach deleted address no longer resolves" "fail:target.not_found" "$global_outreach_deleted_resolve"
+if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach" ]]; then
+  echo "  PASS: agents remove global outreach moved home away"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: agents remove global outreach left home in layout"
+  fail=$((fail + 1))
+fi
+if grep -q '^  outreach:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
+  echo "  FAIL: agents remove global outreach left team.yaml entry"
+  fail=$((fail + 1))
+else
+  echo "  PASS: agents remove global outreach removed team.yaml entry"
+  pass=$((pass + 1))
+fi
+
 run_success "agents add-worktree qa" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add-worktree qa \
   --identity-prefix bootstrap2 \
   --aweb-url "$AWEB_URL" \
