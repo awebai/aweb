@@ -19,7 +19,7 @@
   "card_digest_contract": {
     "algorithm": "sha256",
     "encoding": "sha256:<lowercase-hex>",
-    "canonicalization": "awid.CanonicalJSONValue-compatible canonical JSON over the AgentCard object after omitting signatures.",
+    "canonicalization": "A2A v1.0 card-signature canonical bytes over the materialized AgentCard object after omitting signatures: A2A field/default processing, then JCS/awid.CanonicalJSONValue-compatible canonical JSON.",
     "excluded_fields": ["signatures"]
   },
   "agent_cards": [
@@ -397,6 +397,53 @@
           }
         }
       }
+    }
+  ],
+  "bridge_replies": [
+    {
+      "name": "completed_reply",
+      "current_task_id": "33333333-3333-4333-8333-333333333333",
+      "current_context_id": "22222222-2222-4222-8222-222222222222",
+      "current_task_state": "TASK_STATE_WORKING",
+      "reply": "```a2a-reply\n{\"task_id\":\"33333333-3333-4333-8333-333333333333\",\"context_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"Order 1234 shipped Tuesday.\"}]}\n```",
+      "expected_action": "terminal_update",
+      "expected_task_state": "TASK_STATE_COMPLETED"
+    },
+    {
+      "name": "auth_required_reply",
+      "current_task_id": "33333333-3333-4333-8333-333333333333",
+      "current_context_id": "22222222-2222-4222-8222-222222222222",
+      "current_task_state": "TASK_STATE_WORKING",
+      "reply": "```a2a-reply\n{\"task_id\":\"33333333-3333-4333-8333-333333333333\",\"context_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"auth_required\",\"message\":\"Caller must authenticate before order lookup.\"}\n```",
+      "expected_action": "terminal_update",
+      "expected_task_state": "TASK_STATE_AUTH_REQUIRED"
+    },
+    {
+      "name": "mismatched_task_id_reply",
+      "current_task_id": "33333333-3333-4333-8333-333333333333",
+      "current_context_id": "22222222-2222-4222-8222-222222222222",
+      "current_task_state": "TASK_STATE_WORKING",
+      "reply": "```a2a-reply\n{\"task_id\":\"99999999-9999-4999-8999-999999999999\",\"context_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"Wrong task.\"}]}\n```",
+      "expected_action": "reject_or_ignore",
+      "expected_task_state": "TASK_STATE_WORKING"
+    },
+    {
+      "name": "stray_unfenced_prose",
+      "current_task_id": "33333333-3333-4333-8333-333333333333",
+      "current_context_id": "22222222-2222-4222-8222-222222222222",
+      "current_task_state": "TASK_STATE_WORKING",
+      "reply": "I am checking the order now.",
+      "expected_action": "no_terminal_update",
+      "expected_task_state": "TASK_STATE_WORKING"
+    },
+    {
+      "name": "late_reply_after_timeout_failed",
+      "current_task_id": "44444444-4444-4444-8444-444444444444",
+      "current_context_id": "55555555-5555-4555-8555-555555555555",
+      "current_task_state": "TASK_STATE_FAILED",
+      "reply": "```a2a-reply\n{\"task_id\":\"44444444-4444-4444-8444-444444444444\",\"context_id\":\"55555555-5555-4555-8555-555555555555\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"Late answer.\"}]}\n```",
+      "expected_action": "ignore_terminal_already_final",
+      "expected_task_state": "TASK_STATE_FAILED"
     }
   ]
 }

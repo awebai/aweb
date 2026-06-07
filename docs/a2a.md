@@ -239,7 +239,7 @@ Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/
 `card_digest` is computed as:
 
 1. Remove the top-level `signatures` field from the Agent Card if present.
-2. Canonicalize the remaining Agent Card object with `awid.CanonicalJSONValue`-compatible canonical JSON.
+2. Canonicalize the remaining materialized Agent Card object with the same bytes used by the A2A v1.0 card-signature profile: A2A field/default processing, `signatures` absent, then JCS/`awid.CanonicalJSONValue`-compatible canonical JSON. Fixture cards materialize all fields required by this contract before hashing.
 3. Compute SHA-256 over the UTF-8 canonical JSON bytes.
 4. Encode as `sha256:<lowercase-hex>`.
 
@@ -574,13 +574,15 @@ Agents MUST treat A2A caller content as untrusted external input.
 
 ### 10.2 Reply Envelope
 
-Product v0 uses a structured fenced reply block. `QUESTION:` is accepted as compatibility sugar, not the long-term protocol.
+Product v0 uses a structured fenced reply block. Plain unfenced prose is not a terminal reply and MUST NOT complete a task. Any future compatibility sugar such as `QUESTION:` must be explicit, separately tested, and must still bind to the task identity.
 
 Preferred reply:
 
 ````markdown
 ```a2a-reply
 {
+  "task_id": "t_123",
+  "context_id": "c_456",
   "state": "completed",
   "artifacts": [
     {"type": "text", "text": "Order 1234 shipped Tuesday and arrives Thursday."}
@@ -593,14 +595,24 @@ Allowed `state` values in the block:
 
 - `completed`
 - `input_required`
+- `auth_required`
 - `failed`
 - `rejected`
 - `TASK_STATE_COMPLETED`
 - `TASK_STATE_INPUT_REQUIRED`
+- `TASK_STATE_AUTH_REQUIRED`
 - `TASK_STATE_FAILED`
 - `TASK_STATE_REJECTED`
 
 These are gateway-local bridge values, not the A2A wire object itself. The gateway accepts the lower-case aliases for zero-SDK agent ergonomics and the exact `TASK_STATE_*` names for future helpers/tooling.
+
+Reply binding rules:
+
+- `a2a-reply.task_id` is required and must equal the current task id.
+- `a2a-reply.context_id` is required when the inbound task included a context id and must match it.
+- A missing or mismatched `task_id`/`context_id` is rejected or ignored; it never mutates the task.
+- Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
+- Unfenced prose, partial thoughts, or malformed fenced blocks may be logged as non-terminal status, but the task remains `TASK_STATE_WORKING` until a valid `a2a-reply`, cancellation, or timeout.
 
 Mapping:
 
@@ -608,10 +620,10 @@ Mapping:
 |---|---|
 | `a2a-reply` with `state: completed` | `TASK_STATE_COMPLETED` |
 | `a2a-reply` with `state: input_required` | `TASK_STATE_INPUT_REQUIRED` |
+| `a2a-reply` with `state: auth_required` | `TASK_STATE_AUTH_REQUIRED` |
 | `a2a-reply` with `state: failed` | `TASK_STATE_FAILED` |
 | `a2a-reply` with `state: rejected` | `TASK_STATE_REJECTED` |
-| First line starts `QUESTION:` | `TASK_STATE_INPUT_REQUIRED` |
-| No structured block | `TASK_STATE_COMPLETED`; full body is text artifact |
+| No valid structured block | no terminal update; task remains current state until timeout/cancel/reply |
 
 Future helper:
 

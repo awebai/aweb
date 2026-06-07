@@ -316,10 +316,11 @@ func nullableString(value any) string {
 // --- a2a-v1 ---
 
 type a2aVector struct {
-	Source             a2aSource     `json:"source"`
-	CardDigestContract a2aCardDigest `json:"card_digest_contract"`
-	AgentCards         []a2aCardCase `json:"agent_cards"`
-	JSONRPC            []a2aRPCCase  `json:"jsonrpc"`
+	Source             a2aSource      `json:"source"`
+	CardDigestContract a2aCardDigest  `json:"card_digest_contract"`
+	AgentCards         []a2aCardCase  `json:"agent_cards"`
+	JSONRPC            []a2aRPCCase   `json:"jsonrpc"`
+	BridgeReplies      []a2aReplyCase `json:"bridge_replies"`
 }
 
 type a2aSource struct {
@@ -352,6 +353,16 @@ type a2aRPCCase struct {
 	Kind    string         `json:"kind"`
 	Method  string         `json:"method"`
 	Payload map[string]any `json:"payload"`
+}
+
+type a2aReplyCase struct {
+	Name              string `json:"name"`
+	CurrentTaskID     string `json:"current_task_id"`
+	CurrentContextID  string `json:"current_context_id"`
+	CurrentTaskState  string `json:"current_task_state"`
+	Reply             string `json:"reply"`
+	ExpectedAction    string `json:"expected_action"`
+	ExpectedTaskState string `json:"expected_task_state"`
 }
 
 func TestA2AV1AgentCardVectors(t *testing.T) {
@@ -477,6 +488,114 @@ func TestA2AV1JSONRPCVectors(t *testing.T) {
 	}
 }
 
+func TestA2AV1BridgeReplyVectors(t *testing.T) {
+	vector := readA2AVector(t)
+	terminalStates := map[string]bool{
+		"TASK_STATE_COMPLETED":      true,
+		"TASK_STATE_INPUT_REQUIRED": true,
+		"TASK_STATE_AUTH_REQUIRED":  true,
+		"TASK_STATE_FAILED":         true,
+		"TASK_STATE_CANCELED":       true,
+		"TASK_STATE_REJECTED":       true,
+	}
+	allowedActions := map[string]bool{
+		"terminal_update":               true,
+		"reject_or_ignore":              true,
+		"no_terminal_update":            true,
+		"ignore_terminal_already_final": true,
+	}
+	stateAliases := map[string]string{
+		"completed":                 "TASK_STATE_COMPLETED",
+		"input_required":            "TASK_STATE_INPUT_REQUIRED",
+		"auth_required":             "TASK_STATE_AUTH_REQUIRED",
+		"failed":                    "TASK_STATE_FAILED",
+		"rejected":                  "TASK_STATE_REJECTED",
+		"TASK_STATE_COMPLETED":      "TASK_STATE_COMPLETED",
+		"TASK_STATE_INPUT_REQUIRED": "TASK_STATE_INPUT_REQUIRED",
+		"TASK_STATE_AUTH_REQUIRED":  "TASK_STATE_AUTH_REQUIRED",
+		"TASK_STATE_FAILED":         "TASK_STATE_FAILED",
+		"TASK_STATE_REJECTED":       "TASK_STATE_REJECTED",
+	}
+
+	seen := map[string]bool{}
+	for _, tc := range vector.BridgeReplies {
+		t.Run(tc.Name, func(t *testing.T) {
+			seen[tc.Name] = true
+			if tc.CurrentTaskID == "" {
+				t.Fatalf("bridge reply fixture missing current_task_id")
+			}
+			if !allowedActions[tc.ExpectedAction] {
+				t.Fatalf("unexpected bridge reply expected_action %q", tc.ExpectedAction)
+			}
+			if tc.ExpectedTaskState == "TASK_STATE_UNSPECIFIED" {
+				t.Fatalf("TASK_STATE_UNSPECIFIED is validator-aware only, not a product reply state")
+			}
+			if tc.CurrentTaskState != "" && terminalStates[tc.CurrentTaskState] && tc.ExpectedAction != "ignore_terminal_already_final" {
+				t.Fatalf("terminal current state %s must not be mutated by fixture action %s", tc.CurrentTaskState, tc.ExpectedAction)
+			}
+
+			replyPayload, hasStructuredReply := extractA2AReplyPayload(t, tc.Reply)
+			switch tc.ExpectedAction {
+			case "terminal_update":
+				if !hasStructuredReply {
+					t.Fatalf("terminal update fixture must use fenced a2a-reply")
+				}
+				if replyPayload["task_id"] != tc.CurrentTaskID {
+					t.Fatalf("reply task_id: got %v, want %s", replyPayload["task_id"], tc.CurrentTaskID)
+				}
+				if tc.CurrentContextID != "" && replyPayload["context_id"] != tc.CurrentContextID {
+					t.Fatalf("reply context_id: got %v, want %s", replyPayload["context_id"], tc.CurrentContextID)
+				}
+				state, ok := replyPayload["state"].(string)
+				if !ok {
+					t.Fatalf("structured reply missing state")
+				}
+				if got := stateAliases[state]; got != tc.ExpectedTaskState {
+					t.Fatalf("reply state maps to %s, want %s", got, tc.ExpectedTaskState)
+				}
+				if !terminalStates[tc.ExpectedTaskState] {
+					t.Fatalf("terminal update expected_task_state %s is not terminal", tc.ExpectedTaskState)
+				}
+			case "reject_or_ignore":
+				if !hasStructuredReply {
+					t.Fatalf("reject_or_ignore fixture should exercise a malformed structured reply")
+				}
+				if replyPayload["task_id"] == tc.CurrentTaskID && replyPayload["context_id"] == tc.CurrentContextID {
+					t.Fatalf("reject_or_ignore fixture must mismatch task_id or context_id")
+				}
+				if tc.ExpectedTaskState != tc.CurrentTaskState {
+					t.Fatalf("rejected/ignored reply must leave state unchanged: got %s, want %s", tc.ExpectedTaskState, tc.CurrentTaskState)
+				}
+			case "no_terminal_update":
+				if hasStructuredReply {
+					t.Fatalf("no_terminal_update fixture must be unfenced or non-structured prose")
+				}
+				if tc.ExpectedTaskState != tc.CurrentTaskState {
+					t.Fatalf("unfenced prose must leave state unchanged: got %s, want %s", tc.ExpectedTaskState, tc.CurrentTaskState)
+				}
+			case "ignore_terminal_already_final":
+				if !terminalStates[tc.CurrentTaskState] {
+					t.Fatalf("late-reply fixture current state must be terminal")
+				}
+				if tc.ExpectedTaskState != tc.CurrentTaskState {
+					t.Fatalf("late reply must not mutate terminal state: got %s, want %s", tc.ExpectedTaskState, tc.CurrentTaskState)
+				}
+			}
+		})
+	}
+	for _, required := range []string{
+		"completed_reply",
+		"auth_required_reply",
+		"mismatched_task_id_reply",
+		"stray_unfenced_prose",
+		"late_reply_after_timeout_failed",
+	} {
+		if !seen[required] {
+			t.Fatalf("missing bridge reply fixture %s", required)
+		}
+	}
+}
+
 func readA2AVector(t *testing.T) a2aVector {
 	t.Helper()
 	data := readRootVector(t, "a2a-v1.json")
@@ -485,6 +604,32 @@ func readA2AVector(t *testing.T) a2aVector {
 		t.Fatal(err)
 	}
 	return vector
+}
+
+func extractA2AReplyPayload(t *testing.T, reply string) (map[string]any, bool) {
+	t.Helper()
+	const start = "```a2a-reply"
+	startIndex := strings.Index(reply, start)
+	if startIndex < 0 {
+		return nil, false
+	}
+	bodyStart := startIndex + len(start)
+	if bodyStart < len(reply) && reply[bodyStart] == '\r' {
+		bodyStart++
+	}
+	if bodyStart < len(reply) && reply[bodyStart] == '\n' {
+		bodyStart++
+	}
+	endIndex := strings.Index(reply[bodyStart:], "```")
+	if endIndex < 0 {
+		t.Fatalf("structured a2a-reply missing closing fence")
+	}
+	body := strings.TrimSpace(reply[bodyStart : bodyStart+endIndex])
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("structured a2a-reply is not JSON: %v", err)
+	}
+	return payload, true
 }
 
 func requireA2ACardHasNoLegacyFields(t *testing.T, card map[string]any) {
