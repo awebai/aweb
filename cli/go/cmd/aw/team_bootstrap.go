@@ -130,6 +130,7 @@ var (
 	teamBootstrapRegistryURL      string
 	teamBootstrapAwebURL          string
 	teamBootstrapDryRun           bool
+	teamBootstrapLayoutOnly       bool
 	teamBootstrapYes              bool // deprecated no-op; defaults are used unless --ask-for-agent-names is set
 	teamBootstrapAskAgentNames    bool
 	teamBootstrapSkipRoles        bool
@@ -220,6 +221,7 @@ type teamBootstrapOutput struct {
 
 	TeamName              string                   `json:"team_name,omitempty"`
 	DryRun                bool                     `json:"dry_run"`
+	LayoutOnly            bool                     `json:"layout_only,omitempty"`
 	RolesInstalled        bool                     `json:"roles_installed"`
 	InstructionsInstalled bool                     `json:"instructions_installed"`
 	HomeRoot              string                   `json:"home_root"`
@@ -355,6 +357,7 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapRegistryURL, "registry", "", "AWID registry URL override")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapAwebURL, "aweb-url", "", "Aweb server base URL to connect each generated agent workspace")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the bootstrap plan without changing files or team roles")
+	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapLayoutOnly, "layout-only", false, "Only create the shared agents layout; do not create identities, team memberships, roles, or instructions")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapYes, "yes", false, "Deprecated no-op; template naming policy is used unless --ask-for-agent-names is set")
 	_ = teamBootstrapCmd.Flags().MarkHidden("yes")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapAskAgentNames, "ask-for-agent-names", false, "Prompt for generated display names instead of using template responsibilities")
@@ -395,7 +398,7 @@ func init() {
 func bindAgentsProvisionFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&teamBootstrapAgentsDir, "agents-dir", "agents", "Project-local agents directory to read")
 	cmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
-	cmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
+	cmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding")
 	cmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use")
 	cmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use")
 	cmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOT team")
@@ -484,6 +487,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		TemplateRefreshed: resolved.Refreshed,
 		TeamName:          spec.Name,
 		DryRun:            teamBootstrapDryRun,
+		LayoutOnly:        teamBootstrapLayoutOnly,
 		HomeRoot:          homeRoot,
 		AgentsDir:         layout.AgentsRoot,
 		LayoutMode:        string(layout.Mode),
@@ -500,9 +504,12 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	source, err := resolveTeamBootstrapSource()
-	if err != nil {
-		return err
+	var source teamBootstrapSource
+	if !teamBootstrapLayoutOnly {
+		source, err = resolveTeamBootstrapSource()
+		if err != nil {
+			return err
+		}
 	}
 
 	if layout.Mode == teamBootstrapLayoutLegacy && workRepoURL != "" {
@@ -534,6 +541,12 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, planWorkDirectory); err != nil {
 			return err
 		}
+	}
+
+	if teamBootstrapLayoutOnly {
+		out.NextCommands = plannedInitCommands(plans)
+		printOutput(out, formatTeamBootstrapOutput)
+		return nil
 	}
 
 	rolesInstalled, instructionsInstalled, err := bootstrapTeamAndInitAgentDirs(cmd, source, spec, resolved.TemplateDir, plans)
@@ -1997,7 +2010,7 @@ func agentsAddWorktreeProvisionFailureError(layout teamBootstrapLayout, plan tea
 	if strings.TrimSpace(branchName) == "" {
 		branchName = plan.Responsibility
 	}
-	return fmt.Errorf("agent home was created but identity provisioning failed for %s: %w\n\nOnce `aw agents remove --remove-layout %s` is available, use it to clean up. Manual cleanup: rm -rf %s; git -C %s worktree remove %s; git -C %s branch -D %s; then edit %s to remove the %q responsibility entry",
+	return fmt.Errorf("agent home was created but identity provisioning failed for %s: %w\n\nUse `aw agents remove --remove-layout %s` to remove the shared layout entry after deciding whether to keep or back up local identity state. Manual cleanup: rm -rf %s; git -C %s worktree remove %s; git -C %s branch -D %s; then edit %s to remove the %q responsibility entry",
 		plan.Responsibility,
 		err,
 		plan.Responsibility,
@@ -3887,6 +3900,9 @@ func formatTeamBootstrapOutput(v any) string {
 	}
 	if out.TeamName != "" {
 		b.WriteString(fmt.Sprintf("Team template: %s\n", out.TeamName))
+	}
+	if out.LayoutOnly {
+		b.WriteString("Mode: layout-only\n")
 	}
 	b.WriteString(fmt.Sprintf("Agent home root: %s\n", out.HomeRoot))
 	if strings.TrimSpace(out.IdentityPrefix) != "" {

@@ -1,4 +1,10 @@
-# In-Repo Bootstrap Layout Contract
+# Superseded In-Repo Bootstrap Layout Contract
+
+This document is retained as historical design context for the earlier
+in-repo bootstrap work. The current `aw agents` lifecycle contract is
+[`agents-layout-lifecycle-contract.md`](agents-layout-lifecycle-contract.md),
+and that document is authoritative for current implementation and user-facing
+guidance.
 
 This document is the normative contract for the in-repository `agents/`
 bootstrap convention. It is subordinate to the team and identity authority
@@ -8,7 +14,7 @@ The goal is to make the customer work repo the center of gravity:
 
 ```bash
 cd my-project
-aw team bootstrap gh:awebai/aweb-team-coord-worktrees --username juan
+aw agents bootstrap gh:awebai/aweb-team-coord-worktrees --username juan --identity-prefix juan
 cd agents/home/coordinator
 codex
 ```
@@ -34,7 +40,7 @@ mutating the legacy path into a partially new shape.
 
 ## Mode Selection
 
-`aw team bootstrap` has two explicit layout modes.
+`aw agents bootstrap` has two explicit layout modes.
 
 | Explicit `--agents-dir` | `--work-directory` | `--work-repo-url` | Behavior |
 | --- | --- | --- | --- |
@@ -131,7 +137,7 @@ To create a new bootstrap here:
   1. Pick a different name with --agents-dir <name>, or
   2. Remove or rename the existing directory if you no longer need it.
 
-aw team bootstrap does not adopt, merge, or overwrite existing agents
+aw agents bootstrap does not adopt, merge, or overwrite existing agents
 directories in v1. This prevents accidental data loss to existing agent
 identity state.
 ```
@@ -196,20 +202,14 @@ roles:
 agents:
   coordinator:
     role_name: coordinator
-    default_name: coordinator
-    default_alias: coord
     work: repo_root
     home_template: home/coordinator
   dev:
     role_name: developer
-    default_name: developer
-    default_alias: dev
     work: git_worktree
     home_template: home/dev
   review:
     role_name: reviewer
-    default_name: reviewer
-    default_alias: review
     work: git_worktree
     home_template: home/review
 ```

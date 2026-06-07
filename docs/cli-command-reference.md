@@ -72,7 +72,7 @@ Flags:
 - `--skip-roles Do not install the roles bundle`
 - `--team string BYOT team name/slug to create/use`
 - `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
 
 ## `agents add-worktree`
 
@@ -97,7 +97,7 @@ Flags:
 - `--skip-roles Do not install the roles bundle`
 - `--team string BYOT team name/slug to create/use`
 - `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
 
 ## `agents bootstrap`
 
@@ -142,6 +142,7 @@ Flags:
 - `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
 - `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--layout-only Only create the shared agents layout; do not create identities, team memberships, roles, or instructions`
 - `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
 - `--refresh-template Re-clone the template into the destination directory before using it`
 - `--registry string AWID registry URL override`
@@ -176,7 +177,7 @@ Flags:
 - `--skip-roles Do not install the roles bundle`
 - `--team string BYOT team name/slug to create/use`
 - `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
 
 ## `agents provision`
 
@@ -197,7 +198,7 @@ Flags:
 - `--skip-roles Do not install the roles bundle`
 - `--team string BYOT team name/slug to create/use`
 - `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
 
 ## `agents remove`
 

@@ -155,8 +155,8 @@ aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
 
 A hosted operator (like app.aweb.ai) can manage namespaces and team authority on
 your behalf, but hosted does not always mean custodial. Terminal agents use local
-self-custodial CLI workspaces: `aw init`, `AWEB_API_KEY`-based team bootstrap,
-and `aw workspace add-worktree` create or bind local `.aw/` state and local
+self-custodial CLI workspaces: `aw init`, `AWEB_API_KEY`-based
+`aw agents bootstrap`, and `aw workspace add-worktree` create or bind local `.aw/` state and local
 signing keys. Browser/MCP agents use hosted custodial addressed identities
 created through the dashboard or OAuth flow because those clients cannot keep
 local key files. See the [aweb agent guide](https://aweb.ai/docs/agent-guide.md)

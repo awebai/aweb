@@ -19,7 +19,9 @@ The customer work repo should be the center of gravity:
 
 ```bash
 cd my-project
-aw agents bootstrap gh:awebai/aweb-team-coord-worktrees --username juan
+aw agents bootstrap gh:awebai/aweb-team-coord-worktrees \
+  --username juan \
+  --identity-prefix juan
 cd agents/home/coordinator
 codex
 ```
@@ -546,10 +548,19 @@ human's identities.
 Examples:
 
 ```bash
-aw agents bootstrap gh:awebai/aweb-team-coord-worktrees --username juan
-aw agents bootstrap ./my-template --namespace juanreyero.com --team circle
-aw agents bootstrap gh:awebai/aweb-team-coord-worktrees --layout-only
-aw agents bootstrap gh:awebai/aweb-team-coord-worktrees --dry-run
+aw agents bootstrap gh:awebai/aweb-team-coord-worktrees \
+  --username juan \
+  --identity-prefix juan
+aw agents bootstrap ./my-template \
+  --namespace juanreyero.com \
+  --team circle \
+  --identity-prefix juan
+aw agents bootstrap gh:awebai/aweb-team-coord-worktrees \
+  --layout-only \
+  --identity-prefix juan
+aw agents bootstrap gh:awebai/aweb-team-coord-worktrees \
+  --dry-run \
+  --identity-prefix juan
 ```
 
 Behavior:
@@ -631,7 +642,7 @@ Examples:
 
 ```bash
 aw agents add analyst --local --role analyst
-aw agents add support --global --role support --global-name-pattern "{user}-{star-name}"
+aw agents add support --global --role support --namespace juanreyero.com --team circle --global-name-pattern "{user}-{star-name}" --identity-prefix juan
 aw agents add planner --layout-only
 ```
 

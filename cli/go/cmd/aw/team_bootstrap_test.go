@@ -129,6 +129,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevRegistry := teamBootstrapRegistryURL
 	prevAweb := teamBootstrapAwebURL
 	prevDryRun := teamBootstrapDryRun
+	prevLayoutOnly := teamBootstrapLayoutOnly
 	prevYes := teamBootstrapYes
 	prevAsk := teamBootstrapAskAgentNames
 	prevSkipRoles := teamBootstrapSkipRoles
@@ -164,6 +165,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		teamBootstrapRegistryURL = prevRegistry
 		teamBootstrapAwebURL = prevAweb
 		teamBootstrapDryRun = prevDryRun
+		teamBootstrapLayoutOnly = prevLayoutOnly
 		teamBootstrapYes = prevYes
 		teamBootstrapAskAgentNames = prevAsk
 		teamBootstrapSkipRoles = prevSkipRoles
@@ -199,6 +201,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	teamBootstrapRegistryURL = ""
 	teamBootstrapAwebURL = ""
 	teamBootstrapDryRun = false
+	teamBootstrapLayoutOnly = false
 	teamBootstrapYes = false
 	teamBootstrapAskAgentNames = false
 	teamBootstrapSkipRoles = false
@@ -440,6 +443,39 @@ func TestTeamBootstrapInRepoDryRunDoesNotCreateAgentsDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created .gitignore or unexpected stat error: %v", err)
+	}
+}
+
+func TestTeamBootstrapInRepoLayoutOnlyCreatesSharedLayoutWithoutIdentity(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	t.Chdir(repoDir)
+	teamBootstrapLayoutOnly = true
+	teamBootstrapSkipRoles = true
+	teamBootstrapSkipInstructions = true
+
+	var out bytes.Buffer
+	cmd := testTeamBootstrapCommand(t)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := runTeamBootstrap(cmd, []string{templateDir}); err != nil {
+		t.Fatalf("runTeamBootstrap: %v", err)
+	}
+	assertPathExists(t, filepath.Join(repoDir, "agents", "team.yaml"))
+	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "coordinator", "AGENTS.md"))
+	assertPathExists(t, filepath.Join(repoDir, "agents", "worktrees", "implementation"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "coordinator", ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "implementation", ".aw"))
+	gitignore, err := os.ReadFile(filepath.Join(repoDir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/agents/home/*/.aw/", "/agents/home/*/work", "/agents/worktrees/"} {
+		if !strings.Contains(string(gitignore), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, string(gitignore))
+		}
 	}
 }
 
