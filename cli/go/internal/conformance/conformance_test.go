@@ -317,6 +317,7 @@ func nullableString(value any) string {
 
 type a2aVector struct {
 	Source             a2aSource      `json:"source"`
+	SchemaValidation   a2aSchema      `json:"schema_validation"`
 	CardDigestContract a2aCardDigest  `json:"card_digest_contract"`
 	AgentCards         []a2aCardCase  `json:"agent_cards"`
 	JSONRPC            []a2aRPCCase   `json:"jsonrpc"`
@@ -338,6 +339,17 @@ type a2aCardDigest struct {
 	Encoding         string   `json:"encoding"`
 	Canonicalization string   `json:"canonicalization"`
 	ExcludedFields   []string `json:"excluded_fields"`
+}
+
+type a2aSchema struct {
+	GeneratorScript             string   `json:"generator_script"`
+	GeneratorPlugin             string   `json:"generator_plugin"`
+	GeneratedSchemaSHA256       string   `json:"generated_schema_sha256"`
+	GoogleAPIsInclude           string   `json:"googleapis_include"`
+	AgentCardProperties         []string `json:"agent_card_properties"`
+	AgentInterfaceProperties    []string `json:"agent_interface_properties"`
+	AgentCapabilitiesProperties []string `json:"agent_capabilities_properties"`
+	AgentSkillProperties        []string `json:"agent_skill_properties"`
 }
 
 type a2aCardCase struct {
@@ -374,6 +386,7 @@ func TestA2AV1AgentCardVectors(t *testing.T) {
 		vector.Source.ProtoPath != "specification/a2a.proto" {
 		t.Fatalf("unexpected A2A source pin: %+v", vector.Source)
 	}
+	requireA2ASchemaValidationPin(t, vector.SchemaValidation)
 	if vector.CardDigestContract.Algorithm != "sha256" {
 		t.Fatalf("digest algorithm: got %q, want sha256", vector.CardDigestContract.Algorithm)
 	}
@@ -386,6 +399,7 @@ func TestA2AV1AgentCardVectors(t *testing.T) {
 
 	for _, tc := range vector.AgentCards {
 		t.Run(tc.Name, func(t *testing.T) {
+			requireA2ACardKeysMatchGeneratedSchema(t, vector.SchemaValidation, tc.Card)
 			requireA2ACardHasNoLegacyFields(t, tc.Card)
 			requireA2ACardVersionDistinction(t, tc.Card)
 			requireA2ACardModesAreMediaTypes(t, tc.Card)
@@ -406,6 +420,65 @@ func TestA2AV1AgentCardVectors(t *testing.T) {
 				t.Fatalf("digest: got %s, want %s", got, tc.Digest)
 			}
 		})
+	}
+}
+
+func requireA2ASchemaValidationPin(t *testing.T, schema a2aSchema) {
+	t.Helper()
+	if schema.GeneratorScript != "scripts/proto_to_json_schema.sh" {
+		t.Fatalf("schema generator script: got %q", schema.GeneratorScript)
+	}
+	if schema.GeneratorPlugin != "github.com/bufbuild/protoschema-plugins/cmd/protoc-gen-jsonschema@v0.5.2" {
+		t.Fatalf("schema generator plugin: got %q", schema.GeneratorPlugin)
+	}
+	if schema.GeneratedSchemaSHA256 != "ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd" {
+		t.Fatalf("generated schema sha256: got %q", schema.GeneratedSchemaSHA256)
+	}
+	for name, values := range map[string][]string{
+		"agent_card_properties":         schema.AgentCardProperties,
+		"agent_interface_properties":    schema.AgentInterfaceProperties,
+		"agent_capabilities_properties": schema.AgentCapabilitiesProperties,
+		"agent_skill_properties":        schema.AgentSkillProperties,
+	} {
+		if len(values) == 0 {
+			t.Fatalf("%s is empty", name)
+		}
+	}
+}
+
+func requireA2ACardKeysMatchGeneratedSchema(t *testing.T, schema a2aSchema, card map[string]any) {
+	t.Helper()
+	requireKeysInSet(t, "AgentCard", card, schema.AgentCardProperties)
+	if capabilities, ok := card["capabilities"].(map[string]any); ok {
+		requireKeysInSet(t, "AgentCapabilities", capabilities, schema.AgentCapabilitiesProperties)
+	}
+	if interfaces, ok := card["supportedInterfaces"].([]any); ok {
+		for _, value := range interfaces {
+			iface, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("supportedInterfaces entry is not an object: %v", value)
+			}
+			requireKeysInSet(t, "AgentInterface", iface, schema.AgentInterfaceProperties)
+		}
+	}
+	if skills, ok := card["skills"].([]any); ok {
+		for _, value := range skills {
+			skill, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("skills entry is not an object: %v", value)
+			}
+			requireKeysInSet(t, "AgentSkill", skill, schema.AgentSkillProperties)
+		}
+	}
+}
+
+func requireKeysInSet(t *testing.T, label string, object map[string]any, allowed []string) {
+	t.Helper()
+	allowedSet := stringSet(allowed)
+	for key := range object {
+		if !allowedSet[key] {
+			t.Fatalf("%s field %q is not in pinned A2A generated schema field set", label, key)
+		}
 	}
 }
 
@@ -858,6 +931,14 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[value] = true
+	}
+	return out
 }
 
 // --- rotation-announcements-v1 ---

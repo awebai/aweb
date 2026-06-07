@@ -16,6 +16,16 @@
       "Gateway ingress fixtures are strict A2A v1.0; pre-1.0 slash method aliases are not accepted unless a later compatibility mode is explicitly specified."
     ]
   },
+  "schema_validation": {
+    "generator_script": "scripts/proto_to_json_schema.sh",
+    "generator_plugin": "github.com/bufbuild/protoschema-plugins/cmd/protoc-gen-jsonschema@v0.5.2",
+    "generated_schema_sha256": "ba4b702b5edbdcbfe972c272484eb38e1fcd72af3c0b7eaa114b50e97455d8dd",
+    "googleapis_include": "/opt/homebrew/lib/python3.11/site-packages",
+    "agent_card_properties": ["capabilities", "defaultInputModes", "defaultOutputModes", "description", "documentationUrl", "iconUrl", "name", "provider", "securityRequirements", "securitySchemes", "signatures", "skills", "supportedInterfaces", "version"],
+    "agent_interface_properties": ["protocolBinding", "protocolVersion", "tenant", "url"],
+    "agent_capabilities_properties": ["extendedAgentCard", "extensions", "pushNotifications", "streaming"],
+    "agent_skill_properties": ["description", "examples", "id", "inputModes", "name", "outputModes", "securityRequirements", "tags"]
+  },
   "card_digest_contract": {
     "algorithm": "sha256",
     "encoding": "sha256:<lowercase-hex>",

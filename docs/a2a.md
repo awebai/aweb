@@ -196,8 +196,6 @@ Generated cards MUST use A2A v1.0 field names and media-type input/output modes.
       }
     ]
   },
-  "securitySchemes": {},
-  "securityRequirements": [],
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain"],
   "supportedInterfaces": [
@@ -236,6 +234,8 @@ spec: docs/specification.md
 
 Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/internal/conformance`.
 
+The fixture source was cross-checked against the upstream `scripts/proto_to_json_schema.sh` generator from the pinned A2A commit using `protoc-gen-jsonschema` v0.5.2. The generated schema hash and proto-derived JSON field sets are recorded in `docs/vectors/a2a-v1.json`; conformance tests reject fixture fields outside those sets.
+
 `card_digest` is computed as:
 
 1. Remove the top-level `signatures` field from the Agent Card if present.
@@ -246,6 +246,8 @@ Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/
 Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
 
 For the first product slice, generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
+
+Unauthenticated routes omit `securitySchemes` and `securityRequirements` rather than emitting empty objects/arrays in canonical digest vectors. `streaming: false` and `pushNotifications: false` are deliberate advertised capabilities for initial generated cards and are part of the digest bytes; `extendedAgentCard: false` is omitted unless we deliberately advertise extended-card support state.
 
 This digest is the byte contract used by AWID A2A publication assertions. A later change to the A2A source version, card field shape, digest bytes, or canonicalization rule must update the fixture and receive Athena review before implementation follows it.
 
@@ -272,8 +274,6 @@ When a host has multiple bridged addresses and no explicit default, the root car
       }
     ]
   },
-  "securitySchemes": {},
-  "securityRequirements": [],
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain"],
   "supportedInterfaces": [
