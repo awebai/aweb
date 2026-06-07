@@ -155,6 +155,22 @@ func TestMailBridgeRejectsUnverifiedAndMismatchedConversationReplies(t *testing.
 	}
 }
 
+func TestMailBridgeRejectsMissingContextForContextualTask(t *testing.T) {
+	transport := &fakeMailTransport{}
+	bridge := newTestMailBridge(t, transport, nil)
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
+	bridge.SetReplyApplier(gw)
+	taskID := sendTestA2ATask(t, gw)
+	replyBody := "```a2a-reply\n{\"task_id\":\"" + taskID + "\",\"state\":\"completed\",\"text\":\"missing context\"}\n```"
+	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "missing-context", ConversationID: "conv-1", Body: replyBody, VerificationStatus: awid.Verified}); err != nil || ok {
+		t.Fatalf("missing context_id should be ignored without mutation: ok=%t err=%v", ok, err)
+	}
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	if got := taskStatus(rpcTaskResult(t, get, "")); got != TaskStateWorking {
+		t.Fatalf("missing context reply should not mutate task, got %s", got)
+	}
+}
+
 func TestMailBridgeCancellationSendsVisibleNotice(t *testing.T) {
 	transport := &fakeMailTransport{}
 	bridge := newTestMailBridge(t, transport, nil)

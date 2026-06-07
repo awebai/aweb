@@ -221,7 +221,7 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 	if msg.MessageID != "" && thread.SeenMessages[msg.MessageID] {
 		return Task{}, false, nil
 	}
-	if reply.ContextID != "" && thread.ContextID != "" && reply.ContextID != thread.ContextID {
+	if thread.ContextID != "" && reply.ContextID != thread.ContextID {
 		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ignored", Code: "context_mismatch", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, nil
 	}
