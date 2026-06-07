@@ -141,6 +141,9 @@ func New(config Config) (*Gateway, error) {
 		if _, exists := routeCards[route.RouteID]; exists {
 			return nil, fmt.Errorf("duplicate route_id %q", route.RouteID)
 		}
+		if err := validateRouteRuntimeConfig(route); err != nil {
+			return nil, err
+		}
 		card, err := a2a.PerAddressCard(a2a.CardConfig{
 			Host:               config.Host,
 			RouteID:            route.RouteID,
@@ -226,6 +229,28 @@ func New(config Config) (*Gateway, error) {
 		taskExecution = false
 	}
 	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), rateLimiter: newRateLimiter(time.Now), taskExecution: taskExecution, auditSink: config.Audit}, nil
+}
+
+func validateRouteRuntimeConfig(route Route) error {
+	switch normalizedAuthMode(route.Auth.Mode) {
+	case "", "none":
+	case "static_api_key":
+		if strings.TrimSpace(route.Auth.StaticAPIKey) == "" {
+			return fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey", route.RouteID)
+		}
+	case "bearer":
+		if strings.TrimSpace(route.Auth.BearerToken) == "" {
+			return fmt.Errorf("route %s: bearer mode requires Auth.BearerToken", route.RouteID)
+		}
+	default:
+		return fmt.Errorf("route %s: unsupported auth mode %q", route.RouteID, route.Auth.Mode)
+	}
+	if raw := strings.TrimSpace(route.Limits.RateLimit); raw != "" {
+		if _, err := parseRateLimit(raw); err != nil {
+			return fmt.Errorf("route %s: invalid rate limit %q: %w", route.RouteID, raw, err)
+		}
+	}
+	return nil
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -113,11 +113,7 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32003, "route disabled", requestID, map[string]any{"code": "route_disabled"})})
 		return
 	}
-	if ok, err := g.rateLimitAllows(route, caller); err != nil {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "rate_limit_invalid", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
-		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32603, "invalid route rate limit", requestID, map[string]any{"code": "rate_limit_invalid", "detail": err.Error()})})
-		return
-	} else if !ok {
+	if !g.rateLimitAllows(route, caller) {
 		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "rate_limited", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32029, "rate limited", requestID, map[string]any{"code": "rate_limited"})})
 		return
@@ -329,15 +325,19 @@ func normalizedAuthMode(mode string) string {
 	return strings.ToLower(strings.TrimSpace(mode))
 }
 
-func (g *Gateway) rateLimitAllows(route Route, caller callerScope) (bool, error) {
+func (g *Gateway) rateLimitAllows(route Route, caller callerScope) bool {
 	if g.rateLimiter == nil || strings.TrimSpace(route.Limits.RateLimit) == "" {
-		return true, nil
+		return true
 	}
 	scope := caller.Value
 	if scope == "" {
 		scope = "unauthenticated"
 	}
-	return g.rateLimiter.allow(route.RouteID+"|"+scope, route.Limits.RateLimit)
+	ok, err := g.rateLimiter.allow(route.RouteID+"|"+scope, route.Limits.RateLimit)
+	if err != nil {
+		return false
+	}
+	return ok
 }
 
 func isJSONContentType(value string) bool {

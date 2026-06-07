@@ -101,6 +101,46 @@ func TestGatewayRejectsUnsafeRouteID(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsInvalidRouteRuntimeConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Route)
+		want string
+	}{
+		{
+			name: "static api key requires secret",
+			edit: func(route *Route) {
+				route.Auth = AuthConfig{Mode: "static_api_key"}
+			},
+			want: "StaticAPIKey",
+		},
+		{
+			name: "bearer requires token",
+			edit: func(route *Route) {
+				route.Auth = AuthConfig{Mode: "bearer"}
+			},
+			want: "BearerToken",
+		},
+		{
+			name: "rate limit syntax",
+			edit: func(route *Route) {
+				route.Limits.RateLimit = "100/x"
+			},
+			want: "invalid rate limit",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			route := helpRoute("r_help")
+			tc.edit(&route)
+			_, err := New(Config{Host: "acme.com", Routes: []Route{route}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("New error: got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func newTestGateway(t *testing.T, config Config) *Gateway {
 	t.Helper()
 	gw, err := New(config)
