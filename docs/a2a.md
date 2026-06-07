@@ -595,12 +595,10 @@ Allowed `state` values in the block:
 
 - `completed`
 - `input_required`
-- `auth_required`
 - `failed`
 - `rejected`
 - `TASK_STATE_COMPLETED`
 - `TASK_STATE_INPUT_REQUIRED`
-- `TASK_STATE_AUTH_REQUIRED`
 - `TASK_STATE_FAILED`
 - `TASK_STATE_REJECTED`
 
@@ -612,6 +610,7 @@ Reply binding rules:
 - `a2a-reply.context_id` is required when the inbound task included a context id and must match it.
 - A missing or mismatched `task_id`/`context_id` is rejected or ignored; it never mutates the task.
 - Terminal task states are final. A later agent reply after `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, or `TASK_STATE_REJECTED` is ignored/logged or starts a new task explicitly; it never revives or mutates the terminal task.
+- `TASK_STATE_AUTH_REQUIRED` is a gateway-generated route/auth state in v1, not an agent reply alias. A route/auth flow that lets agents request auth must define that explicitly in a later contract amendment.
 - Unfenced prose, partial thoughts, or malformed fenced blocks may be logged as non-terminal status, but the task remains `TASK_STATE_WORKING` until a valid `a2a-reply`, cancellation, or timeout.
 
 Mapping:
@@ -620,7 +619,6 @@ Mapping:
 |---|---|
 | `a2a-reply` with `state: completed` | `TASK_STATE_COMPLETED` |
 | `a2a-reply` with `state: input_required` | `TASK_STATE_INPUT_REQUIRED` |
-| `a2a-reply` with `state: auth_required` | `TASK_STATE_AUTH_REQUIRED` |
 | `a2a-reply` with `state: failed` | `TASK_STATE_FAILED` |
 | `a2a-reply` with `state: rejected` | `TASK_STATE_REJECTED` |
 | No valid structured block | no terminal update; task remains current state until timeout/cancel/reply |
@@ -742,7 +740,7 @@ A2A caller content is external untrusted input. Gateway task envelopes must make
 
 - Send structured `a2a-task` message to real aweb agent.
 - Receive/poll/subscribe for replies.
-- Parse `a2a-reply`, `QUESTION:`, and default-completed replies.
+- Parse `a2a-reply` envelopes; unfenced prose is non-terminal status/missing-envelope, not default completion.
 - Update task store.
 - Deploy first three agents on Hetzner using normal aweb workspaces.
 

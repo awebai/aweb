@@ -486,6 +486,14 @@ func TestA2AV1JSONRPCVectors(t *testing.T) {
 	if containsString(states, "TASK_STATE_WORKING") {
 		t.Fatalf("wait-timeout fixture must not leave task in TASK_STATE_WORKING")
 	}
+
+	authRequired, ok := seen["send_message_auth_required_response"]
+	if !ok {
+		t.Fatalf("missing send_message_auth_required_response fixture")
+	}
+	if !containsString(collectA2AStates(authRequired.Payload), "TASK_STATE_AUTH_REQUIRED") {
+		t.Fatalf("auth-required fixture must cover gateway-generated TASK_STATE_AUTH_REQUIRED")
+	}
 }
 
 func TestA2AV1BridgeReplyVectors(t *testing.T) {
@@ -507,12 +515,10 @@ func TestA2AV1BridgeReplyVectors(t *testing.T) {
 	stateAliases := map[string]string{
 		"completed":                 "TASK_STATE_COMPLETED",
 		"input_required":            "TASK_STATE_INPUT_REQUIRED",
-		"auth_required":             "TASK_STATE_AUTH_REQUIRED",
 		"failed":                    "TASK_STATE_FAILED",
 		"rejected":                  "TASK_STATE_REJECTED",
 		"TASK_STATE_COMPLETED":      "TASK_STATE_COMPLETED",
 		"TASK_STATE_INPUT_REQUIRED": "TASK_STATE_INPUT_REQUIRED",
-		"TASK_STATE_AUTH_REQUIRED":  "TASK_STATE_AUTH_REQUIRED",
 		"TASK_STATE_FAILED":         "TASK_STATE_FAILED",
 		"TASK_STATE_REJECTED":       "TASK_STATE_REJECTED",
 	}
@@ -585,7 +591,6 @@ func TestA2AV1BridgeReplyVectors(t *testing.T) {
 	}
 	for _, required := range []string{
 		"completed_reply",
-		"auth_required_reply",
 		"mismatched_task_id_reply",
 		"stray_unfenced_prose",
 		"late_reply_after_timeout_failed",

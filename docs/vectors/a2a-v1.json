@@ -26,8 +26,8 @@
     {
       "name": "hosted_default",
       "path": "/.well-known/agent-card.json",
-      "canonical_no_signatures": "{\"capabilities\":{\"extendedAgentCard\":false,\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"Hosted support agent for aweb users.\",\"name\":\"Aweb Support\",\"provider\":{\"organization\":\"aweb\",\"url\":\"https://aweb.ai\"},\"securityRequirements\":[],\"securitySchemes\":{},\"skills\":[{\"description\":\"Answers product and onboarding questions.\",\"id\":\"support\",\"name\":\"Support\",\"tags\":[\"support\",\"onboarding\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://team.aweb.ai/a2a/agents/r_support/rpc\"}],\"version\":\"1.0.0\"}",
-      "digest": "sha256:fe77813b3224df1ea576c6b130a53ed06371645e40ed9638bd90707dcb9bdf84",
+      "canonical_no_signatures": "{\"capabilities\":{\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"Hosted support agent for aweb users.\",\"name\":\"Aweb Support\",\"provider\":{\"organization\":\"aweb\",\"url\":\"https://aweb.ai\"},\"skills\":[{\"description\":\"Answers product and onboarding questions.\",\"id\":\"support\",\"name\":\"Support\",\"tags\":[\"support\",\"onboarding\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://team.aweb.ai/a2a/agents/r_support/rpc\"}],\"version\":\"1.0.0\"}",
+      "digest": "sha256:cf5e5d584aa209059dfed0844b0f84ce5ed2ddb07e786ec223937dcb62f85ae5",
       "card": {
         "name": "Aweb Support",
         "description": "Hosted support agent for aweb users.",
@@ -39,7 +39,6 @@
         "capabilities": {
           "streaming": false,
           "pushNotifications": false,
-          "extendedAgentCard": false,
           "extensions": [
             {
               "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
@@ -47,8 +46,6 @@
             }
           ]
         },
-        "securitySchemes": {},
-        "securityRequirements": [],
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
         "supportedInterfaces": [
@@ -71,8 +68,8 @@
     {
       "name": "byot_default",
       "path": "/.well-known/agent-card.json",
-      "canonical_no_signatures": "{\"capabilities\":{\"extendedAgentCard\":false,\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"Customer support agent for Acme products.\",\"name\":\"Acme Help\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"securityRequirements\":[],\"securitySchemes\":{},\"skills\":[{\"description\":\"Look up order status from an order ID.\",\"id\":\"order-status\",\"name\":\"Order status\",\"tags\":[\"support\",\"orders\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/agents/r_help/rpc\"}],\"version\":\"1.0.0\"}",
-      "digest": "sha256:217b3b7065caac60aa7ca4ce2a8d01b490c111b878cc189bbebe6ee2472b904c",
+      "canonical_no_signatures": "{\"capabilities\":{\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"Customer support agent for Acme products.\",\"name\":\"Acme Help\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"skills\":[{\"description\":\"Look up order status from an order ID.\",\"id\":\"order-status\",\"name\":\"Order status\",\"tags\":[\"support\",\"orders\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/agents/r_help/rpc\"}],\"version\":\"1.0.0\"}",
+      "digest": "sha256:34a5e44396217a3067dc525275ea3c564c324ece1b17d4c73a741fee025bc412",
       "card": {
         "name": "Acme Help",
         "description": "Customer support agent for Acme products.",
@@ -84,7 +81,6 @@
         "capabilities": {
           "streaming": false,
           "pushNotifications": false,
-          "extendedAgentCard": false,
           "extensions": [
             {
               "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
@@ -92,8 +88,6 @@
             }
           ]
         },
-        "securitySchemes": {},
-        "securityRequirements": [],
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
         "supportedInterfaces": [
@@ -116,8 +110,8 @@
     {
       "name": "byot_router_root",
       "path": "/.well-known/agent-card.json",
-      "canonical_no_signatures": "{\"capabilities\":{\"extendedAgentCard\":false,\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"A2A gateway for Acme agents. Exact agent cards are published in the Acme/aweb directory.\",\"name\":\"Acme A2A Gateway\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"securityRequirements\":[],\"securitySchemes\":{},\"skills\":[{\"description\":\"Routes customer tasks to configured Acme agents when enough information is provided.\",\"id\":\"route-to-agent\",\"name\":\"Route to Acme agents\",\"tags\":[\"router\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/rpc\"}],\"version\":\"1.0.0\"}",
-      "digest": "sha256:334bb56d97dc7566c9357428ee43c0ac178422a365ad34c0b8a351bcc6d53dd2",
+      "canonical_no_signatures": "{\"capabilities\":{\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\"],\"description\":\"A2A gateway for Acme agents. Exact agent cards are published in the Acme/aweb directory.\",\"name\":\"Acme A2A Gateway\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"skills\":[{\"description\":\"Routes customer tasks to configured Acme agents when enough information is provided.\",\"id\":\"route-to-agent\",\"name\":\"Route to Acme agents\",\"tags\":[\"router\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/rpc\"}],\"version\":\"1.0.0\"}",
+      "digest": "sha256:75d0f42aadb0c9bb0487de72c58c5ca4a7c9a0834993d251cd1a86c35a8440f8",
       "card": {
         "name": "Acme A2A Gateway",
         "description": "A2A gateway for Acme agents. Exact agent cards are published in the Acme/aweb directory.",
@@ -129,7 +123,6 @@
         "capabilities": {
           "streaming": false,
           "pushNotifications": false,
-          "extendedAgentCard": false,
           "extensions": [
             {
               "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
@@ -137,8 +130,6 @@
             }
           ]
         },
-        "securitySchemes": {},
-        "securityRequirements": [],
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
         "supportedInterfaces": [
@@ -161,8 +152,8 @@
     {
       "name": "per_address_research",
       "path": "/a2a/agents/r_research/agent-card.json",
-      "canonical_no_signatures": "{\"capabilities\":{\"extendedAgentCard\":false,\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":true},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\",\"application/json\"],\"description\":\"Research agent for Acme technical investigations.\",\"name\":\"Acme Research\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"securityRequirements\":[],\"securitySchemes\":{},\"skills\":[{\"description\":\"Investigates technical questions and returns concise findings.\",\"id\":\"technical-research\",\"name\":\"Technical research\",\"tags\":[\"research\",\"technical\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/agents/r_research/rpc\"}],\"version\":\"1.0.0\"}",
-      "digest": "sha256:125794bb8f5dbfb3f305b9cde732effbf6b20d122b41c42b0ca31fcf34d2c64e",
+      "canonical_no_signatures": "{\"capabilities\":{\"extensions\":[{\"description\":\"AWID publication and delegation metadata\",\"uri\":\"https://aweb.ai/a2a/ext/awid-publication/v1\"}],\"pushNotifications\":false,\"streaming\":true},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"text/plain\",\"application/json\"],\"description\":\"Research agent for Acme technical investigations.\",\"name\":\"Acme Research\",\"provider\":{\"organization\":\"Acme\",\"url\":\"https://acme.com\"},\"skills\":[{\"description\":\"Investigates technical questions and returns concise findings.\",\"id\":\"technical-research\",\"name\":\"Technical research\",\"tags\":[\"research\",\"technical\"]}],\"supportedInterfaces\":[{\"protocolBinding\":\"JSONRPC\",\"protocolVersion\":\"1.0\",\"url\":\"https://acme.com/a2a/agents/r_research/rpc\"}],\"version\":\"1.0.0\"}",
+      "digest": "sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7",
       "card": {
         "name": "Acme Research",
         "description": "Research agent for Acme technical investigations.",
@@ -174,7 +165,6 @@
         "capabilities": {
           "streaming": true,
           "pushNotifications": false,
-          "extendedAgentCard": false,
           "extensions": [
             {
               "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
@@ -182,8 +172,6 @@
             }
           ]
         },
-        "securitySchemes": {},
-        "securityRequirements": [],
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain", "application/json"],
         "supportedInterfaces": [
@@ -274,6 +262,38 @@
                 "parts": [
                   {
                     "text": "A2A route timed out before the agent produced a terminal or interrupted reply.",
+                    "mediaType": "text/plain"
+                  }
+                ]
+              }
+            },
+            "history": []
+          }
+        }
+      }
+    },
+    {
+      "name": "send_message_auth_required_response",
+      "kind": "response",
+      "method": "SendMessage",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": "req-6",
+        "result": {
+          "task": {
+            "id": "88888888-8888-4888-8888-888888888888",
+            "contextId": "99999999-9999-4999-8999-999999999999",
+            "status": {
+              "state": "TASK_STATE_AUTH_REQUIRED",
+              "timestamp": "2026-06-07T20:03:00Z",
+              "message": {
+                "messageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "contextId": "99999999-9999-4999-8999-999999999999",
+                "taskId": "88888888-8888-4888-8888-888888888888",
+                "role": "ROLE_AGENT",
+                "parts": [
+                  {
+                    "text": "This route requires caller authentication.",
                     "mediaType": "text/plain"
                   }
                 ]
@@ -408,15 +428,6 @@
       "reply": "```a2a-reply\n{\"task_id\":\"33333333-3333-4333-8333-333333333333\",\"context_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"Order 1234 shipped Tuesday.\"}]}\n```",
       "expected_action": "terminal_update",
       "expected_task_state": "TASK_STATE_COMPLETED"
-    },
-    {
-      "name": "auth_required_reply",
-      "current_task_id": "33333333-3333-4333-8333-333333333333",
-      "current_context_id": "22222222-2222-4222-8222-222222222222",
-      "current_task_state": "TASK_STATE_WORKING",
-      "reply": "```a2a-reply\n{\"task_id\":\"33333333-3333-4333-8333-333333333333\",\"context_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"auth_required\",\"message\":\"Caller must authenticate before order lookup.\"}\n```",
-      "expected_action": "terminal_update",
-      "expected_task_state": "TASK_STATE_AUTH_REQUIRED"
     },
     {
       "name": "mismatched_task_id_reply",
