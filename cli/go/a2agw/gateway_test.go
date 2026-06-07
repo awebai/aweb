@@ -84,10 +84,18 @@ func TestGatewayDiagnosticsAndNotReadyRPC(t *testing.T) {
 	if rpc["error"] != "jsonrpc_not_ready" {
 		t.Fatalf("rpc error: got %v", rpc["error"])
 	}
+	missing := fetchJSON(t, gw, "/a2a/agents/missing/rpc", http.StatusNotFound)
+	if missing["error"] != "route_not_found" {
+		t.Fatalf("missing rpc route error: got %v", missing["error"])
+	}
 }
 
 func TestGatewayRejectsUnsafeRouteID(t *testing.T) {
 	_, err := New(Config{Host: "acme.com", Routes: []Route{helpRoute("../escape")}})
+	if err == nil || !strings.Contains(err.Error(), "path-safe") {
+		t.Fatalf("New error: got %v, want path-safe route rejection", err)
+	}
+	_, err = New(Config{Host: "acme.com", Routes: []Route{helpRoute(".")}})
 	if err == nil || !strings.Contains(err.Error(), "path-safe") {
 		t.Fatalf("New error: got %v, want path-safe route rejection", err)
 	}

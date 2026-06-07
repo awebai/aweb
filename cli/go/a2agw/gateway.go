@@ -226,6 +226,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, card)
 	case strings.HasPrefix(r.URL.Path, "/a2a/agents/") && strings.HasSuffix(r.URL.Path, "/rpc"):
+		routeID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/a2a/agents/"), "/rpc")
+		if _, ok := g.routeConfigs[routeID]; !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "route_not_found"})
+			return
+		}
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "jsonrpc_not_ready", "message": "A2A task execution is implemented by aweb-aaqa.4"})
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})

@@ -422,7 +422,7 @@ func validateRouteConfig(host, routeID string) error {
 		return err
 	}
 	routeID = strings.TrimSpace(routeID)
-	if routeID == "" || strings.Contains(routeID, "..") {
+	if routeID == "" || routeID == "." || strings.Contains(routeID, "..") {
 		return fmt.Errorf("route_id must be a non-empty path-safe segment")
 	}
 	for _, r := range routeID {
