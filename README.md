@@ -71,7 +71,9 @@ Run from the root of the project git repo where agents should work.
 Happy path (bootstrap from the canonical template in one shot):
 
 ```bash
-aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
+aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+  --username <username> \
+  --identity-prefix <you>
 # Creates:
 #   ./agents/home/coordinator/
 #   ./agents/home/developer/
@@ -131,40 +133,56 @@ There are however solutions:
 - Run from the root of the project repo. Bootstrap creates `agents/` with all live homes under `agents/home/`:
 
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+    --username <username> \
+    --identity-prefix <you>
   cd agents/home/coordinator
   ```
 - Choose a different generated directory if your repo already uses `agents/`:
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username> --agents-dir aweb-agents
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+    --username <username> \
+    --identity-prefix <you> \
+    --agents-dir aweb-agents
   ```
 - Use an existing local template directory:
   ```bash
-  aw team bootstrap /path/to/template --username <username>
+  aw agents bootstrap /path/to/template --username <username> --identity-prefix <you>
   ```
 - Use a remote template (no fork required):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username>
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+    --username <username> \
+    --identity-prefix <you>
   ```
 - Fork the template first (optional; requires GitHub CLI `gh`):
   ```bash
-  aw team bootstrap --fork gh:awebai/aweb-team-coord-worktrees --username <username>
+  aw agents bootstrap --fork gh:awebai/aweb-team-coord-worktrees \
+    --username <username> \
+    --identity-prefix <you>
   ```
 - Clone the template somewhere explicit (advanced cache override):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git --username <username> --template-cache-dir /tmp/aw-templates
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+    --username <username> \
+    --identity-prefix <you> \
+    --template-cache-dir /tmp/aw-templates
   ```
 - Legacy out-of-repo mode is still available for existing scripts:
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-dev-review.git --username <username> --work-directory /path/to/work
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+    --username <username> \
+    --identity-prefix <you> \
+    --work-directory /path/to/work
   ```
 - Bring Your Own Domain (BYOD, local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
   ```bash
-  aw team bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
+  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
     --aweb-url http://localhost:8000 \
     --registry http://localhost:8010 \
     --namespace example.com \
-    --team dev
+    --team dev \
+    --identity-prefix <you>
   ```
   If you do not yet have a local controller key for the namespace, create one first:
   ```bash
@@ -212,12 +230,12 @@ bind step. The lifecycle contract is documented in
 
 ### 5. Add another agent
 
-If you used `aw team bootstrap`, your template-defined agents are already created.
+If you used `aw agents bootstrap`, your template-defined agents are already created.
 
-For another local agent in the same git repo on the same controller machine:
+For another worktree-bound agent in the same repo-local `agents/` convention:
 
 ```bash
-aw workspace add-worktree developer
+aw agents add-worktree developer
 ```
 
 For another repo or machine, have the joining machine print a request:
