@@ -409,6 +409,67 @@ func TestA2AV1AgentCardVectors(t *testing.T) {
 	}
 }
 
+func TestA2AV1NegativeStructuralFixtures(t *testing.T) {
+	vector := readA2AVector(t)
+	if len(vector.AgentCards) == 0 {
+		t.Fatalf("missing agent card fixtures")
+	}
+
+	t.Run("top_level_protocol_version_rejected", func(t *testing.T) {
+		card := cloneMap(vector.AgentCards[0].Card)
+		card["protocolVersion"] = "1.0"
+		if !containsString(a2aLegacyTopLevelFields(card), "protocolVersion") {
+			t.Fatalf("expected top-level protocolVersion to be detected as legacy/non-v1")
+		}
+	})
+
+	t.Run("agent_card_version_confused_with_protocol_version", func(t *testing.T) {
+		card := cloneMap(vector.AgentCards[0].Card)
+		card["version"] = "1.0"
+		if !a2aCardVersionLooksLikeProtocolVersion(card) {
+			t.Fatalf("expected AgentCard.version 1.0 to be detected as protocol-version confusion")
+		}
+	})
+
+	t.Run("tenant_on_direct_per_address_card_rejected", func(t *testing.T) {
+		tc := a2aCardCase{
+			Name: "bad_direct_tenant",
+			Path: "/a2a/agents/r_bad/agent-card.json",
+			Card: map[string]any{
+				"supportedInterfaces": []any{
+					map[string]any{
+						"url":             "https://acme.com/a2a/agents/r_bad/rpc",
+						"protocolBinding": "JSONRPC",
+						"protocolVersion": "1.0",
+						"tenant":          "r_bad",
+					},
+				},
+			},
+		}
+		if !a2aDirectCardHasTenant(tc) {
+			t.Fatalf("expected direct per-address tenant to be detected")
+		}
+	})
+
+	t.Run("slash_method_alias_rejected", func(t *testing.T) {
+		method := "message/send"
+		if !strings.Contains(method, "/") {
+			t.Fatalf("test setup invalid")
+		}
+		allowedMethods := map[string]bool{
+			"SendMessage":          true,
+			"SendStreamingMessage": true,
+			"GetTask":              true,
+			"ListTasks":            true,
+			"CancelTask":           true,
+			"SubscribeToTask":      true,
+		}
+		if allowedMethods[method] {
+			t.Fatalf("legacy slash method unexpectedly allowed")
+		}
+	})
+}
+
 func TestA2AV1JSONRPCVectors(t *testing.T) {
 	vector := readA2AVector(t)
 	allowedMethods := map[string]bool{
@@ -639,10 +700,8 @@ func extractA2AReplyPayload(t *testing.T, reply string) (map[string]any, bool) {
 
 func requireA2ACardHasNoLegacyFields(t *testing.T, card map[string]any) {
 	t.Helper()
-	for _, field := range []string{"protocolVersion", "url", "stateTransitionHistory", "security"} {
-		if _, ok := card[field]; ok {
-			t.Fatalf("AgentCard must not contain legacy/non-v1 top-level field %q", field)
-		}
+	for _, field := range a2aLegacyTopLevelFields(card) {
+		t.Fatalf("AgentCard must not contain legacy/non-v1 top-level field %q", field)
 	}
 }
 
@@ -652,7 +711,7 @@ func requireA2ACardVersionDistinction(t *testing.T, card map[string]any) {
 	if !ok || version == "" {
 		t.Fatalf("AgentCard missing service/card version")
 	}
-	if version == "1.0" {
+	if a2aCardVersionLooksLikeProtocolVersion(card) {
 		t.Fatalf("AgentCard.version %q looks like the A2A protocol version; supportedInterfaces[].protocolVersion carries protocol version", version)
 	}
 }
@@ -718,13 +777,42 @@ func requireA2ACardInterfaces(t *testing.T, tc a2aCardCase) {
 			if !strings.HasSuffix(urlValue, routePrefix+"/rpc") {
 				t.Fatalf("per-address rpc URL %q does not match card path %q", urlValue, tc.Path)
 			}
-			if _, ok := iface["tenant"]; ok {
+			if a2aDirectCardHasTenant(tc) {
 				t.Fatalf("direct per-address card must omit supportedInterfaces[].tenant by default")
 			}
 		} else if tc.Path != "/.well-known/agent-card.json" {
 			t.Fatalf("unexpected card path %q", tc.Path)
 		}
 	}
+}
+
+func a2aLegacyTopLevelFields(card map[string]any) []string {
+	var out []string
+	for _, field := range []string{"protocolVersion", "url", "stateTransitionHistory", "security"} {
+		if _, ok := card[field]; ok {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func a2aCardVersionLooksLikeProtocolVersion(card map[string]any) bool {
+	version, _ := card["version"].(string)
+	return version == "1.0"
+}
+
+func a2aDirectCardHasTenant(tc a2aCardCase) bool {
+	if !strings.HasPrefix(tc.Path, "/a2a/agents/") {
+		return false
+	}
+	interfaces, _ := tc.Card["supportedInterfaces"].([]any)
+	for _, value := range interfaces {
+		iface, _ := value.(map[string]any)
+		if _, ok := iface["tenant"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {

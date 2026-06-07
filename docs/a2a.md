@@ -243,6 +243,10 @@ Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/
 3. Compute SHA-256 over the UTF-8 canonical JSON bytes.
 4. Encode as `sha256:<lowercase-hex>`.
 
+Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
+
+For the first product slice, generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
+
 This digest is the byte contract used by AWID A2A publication assertions. A later change to the A2A source version, card field shape, digest bytes, or canonicalization rule must update the fixture and receive Athena review before implementation follows it.
 
 ### 5.3 Root Router Card
