@@ -97,6 +97,20 @@ func TestValidateCardRejectsInvalidShapes(t *testing.T) {
 		card["unknown"] = true
 		requireValidateErrorContains(t, card, ValidationOptions{}, "not in pinned A2A")
 	})
+
+	t.Run("missing_supported_interfaces", func(t *testing.T) {
+		card := cloneMapForTest(base)
+		delete(card, "supportedInterfaces")
+		requireValidateErrorContains(t, card, ValidationOptions{}, "supportedInterfaces")
+	})
+
+	t.Run("unknown_capability", func(t *testing.T) {
+		card := cloneMapForTest(base)
+		capabilities := cloneMapForTest(card["capabilities"].(map[string]any))
+		capabilities["stateTransitionHistory"] = true
+		card["capabilities"] = capabilities
+		requireValidateErrorContains(t, card, ValidationOptions{}, "AgentCapabilities")
+	})
 }
 
 func TestVerificationResultStubs(t *testing.T) {
