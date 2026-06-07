@@ -225,6 +225,25 @@ When a host has multiple bridged addresses and no explicit default, the root car
 {
   "name": "Acme A2A Gateway",
   "description": "A2A gateway for Acme agents. Exact agent cards are published in the Acme/aweb directory.",
+  "provider": {
+    "organization": "Acme",
+    "url": "https://acme.com"
+  },
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
+        "description": "AWID publication and delegation metadata"
+      }
+    ]
+  },
+  "securitySchemes": {},
+  "securityRequirements": [],
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
   "supportedInterfaces": [
     {
       "url": "https://acme.com/a2a/rpc",
@@ -464,7 +483,7 @@ The gateway MUST NOT require synchronous agent liveness for `SendMessage` to suc
 
 For the product async path, A2A clients SHOULD send `configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
 
-If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until a terminal or interrupted state, or until the route timeout is reached. If no reply arrives before the wait timeout, the task remains `TASK_STATE_WORKING` and the response includes the current task state. The canonical follow-up remains `GetTask`.
+If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route wait timeout expires before an agent reply, the gateway transitions the task to `TASK_STATE_FAILED` with a timeout message and returns that failed task. Callers that want durable async follow-up SHOULD set `configuration.returnImmediately: true` and poll `GetTask`.
 
 Our own CLI mapping:
 
