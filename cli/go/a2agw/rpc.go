@@ -3,6 +3,7 @@ package a2agw
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,20 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32600, "invalid request", requestID, nil)})
 		return
 	}
+	if route.Disabled {
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "route_disabled", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32003, "route disabled", requestID, map[string]any{"code": "route_disabled"})})
+		return
+	}
+	if ok, err := g.rateLimitAllows(route, caller); err != nil {
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "rate_limit_invalid", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32603, "invalid route rate limit", requestID, map[string]any{"code": "rate_limit_invalid", "detail": err.Error()})})
+		return
+	} else if !ok {
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "rate_limited", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		writeRPC(w, http.StatusOK, rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID), Error: jsonRPCError(-32029, "rate limited", requestID, map[string]any{"code": "rate_limited"})})
+		return
+	}
 	result, rpcErr := g.handleRPCMethod(r.Context(), route, req, requestID, caller)
 	resp := rpcResponse{JSONRPC: jsonRPCVersion, ID: normalizedID(req.ID)}
 	if rpcErr != nil {
@@ -144,6 +159,9 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 	}
 	if err := validateInboundMessage(params.Message); err != nil {
 		return nil, jsonRPCError(-32602, "invalid message", requestID, map[string]any{"detail": err.Error()})
+	}
+	if !authRequired(route, caller) && route.Limits.MaxConcurrentTasks > 0 && g.tasks.activeCount(route.RouteID, caller.Value) >= route.Limits.MaxConcurrentTasks {
+		return nil, jsonRPCError(-32003, "too many active tasks", requestID, map[string]any{"code": "max_concurrent_tasks"})
 	}
 	record, err := g.tasks.create(route.RouteID, caller.Value, requestID, params.Message, effectiveTaskTTL(route))
 	if err != nil {
@@ -272,7 +290,7 @@ func textFromMessage(message A2AMessage) string {
 }
 
 func authRequired(route Route, caller callerScope) bool {
-	mode := strings.TrimSpace(route.Auth.Mode)
+	mode := normalizedAuthMode(route.Auth.Mode)
 	if mode == "" || mode == "none" {
 		return false
 	}
@@ -286,16 +304,40 @@ type callerScope struct {
 
 func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 	token := strings.TrimSpace(r.Header.Get("X-A2A-Task-Token"))
-	if value := strings.TrimSpace(r.Header.Get("X-A2A-Caller-ID")); value != "" {
-		return callerScope{Value: "caller:" + value, TaskToken: token}
-	}
-	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
-		return callerScope{Value: "auth:" + auth, TaskToken: token}
-	}
-	if route.Auth.Mode == "" || route.Auth.Mode == "none" {
+	switch normalizedAuthMode(route.Auth.Mode) {
+	case "", "none":
 		return callerScope{Value: "anonymous:unscoped", TaskToken: token}
+	case "static_api_key":
+		key := strings.TrimSpace(r.Header.Get("X-A2A-API-Key"))
+		if key != "" && route.Auth.StaticAPIKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(route.Auth.StaticAPIKey)) == 1 {
+			return callerScope{Value: "auth:" + auditHash("static_api_key:"+key), TaskToken: token}
+		}
+	case "bearer":
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		const prefix = "Bearer "
+		if strings.HasPrefix(auth, prefix) {
+			bearer := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+			if bearer != "" && route.Auth.BearerToken != "" && subtle.ConstantTimeCompare([]byte(bearer), []byte(route.Auth.BearerToken)) == 1 {
+				return callerScope{Value: "auth:" + auditHash("bearer:"+bearer), TaskToken: token}
+			}
+		}
 	}
 	return callerScope{TaskToken: token}
+}
+
+func normalizedAuthMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func (g *Gateway) rateLimitAllows(route Route, caller callerScope) (bool, error) {
+	if g.rateLimiter == nil || strings.TrimSpace(route.Limits.RateLimit) == "" {
+		return true, nil
+	}
+	scope := caller.Value
+	if scope == "" {
+		scope = "unauthenticated"
+	}
+	return g.rateLimiter.allow(route.RouteID+"|"+scope, route.Limits.RateLimit)
 }
 
 func isJSONContentType(value string) bool {

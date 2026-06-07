@@ -15,7 +15,10 @@ import (
 
 func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	bridge := &fakeBridge{}
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
+	route := supportRoute("r_support")
+	route.Auth = AuthConfig{Mode: "static_api_key", StaticAPIKey: "test-key"}
+	headers := map[string]string{"X-A2A-API-Key": "test-key", "X-Request-ID": "trace-1"}
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{route}})
 
 	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
 		"message": testUserMessage("msg-1", "ctx-1", "Where is order 1234?"),
@@ -23,7 +26,7 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 			"returnImmediately":   true,
 			"acceptedOutputModes": []string{"text/plain"},
 		},
-	}), map[string]string{"X-A2A-Caller-ID": "alice", "X-Request-ID": "trace-1"}, http.StatusOK)
+	}), headers, http.StatusOK)
 	task := rpcTaskResult(t, resp, "task")
 	if got := taskStatus(task); got != TaskStateWorking {
 		t.Fatalf("task state: got %s, want %s", got, TaskStateWorking)
@@ -36,7 +39,7 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	}
 	taskID := task["id"].(string)
 
-	getAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	getAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), headers, http.StatusOK)
 	aliceTask := rpcTaskResult(t, getAlice, "")
 	if aliceTask["id"] != taskID {
 		t.Fatal("alice should see her task")
@@ -44,19 +47,15 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	if history, ok := aliceTask["history"].([]any); !ok || len(history) != 1 {
 		t.Fatalf("absent historyLength should preserve history, got %#v", aliceTask["history"])
 	}
-	getAliceNoHistory := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2b", "GetTask", map[string]any{"id": taskID, "historyLength": 0}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	getAliceNoHistory := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2b", "GetTask", map[string]any{"id": taskID, "historyLength": 0}), headers, http.StatusOK)
 	if _, ok := rpcTaskResult(t, getAliceNoHistory, "")["history"]; ok {
 		t.Fatalf("explicit historyLength=0 should omit history: %#v", getAliceNoHistory)
 	}
-	getBob := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "bob"}, http.StatusOK)
-	if rpcErrorCode(getBob) != "task_not_found" {
-		t.Fatalf("bob get error code: got %#v", getBob)
+	getUnauthed := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-API-Key": "wrong"}, http.StatusOK)
+	if rpcErrorCode(getUnauthed) != "task_not_found" {
+		t.Fatalf("unauthenticated get error code: got %#v", getUnauthed)
 	}
-	listBob := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "ListTasks", map[string]any{"pageSize": 50}), map[string]string{"X-A2A-Caller-ID": "bob"}, http.StatusOK)
-	if got := int(listBob["result"].(map[string]any)["totalSize"].(float64)); got != 0 {
-		t.Fatalf("bob list total: got %d", got)
-	}
-	listAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-5", "ListTasks", map[string]any{"status": TaskStateWorking}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	listAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-5", "ListTasks", map[string]any{"status": TaskStateWorking}), headers, http.StatusOK)
 	if got := int(listAlice["result"].(map[string]any)["totalSize"].(float64)); got != 1 {
 		t.Fatalf("alice list total: got %d", got)
 	}
@@ -142,8 +141,9 @@ func TestGatewayRPCCancelTask(t *testing.T) {
 		"message":       testUserMessage("msg-1", "ctx-1", "Cancel me"),
 		"configuration": map[string]any{"returnImmediately": true},
 	}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	taskID := rpcTaskResult(t, resp, "task")["id"].(string)
-	cancel := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "CancelTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	task := rpcTaskResult(t, resp, "task")
+	taskID := task["id"].(string)
+	cancel := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "CancelTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": taskBearerToken(t, task)}, http.StatusOK)
 	if got := taskStatus(rpcTaskResult(t, cancel, "")); got != TaskStateCanceled {
 		t.Fatalf("cancel state: got %s", got)
 	}
@@ -212,6 +212,82 @@ func TestGatewayRPCUnscopedPublicListDisabledAndBearerGet(t *testing.T) {
 	if rpcTaskResult(t, get, "")["id"] != taskID {
 		t.Fatal("bearer token should fetch unscoped task")
 	}
+	spoofedGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	if rpcErrorCode(spoofedGet) != "task_not_found" {
+		t.Fatalf("public caller id must not grant task visibility: %#v", spoofedGet)
+	}
+}
+
+func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
+	t.Run("bearer required", func(t *testing.T) {
+		route := supportRoute("r_support")
+		route.Auth = AuthConfig{Mode: "bearer", BearerToken: "good-token"}
+		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
+		missing := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
+			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
+			"configuration": map[string]any{"returnImmediately": true},
+		}), nil, http.StatusOK)
+		if got := taskStatus(rpcTaskResult(t, missing, "task")); got != TaskStateAuthRequired {
+			t.Fatalf("missing bearer state=%s", got)
+		}
+		ok := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
+			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
+			"configuration": map[string]any{"returnImmediately": true},
+		}), map[string]string{"Authorization": "Bearer good-token"}, http.StatusOK)
+		if got := taskStatus(rpcTaskResult(t, ok, "task")); got != TaskStateWorking {
+			t.Fatalf("valid bearer state=%s", got)
+		}
+	})
+
+	t.Run("rate limit", func(t *testing.T) {
+		route := supportRoute("r_support")
+		route.Limits.RateLimit = "1/m"
+		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
+		for i := 0; i < 2; i++ {
+			resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
+				"message":       testUserMessage(mustNewUUIDv4(), "ctx-1", "hello"),
+				"configuration": map[string]any{"returnImmediately": true},
+			}), nil, http.StatusOK)
+			if i == 0 && resp["error"] != nil {
+				t.Fatalf("first request should pass: %#v", resp)
+			}
+			if i == 1 && rpcErrorCode(resp) != "rate_limited" {
+				t.Fatalf("second request should rate limit: %#v", resp)
+			}
+		}
+	})
+
+	t.Run("disabled route", func(t *testing.T) {
+		route := supportRoute("r_support")
+		route.Disabled = true
+		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
+		resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req", "SendMessage", map[string]any{
+			"message": testUserMessage("msg-1", "ctx-1", "hello"),
+		}), nil, http.StatusOK)
+		if rpcErrorCode(resp) != "route_disabled" {
+			t.Fatalf("disabled route response: %#v", resp)
+		}
+	})
+
+	t.Run("max concurrent", func(t *testing.T) {
+		route := supportRoute("r_support")
+		route.Limits.MaxConcurrentTasks = 1
+		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
+		first := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
+			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
+			"configuration": map[string]any{"returnImmediately": true},
+		}), nil, http.StatusOK)
+		if got := taskStatus(rpcTaskResult(t, first, "task")); got != TaskStateWorking {
+			t.Fatalf("first state=%s", got)
+		}
+		second := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
+			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
+			"configuration": map[string]any{"returnImmediately": true},
+		}), nil, http.StatusOK)
+		if rpcErrorCode(second) != "max_concurrent_tasks" {
+			t.Fatalf("max concurrent response: %#v", second)
+		}
+	})
 }
 
 func TestGatewayRPCTaskIDEntropyAndShape(t *testing.T) {
@@ -242,9 +318,10 @@ func TestGatewayRPCTaskExpiryHidesTask(t *testing.T) {
 		"message":       testUserMessage("msg-1", "ctx-1", "expires"),
 		"configuration": map[string]any{"returnImmediately": true},
 	}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	taskID := rpcTaskResult(t, resp, "task")["id"].(string)
+	task := rpcTaskResult(t, resp, "task")
+	taskID := task["id"].(string)
 	time.Sleep(10 * time.Millisecond)
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": taskBearerToken(t, task)}, http.StatusOK)
 	if rpcErrorCode(get) != "task_not_found" {
 		t.Fatalf("expired get: %#v", get)
 	}
@@ -314,6 +391,19 @@ func rpcTaskResult(t *testing.T, resp map[string]any, wrapper string) map[string
 
 func taskStatus(task map[string]any) string {
 	return task["status"].(map[string]any)["state"].(string)
+}
+
+func taskBearerToken(t *testing.T, task map[string]any) string {
+	t.Helper()
+	metadata, ok := task["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("task missing metadata: %#v", task)
+	}
+	token, ok := metadata["task_bearer_token"].(string)
+	if !ok || token == "" {
+		t.Fatalf("task missing bearer token metadata: %#v", task)
+	}
+	return token
 }
 
 func rpcErrorCode(resp map[string]any) string {

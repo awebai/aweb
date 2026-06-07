@@ -21,7 +21,9 @@ func TestMailBridgeSendIngestReplyAndGetCompletedTask(t *testing.T) {
 		"message":       testUserMessage("msg-1", "ctx-1", "Where is order 1234?"),
 		"configuration": map[string]any{"returnImmediately": true},
 	}), map[string]string{"X-A2A-Caller-ID": "alice", "X-Request-ID": "trace-1"}, 200)
-	taskID := rpcTaskResult(t, resp, "task")["id"].(string)
+	sentTask := rpcTaskResult(t, resp, "task")
+	taskID := sentTask["id"].(string)
+	token := taskBearerToken(t, sentTask)
 	if len(transport.sent) != 1 {
 		t.Fatalf("sent=%d, want 1", len(transport.sent))
 	}
@@ -45,7 +47,7 @@ func TestMailBridgeSendIngestReplyAndGetCompletedTask(t *testing.T) {
 	if task.Status.State != TaskStateCompleted {
 		t.Fatalf("state=%s", task.Status.State)
 	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
 	got := rpcTaskResult(t, get, "")
 	if taskStatus(got) != TaskStateCompleted {
 		t.Fatalf("get state=%s", taskStatus(got))
@@ -64,6 +66,7 @@ func TestMailBridgeDoesNotLeakAuthorizationToRecipient(t *testing.T) {
 	bridge := newTestMailBridge(t, transport, nil)
 	route := supportRoute("r_support")
 	route.Auth.Mode = "bearer"
+	route.Auth.BearerToken = "s3cret-jwt-do-not-leak"
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{route}})
 	bridge.SetReplyApplier(gw)
 
@@ -114,12 +117,12 @@ func TestMailBridgeReplyStatesAndMalformedBlocks(t *testing.T) {
 	bridge := newTestMailBridge(t, transport, nil)
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
 	bridge.SetReplyApplier(gw)
-	taskID := sendTestA2ATask(t, gw)
+	taskID, token := sendTestA2ATaskWithToken(t, gw)
 	_, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "bad", ConversationID: "conv-1", Body: "```a2a-reply\n{\"task_id\":", VerificationStatus: awid.Verified})
 	if err == nil || ok {
 		t.Fatalf("malformed reply: ok=%t err=%v", ok, err)
 	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
 	if got := taskStatus(rpcTaskResult(t, get, "")); got != TaskStateWorking {
 		t.Fatalf("malformed reply should not mutate task, got %s", got)
 	}
@@ -133,7 +136,7 @@ func TestMailBridgeQuestionCompatibilityRequiresTrackedConversation(t *testing.T
 	}
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
 	bridge.SetReplyApplier(gw)
-	taskID := sendTestA2ATask(t, gw)
+	taskID, _ := sendTestA2ATaskWithToken(t, gw)
 	task, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "question", ConversationID: "conv-1", Body: "QUESTION: Which email is the order under?", VerificationStatus: awid.Verified})
 	if err != nil || !ok {
 		t.Fatalf("question ingest: ok=%t err=%v", ok, err)
@@ -151,7 +154,7 @@ func TestMailBridgeRejectsUnverifiedAndMismatchedConversationReplies(t *testing.
 	bridge := newTestMailBridge(t, transport, nil)
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
 	bridge.SetReplyApplier(gw)
-	taskID := sendTestA2ATask(t, gw)
+	taskID, token := sendTestA2ATaskWithToken(t, gw)
 	replyBody := "```a2a-reply\n{\"task_id\":\"" + taskID + "\",\"context_id\":\"ctx-1\",\"state\":\"completed\",\"text\":\"done\"}\n```"
 	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "unverified", ConversationID: "conv-1", Body: replyBody, VerificationStatus: awid.Unverified}); err == nil || ok {
 		t.Fatalf("unverified reply should fail closed: ok=%t err=%v", ok, err)
@@ -162,18 +165,18 @@ func TestMailBridgeRejectsUnverifiedAndMismatchedConversationReplies(t *testing.
 	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "missing-conv", Body: replyBody, VerificationStatus: awid.Verified}); err != nil || ok {
 		t.Fatalf("missing conversation should be ignored without mutation: ok=%t err=%v", ok, err)
 	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
 	if got := taskStatus(rpcTaskResult(t, get, "")); got != TaskStateWorking {
 		t.Fatalf("rejected replies should not mutate task, got %s", got)
 	}
 
 	taskA := taskID
-	taskB := sendTestA2ATask(t, gw)
+	taskB, tokenB := sendTestA2ATaskWithToken(t, gw)
 	replyForBOnAConversation := "```a2a-reply\n{\"task_id\":\"" + taskB + "\",\"context_id\":\"ctx-1\",\"state\":\"completed\",\"text\":\"wrong conversation\"}\n```"
 	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "cross-task", ConversationID: "conv-1", Body: replyForBOnAConversation, VerificationStatus: awid.Verified}); err != nil || ok {
 		t.Fatalf("cross-task reply from wrong conversation should be ignored: taskA=%s taskB=%s ok=%t err=%v", taskA, taskB, ok, err)
 	}
-	getB := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get-b", "GetTask", map[string]any{"id": taskB}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	getB := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get-b", "GetTask", map[string]any{"id": taskB}), map[string]string{"X-A2A-Task-Token": tokenB}, 200)
 	if got := taskStatus(rpcTaskResult(t, getB, "")); got != TaskStateWorking {
 		t.Fatalf("cross-task reply should not mutate named task, got %s", got)
 	}
@@ -184,12 +187,12 @@ func TestMailBridgeRejectsMissingContextForContextualTask(t *testing.T) {
 	bridge := newTestMailBridge(t, transport, nil)
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
 	bridge.SetReplyApplier(gw)
-	taskID := sendTestA2ATask(t, gw)
+	taskID, token := sendTestA2ATaskWithToken(t, gw)
 	replyBody := "```a2a-reply\n{\"task_id\":\"" + taskID + "\",\"state\":\"completed\",\"text\":\"missing context\"}\n```"
 	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{MessageID: "missing-context", ConversationID: "conv-1", Body: replyBody, VerificationStatus: awid.Verified}); err != nil || ok {
 		t.Fatalf("missing context_id should be ignored without mutation: ok=%t err=%v", ok, err)
 	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
 	if got := taskStatus(rpcTaskResult(t, get, "")); got != TaskStateWorking {
 		t.Fatalf("missing context reply should not mutate task, got %s", got)
 	}
@@ -200,8 +203,8 @@ func TestMailBridgeCancellationSendsVisibleNotice(t *testing.T) {
 	bridge := newTestMailBridge(t, transport, nil)
 	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
 	bridge.SetReplyApplier(gw)
-	taskID := sendTestA2ATask(t, gw)
-	cancel := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-cancel", "CancelTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice", "X-Request-ID": "trace-cancel"}, 200)
+	taskID, token := sendTestA2ATaskWithToken(t, gw)
+	cancel := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-cancel", "CancelTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token, "X-Request-ID": "trace-cancel"}, 200)
 	if got := taskStatus(rpcTaskResult(t, cancel, "")); got != TaskStateCanceled {
 		t.Fatalf("cancel state=%s", got)
 	}
@@ -247,11 +250,18 @@ func newTestMailBridge(t *testing.T, transport *fakeMailTransport, audit AuditSi
 
 func sendTestA2ATask(t *testing.T, gw *Gateway) string {
 	t.Helper()
+	taskID, _ := sendTestA2ATaskWithToken(t, gw)
+	return taskID
+}
+
+func sendTestA2ATaskWithToken(t *testing.T, gw *Gateway) (string, string) {
+	t.Helper()
 	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-send", "SendMessage", map[string]any{
 		"message":       testUserMessage("msg-1", "ctx-1", "hello"),
 		"configuration": map[string]any{"returnImmediately": true},
 	}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
-	return rpcTaskResult(t, resp, "task")["id"].(string)
+	task := rpcTaskResult(t, resp, "task")
+	return task["id"].(string), taskBearerToken(t, task)
 }
 
 type fakeMailTransport struct {

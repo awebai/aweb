@@ -32,6 +32,7 @@ type Route struct {
 	RouteID         string
 	Address         string
 	Mode            string
+	Disabled        bool
 	ResponseTimeout time.Duration
 	Auth            AuthConfig
 	Limits          Limits
@@ -64,13 +65,16 @@ type RouterCard struct {
 }
 
 type AuthConfig struct {
-	Mode string
+	Mode         string
+	StaticAPIKey string
+	BearerToken  string
 }
 
 type Limits struct {
-	MaxMessageBytes int
-	RateLimit       string
-	TaskTTL         time.Duration
+	MaxMessageBytes    int
+	RateLimit          string
+	MaxConcurrentTasks int
+	TaskTTL            time.Duration
 }
 
 type AWIDPublicationExpectation struct {
@@ -86,6 +90,7 @@ type Gateway struct {
 	routeConfigs  map[string]Route
 	bridge        Bridge
 	tasks         *taskStore
+	rateLimiter   *rateLimiter
 	taskExecution bool
 	auditSink     AuditSink
 }
@@ -113,6 +118,8 @@ type RouteDiagnostic struct {
 	CardPath         string `json:"card_path"`
 	RPCPath          string `json:"rpc_path"`
 	AuthMode         string `json:"auth_mode,omitempty"`
+	Disabled         bool   `json:"disabled,omitempty"`
+	RateLimit        string `json:"rate_limit,omitempty"`
 	AWIDRequired     bool   `json:"awid_required"`
 	VerificationTier string `json:"verification_tier"`
 }
@@ -218,7 +225,7 @@ func New(config Config) (*Gateway, error) {
 		bridge = notReadyBridge{}
 		taskExecution = false
 	}
-	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), taskExecution: taskExecution, auditSink: config.Audit}, nil
+	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), rateLimiter: newRateLimiter(time.Now), taskExecution: taskExecution, auditSink: config.Audit}, nil
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +277,8 @@ func (g *Gateway) Diagnostics() Diagnostics {
 			CardPath:         a2a.DirectCardPath(route.RouteID),
 			RPCPath:          a2a.DirectRPCPath(route.RouteID),
 			AuthMode:         route.Auth.Mode,
+			Disabled:         route.Disabled,
+			RateLimit:        route.Limits.RateLimit,
 			AWIDRequired:     awidRequired,
 			VerificationTier: "unsigned",
 		})

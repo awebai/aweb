@@ -211,6 +211,21 @@ func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, 
 	return out
 }
 
+func (s *taskStore) activeCount(routeID, callerScope string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, record := range s.tasks {
+		if record == nil || record.RouteID != routeID || record.Terminal || s.expiredLocked(record) {
+			continue
+		}
+		if callerScope == "" || record.CallerScope == callerScope {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *taskStore) updateWorking(taskID string) (*taskRecord, bool) {
 	return s.updateState(taskID, TaskStateWorking, nil, nil)
 }
