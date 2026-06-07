@@ -3,10 +3,13 @@ package awid
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 )
+
+const RegistryCodeCertificateAlreadyRegistered = "certificate_already_registered"
 
 // RegistryTeam represents a team from the awid registry.
 type RegistryTeam struct {
@@ -43,6 +46,23 @@ type registryCertificateFetchResponse struct {
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
 	Certificate   string `json:"certificate"`
+}
+
+type CertificateAlreadyRegisteredError struct {
+	CertificateID string
+	StatusCode    int
+	Message       string
+}
+
+func (e *CertificateAlreadyRegisteredError) Error() string {
+	message := strings.TrimSpace(e.Message)
+	if message == "" {
+		message = "Certificate already registered"
+	}
+	if strings.TrimSpace(e.CertificateID) == "" {
+		return message
+	}
+	return fmt.Sprintf("%s: %s", message, strings.TrimSpace(e.CertificateID))
 }
 
 // TeamMemberReference resolves a (team_id, alias) reference to an active member.
@@ -258,7 +278,7 @@ func (c *RegistryClient) RegisterCertificate(
 	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates"
-	return c.requestJSON(
+	if err := c.requestJSON(
 		ctx,
 		http.MethodPost,
 		registryURL,
@@ -277,7 +297,18 @@ func (c *RegistryClient) RegisterCertificate(
 			Certificate:   encodedCert,
 		},
 		nil,
-	)
+	); err != nil {
+		var registryErr *RegistryError
+		if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusConflict && registryErr.HasCode(RegistryCodeCertificateAlreadyRegistered) {
+			return &CertificateAlreadyRegisteredError{
+				CertificateID: cert.CertificateID,
+				StatusCode:    registryErr.StatusCode,
+				Message:       registryErr.Message,
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 // FetchTeamCertificate downloads a signed team certificate blob from awid.

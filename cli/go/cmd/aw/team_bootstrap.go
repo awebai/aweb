@@ -1333,7 +1333,8 @@ func ensureAgentsAddGlobalCertificate(ctx context.Context, registry *awid.Regist
 	}
 	if !pending.CertificateRegistered {
 		if err := registry.RegisterCertificate(ctx, registryURL, pending.Domain, pending.TeamName, pending.Certificate, registration.TeamKey); err != nil {
-			if !strings.Contains(err.Error(), "Certificate already registered") {
+			var alreadyRegistered *awid.CertificateAlreadyRegisteredError
+			if !errors.As(err, &alreadyRegistered) {
 				return nil, fmt.Errorf("register team certificate: %w", err)
 			}
 		}

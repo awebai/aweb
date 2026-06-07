@@ -985,13 +985,26 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 }
 
 func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
-	if strings.TrimSpace(addressOverride) != "" {
-		return nil, usageError("--address is only valid for global invites")
-	}
 	if err := ensureConnectTargetClean(workingDir); err != nil {
 		return nil, err
 	}
 	alias := strings.TrimSpace(aliasHint)
+	memberAddress := strings.TrimSpace(addressOverride)
+	global := memberAddress != ""
+	addressName := ""
+	if global {
+		domain, name, ok := strings.Cut(memberAddress, "/")
+		domain = strings.TrimSpace(domain)
+		name = strings.TrimSpace(name)
+		if !ok || domain == "" || name == "" {
+			return nil, usageError("invalid --address %q; expected <domain>/<name>", memberAddress)
+		}
+		if alias != "" && alias != name {
+			return nil, usageError("--alias %q does not match global address name %q; omit --alias or use --alias %s", alias, name, name)
+		}
+		alias = name
+		addressName = name
+	}
 	if alias == "" {
 		return nil, usageError("--alias is required for hosted team invites")
 	}
@@ -1016,22 +1029,44 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	resp, err := client.AcceptSpawnInvite(ctx, &awid.SpawnAcceptInviteRequest{
-		Token:     strings.TrimSpace(token),
-		Alias:     alias,
-		DID:       didKey,
-		PublicKey: base64.StdEncoding.EncodeToString(pub),
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-	})
+	stableID := ""
+	registryURL := ""
+	if global {
+		stableID = awid.ComputeStableID(pub)
+		registry, err := newConfiguredRegistryClient(nil, awebURL)
+		if err != nil {
+			return nil, err
+		}
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+		if err := registerHostedDID(ctx, registry, didKey, stableID, signingKey); err != nil {
+			return nil, fmt.Errorf("register hosted invite global did:aw before accepting invite: %w", err)
+		}
+	}
+
+	req := &awid.SpawnAcceptInviteRequest{
+		Token:         strings.TrimSpace(token),
+		DID:           didKey,
+		PublicKey:     base64.StdEncoding.EncodeToString(pub),
+		Custody:       awid.CustodySelf,
+		Lifetime:      awid.LifetimeEphemeral,
+		IdentityScope: awid.IdentityModeLocal,
+	}
+	if global {
+		req.Name = addressName
+		req.Lifetime = awid.LifetimePersistent
+		req.IdentityScope = awid.IdentityModeGlobal
+	} else {
+		req.Alias = alias
+	}
+	resp, err := client.AcceptSpawnInvite(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("accept hosted team invite: %w", err)
 	}
-	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias)
+	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias, stableID, memberAddress)
 	if err != nil {
 		return nil, err
 	}
-	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+	if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, global); err != nil {
 		return nil, err
 	}
 
@@ -1049,7 +1084,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 	}, nil
 }
 
-func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias string) (*awid.TeamCertificate, string, error) {
+func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress string) (*awid.TeamCertificate, string, error) {
 	if resp == nil {
 		return nil, "", fmt.Errorf("missing hosted team invite response")
 	}
@@ -1078,11 +1113,30 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 	if strings.TrimSpace(cert.Alias) != strings.TrimSpace(requestedAlias) {
 		return nil, "", fmt.Errorf("hosted team invite certificate alias %q does not match requested alias %q", cert.Alias, requestedAlias)
 	}
-	if awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)) != awid.IdentityModeLocal {
-		return nil, "", fmt.Errorf("hosted team invite certificate identity_scope %q does not match %q", awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)), awid.IdentityModeLocal)
+	expectedScope := awid.IdentityModeLocal
+	if strings.TrimSpace(expectedAddress) != "" {
+		expectedScope = awid.IdentityModeGlobal
 	}
-	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
+	actualScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	if actualScope != expectedScope {
+		return nil, "", fmt.Errorf("hosted team invite certificate identity_scope %q does not match %q", actualScope, expectedScope)
+	}
+	if expectedScope == awid.IdentityModeLocal && (strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "") {
 		return nil, "", fmt.Errorf("hosted local team invite certificate unexpectedly contains global identity fields")
+	}
+	if expectedScope == awid.IdentityModeGlobal {
+		if strings.TrimSpace(resp.StableID) != strings.TrimSpace(expectedStableID) {
+			return nil, "", fmt.Errorf("hosted team invite response stable_id %q does not match generated did:aw %q", resp.StableID, expectedStableID)
+		}
+		if strings.TrimSpace(resp.Address) != strings.TrimSpace(expectedAddress) {
+			return nil, "", fmt.Errorf("hosted team invite response address %q does not match requested address %q", resp.Address, expectedAddress)
+		}
+		if strings.TrimSpace(cert.MemberDIDAW) != strings.TrimSpace(expectedStableID) {
+			return nil, "", fmt.Errorf("hosted team invite certificate member_did_aw %q does not match generated did:aw %q", cert.MemberDIDAW, expectedStableID)
+		}
+		if strings.TrimSpace(cert.MemberAddress) != strings.TrimSpace(expectedAddress) {
+			return nil, "", fmt.Errorf("hosted team invite certificate member_address %q does not match requested address %q", cert.MemberAddress, expectedAddress)
+		}
 	}
 	return cert, serverURL, nil
 }

@@ -539,6 +539,8 @@ async def test_register_certificate_duplicate_returns_409(client, controller_ide
         headers=headers,
     )
     assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "certificate_already_registered"
+    assert resp.json()["detail"]["message"] == "Certificate already registered"
 
 
 @pytest.mark.asyncio

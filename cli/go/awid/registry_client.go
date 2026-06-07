@@ -17,6 +17,8 @@ import (
 type RegistryError struct {
 	StatusCode int
 	Detail     string
+	Code       string
+	Message    string
 }
 
 func (e *RegistryError) Error() string {
@@ -448,8 +450,29 @@ func signedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[s
 
 func parseRegistryError(resp *http.Response) error {
 	body := readBodyString(resp)
-	return &RegistryError{
+	regErr := &RegistryError{
 		StatusCode: resp.StatusCode,
 		Detail:     body,
 	}
+	var parsed struct {
+		Detail any `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+		if detail, ok := parsed.Detail.(map[string]any); ok {
+			if code, ok := detail["code"].(string); ok {
+				regErr.Code = strings.TrimSpace(code)
+			}
+			if message, ok := detail["message"].(string); ok {
+				regErr.Message = strings.TrimSpace(message)
+			}
+		}
+	}
+	return regErr
+}
+
+func (e *RegistryError) HasCode(code string) bool {
+	if e == nil {
+		return false
+	}
+	return strings.TrimSpace(e.Code) == strings.TrimSpace(code)
 }

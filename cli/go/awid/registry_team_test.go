@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -358,6 +359,58 @@ func TestRegisterCertificate(t *testing.T) {
 		t.Fatalf("certificate blob not sent")
 	}
 	_ = teamPub
+}
+
+func TestRegisterCertificateAlreadyRegisteredTypedError(t *testing.T) {
+	t.Parallel()
+
+	_, teamKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: ComputeDIDKey(memberPub),
+		Alias:        "alice",
+		Lifetime:     LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": map[string]any{
+				"code":    RegistryCodeCertificateAlreadyRegistered,
+				"message": "Certificate already registered",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = client.RegisterCertificate(ctx, server.URL, "acme.com", "backend", cert, teamKey)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var alreadyRegistered *CertificateAlreadyRegisteredError
+	if !errors.As(err, &alreadyRegistered) {
+		t.Fatalf("error %T %[1]v is not CertificateAlreadyRegisteredError", err)
+	}
+	if alreadyRegistered.CertificateID != cert.CertificateID {
+		t.Fatalf("certificate_id=%q want %q", alreadyRegistered.CertificateID, cert.CertificateID)
+	}
+	if alreadyRegistered.StatusCode != http.StatusConflict {
+		t.Fatalf("status=%d", alreadyRegistered.StatusCode)
+	}
 }
 
 func TestFetchTeamCertificate(t *testing.T) {
