@@ -17,19 +17,25 @@ Diagnose and fix the aweb channel setup for this project.
    test -f .aw/team-cert.pem && echo "CERT OK" || echo "CERT MISSING"
    ```
 
-   If `.aw/workspace.yaml` is missing, the workspace is not initialized yet.
-   Tell the user to run:
+   If `.aw/workspace.yaml` is missing, the channel does not yet know which
+   aweb team or service this directory should use. Do not guess. Tell the user
+   to initialize or join the workspace through the correct source first, for
+   example:
 
    ```bash
-   aw init --setup-channel
+   aw init
    ```
 
-   Or use the explicit invite flow:
+   Or, when they have an explicit invite/service/BYOT source:
 
    ```bash
    aw id team accept-invite <token>
    AWEB_URL=<server-url> aw init
+   aw service init --service <service-url> --team <team:namespace>
    ```
+
+   After `.aw/workspace.yaml` exists, continue with the channel MCP
+   configuration checks below.
 
    Do not instruct the user to use legacy project bootstrap commands.
 
