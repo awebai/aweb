@@ -25,6 +25,7 @@ type Config struct {
 	RouterCard     RouterCard
 	Routes         []Route
 	Bridge         Bridge
+	Audit          AuditSink
 }
 
 type Route struct {
@@ -86,6 +87,7 @@ type Gateway struct {
 	bridge        Bridge
 	tasks         *taskStore
 	taskExecution bool
+	auditSink     AuditSink
 }
 
 type Health struct {
@@ -216,7 +218,7 @@ func New(config Config) (*Gateway, error) {
 		bridge = notReadyBridge{}
 		taskExecution = false
 	}
-	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), taskExecution: taskExecution}, nil
+	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), taskExecution: taskExecution, auditSink: config.Audit}, nil
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
