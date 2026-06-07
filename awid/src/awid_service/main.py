@@ -13,6 +13,7 @@ from redis.asyncio import from_url as async_redis_from_url
 from awid.log_config import configure_logging
 from awid.ratelimit import build_rate_limiter as _shared_build_rate_limiter
 from .config import get_settings
+from .routes.a2a_publications import router as a2a_publications_router
 from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
@@ -154,6 +155,7 @@ def create_app(
     app.include_router(did_router)
     app.include_router(dns_namespaces_router)
     app.include_router(dns_addresses_router)
+    app.include_router(a2a_publications_router)
     app.include_router(teams_router)
     return app
 
