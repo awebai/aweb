@@ -176,10 +176,8 @@ Generated cards MUST use A2A v1.0 field names and media-type input/output modes.
 
 ```json
 {
-  "protocolVersion": "1.0",
   "name": "Acme Help",
   "description": "Customer support agent for Acme products.",
-  "url": "https://acme.com/a2a/agents/r_help_01/rpc",
   "provider": {
     "organization": "Acme",
     "url": "https://acme.com"
@@ -188,7 +186,6 @@ Generated cards MUST use A2A v1.0 field names and media-type input/output modes.
   "capabilities": {
     "streaming": false,
     "pushNotifications": false,
-    "stateTransitionHistory": true,
     "extensions": [
       {
         "uri": "https://aweb.ai/a2a/ext/awid-publication/v1",
@@ -264,18 +261,25 @@ The first product contract for an AWID A2A publication assertion MUST include:
 
 ```yaml
 operation: a2a_publish_card
+assertion_id: a2a-pub-...
 address: acme.com/help
 did_aw: did:aw:...
 identity_did_key: did:key:...
+signer_did: did:aw:...
+signer_kid: did:aw:...#key-...
 card_url: https://acme.com/a2a/agents/r_help_01/agent-card.json
 rpc_url: https://acme.com/a2a/agents/r_help_01/rpc
 route_id: r_help_01
 tenant: null
 gateway_identity: did:aw:...
 delegation_id: a2a-delegation-...
+delegation_ref: awid://delegations/a2a-delegation-...
+delegation_digest: sha256:...
+card_digest_alg: sha256
 card_digest: sha256:...
 card_revision: 3
 default_for_host: false
+status: active
 published_at: "2026-06-07T00:00:00Z"
 expires_at: "2026-07-07T00:00:00Z"
 registry_url: https://api.awid.ai
@@ -284,6 +288,10 @@ registry_url: https://api.awid.ai
 `card_digest` is load-bearing. Aweb-aware Tier-2 verification MUST reject or hard-warn when the served card digest does not match the active AWID publication assertion.
 
 Material Agent Card changes require republishing the assertion with a new digest/revision. This is intentional: an Agent Card is a public service contract, not per-request dynamic state.
+
+The assertion MUST identify the exact signed publication and delegation material used for verification. If AWID's existing revocation/event-log model supplies assertion ids, signer ids, and delegation references indirectly, the implementation can derive these fields from that model, but the verifier must still be able to report the exact assertion and delegation it trusted.
+
+Revocation follows the AWID event/revocation model: a revoked publication or revoked delegation is not active even if its expiry is in the future.
 
 ### 6.3 Publication Authority
 
@@ -372,6 +380,7 @@ For operator-configured internal/event routes before AWID delegation enforcement
 - the gateway identity is configured to bridge route -> address;
 - every message to the agent includes structured metadata naming the A2A caller, task id, route id, target address, and gateway identity;
 - docs/cards MUST label this as locally configured/unverified delegation, not AWID-verified delegation.
+- customer-facing UI, CLI, cards, and docs MUST NOT call the route "verified", "AWID-backed", or "authorized for address X" until AWID publication and delegation checks are enforced. Operator-configured routes are only "configured by gateway operator."
 
 For product-trusted external routes:
 
@@ -399,6 +408,9 @@ routes:
     response_timeout_s: 120
     auth:
       scheme: none
+    limits:
+      max_tasks_per_minute: 30
+      task_expiry_s: 900
     card:
       name: "Personal Agent"
       description: "Personal agent for the A2A customer-service chain."
@@ -450,6 +462,15 @@ On new A2A message:
 
 The gateway MUST NOT require synchronous agent liveness for `SendMessage` to succeed unless the route is explicitly configured as sync-only.
 
+For the product async path, A2A clients SHOULD send `configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
+
+If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until a terminal or interrupted state, or until the route timeout is reached. If no reply arrives before the wait timeout, the task remains `TASK_STATE_WORKING` and the response includes the current task state. The canonical follow-up remains `GetTask`.
+
+Our own CLI mapping:
+
+- `aw a2a send --no-wait` sets `configuration.returnImmediately: true`.
+- `aw a2a send --wait` prefers `SendStreamingMessage`; if streaming is unavailable, it uses `SendMessage` without `returnImmediately` when supported, otherwise `SendMessage` with polling `GetTask`.
+
 ### 9.3 `GetTask`
 
 Returns the task, current state, message history, and artifacts visible to the authenticated caller.
@@ -459,6 +480,8 @@ Tasks MUST be scoped by caller/auth context. One caller MUST NOT be able to fetc
 ### 9.4 `ListTasks`
 
 Returns only tasks created by the authenticated caller for the requested route/interface. Pagination is required before public product launch.
+
+For unauthenticated public/event routes, caller scope MUST still be isolated. Acceptable v0 scopes include anonymous session cookie, explicit opaque task bearer token, or IP/token-bucket scope when no better identity exists. If the gateway cannot isolate unauthenticated callers safely, `ListTasks` MUST be disabled for that route and `GetTask` MUST require an unguessable task bearer token.
 
 ### 9.5 `CancelTask`
 
@@ -525,6 +548,12 @@ Allowed `state` values in the block:
 - `input_required`
 - `failed`
 - `rejected`
+- `TASK_STATE_COMPLETED`
+- `TASK_STATE_INPUT_REQUIRED`
+- `TASK_STATE_FAILED`
+- `TASK_STATE_REJECTED`
+
+These are gateway-local bridge values, not the A2A wire object itself. The gateway accepts the lower-case aliases for zero-SDK agent ergonomics and the exact `TASK_STATE_*` names for future helpers/tooling.
 
 Mapping:
 
