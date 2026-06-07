@@ -148,6 +148,8 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAddClaim := agentsAddClaimIdentityAddress
 	prevAddCert := agentsAddEnsureGlobalCertificate
 	prevAddConnect := agentsAddConnectGlobalAgent
+	prevLockExclusive := agentsLockExclusive
+	prevWriteLayoutYAML := writeAgentsAddLayoutYAML
 	t.Cleanup(func() {
 		teamBootstrapHomeRoot = prevHomeRoot
 		teamBootstrapAgentsDir = prevAgentsDir
@@ -184,6 +186,8 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		agentsAddClaimIdentityAddress = prevAddClaim
 		agentsAddEnsureGlobalCertificate = prevAddCert
 		agentsAddConnectGlobalAgent = prevAddConnect
+		agentsLockExclusive = prevLockExclusive
+		writeAgentsAddLayoutYAML = prevWriteLayoutYAML
 	})
 	teamBootstrapHomeRoot = ""
 	teamBootstrapAgentsDir = "agents"
@@ -222,6 +226,10 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	}
 	agentsAddEnsureGlobalCertificate = ensureAgentsAddGlobalCertificate
 	agentsAddConnectGlobalAgent = initCertificateConnectWithOptions
+	agentsLockExclusive = func(lockPath string) (agentsLayoutLock, error) {
+		return awconfig.LockExclusive(lockPath)
+	}
+	writeAgentsAddLayoutYAML = writeAgentsAddLayoutYAMLImpl
 }
 
 func testTeamBootstrapCommand(t *testing.T) *cobra.Command {
@@ -1260,6 +1268,113 @@ func TestAgentsRemoveLayoutMovesHomeAndRemovesSpec(t *testing.T) {
 	}
 }
 
+type testAgentsLayoutLock struct {
+	closed *bool
+}
+
+func (l testAgentsLayoutLock) Close() error {
+	if l.closed != nil {
+		*l.closed = true
+	}
+	return nil
+}
+
+func TestAgentsRemoveUsesLayoutLockForMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveRemoveLayout = true
+	layout, err := resolveAgentsExistingLayoutPreflight()
+	if err != nil {
+		t.Fatalf("resolve layout: %v", err)
+	}
+
+	var gotLockPath string
+	closed := false
+	agentsLockExclusive = func(lockPath string) (agentsLayoutLock, error) {
+		gotLockPath = lockPath
+		return testAgentsLayoutLock{closed: &closed}, nil
+	}
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	wantLockPath := agentsAddLayoutLockPath(layout.AgentsRoot)
+	if gotLockPath != wantLockPath {
+		t.Fatalf("lock path=%q want %q", gotLockPath, wantLockPath)
+	}
+	if !closed {
+		t.Fatal("layout lock was not closed")
+	}
+}
+
+func TestAgentsRemoveLayoutWarnsWhenMovingActiveAWWithoutDeprovision(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveRemoveLayout = true
+
+	plan, err := buildAgentsRemovePlan("coordinator")
+	if err != nil {
+		t.Fatalf("buildAgentsRemovePlan: %v", err)
+	}
+	if len(plan.Output.Warnings) == 0 {
+		t.Fatal("expected warning for active .aw layout removal")
+	}
+	if !strings.Contains(strings.Join(plan.Output.Warnings, "\n"), "without revoking membership") {
+		t.Fatalf("warnings=%v, want active .aw remove-layout warning", plan.Output.Warnings)
+	}
+}
+
+func TestAgentsRemoveLayoutWriteFailureGuidesRetry(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	agentsRemoveRemoveLayout = true
+	writeAgentsAddLayoutYAML = func(layout teamBootstrapLayout, spec *teamBootstrapSpec) error {
+		return os.ErrPermission
+	}
+
+	err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"implementation"})
+	if err == nil {
+		t.Fatal("expected layout write failure")
+	}
+	text := err.Error()
+	for _, want := range []string{"retry `aw agents remove --remove-layout implementation`", "backup", "restore the backup"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error=%q missing %q", text, want)
+		}
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "implementation"))
+	data, readErr := os.ReadFile(filepath.Join(repoDir, "agents", "team.yaml"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "implementation:") {
+		t.Fatalf("team.yaml unexpectedly changed after write failure:\n%s", string(data))
+	}
+}
+
 func TestAgentsRemoveMissingTeamKeyFailsBeforeMovingLocalState(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	t.Setenv("HOME", t.TempDir())
@@ -1668,6 +1783,106 @@ func TestAgentsRemoveDeprovisionRevokesBeforeMovingLocalState(t *testing.T) {
 	}
 	if gotRevoke["certificate_id"] != cert.CertificateID {
 		t.Fatalf("revoke certificate_id=%v want %s", gotRevoke["certificate_id"], cert.CertificateID)
+	}
+	assertPathMissing(t, filepath.Join(home, ".aw"))
+}
+
+func TestAgentsRemoveDeleteAddressSuccessRevokesDeletesBeforeMovingLocalState(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	homeRoot := t.TempDir()
+	t.Setenv("HOME", homeRoot)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	controllerPub, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("example.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, homeRoot, "example.com", "circle", teamKey)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  "did:key:ztest",
+		MemberDIDAW:   "did:aw:test-global",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:      cert.Team,
+			Alias:       cert.Alias,
+			CertPath:    awconfig.TeamCertificateRelativePath(cert.Team),
+			RegistryURL: "will-be-replaced",
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+	events := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/example.com/teams/circle/certificates/revoke":
+			events = append(events, "revoke")
+			assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/example.com":
+			events = append(events, "namespace")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-example",
+				"domain":              "example.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-06-07T00:00:00Z",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/example.com/addresses/juan-coordinator":
+			events = append(events, "delete")
+			assertPathExists(t, filepath.Join(home, ".aw", "teams.yaml"))
+			verifyRegistrySignatureForTest(t, r, controllerPub, map[string]string{
+				"domain":    "example.com",
+				"name":      "juan-coordinator",
+				"operation": "delete_address",
+			})
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	teamState, err := awconfig.LoadTeamState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamState.Memberships[0].RegistryURL = server.URL
+	if err := awconfig.SaveTeamState(home, teamState); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	agentsRemoveDeleteAddress = true
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"}); err != nil {
+		t.Fatalf("runAgentsRemove: %v", err)
+	}
+	if strings.Join(events, ",") != "revoke,namespace,delete" {
+		t.Fatalf("events=%v, want revoke, namespace, delete", events)
 	}
 	assertPathMissing(t, filepath.Join(home, ".aw"))
 }

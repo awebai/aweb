@@ -643,11 +643,11 @@ func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentsRemove(cmd *cobra.Command, args []string) error {
-	plan, err := buildAgentsRemovePlan(args[0])
-	if err != nil {
-		return err
-	}
 	if teamBootstrapDryRun {
+		plan, err := buildAgentsRemovePlan(args[0])
+		if err != nil {
+			return err
+		}
 		plan.Output.DryRun = true
 		printOutput(plan.Output, formatAgentsRemoveOutput)
 		return nil
@@ -657,6 +657,20 @@ func runAgentsRemove(cmd *cobra.Command, args []string) error {
 	}
 	if agentsRemoveDeleteAddress && !agentsRemoveDeprovisionLocal {
 		return usageError("--delete-global-address must be paired with --deprovision-local so membership is revoked before the address is deleted")
+	}
+	layout, err := resolveAgentsExistingLayoutPreflight()
+	if err != nil {
+		return err
+	}
+	lock, err := agentsLockExclusive(agentsAddLayoutLockPath(layout.AgentsRoot))
+	if err != nil {
+		return fmt.Errorf("lock agents layout: %w", err)
+	}
+	defer lock.Close()
+
+	plan, err := buildAgentsRemovePlan(args[0])
+	if err != nil {
+		return err
 	}
 
 	if agentsRemoveDeprovisionLocal {
@@ -696,6 +710,14 @@ type agentsRemovePlan struct {
 	Membership               *awconfig.TeamMembership
 	Cert                     *awid.TeamCertificate
 	HostedDeprovisionApplied bool
+}
+
+type agentsLayoutLock interface {
+	Close() error
+}
+
+var agentsLockExclusive = func(lockPath string) (agentsLayoutLock, error) {
+	return awconfig.LockExclusive(lockPath)
 }
 
 func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) {
@@ -769,6 +791,9 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 	}
 	if strings.TrimSpace(memberAddress) != "" && !agentsRemoveDeleteAddress {
 		out.Warnings = append(out.Warnings, "global address is preserved by default; pass --delete-global-address to delete it after membership revocation")
+	}
+	if agentsRemoveRemoveLayout && !agentsRemoveDeprovisionLocal && agentsRemovePathExists(filepath.Join(homeDir, ".aw")) {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("--remove-layout will move active local .aw state for %s without revoking membership; add --deprovision-local first if this agent should stop acting in the team", responsibility))
 	}
 	if agentsRemoveDeprovisionLocal {
 		out.Actions = append(out.Actions, agentsRemoveAction{Name: "revoke_membership", Status: agentsRemovePlannedOrSkipped(cert != nil), Detail: teamID})
@@ -1009,7 +1034,7 @@ func executeAgentsRemoveLayout(plan *agentsRemovePlan) error {
 	}
 	delete(plan.Spec.Agents, plan.Output.Responsibility)
 	if err := writeAgentsAddLayoutYAML(plan.Layout, plan.Spec); err != nil {
-		return err
+		return fmt.Errorf("remove layout for %s: %w. The home directory may already have been moved to backup %s; retry `aw agents remove --remove-layout %s` to finish removing the shared layout entry, or restore the backup before retrying if you want to keep the layout.", plan.Output.Responsibility, err, backupRoot, plan.Output.Responsibility)
 	}
 	agentsRemoveMarkAction(&plan.Output, "remove_layout", "done", filepath.Join(plan.Layout.AgentsRoot, "team.yaml"))
 	return nil
@@ -1092,7 +1117,7 @@ func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBind
 		if err != nil {
 			return err
 		}
-		lock, err := awconfig.LockExclusive(agentsAddLayoutLockPath(layout.AgentsRoot))
+		lock, err := agentsLockExclusive(agentsAddLayoutLockPath(layout.AgentsRoot))
 		if err != nil {
 			return fmt.Errorf("lock agents layout: %w", err)
 		}
@@ -2147,7 +2172,9 @@ func revertAgentsAddLayoutMaterialization(layout teamBootstrapLayout, spec *team
 	return writeAgentsAddLayoutYAML(layout, spec)
 }
 
-func writeAgentsAddLayoutYAML(layout teamBootstrapLayout, spec *teamBootstrapSpec) error {
+var writeAgentsAddLayoutYAML = writeAgentsAddLayoutYAMLImpl
+
+func writeAgentsAddLayoutYAMLImpl(layout teamBootstrapLayout, spec *teamBootstrapSpec) error {
 	teamYAMLPath := filepath.Join(layout.AgentsRoot, "team.yaml")
 	sanitizeTeamBootstrapSpecForWrite(spec)
 	data, err := yaml.Marshal(spec)
