@@ -101,9 +101,9 @@ var agentsAddCmd = &cobra.Command{
 }
 
 var agentsAddWorktreeCmd = &cobra.Command{
-	Use:   "add-worktree <responsibility>",
-	Short: "Add a worktree-bound agent to the agents layout",
-	Args:  cobra.ExactArgs(1),
+	Use:   "add-worktree [role]",
+	Short: "Create a repo-local git worktree and initialize a new local agent in it",
+	Args:  cobra.RangeArgs(0, 1),
 	RunE:  runAgentsAddWorktree,
 }
 
@@ -140,6 +140,7 @@ var (
 	agentsAddLocal                bool
 	agentsAddGlobal               bool
 	agentsAddRole                 string
+	agentsAddWorktreeAlias        string
 	agentsAddLayoutOnly           bool
 	agentsRemoveDeprovisionLocal  bool
 	agentsRemoveRemoveLayout      bool
@@ -207,6 +208,7 @@ type teamBootstrapAgentPlan struct {
 	IdentityScope  string `json:"identity_scope,omitempty"`
 	GlobalAddress  string `json:"global_address,omitempty"`
 	HomeDir        string `json:"home_dir"`
+	WorkspaceDir   string `json:"workspace_dir,omitempty"`
 	SourceHome     string `json:"-"`
 	Instructions   string `json:"instructions"`
 	WorkBinding    string `json:"work_binding,omitempty"`
@@ -296,6 +298,7 @@ type agentsRemoveOutput struct {
 	AgentsDir            string               `json:"agents_dir"`
 	Responsibility       string               `json:"responsibility"`
 	HomeDir              string               `json:"home_dir"`
+	WorkspaceDir         string               `json:"workspace_dir,omitempty"`
 	WorkBinding          string               `json:"work_binding,omitempty"`
 	WorkDir              string               `json:"work_dir,omitempty"`
 	TeamID               string               `json:"team_id,omitempty"`
@@ -373,11 +376,10 @@ func init() {
 	agentsAddCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
 	agentsAddCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
 	agentsAddCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create local identity state")
-	bindAgentsProvisionFlags(agentsAddWorktreeCmd)
-	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
-	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddGlobal, "global", false, "Add a global AWID identity/address-backed agent (not supported for worktree-bound agents in v1)")
-	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddRole, "role", "", "Role name to bind this responsibility to (default: responsibility)")
-	agentsAddWorktreeCmd.Flags().BoolVar(&agentsAddLayoutOnly, "layout-only", false, "Only update the shared agents layout; do not create the git worktree or local identity state")
+	agentsAddWorktreeCmd.Flags().StringVar(&teamBootstrapAgentsDir, "agents-dir", "agents", "Project-local agents directory to read")
+	agentsAddWorktreeCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the worktree plan without changing files or team state")
+	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddRole, "role", "", "Existing team role for the new worktree agent")
+	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddWorktreeAlias, "alias", "", "Override the default generated alias/worktree name")
 
 	agentsRemoveCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Show the remove/deprovision plan without mutating local, git, or registry state")
 	agentsRemoveCmd.Flags().BoolVar(&agentsRemoveDeprovisionLocal, "deprovision-local", false, "Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout")
@@ -639,7 +641,196 @@ func runAgentsAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
-	return runAgentsAddWithWorkBinding(cmd, args[0], agentsWorkGitWorktree)
+	if agentsAddGlobal {
+		return usageError("aw agents add-worktree --global is not supported in v1; worktree-bound agents are local identities")
+	}
+	if agentsAddLayoutOnly {
+		return usageError("aw agents add-worktree does not mutate the shared agents layout; --layout-only is not supported")
+	}
+	layout, err := resolveAgentsExistingLayoutPreflight()
+	if err != nil {
+		return err
+	}
+	lock, err := agentsLockExclusive(agentsAddLayoutLockPath(layout.AgentsRoot))
+	if err != nil {
+		return fmt.Errorf("lock agents layout: %w", err)
+	}
+	defer lock.Close()
+
+	anchorDir, err := findAgentsProvisionAnchor(layout, "")
+	if err != nil {
+		return err
+	}
+	if anchorDir == "" {
+		return usageError("aw agents add-worktree requires an existing provisioned agent in this layout; run `aw agents bootstrap` or `aw agents provision` first")
+	}
+	client, _, err := resolveClientSelectionForDir(anchorDir)
+	if err != nil {
+		return err
+	}
+
+	requestedRole, err := resolveAgentsAddWorktreeRequestedRole(cmd, args)
+	if err != nil {
+		return err
+	}
+	roleIn := io.Reader(os.Stdin)
+	roleOut := io.Writer(os.Stderr)
+	if cmd != nil {
+		roleIn = cmd.InOrStdin()
+		roleOut = cmd.ErrOrStderr()
+	}
+	allowRolePrompt := requestedRole == "" && isTTY()
+	if roleIn != os.Stdin {
+		allowRolePrompt = false
+	}
+	role, err := resolveRole(client, requestedRole, allowRolePrompt, roleIn, roleOut)
+	if err != nil {
+		return err
+	}
+	role = normalizeWorkspaceRole(role)
+	if role != "" && !isValidWorkspaceRole(role) {
+		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
+	}
+
+	state, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(anchorDir)
+	if err != nil {
+		return fmt.Errorf("load anchor workspace binding: %w", err)
+	}
+	if !state.HasTeamBinding() {
+		return usageError("anchor workspace %s is missing team binding; run `aw agents provision` first", anchorDir)
+	}
+	activeMembership := awconfig.ActiveMembershipFor(state, teamState)
+	if activeMembership == nil {
+		return usageError("anchor workspace %s is missing active_team membership; run `aw agents provision` first", anchorDir)
+	}
+	teamID := strings.TrimSpace(activeMembership.TeamID)
+	if teamID == "" {
+		return usageError("anchor workspace %s is missing team_id; run `aw agents provision` first", anchorDir)
+	}
+	sourceServerURL := strings.TrimSpace(state.AwebURL)
+	if sourceServerURL == "" {
+		return usageError("anchor workspace %s is missing aweb_url; run `aw agents provision` first", anchorDir)
+	}
+
+	alias := strings.TrimSpace(agentsAddWorktreeAlias)
+	if alias != "" {
+		if !isValidWorkspaceAlias(alias) {
+			return usageError("invalid alias %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
+		}
+		teamAliases, err := fetchWorkspaceTeamAliases(client, strings.TrimSpace(activeMembership.WorkspaceID))
+		if err != nil {
+			return err
+		}
+		if teamAliases[strings.ToLower(alias)] {
+			return usageError("alias %q is already in use by this team", alias)
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		suggestion, err := client.SuggestAliasPrefix(ctx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("suggest next alias from server: %w", err)
+		}
+		alias = strings.TrimSpace(suggestion.NamePrefix)
+		if !isValidSuggestedAliasPrefix(alias) {
+			return fmt.Errorf("server returned invalid alias suggestion %q", alias)
+		}
+	}
+
+	branchName := alias
+	worktreePath := filepath.Join(layout.WorktreesRoot, branchName)
+	if _, err := os.Stat(worktreePath); err == nil {
+		return usageError("worktree path %s already exists", worktreePath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat worktree path %s: %w", worktreePath, err)
+	}
+
+	output := workspaceAddWorktreeOutput{
+		Alias:        alias,
+		Role:         role,
+		Branch:       branchName,
+		WorktreePath: worktreePath,
+	}
+	if teamBootstrapDryRun {
+		printOutput(output, formatWorkspaceAddWorktree)
+		return nil
+	}
+
+	if err := ensureAwebRuntimeUntrackedForAddWorktree(layout.CustomerRepoRoot); err != nil {
+		return err
+	}
+	if err := ensureInRepoBootstrapGitignore(layout); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(layout.WorktreesRoot, 0o755); err != nil {
+		return err
+	}
+	if !jsonFlag {
+		fmt.Fprintf(os.Stderr, "Creating worktree for branch %q...\n", branchName)
+		fmt.Fprintf(os.Stderr, "  Main repo: %s\n", layout.CustomerRepoRoot)
+		fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
+		fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
+		fmt.Fprintf(os.Stderr, "  Alias:     %s\n\n", alias)
+		fmt.Fprintln(os.Stderr, "Creating git worktree...")
+	}
+	branchCreated, err := createWorkspaceGitWorktree(layout.CustomerRepoRoot, worktreePath, branchName, jsonFlag)
+	if err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+	if err := ensureAwebRuntimeGitIgnored(worktreePath); err != nil {
+		cleanupWorkspaceWorktree(layout.CustomerRepoRoot, worktreePath, branchName, branchCreated)
+		return err
+	}
+
+	teamDomain, teamName, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		cleanupWorkspaceWorktree(layout.CustomerRepoRoot, worktreePath, branchName, branchCreated)
+		return fmt.Errorf("invalid team_id in workspace.yaml: %w", err)
+	}
+	hasTeamKey, err := awconfig.TeamKeyExists(teamDomain, teamName)
+	if err != nil {
+		cleanupWorkspaceWorktree(layout.CustomerRepoRoot, worktreePath, branchName, branchCreated)
+		return fmt.Errorf("check team key: %w", err)
+	}
+
+	if hasTeamKey {
+		_, err = addWorktreeViaLocalTeamKey(
+			worktreePath, layout.CustomerRepoRoot, branchName, branchCreated,
+			teamID, teamDomain, teamName, sourceServerURL, anchorDir,
+			alias, role, state,
+		)
+	} else if strings.TrimSpace(state.APIKey) != "" {
+		_, err = addWorktreeViaCloudBootstrap(
+			worktreePath, layout.CustomerRepoRoot, branchName, branchCreated,
+			sourceServerURL, alias, role, state,
+		)
+	} else {
+		_, err = addWorktreeViaPrimaryInvite(
+			anchorDir, worktreePath, layout.CustomerRepoRoot, branchName, branchCreated,
+			sourceServerURL, alias, role, state,
+		)
+	}
+	if err != nil {
+		return err
+	}
+
+	printOutput(output, formatWorkspaceAddWorktree)
+	return nil
+}
+
+func resolveAgentsAddWorktreeRequestedRole(cmd *cobra.Command, args []string) (string, error) {
+	positional := ""
+	if len(args) > 0 {
+		positional = strings.TrimSpace(args[0])
+	}
+	flag := strings.TrimSpace(agentsAddRole)
+	if positional != "" && flag != "" && normalizeWorkspaceRole(positional) != normalizeWorkspaceRole(flag) {
+		return "", usageError("role specified twice with different values: %q and %q", positional, flag)
+	}
+	if flag != "" {
+		return flag, nil
+	}
+	return positional, nil
 }
 
 func runAgentsRemove(cmd *cobra.Command, args []string) error {
@@ -752,9 +943,13 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 			workDir = target
 		}
 	}
+	workspaceDir := homeDir
+	if workBinding == agentsWorkGitWorktree && strings.TrimSpace(workDir) != "" {
+		workspaceDir = workDir
+	}
 
-	identity, _, _ := awconfig.LoadWorktreeIdentityFromDir(homeDir)
-	teamState, _ := awconfig.LoadTeamState(homeDir)
+	identity, _, _ := awconfig.LoadWorktreeIdentityFromDir(workspaceDir)
+	teamState, _ := awconfig.LoadTeamState(workspaceDir)
 	var membership *awconfig.TeamMembership
 	var cert *awid.TeamCertificate
 	teamID := ""
@@ -763,7 +958,7 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 		membership = teamState.ActiveMembership()
 		if membership != nil {
 			teamID = strings.TrimSpace(membership.TeamID)
-			if loaded, err := awconfig.LoadTeamCertificateForTeam(homeDir, teamID); err == nil {
+			if loaded, err := awconfig.LoadTeamCertificateForTeam(workspaceDir, teamID); err == nil {
 				cert = loaded
 			}
 		}
@@ -784,6 +979,7 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 		AgentsDir:      layout.AgentsRoot,
 		Responsibility: responsibility,
 		HomeDir:        homeDir,
+		WorkspaceDir:   workspaceDir,
 		WorkBinding:    workBinding,
 		WorkDir:        workDir,
 		TeamID:         teamID,
@@ -792,12 +988,12 @@ func buildAgentsRemovePlan(responsibilityRaw string) (*agentsRemovePlan, error) 
 	if strings.TrimSpace(memberAddress) != "" && !agentsRemoveDeleteAddress {
 		out.Warnings = append(out.Warnings, "global address is preserved by default; pass --delete-global-address to delete it after membership revocation")
 	}
-	if agentsRemoveRemoveLayout && !agentsRemoveDeprovisionLocal && agentsRemovePathExists(filepath.Join(homeDir, ".aw")) {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("--remove-layout will move active local .aw state for %s without revoking membership; add --deprovision-local first if this agent should stop acting in the team", responsibility))
+	if agentsRemoveRemoveLayout && !agentsRemoveDeprovisionLocal && agentsRemovePathExists(filepath.Join(workspaceDir, ".aw")) {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("--remove-layout will leave active local .aw state for %s in %s without revoking membership; add --deprovision-local first if this agent should stop acting in the team", responsibility, workspaceDir))
 	}
 	if agentsRemoveDeprovisionLocal {
 		out.Actions = append(out.Actions, agentsRemoveAction{Name: "revoke_membership", Status: agentsRemovePlannedOrSkipped(cert != nil), Detail: teamID})
-		out.Actions = append(out.Actions, agentsRemoveAction{Name: "move_local_aw", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(filepath.Join(homeDir, ".aw"))), Detail: filepath.Join(homeDir, ".aw")})
+		out.Actions = append(out.Actions, agentsRemoveAction{Name: "move_local_aw", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(filepath.Join(workspaceDir, ".aw"))), Detail: filepath.Join(workspaceDir, ".aw")})
 		if workBinding == agentsWorkGitWorktree {
 			out.Actions = append(out.Actions, agentsRemoveAction{Name: "remove_git_worktree", Status: agentsRemovePlannedOrSkipped(agentsRemovePathExists(workDir)), Detail: workDir})
 		}
@@ -846,7 +1042,7 @@ func executeAgentsRemoveRevokeMembership(plan *agentsRemovePlan) error {
 	}
 	if plan.Cert == nil {
 		if agentsRemoveDeleteAddress {
-			return usageError("cannot delete global address for %s: no active team certificate was found in %s/.aw, so membership cannot be revoked first. Restore the matching team certificate or rerun without --delete-global-address.", plan.Output.Responsibility, plan.Output.HomeDir)
+			return usageError("cannot delete global address for %s: no active team certificate was found in %s/.aw, so membership cannot be revoked first. Restore the matching team certificate or rerun without --delete-global-address.", plan.Output.Responsibility, agentsRemoveWorkspaceDir(plan))
 		}
 		return nil
 	}
@@ -897,7 +1093,8 @@ func executeAgentsRemoveHostedDeprovision(plan *agentsRemovePlan) error {
 	if awebURL == "" {
 		return fmt.Errorf("missing hosted service URL in .aw/teams.yaml")
 	}
-	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(plan.Output.HomeDir))
+	workspaceDir := agentsRemoveWorkspaceDir(plan)
+	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workspaceDir))
 	if err != nil {
 		return fmt.Errorf("load local signing key for hosted self-deprovision: %w", err)
 	}
@@ -970,7 +1167,7 @@ func executeAgentsRemoveDeleteAddress(plan *agentsRemovePlan) error {
 	}
 	address := strings.TrimSpace(plan.Output.MemberAddress)
 	if address == "" {
-		return usageError("--delete-global-address requested but no global member address was found in %s/.aw; local state was not moved", plan.Output.HomeDir)
+		return usageError("--delete-global-address requested but no global member address was found in %s/.aw; local state was not moved", agentsRemoveWorkspaceDir(plan))
 	}
 	domain, name, err := parseAddress(address)
 	if err != nil {
@@ -995,7 +1192,7 @@ func executeAgentsRemoveLocal(plan *agentsRemovePlan) error {
 	if err != nil {
 		return err
 	}
-	awDir := filepath.Join(plan.Output.HomeDir, ".aw")
+	awDir := filepath.Join(agentsRemoveWorkspaceDir(plan), ".aw")
 	if agentsRemovePathExists(awDir) {
 		dst, err := movePathIntoBackup(awDir, backupRoot)
 		if err != nil {
@@ -1017,6 +1214,16 @@ func executeAgentsRemoveLocal(plan *agentsRemovePlan) error {
 		agentsRemoveMarkAction(&plan.Output, "remove_git_worktree", "done", plan.Output.WorkDir)
 	}
 	return nil
+}
+
+func agentsRemoveWorkspaceDir(plan *agentsRemovePlan) string {
+	if plan == nil {
+		return ""
+	}
+	if dir := strings.TrimSpace(plan.Output.WorkspaceDir); dir != "" {
+		return dir
+	}
+	return strings.TrimSpace(plan.Output.HomeDir)
 }
 
 func executeAgentsRemoveLayout(plan *agentsRemovePlan) error {
@@ -1109,6 +1316,16 @@ func splitAWIDTeamID(teamID string) (string, string, error) {
 		return "", "", usageError("team_id %q is not in <team>:<namespace> form", teamID)
 	}
 	return awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(team)), nil
+}
+
+func teamBootstrapAgentWorkspaceDir(plan teamBootstrapAgentPlan) string {
+	if dir := strings.TrimSpace(plan.WorkspaceDir); dir != "" {
+		return dir
+	}
+	if strings.TrimSpace(plan.WorkBinding) == agentsWorkGitWorktree && strings.TrimSpace(plan.WorkDir) != "" {
+		return strings.TrimSpace(plan.WorkDir)
+	}
+	return strings.TrimSpace(plan.HomeDir)
 }
 
 func runAgentsAddWithWorkBinding(cmd *cobra.Command, responsibilityRaw, workBinding string) error {
@@ -1647,6 +1864,7 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding str
 			IdentityScope:  agentsIdentityScopeGlobal,
 			GlobalAddress:  strings.TrimSpace(pending.GlobalAddress),
 			HomeDir:        filepath.Join(layout.HomeRoot, responsibility),
+			WorkspaceDir:   filepath.Join(layout.HomeRoot, responsibility),
 			SourceHome:     filepath.Join(layout.HomeRoot, responsibility),
 			Instructions:   filepath.Join(layout.HomeRoot, responsibility, "AGENTS.md"),
 			WorkBinding:    agentsWorkRepoRoot,
@@ -1683,11 +1901,13 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding str
 	}
 	agentPlan := namingPlan.Agents[0]
 	workDir := layout.CustomerRepoRoot
+	workspaceDir := filepath.Join(layout.HomeRoot, responsibility)
 	if workBinding == agentsWorkGitWorktree {
 		if strings.TrimSpace(agentPlan.WorktreeName) == "" {
 			return agentsAddOutput{}, teamBootstrapLayout{}, nil, teamBootstrapAgentPlan{}, fmt.Errorf("internal error: worktree add did not allocate a worktree name")
 		}
 		workDir = filepath.Join(layout.WorktreesRoot, agentPlan.WorktreeName)
+		workspaceDir = workDir
 	}
 	plan := teamBootstrapAgentPlan{
 		Responsibility: responsibility,
@@ -1697,6 +1917,7 @@ func buildAgentsAddOutput(cmd *cobra.Command, responsibilityRaw, workBinding str
 		IdentityScope:  agentPlan.IdentityScope,
 		GlobalAddress:  agentPlan.GlobalAddress,
 		HomeDir:        filepath.Join(layout.HomeRoot, responsibility),
+		WorkspaceDir:   workspaceDir,
 		SourceHome:     filepath.Join(layout.HomeRoot, responsibility),
 		Instructions:   filepath.Join(layout.HomeRoot, responsibility, "AGENTS.md"),
 		WorkBinding:    workBinding,
@@ -2044,20 +2265,31 @@ func existingAgentsBranchNames(layout teamBootstrapLayout) (map[string]bool, err
 
 func existingAgentsMemberships(layout teamBootstrapLayout, skipResponsibility string) []awconfig.WorktreeMembership {
 	memberships := []awconfig.WorktreeMembership{}
+	seen := map[string]bool{}
 	for responsibility := range mapExistingAgentHomes(layout) {
 		if responsibility == skipResponsibility {
 			continue
 		}
 		home := filepath.Join(layout.HomeRoot, responsibility)
-		workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(home)
-		if err != nil || workspace == nil {
-			continue
-		}
-		for _, membership := range workspace.Memberships {
-			memberships = append(memberships, membership)
-		}
+		memberships = append(memberships, existingAgentsMembershipsFromDir(home, seen)...)
+	}
+	for _, worktree := range mapExistingAgentWorktrees(layout) {
+		memberships = append(memberships, existingAgentsMembershipsFromDir(worktree, seen)...)
 	}
 	return memberships
+}
+
+func existingAgentsMembershipsFromDir(dir string, seen map[string]bool) []awconfig.WorktreeMembership {
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if dir == "." || dir == "" || seen[dir] {
+		return nil
+	}
+	seen[dir] = true
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(dir)
+	if err != nil || workspace == nil {
+		return nil
+	}
+	return append([]awconfig.WorktreeMembership(nil), workspace.Memberships...)
 }
 
 func mapExistingAgentHomes(layout teamBootstrapLayout) map[string]bool {
@@ -2071,6 +2303,22 @@ func mapExistingAgentHomes(layout teamBootstrapLayout) map[string]bool {
 			out[entry.Name()] = true
 		}
 	}
+	return out
+}
+
+func mapExistingAgentWorktrees(layout teamBootstrapLayout) []string {
+	out := []string{}
+	entries, err := os.ReadDir(layout.WorktreesRoot)
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		out = append(out, filepath.Join(layout.WorktreesRoot, entry.Name()))
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -2094,26 +2342,28 @@ func ensureAgentsAddPathsAvailable(layout teamBootstrapLayout, spec *teamBootstr
 }
 
 func findAgentsProvisionAnchor(layout teamBootstrapLayout, skipHome string) (string, error) {
-	entries, err := os.ReadDir(layout.HomeRoot)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
+	for _, root := range []string{layout.HomeRoot, layout.WorktreesRoot} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("read agent homes: %w", err)
 		}
-		return "", fmt.Errorf("read agent homes: %w", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		home := filepath.Join(layout.HomeRoot, entry.Name())
-		if filepath.Clean(home) == filepath.Clean(skipHome) {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(home, ".aw")); err != nil {
-			continue
-		}
-		if _, err := resolveSelectionForDir(home); err == nil {
-			return home, nil
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			home := filepath.Join(root, entry.Name())
+			if filepath.Clean(home) == filepath.Clean(skipHome) {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(home, ".aw")); err != nil {
+				continue
+			}
+			if _, err := resolveSelectionForDir(home); err == nil {
+				return home, nil
+			}
 		}
 	}
 	return "", nil
@@ -2358,7 +2608,8 @@ func assessAgentsProvisionState(plans []teamBootstrapAgentPlan, expectedTeamID s
 	clean := 0
 	existingTeamID := ""
 	for _, plan := range plans {
-		awDir := filepath.Join(plan.HomeDir, ".aw")
+		workspaceDir := teamBootstrapAgentWorkspaceDir(plan)
+		awDir := filepath.Join(workspaceDir, ".aw")
 		if _, err := os.Stat(awDir); err != nil {
 			if os.IsNotExist(err) {
 				clean++
@@ -2367,19 +2618,19 @@ func assessAgentsProvisionState(plans []teamBootstrapAgentPlan, expectedTeamID s
 			return agentsProvisionStateClean, fmt.Errorf("stat agent .aw state %s: %w", awDir, err)
 		}
 		existing++
-		sel, err := resolveSelectionForDir(plan.HomeDir)
+		sel, err := resolveSelectionForDir(workspaceDir)
 		if err != nil {
-			return agentsProvisionStateClean, usageError("agent home %s has partial or unreadable .aw state: %v. aw agents provision does not auto-recover or merge partial identity state in v1; inspect and back up %s, then move it aside before retrying.", plan.HomeDir, err, awDir)
+			return agentsProvisionStateClean, usageError("agent workspace %s has partial or unreadable .aw state: %v. aw agents provision does not auto-recover or merge partial identity state in v1; inspect and back up %s, then move it aside before retrying.", workspaceDir, err, awDir)
 		}
 		alias := strings.TrimSpace(plan.Alias)
 		if alias == "" {
 			alias = sanitizeSlug(plan.Name)
 		}
 		if !strings.EqualFold(strings.TrimSpace(sel.Alias), alias) {
-			return agentsProvisionStateClean, usageError("agent home %s already belongs to alias %q, but this layout plans alias %q. aw agents provision does not merge mismatched identity state; inspect and back up %s, then move it aside or use a different identity prefix.", plan.HomeDir, sel.Alias, alias, awDir)
+			return agentsProvisionStateClean, usageError("agent workspace %s already belongs to alias %q, but this layout plans alias %q. aw agents provision does not merge mismatched identity state; inspect and back up %s, then move it aside or use a different identity prefix.", workspaceDir, sel.Alias, alias, awDir)
 		}
 		if expectedTeamID != "" && !strings.EqualFold(strings.TrimSpace(sel.TeamID), expectedTeamID) {
-			return agentsProvisionStateClean, usageError("agent home %s already belongs to team %q, but this provision targets %q. Move aside %s or run with the matching team source.", plan.HomeDir, sel.TeamID, expectedTeamID, awDir)
+			return agentsProvisionStateClean, usageError("agent workspace %s already belongs to team %q, but this provision targets %q. Move aside %s or run with the matching team source.", workspaceDir, sel.TeamID, expectedTeamID, awDir)
 		}
 		if existingTeamID == "" {
 			existingTeamID = strings.TrimSpace(sel.TeamID)
@@ -2387,11 +2638,11 @@ func assessAgentsProvisionState(plans []teamBootstrapAgentPlan, expectedTeamID s
 			return agentsProvisionStateClean, usageError("agents layout has existing .aw state for multiple teams (%q and %q). aw agents provision requires all existing homes to match the same team; inspect and back up the mismatched .aw directories before retrying.", existingTeamID, sel.TeamID)
 		}
 		if strings.TrimSpace(plan.GlobalAddress) != "" && !strings.EqualFold(strings.TrimSpace(sel.Address), strings.TrimSpace(plan.GlobalAddress)) {
-			return agentsProvisionStateClean, usageError("agent home %s already has address %q, but this layout plans %q. aw agents provision does not merge mismatched global identity state; inspect and back up %s, then move it aside or choose a different identity prefix.", plan.HomeDir, sel.Address, plan.GlobalAddress, awDir)
+			return agentsProvisionStateClean, usageError("agent workspace %s already has address %q, but this layout plans %q. aw agents provision does not merge mismatched global identity state; inspect and back up %s, then move it aside or choose a different identity prefix.", workspaceDir, sel.Address, plan.GlobalAddress, awDir)
 		}
 	}
 	if existing > 0 && clean > 0 {
-		return agentsProvisionStateClean, usageError("agents layout is partially provisioned (%d existing homes, %d clean homes). aw agents provision does not auto-recover partial state in v1; inspect and back up existing agents/home/*/.aw directories, then either provision from a clean layout or rerun after every planned home has matching .aw state.", existing, clean)
+		return agentsProvisionStateClean, usageError("agents layout is partially provisioned (%d existing workspaces, %d clean workspaces). aw agents provision does not auto-recover partial state in v1; inspect and back up existing .aw directories, then either provision from a clean layout or rerun after every planned workspace has matching .aw state.", existing, clean)
 	}
 	if existing > 0 {
 		return agentsProvisionStateAlreadyProvisioned, nil
@@ -2623,12 +2874,14 @@ func applyInRepoBootstrapWorkBindings(layout teamBootstrapLayout, plans []teamBo
 		switch binding {
 		case teamBootstrapWorkRepoRoot:
 			plans[i].WorkDir = layout.CustomerRepoRoot
+			plans[i].WorkspaceDir = plans[i].HomeDir
 		case teamBootstrapWorkGitWorktree:
 			name, err := teamBootstrapWorktreeName(plans[i])
 			if err != nil {
 				return err
 			}
 			plans[i].WorkDir = filepath.Join(layout.WorktreesRoot, name)
+			plans[i].WorkspaceDir = plans[i].WorkDir
 		default:
 			return usageError("unsupported work binding %q for agent %s (expected repo_root or git_worktree)", binding, plans[i].Responsibility)
 		}
@@ -3318,10 +3571,10 @@ func bootstrapTeamAndInitAgentDirs(cmd *cobra.Command, source teamBootstrapSourc
 
 	// 3) Create/connect the remaining generated agents in the established team.
 	for _, agent := range plans {
-		if agent.HomeDir == primary.HomeDir {
+		if agent.Responsibility == primary.Responsibility {
 			continue
 		}
-		if err := initTeamBootstrapAdditionalAgent(primary.HomeDir, agent); err != nil {
+		if err := initTeamBootstrapAdditionalAgent(teamBootstrapAgentWorkspaceDir(primary), agent); err != nil {
 			return false, false, err
 		}
 	}
@@ -3387,33 +3640,34 @@ func initTeamBootstrapPrimaryAgent(cmd *cobra.Command, source teamBootstrapSourc
 	if alias == "" {
 		alias = sanitizeSlug(primary.Name)
 	}
-	if err := ensureConnectTargetClean(primary.HomeDir); err != nil {
+	workspaceDir := teamBootstrapAgentWorkspaceDir(primary)
+	if err := ensureConnectTargetClean(workspaceDir); err != nil {
 		return err
 	}
 
 	switch source.Kind {
 	case teamBootstrapSourceAPIKey:
-		return initTeamBootstrapAgentViaAPIKey(primary.HomeDir, alias, primary.RoleName)
+		return initTeamBootstrapAgentViaAPIKey(workspaceDir, alias, primary.RoleName)
 	case teamBootstrapSourceInvite:
-		_, err := acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, teamBootstrapInvite{Token: source.InviteToken}, alias, primary.RoleName, primary.GlobalAddress)
+		_, err := acceptInviteAndConnectTeamBootstrapAgent(workspaceDir, teamBootstrapInvite{Token: source.InviteToken}, alias, primary.RoleName, primary.GlobalAddress)
 		return err
 	case teamBootstrapSourceCurrent:
 		invite, err := createTeamBootstrapInviteFromCurrentWorkspace()
 		if err != nil {
 			return err
 		}
-		_, err = acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, invite, alias, primary.RoleName, primary.GlobalAddress)
+		_, err = acceptInviteAndConnectTeamBootstrapAgent(workspaceDir, invite, alias, primary.RoleName, primary.GlobalAddress)
 		return err
 	case teamBootstrapSourceBYOT:
 		invite, err := createTeamBootstrapBYOTInvite()
 		if err != nil {
 			return err
 		}
-		_, err = acceptInviteAndConnectTeamBootstrapAgent(primary.HomeDir, invite, alias, primary.RoleName, primary.GlobalAddress)
+		_, err = acceptInviteAndConnectTeamBootstrapAgent(workspaceDir, invite, alias, primary.RoleName, primary.GlobalAddress)
 		return err
 	case teamBootstrapSourceHostedNew:
 		_, err := guidedOnboardingWizard(guidedOnboardingRequest{
-			WorkingDir:         primary.HomeDir,
+			WorkingDir:         workspaceDir,
 			PromptIn:           cmd.InOrStdin(),
 			PromptOut:          cmd.ErrOrStderr(),
 			BaseURL:            strings.TrimSpace(teamBootstrapAwebURL),
@@ -3438,7 +3692,8 @@ func initTeamBootstrapAdditionalAgent(primaryDir string, agent teamBootstrapAgen
 	if alias == "" {
 		alias = sanitizeSlug(agent.Name)
 	}
-	if err := ensureConnectTargetClean(agent.HomeDir); err != nil {
+	workspaceDir := teamBootstrapAgentWorkspaceDir(agent)
+	if err := ensureConnectTargetClean(workspaceDir); err != nil {
 		return err
 	}
 
@@ -3446,7 +3701,7 @@ func initTeamBootstrapAdditionalAgent(primaryDir string, agent teamBootstrapAgen
 	if err != nil {
 		return err
 	}
-	_, err = acceptInviteAndConnectTeamBootstrapAgent(agent.HomeDir, invite, alias, agent.RoleName, agent.GlobalAddress)
+	_, err = acceptInviteAndConnectTeamBootstrapAgent(workspaceDir, invite, alias, agent.RoleName, agent.GlobalAddress)
 	return err
 }
 
@@ -3800,6 +4055,7 @@ func buildTeamBootstrapPlans(in io.Reader, out io.Writer, templateDir, homeRoot 
 			Name:           name,
 			Alias:          strings.TrimSpace(agent.DefaultAlias),
 			HomeDir:        filepath.Join(homeRoot, responsibility),
+			WorkspaceDir:   filepath.Join(homeRoot, responsibility),
 			SourceHome:     sourceHome,
 			Instructions:   filepath.Join(sourceHome, "AGENTS.md"),
 			WorkBinding:    strings.TrimSpace(agent.Work),
@@ -3823,7 +4079,7 @@ func installTeamBootstrapOverridesAfterConnect(spec *teamBootstrapSpec, template
 	if err != nil {
 		return false, false, err
 	}
-	client, _, err := resolveClientSelectionForDir(primary.HomeDir)
+	client, _, err := resolveClientSelectionForDir(teamBootstrapAgentWorkspaceDir(primary))
 	if err != nil {
 		return false, false, err
 	}
@@ -4044,7 +4300,7 @@ func plannedInitCommands(plans []teamBootstrapAgentPlan) []string {
 		if plan.Alias != "" {
 			initParts = append(initParts, "--alias", plan.Alias)
 		}
-		commands = append(commands, "cd "+shellQuote(plan.HomeDir)+" && "+formatShellCommand(initParts))
+		commands = append(commands, "cd "+shellQuote(teamBootstrapAgentWorkspaceDir(plan))+" && "+formatShellCommand(initParts))
 	}
 	return commands
 }
@@ -4132,7 +4388,11 @@ func formatTeamBootstrapOutput(v any) string {
 				work += " (" + agent.WorkBinding + ")"
 			}
 		}
-		b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s role=%s%s%s home=%s%s\n", agent.Responsibility, scope, agent.Name, agent.RoleName, alias, address, agent.HomeDir, work))
+		workspace := ""
+		if dir := teamBootstrapAgentWorkspaceDir(agent); dir != "" && dir != agent.HomeDir {
+			workspace = " workspace=" + dir
+		}
+		b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s role=%s%s%s home=%s%s%s\n", agent.Responsibility, scope, agent.Name, agent.RoleName, alias, address, agent.HomeDir, workspace, work))
 		for _, check := range out.Availability {
 			if check.Responsibility != agent.Responsibility {
 				continue
@@ -4183,7 +4443,11 @@ func formatAgentsProvisionOutput(v any) string {
 				work += " (" + agent.WorkBinding + ")"
 			}
 		}
-		b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s role=%s%s%s home=%s%s\n", agent.Responsibility, scope, agent.Name, agent.RoleName, alias, address, agent.HomeDir, work))
+		workspace := ""
+		if dir := teamBootstrapAgentWorkspaceDir(agent); dir != "" && dir != agent.HomeDir {
+			workspace = " workspace=" + dir
+		}
+		b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s role=%s%s%s home=%s%s%s\n", agent.Responsibility, scope, agent.Name, agent.RoleName, alias, address, agent.HomeDir, workspace, work))
 		for _, check := range out.Availability {
 			if check.Responsibility != agent.Responsibility {
 				continue
@@ -4194,7 +4458,7 @@ func formatAgentsProvisionOutput(v any) string {
 	if len(out.NextCommands) > 0 {
 		b.WriteString("\nAfter provisioning, start agents from:\n")
 		for _, agent := range out.Agents {
-			b.WriteString("  cd " + shellQuote(agent.HomeDir) + "\n")
+			b.WriteString("  cd " + shellQuote(teamBootstrapAgentWorkspaceDir(agent)) + "\n")
 		}
 	}
 	return b.String()
@@ -4240,7 +4504,11 @@ func formatAgentsAddOutput(v any) string {
 	if strings.TrimSpace(agent.GlobalAddress) != "" {
 		address = " address=" + agent.GlobalAddress
 	}
-	b.WriteString(fmt.Sprintf("- %s: scope=%s alias=%s%s home=%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, agent.WorkDir))
+	workspace := ""
+	if dir := teamBootstrapAgentWorkspaceDir(agent); dir != "" && dir != agent.HomeDir {
+		workspace = " workspace=" + dir
+	}
+	b.WriteString(fmt.Sprintf("- %s: scope=%s alias=%s%s home=%s%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, workspace, agent.WorkDir))
 	for _, check := range out.Availability {
 		b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
 	}

@@ -40,12 +40,13 @@ confuse:
 2) Generated project-local agents directory — where humans start agents.
 
 - By default, run bootstrap from the root of the work repo.
-- Bootstrap creates `agents/` in that repo. Every live agent home is
-  under `agents/home/<responsibility>/`.
-- The coordinator/global-style home normally has `work -> <repo-root>`.
-- Worktree-bound homes still live under
-  `agents/home/<responsibility>/`; their `work` symlink points at
-  `agents/worktrees/<worktree-name>/`.
+- Bootstrap creates `agents/` in that repo. Every responsibility has a
+  blueprint home under `agents/home/<responsibility>/`.
+- Repo-root agents use that home as the live workspace.
+- Worktree-bound agents use `agents/worktrees/<worktree-name>/` as the
+  live workspace; their `.aw/` state lives in that worktree.
+- The blueprint home's `work` symlink points at the repo root or at the
+  generated worktree for convenience.
 - Use `--agents-dir <name>` only when the repo already uses `agents/`
   for something else. If the target directory exists, bootstrap must
   fail before side effects.
@@ -68,12 +69,13 @@ confuse:
   `{user}-{classic-name}` for local aliases and
   `{user}-{responsibility}` for global address names.
 - Never commit the final planned alias/address to `team.yaml`; it
-  belongs in ignored `.aw/` state under each agent home.
+  belongs in ignored `.aw/` state under each agent's runtime workspace.
 
 5) Generated workspaces — the identities that will act.
 
-- Each `agents/home/<responsibility>/` directory becomes an aw
-  workspace with its own identity and team certificate.
+- Each planned agent gets an aw workspace with its own identity and
+  team certificate: repo-root agents under `agents/home/<responsibility>/`,
+  worktree-bound agents under `agents/worktrees/<worktree-name>/`.
 - The **first generated plan** is the anchor: bootstrap connects it
   first, installs roles/instructions from that workspace's team
   context, then invites/connects the rest.
@@ -111,9 +113,10 @@ Use `aw agents provision` when:
 
 Use `aw agents add` or `aw agents add-worktree` when:
 
-- The layout already exists and you need one more responsibility.
-- You want a repo-root agent (`add`) or isolated git worktree agent
-  (`add-worktree`).
+- The layout already exists and you need one more repo-root
+  responsibility (`add`).
+- You want one more local git worktree agent without changing the
+  committed layout (`add-worktree`).
 
 Do NOT bootstrap when:
 
@@ -170,10 +173,10 @@ What to edit:
   `home_template`, and optional `work`.
 - `team.yaml` naming: for shared repos, prefer
   `naming.local_alias.pattern: "{user}-{classic-name}"`.
-- Use `work: repo_root` for an agent whose `work` symlink points to
-  the project repo root.
-- Use `work: git_worktree` for an agent whose `work` symlink points
-  to a generated git worktree under `agents/worktrees/`.
+- Use `work: repo_root` for an agent whose runtime workspace is its
+  blueprint home and whose `work` symlink points to the project repo root.
+- Use `work: git_worktree` for an agent whose runtime workspace is a
+  generated git worktree under `agents/worktrees/`.
 - `roles/*.md`: change operational playbooks installed with
   `aw roles`.
 - `docs/team.md`: change shared team instructions installed after the
@@ -240,11 +243,14 @@ agents/
 ```
 
 The repo root itself is not an aw workspace. Start Codex, Claude Code,
-or Pi from an agent home:
+or Pi from an agent runtime workspace:
 
 ```bash
 cd agents/home/coordinator
 codex
+
+cd agents/worktrees/developer
+claude
 ```
 
 Bootstrap writes scoped `.gitignore` entries for
@@ -359,10 +365,10 @@ Add a repo-root local responsibility:
 aw agents add support --role support
 ```
 
-Add a worktree-bound local responsibility:
+Create a local worktree-bound agent without changing the shared layout:
 
 ```bash
-aw agents add-worktree developer --role developer
+aw agents add-worktree developer
 ```
 
 Add a global BYOT responsibility:

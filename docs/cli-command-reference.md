@@ -39,7 +39,7 @@ agent homes live under agents/home/<responsibility>.
 
 Subcommands:
 - `add` Add a responsibility to the agents layout
-- `add-worktree` Add a worktree-bound agent to the agents layout
+- `add-worktree` Create a repo-local git worktree and initialize a new local agent in it
 - `bootstrap` Bootstrap repo-local agents from a template repository
 - `plan` Plan repo-local agent names and paths
 - `provision` Provision identities for an existing agents layout
@@ -78,26 +78,14 @@ Flags:
 
 ### `agents add-worktree`
 
-Add a worktree-bound agent to the agents layout
+Create a repo-local git worktree and initialize a new local agent in it
 
 Flags:
 - `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the provisioning plan without changing files or team roles`
-- `--global Add a global AWID identity/address-backed agent (not supported for worktree-bound agents in v1)`
+- `--alias string Override the default generated alias/worktree name`
+- `--dry-run Validate and print the worktree plan without changing files or team state`
 - `-h, --help help for add-worktree`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--layout-only Only update the shared agents layout; do not create the git worktree or local identity state`
-- `--local Add a local team-scoped agent identity (default)`
-- `--namespace string BYOT team namespace domain to create/use`
-- `--registry string AWID registry URL override`
-- `--role string Role name to bind this responsibility to (default: responsibility)`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
+- `--role string Existing team role for the new worktree agent`
 
 ## `agents bootstrap`
 

@@ -207,7 +207,7 @@ Repo-root local agent:
 
 Worktree-bound local agent:
 
-  aw agents add-worktree developer --role developer
+  aw agents add-worktree developer
 
 Global BYOT agent:
 
@@ -280,14 +280,25 @@ Requirements:
 - The template declares `work: git_worktree` for the relevant agent in
   `team.yaml`.
 
-What bootstrap/add-worktree does:
+What bootstrap/provision does for template-declared worktree agents:
 
 - It creates `agents/worktrees/` and writes scoped `.gitignore`
   entries.
 - It creates one git worktree per `work: git_worktree` agent.
-- The live agent home remains under `agents/home/<responsibility>/`.
+- The committed blueprint home remains under
+  `agents/home/<responsibility>/`.
+- The live aw workspace is the generated worktree under
+  `agents/worktrees/<name>/`.
 - Each worktree-bound agent gets its own `.aw/` state and local-scope
-  identity.
+  identity in that worktree.
+
+What `aw agents add-worktree` does:
+
+- It creates one additional local worktree agent under
+  `agents/worktrees/<alias>/`.
+- The new agent's `.aw/` state lives in that worktree, matching
+  `aw workspace add-worktree` cleanup behavior.
+- It does not add a committed responsibility or role to `agents/team.yaml`.
 
 Common pitfall:
 

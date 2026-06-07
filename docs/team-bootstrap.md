@@ -10,12 +10,12 @@ AI agents working around this codebase" to a working aweb team. It
 takes a **team template** and produces:
 
 - a registered or joined aweb team,
-- a project-local `agents/` directory with one live home per agent,
+- a project-local `agents/` directory with one blueprint home per agent,
 - optional generated git worktrees for worktree-bound agents,
 - role playbooks and shared instructions installed on the coordination
   server,
 - local `.aw/` identity and certificate state under each generated
-  agent home.
+  runtime workspace.
 
 The normative lifecycle contract is
 [`agents-layout-lifecycle-contract.md`](agents-layout-lifecycle-contract.md).
@@ -49,24 +49,27 @@ agents/
 │  │  ├─ AGENTS.md
 │  │  └─ work -> ../../..
 │  ├─ developer/
-│  │  ├─ .aw/
 │  │  ├─ AGENTS.md
 │  │  └─ work -> ../../worktrees/developer
 │  └─ reviewer/
-│     ├─ .aw/
 │     ├─ AGENTS.md
 │     └─ work -> ../../worktrees/reviewer
 └─ worktrees/
    ├─ developer/
+   │  └─ .aw/
    └─ reviewer/
+      └─ .aw/
 ```
 
 The repo root itself is not an aw workspace. Start Codex, Claude Code,
-Pi, or another agent runtime from an agent home:
+Pi, or another agent runtime from the generated runtime workspace:
 
 ```bash
 cd agents/home/coordinator
 codex
+
+cd agents/worktrees/developer
+claude
 ```
 
 ## Mental Model
@@ -77,14 +80,15 @@ Bootstrap assembles five separate things:
    `team.yaml`, `roles/`, `docs/`, and `home/<responsibility>/AGENTS.md`.
 2. **Project-local agents directory**: generated convention directory.
    Default: `agents/`; override with `--agents-dir`.
-3. **Work binding**: each agent home's `work` symlink points either at
-   the repo root (`work: repo_root`) or a generated git worktree
-   (`work: git_worktree`).
+3. **Work binding**: repo-root agents use their blueprint home as the
+   runtime workspace. Worktree-bound agents keep instructions under
+   `agents/home/<responsibility>/`, but their runtime workspace and
+   `.aw/` state live in `agents/worktrees/<name>/`.
 4. **Team source**: hosted new team, hosted API key, invite token,
    current workspace forwarding, or BYOT.
-5. **Generated workspaces**: live homes under
-   `agents/home/<responsibility>/`, each with its own ignored `.aw/`
-   state.
+5. **Generated workspaces**: repo-root workspaces under
+   `agents/home/<responsibility>/`; worktree-bound workspaces under
+   `agents/worktrees/<name>/`, each with its own ignored `.aw/` state.
 
 The first generated plan is the **anchor**. Bootstrap connects it
 first, installs roles and shared instructions through that workspace's
@@ -230,10 +234,11 @@ bootstrap/provision time.
 `work` is optional. When omitted, bootstrap uses `repo_root`.
 Supported values in v1:
 
-- `repo_root`: the generated home's `work` symlink points at the
-  project repo root.
+- `repo_root`: the generated home is the aw runtime workspace; its
+  `work` symlink points at the project repo root.
 - `git_worktree`: bootstrap creates `agents/worktrees/<worktree-name>`
-  and the generated home's `work` symlink points there.
+  and uses that worktree as the aw runtime workspace; the generated
+  blueprint home's `work` symlink points there.
 
 ## Team Sources
 
@@ -330,10 +335,10 @@ Add a repo-root local responsibility:
 aw agents add support --role support --identity-scope local
 ```
 
-Add a worktree-bound local responsibility:
+Create a local worktree-bound agent without changing the shared layout:
 
 ```bash
-aw agents add-worktree developer --role developer
+aw agents add-worktree developer
 ```
 
 Add a global BYOT responsibility:

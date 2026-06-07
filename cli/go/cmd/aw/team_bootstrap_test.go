@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,6 +138,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	prevAddLocal := agentsAddLocal
 	prevAddGlobal := agentsAddGlobal
 	prevAddRole := agentsAddRole
+	prevAddWorktreeAlias := agentsAddWorktreeAlias
 	prevAddLayoutOnly := agentsAddLayoutOnly
 	prevRemoveDeprovision := agentsRemoveDeprovisionLocal
 	prevRemoveLayout := agentsRemoveRemoveLayout
@@ -176,6 +177,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 		agentsAddLocal = prevAddLocal
 		agentsAddGlobal = prevAddGlobal
 		agentsAddRole = prevAddRole
+		agentsAddWorktreeAlias = prevAddWorktreeAlias
 		agentsAddLayoutOnly = prevAddLayoutOnly
 		agentsRemoveDeprovisionLocal = prevRemoveDeprovision
 		agentsRemoveRemoveLayout = prevRemoveLayout
@@ -214,6 +216,7 @@ func resetTeamBootstrapGlobals(t *testing.T) {
 	agentsAddLocal = false
 	agentsAddGlobal = false
 	agentsAddRole = ""
+	agentsAddWorktreeAlias = ""
 	agentsAddLayoutOnly = false
 	agentsRemoveDeprovisionLocal = false
 	agentsRemoveRemoveLayout = false
@@ -275,7 +278,7 @@ func TestAgentsCommandSurfaceReplacesTeamBootstrap(t *testing.T) {
 		{"plan", "plan"},
 		{"provision", "provision"},
 		{"add", "add <responsibility>"},
-		{"add-worktree", "add-worktree <responsibility>"},
+		{"add-worktree", "add-worktree [role]"},
 		{"remove", "remove <responsibility>"},
 	} {
 		cmd := findSubcommand(agents, tt.name)
@@ -927,7 +930,7 @@ func TestAgentsAddUsesTemplateNamingPolicy(t *testing.T) {
 	}
 }
 
-func TestAgentsAddWorktreeCreatesGitWorktreeAndHomeState(t *testing.T) {
+func TestAgentsAddWorktreeRequiresRoleNonTTYBeforeMutation(t *testing.T) {
 	resetTeamBootstrapGlobals(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -936,195 +939,172 @@ func TestAgentsAddWorktreeCreatesGitWorktreeAndHomeState(t *testing.T) {
 		t.Fatalf("copy layout: %v", err)
 	}
 	t.Chdir(repoDir)
-	repoRoot, err := currentGitWorktreeRootFromDir(repoDir)
+	server := newAgentsAddWorktreeTestServer(t, nil)
+	seedAgentsAddWorktreeAnchor(t, repoDir, server.URL, "default:example.aweb.ai", "aw_sk_parent")
+
+	cmd := &cobra.Command{Use: "add-worktree"}
+	cmd.SetIn(strings.NewReader(""))
+	err := runAgentsAddWorktree(cmd, nil)
+	if err == nil {
+		t.Fatal("expected role error")
+	}
+	if !strings.Contains(err.Error(), "no role specified") || !strings.Contains(err.Error(), "developer") {
+		t.Fatalf("error=%q, want role guidance", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "qa"))
+}
+
+func TestAgentsAddWorktreeRejectsUnknownRoleBeforeMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	server := newAgentsAddWorktreeTestServer(t, nil)
+	seedAgentsAddWorktreeAnchor(t, repoDir, server.URL, "default:example.aweb.ai", "aw_sk_parent")
+
+	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"qa"})
+	if err == nil {
+		t.Fatal("expected unknown role error")
+	}
+	if !strings.Contains(err.Error(), "invalid role") || !strings.Contains(err.Error(), "developer") {
+		t.Fatalf("error=%q, want role validation", err)
+	}
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "qa"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "roles", "qa.md"))
+}
+
+func TestAgentsAddWorktreeCreatesWorkspaceInsideWorktreeWithoutLayoutMutation(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	t.Chdir(repoDir)
+	teamYAMLPath := filepath.Join(repoDir, "agents", "team.yaml")
+	beforeTeamYAML, err := os.ReadFile(teamYAMLPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	teamBootstrapInviteToken = "aw-invite-test-token"
-
-	var sawPlan teamBootstrapAgentPlan
-	var sawSource teamBootstrapSource
-	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
-		sawSource = source
-		sawPlan = plan
-		assertPathExists(t, filepath.Join(plan.HomeDir, "AGENTS.md"))
-		assertPathExists(t, filepath.Join(plan.HomeDir, "CLAUDE.md"))
-		workLink := filepath.Join(plan.HomeDir, "work")
-		assertPathExists(t, workLink)
-		target, err := os.Readlink(workLink)
-		if err != nil {
-			t.Fatalf("read work symlink: %v", err)
-		}
-		if target != plan.WorkDir {
-			t.Fatalf("work symlink target=%q want %q", target, plan.WorkDir)
-		}
-		if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
-			return err
-		}
-		return nil
-	}
-	agentsAddInitAdditionalAgent = func(primaryDir string, plan teamBootstrapAgentPlan) error {
-		t.Fatalf("additional-agent path should not run: primary=%s plan=%+v", primaryDir, plan)
-		return nil
-	}
+	var initBody map[string]any
+	server := newAgentsAddWorktreeTestServer(t, &initBody)
+	seedAgentsAddWorktreeAnchor(t, repoDir, server.URL, "default:example.aweb.ai", "aw_sk_parent")
 
 	if err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"}); err != nil {
 		t.Fatalf("runAgentsAddWorktree: %v", err)
 	}
-	if sawSource.Kind != teamBootstrapSourceInvite {
-		t.Fatalf("source kind=%q want invite", sawSource.Kind)
-	}
-	if sawPlan.Responsibility != "developer" || sawPlan.WorkBinding != agentsWorkGitWorktree {
-		t.Fatalf("plan mismatch: %+v", sawPlan)
-	}
-	if sawPlan.WorkDir != filepath.Join(repoRoot, "agents", "worktrees", "developer") {
-		t.Fatalf("work_dir=%q", sawPlan.WorkDir)
-	}
-	assertPathExists(t, filepath.Join(repoRoot, "agents", "worktrees", "developer", "README.md"))
-	assertPathExists(t, filepath.Join(repoRoot, "agents", "home", "developer", ".aw"))
-
-	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
+	worktree := filepath.Join(repoDir, "agents", "worktrees", "qa")
+	assertPathExists(t, filepath.Join(worktree, ".aw", "workspace.yaml"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "qa"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "roles", "qa.md"))
+	afterTeamYAML, err := os.ReadFile(teamYAMLPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, ok := spec.Agents["developer"]
-	if !ok {
-		t.Fatalf("developer missing from team.yaml: %#v", spec.Agents)
+	if string(afterTeamYAML) != string(beforeTeamYAML) {
+		t.Fatalf("add-worktree mutated team.yaml:\n--- before ---\n%s\n--- after ---\n%s", beforeTeamYAML, afterTeamYAML)
 	}
-	if agent.Work != agentsWorkGitWorktree {
-		t.Fatalf("agent work=%q want git_worktree", agent.Work)
+	if got := strings.TrimSpace(fmt.Sprint(initBody["alias"])); got != "qa" {
+		t.Fatalf("workspace init alias=%q want qa (body=%v)", got, initBody)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(initBody["role_name"])); got != "developer" {
+		t.Fatalf("workspace init role_name=%q want developer (body=%v)", got, initBody)
 	}
 }
 
-func TestAgentsAddWorktreePlansCollisionSuffixBeforeMutation(t *testing.T) {
-	resetTeamBootstrapGlobals(t)
-	repoDir := t.TempDir()
-	initGitRepo(t, repoDir)
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	runGit("branch", "developer")
-	templateDir := writeInRepoTeamBootstrapFixture(t)
-	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
-		t.Fatalf("copy layout: %v", err)
-	}
-	t.Chdir(repoDir)
-	repoRoot, err := currentGitWorktreeRootFromDir(repoDir)
+func newAgentsAddWorktreeTestServer(t *testing.T, initBody *map[string]any) *httptest.Server {
+	t.Helper()
+	const teamID = "default:example.aweb.ai"
+	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	out, _, _, plan, err := buildAgentsAddOutput(&cobra.Command{Use: "add-worktree"}, "developer", agentsWorkGitWorktree)
-	if err != nil {
-		t.Fatalf("buildAgentsAddOutput: %v", err)
-	}
-	if plan.WorkDir != filepath.Join(repoRoot, "agents", "worktrees", "developer-2") {
-		t.Fatalf("work_dir=%q", plan.WorkDir)
-	}
-	foundWorktreeCheck := false
-	for _, check := range out.Availability {
-		if check.Field == "worktree" && check.Value == "developer-2" {
-			foundWorktreeCheck = true
+	_ = awid.ComputeDIDKey(teamPub)
+	return newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+					"reviewer":  map[string]any{"title": "Reviewer"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":     teamID,
+				"name_prefix": "qa",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer aw_sk_parent" {
+				t.Fatalf("Authorization=%q, want parent API key", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if initBody != nil {
+				*initBody = body
+			}
+			didKey := strings.TrimSpace(fmt.Sprint(body["did"]))
+			alias := strings.TrimSpace(fmt.Sprint(body["alias"]))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":     "http://" + r.Host + "/api",
+				"team_cert":      encoded,
+				"alias":          alias,
+				"team_id":        teamID,
+				"workspace_id":   "workspace-qa",
+				"did":            didKey,
+				"stable_id":      "",
+				"identity_scope": awid.IdentityModeLocal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "aw_sk_child",
+			})
+		case r.Method == http.MethodPost && (r.URL.Path == "/v1/connect" || r.URL.Path == "/api/v1/connect"):
+			cert := requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        cert.Alias,
+				"agent_id":     "agent-" + cert.Alias,
+				"workspace_id": "workspace-" + cert.Alias,
+				"repo_id":      "repo-" + cert.Alias,
+				"team_did_key": cert.TeamDIDKey,
+				"role":         "developer",
+				"status":       "ok",
+			})
+		default:
+			http.NotFound(w, r)
 		}
-	}
-	if !foundWorktreeCheck {
-		t.Fatalf("availability missing developer-2 worktree check: %+v", out.Availability)
-	}
-	assertPathMissing(t, filepath.Join(repoRoot, "agents", "worktrees", "developer-2"))
-	data, err := os.ReadFile(filepath.Join(repoRoot, "agents", "team.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "developer-2") {
-		t.Fatalf("team.yaml mutated during planning:\n%s", string(data))
-	}
+	}))
 }
 
-func TestAgentsAddWorktreeMaterializeFailureRollsBackLayout(t *testing.T) {
-	resetTeamBootstrapGlobals(t)
-	repoDir := t.TempDir()
-	initGitRepo(t, repoDir)
-	templateDir := writeInRepoTeamBootstrapFixture(t)
-	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
-		t.Fatalf("copy layout: %v", err)
-	}
-	t.Chdir(repoDir)
-	teamBootstrapInviteToken = "aw-invite-test-token"
-	agentsAddMaterializeAgent = func(templateDir string, plan teamBootstrapAgentPlan, workDirectory string) error {
-		return errors.New("materialize boom")
-	}
-	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
-		t.Fatal("provision should not run after materialize failure")
-		return nil
-	}
-
-	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"support"})
-	if err == nil {
-		t.Fatal("expected materialize failure")
-	}
-	if !strings.Contains(err.Error(), "materialize boom") {
-		t.Fatalf("error=%q, want materialize cause", err)
-	}
-	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "support"))
-	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "support"))
-	assertPathMissing(t, filepath.Join(repoDir, "agents", "roles", "support.md"))
-	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
-	if err != nil {
+func seedAgentsAddWorktreeAnchor(t *testing.T, repoDir, serverURL, teamID, apiKey string) {
+	t.Helper()
+	anchor := filepath.Join(repoDir, "agents", "home", "coordinator")
+	if err := os.MkdirAll(anchor, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := spec.Agents["support"]; ok {
-		t.Fatalf("support remained in team.yaml after rollback: %#v", spec.Agents["support"])
-	}
-	if _, ok := spec.Roles["support"]; ok {
-		t.Fatalf("support role remained in team.yaml after rollback: %#v", spec.Roles["support"])
-	}
-}
-
-func TestAgentsAddWorktreeProvisionFailureExplainsCleanup(t *testing.T) {
-	resetTeamBootstrapGlobals(t)
-	repoDir := t.TempDir()
-	initGitRepo(t, repoDir)
-	templateDir := writeInRepoTeamBootstrapFixture(t)
-	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
-		t.Fatalf("copy layout: %v", err)
-	}
-	t.Chdir(repoDir)
-	teamBootstrapInviteToken = "aw-invite-test-token"
-	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
-		return errors.New("provision boom")
-	}
-
-	err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"})
-	if err == nil {
-		t.Fatal("expected provisioning failure")
-	}
-	for _, want := range []string{
-		"identity provisioning failed",
-		"aw agents remove --remove-layout developer",
-		"rm -rf",
-		"git -C",
-		"worktree remove",
-		"branch -D developer",
-		"team.yaml",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error=%q, want %q", err, want)
-		}
-	}
-	assertPathExists(t, filepath.Join(repoDir, "agents", "worktrees", "developer"))
-	assertPathExists(t, filepath.Join(repoDir, "agents", "home", "developer", "AGENTS.md"))
-	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := spec.Agents["developer"]; !ok {
-		t.Fatalf("developer should remain in team.yaml for remove/recovery: %#v", spec.Agents)
-	}
+	state := workspaceBinding(serverURL, teamID, "coordinator", "workspace-parent")
+	state.APIKey = apiKey
+	writeWorkspaceBindingForTest(t, anchor, state)
 }
 
 func TestAgentsAddWorktreeRejectsGlobalBeforeMutation(t *testing.T) {
@@ -1195,35 +1175,43 @@ func TestAgentsRemoveWorktreeDeprovisionMovesLocalStateAndRemovesWorktree(t *tes
 		t.Fatalf("copy layout: %v", err)
 	}
 	t.Chdir(repoDir)
-	teamBootstrapInviteToken = "aw-invite-test-token"
-	agentsAddInitPrimaryAgent = func(cmd *cobra.Command, source teamBootstrapSource, plan teamBootstrapAgentPlan) error {
-		if err := os.MkdirAll(filepath.Join(plan.HomeDir, ".aw"), 0o700); err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(plan.HomeDir, ".aw", "marker"), []byte("secret"), 0o600)
+	worktreePath := filepath.Join(repoDir, "agents", "worktrees", "implementation")
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if err := runAgentsAddWorktree(&cobra.Command{Use: "add-worktree"}, []string{"developer"}); err != nil {
-		t.Fatalf("runAgentsAddWorktree: %v", err)
+	branchCreated, err := createWorkspaceGitWorktree(repoDir, worktreePath, "implementation", true)
+	if err != nil {
+		t.Fatalf("create fixture worktree: %v", err)
+	}
+	if !branchCreated {
+		t.Fatal("expected fixture worktree branch to be created")
+	}
+	awDir := filepath.Join(repoDir, "agents", "worktrees", "implementation", ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(awDir, "marker"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	agentsRemoveDeprovisionLocal = true
-	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"developer"}); err != nil {
+	if err := runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"implementation"}); err != nil {
 		t.Fatalf("runAgentsRemove: %v", err)
 	}
-	assertPathMissing(t, filepath.Join(repoDir, "agents", "home", "developer", ".aw"))
-	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "developer"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "implementation", ".aw"))
+	assertPathMissing(t, filepath.Join(repoDir, "agents", "worktrees", "implementation"))
 	spec, err := loadTeamBootstrapSpec(filepath.Join(repoDir, "agents"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := spec.Agents["developer"]; !ok {
+	if _, ok := spec.Agents["implementation"]; !ok {
 		t.Fatalf("deprovision-local should preserve layout entry: %#v", spec.Agents)
 	}
 	backupRoot, err := awconfig.PathInAWIDState("agents-remove-backups")
 	if err != nil {
 		t.Fatal(err)
 	}
-	matches, err := filepath.Glob(filepath.Join(backupRoot, "*-developer-*", ".aw", "marker"))
+	matches, err := filepath.Glob(filepath.Join(backupRoot, "*-implementation-*", ".aw", "marker"))
 	if err != nil {
 		t.Fatal(err)
 	}

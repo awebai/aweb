@@ -32,7 +32,7 @@ The same repo should work for multiple humans:
 git clone git@github.com:customer/my-project.git
 cd my-project
 aw agents provision --identity-prefix maria --invite-token "$TOKEN"
-cd agents/home/developer
+cd agents/worktrees/developer
 claude
 ```
 
@@ -48,9 +48,12 @@ team without reusing Juan's aliases, addresses, DIDs, keys, or certificates.
   `--agents-dir`, defaulting to `agents`.
 - **Agent responsibility**: a stable blueprint key such as `coordinator`,
   `developer`, or `reviewer`. Responsibilities are safe to commit.
-- **Agent home**: `agents/home/<responsibility>/`, containing `AGENTS.md`,
-  `CLAUDE.md`, the `work` symlink, and this human's ignored `.aw/` runtime
-  state after provisioning.
+- **Blueprint home**: `agents/home/<responsibility>/`, containing committed
+  agent instructions such as `AGENTS.md`, `CLAUDE.md`, and any generated
+  `work` symlink.
+- **Runtime workspace**: the directory where aw commands run and `.aw/` lives.
+  Repo-root-bound responsibilities use their blueprint home. Worktree-bound
+  responsibilities use their generated git worktree.
 - **Worktree checkout**: `agents/worktrees/<name>/`, a generated git worktree
   for a worktree-bound agent.
 - **Template repo**: reusable source blueprint containing `team.yaml`, shared
@@ -76,7 +79,7 @@ aw agents bootstrap <template>
 aw agents plan
 aw agents provision
 aw agents add <responsibility>
-aw agents add-worktree <responsibility>
+aw agents add-worktree [role]
 aw agents remove <responsibility>
 ```
 
@@ -91,9 +94,10 @@ Command meanings:
   creates or verifies this human's local ignored identity state.
 - `aw agents add <responsibility>` adds a local or global agent responsibility
   to the layout and optionally provisions it for this human.
-- `aw agents add-worktree <responsibility>` adds a worktree-bound agent from
-  repo root. Its home remains under `agents/home/<responsibility>/`; its
-  checkout lives under `agents/worktrees/<name>/`.
+- `aw agents add-worktree [role]` creates a local worktree-bound agent from
+  repo root. The agent lives in the git worktree itself under
+  `agents/worktrees/<alias>/`, with `.aw/` stored in that worktree. It does not
+  add a committed responsibility to `agents/team.yaml`.
 - `aw agents remove <responsibility>` safely removes or deprovisions an agent
   responsibility or this human's local materialization, depending on flags.
 
@@ -170,14 +174,20 @@ git rev-parse --show-toplevel
 The customer repo root is not an aw identity. `aw agents` must not create
 `.aw/` at the repo root. Identity-dependent commands such as `aw whoami`,
 `aw mail`, and `aw chat` run from the repo root should fail with normal
-"not initialized" guidance plus, where practical, a hint to `cd
-agents/home/<responsibility>`.
+"not initialized" guidance plus, where practical, a hint to `cd` into the
+planned runtime workspace: `agents/home/<responsibility>` for repo-root
+agents, or `agents/worktrees/<name>` for worktree-bound agents.
 
-All live agent homes created or provisioned by `aw agents` are under:
+Committed blueprint homes created or provisioned by `aw agents` are under:
 
 ```text
 <agents-dir>/home/<responsibility>/
 ```
+
+Runtime workspaces are:
+
+- `<agents-dir>/home/<responsibility>/` for `work: repo_root`
+- `<agents-dir>/worktrees/<name>/` for `work: git_worktree`
 
 All generated worktree checkouts are under:
 
@@ -199,6 +209,7 @@ Committed/shared:
 Ignored/per-human:
 
 - `<agents-dir>/home/*/.aw/`
+- `<agents-dir>/worktrees/*/.aw/` and the generated worktree checkouts
 - private signing keys
 - private encryption keys
 - team certificates
@@ -238,23 +249,24 @@ my-project/
    │  │  ├─ CLAUDE.md
    │  │  └─ work -> ../../..
    │  ├─ developer/
-   │  │  ├─ .aw/              # ignored, created per human
    │  │  ├─ AGENTS.md
    │  │  ├─ CLAUDE.md
    │  │  └─ work -> ../../worktrees/<developer-worktree>
    │  └─ reviewer/
-   │     ├─ .aw/              # ignored, created per human
    │     ├─ AGENTS.md
    │     ├─ CLAUDE.md
    │     └─ work -> ../../worktrees/<reviewer-worktree>
    └─ worktrees/
       ├─ <developer-worktree>/
+      │  └─ .aw/              # ignored, created per human
       └─ <reviewer-worktree>/
+         └─ .aw/              # ignored, created per human
 ```
 
 `work: repo_root` means the agent home's `work` symlink points to the customer
-repo root. `work: git_worktree` means the agent home's `work` symlink points
-to a generated checkout under `agents/worktrees/`.
+repo root and the runtime `.aw/` state is in that home. `work: git_worktree`
+means the blueprint home's `work` symlink points to a generated checkout under
+`agents/worktrees/`, and the runtime `.aw/` state is in that worktree.
 
 ## Template Source Shape
 
@@ -336,7 +348,8 @@ aliases for all users.
 After every `aw agents` command, committed `agents/team.yaml` remains
 identity-free. It must not be rewritten with final aliases, global addresses,
 DIDs, cert paths, workspace ids, or any per-human state. Runtime state belongs
-under ignored `agents/home/<responsibility>/.aw/` or approved user key
+under the planned runtime workspace's ignored `.aw/` directory (home for
+`work: repo_root`, worktree for `work: git_worktree`) or approved user key
 locations only.
 
 ## Naming Grammar
@@ -655,20 +668,27 @@ Behavior:
 
 ### aw agents add-worktree
 
-Adds a worktree-bound agent from repo root.
+Creates a local worktree-bound agent from repo root.
 
 Examples:
 
 ```bash
 aw agents add-worktree developer
-aw agents add-worktree reviewer --identity-prefix maria
+aw agents add-worktree --role reviewer --alias maria-reviewer
 ```
 
 Behavior:
 
-- Home path remains `agents/home/<responsibility>`.
-- Worktree path is `agents/worktrees/<safe-name>`.
-- Branch/worktree name is sanitized and collision checked.
+- Role argument is optional only when the team has no defined roles.
+- If roles are defined and no role is supplied, an interactive terminal prompts;
+  non-interactive runs fail before side effects.
+- A supplied role must match one of the defined team roles.
+- Worktree path is `agents/worktrees/<alias>`.
+- `.aw/` state lives in that worktree, matching `aw workspace add-worktree`
+  cleanup semantics.
+- Branch/worktree/alias name is sanitized and collision checked.
+- The command does not create roles, role files, source homes, or committed
+  `agents/team.yaml` responsibilities.
 - Reuses established team authority paths internally:
   local team key, API key, hosted cert-only parent invite, or BYOT team key.
 
@@ -729,7 +749,7 @@ Human B:
 git clone git@github.com:customer/my-project.git
 cd my-project
 aw agents provision --invite-token "$TOKEN" --identity-prefix maria
-cd agents/home/developer
+cd agents/worktrees/developer
 aw whoami
 ```
 
@@ -738,7 +758,8 @@ Expected result:
 - Human B does not reuse Human A's DIDs, aliases, private keys, certs, or
   global addresses.
 - Shared responsibilities and instructions are reused.
-- `agents/home/*/.aw/` remains ignored.
+- Runtime `.aw/` state remains ignored: `agents/home/*/.aw/` for repo-root
+  agents and generated `agents/worktrees/` for worktree-bound agents.
 - Team aliases/global addresses are unique and checked before provisioning.
 
 ## Add and Remove Semantics
@@ -816,8 +837,9 @@ Minimum release-blocking tests:
    file writes, git operations, identity creation, or network mutation.
 9. Repo root remains non-aw identity after bootstrap/provision.
 10. `aw agents add` local and global paths work and are dry-run visible.
-11. `aw agents add-worktree` creates home under `agents/home` and checkout
-    under `agents/worktrees`.
+11. `aw agents add-worktree` creates a local workspace under
+    `agents/worktrees/<alias>`, stores `.aw/` in that worktree, does not create
+    `agents/home/<alias>`, and does not mutate committed layout or roles.
 12. `aw agents remove` dry-run, move-aside, revoke, preserve-address default,
     and explicit address deletion are covered.
 13. Existing standalone `aw workspace add-worktree` behavior remains green.
