@@ -483,17 +483,20 @@ func (r *doctorRunner) addCoordinationChecks(workspaceID string, teamResp *aweb.
 func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	roles, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: true})
+	localRole := ""
+	if state.membership != nil {
+		localRole = strings.TrimSpace(state.membership.RoleName)
+	}
+	roles, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
+		RoleName:     localRole,
+		OnlySelected: localRole != "",
+	})
 	if err != nil {
 		r.addAwebHTTPErrorCheck(doctorCheckTeamRolesRead, err, "Active team roles read failed.", "Retry with the active workspace certificate or repair local team credentials.")
 		r.addBlockedAwebChecks([]string{doctorCheckTeamSelectedRoleMatches, doctorCheckTeamMembershipAuth}, doctorCheckTeamRolesRead)
 		return
 	}
 	r.add(awebCheck(doctorCheckTeamRolesRead, doctorStatusOK, &doctorTarget{Type: "team", ID: strings.TrimSpace(roles.TeamID)}, "Active team roles read succeeded.", "", map[string]any{"team_id": strings.TrimSpace(roles.TeamID), "version": roles.Version}))
-	localRole := ""
-	if state.membership != nil {
-		localRole = strings.TrimSpace(state.membership.RoleName)
-	}
 	selectedRole := ""
 	if roles.SelectedRole != nil {
 		selectedRole = strings.TrimSpace(roles.SelectedRole.RoleName)

@@ -119,18 +119,27 @@ func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer 
 			if !cfg.requireTeamAuth(w, r) {
 				return
 			}
+			roleName := strings.TrimSpace(r.URL.Query().Get("role_name"))
+			if r.URL.Query().Get("only_selected") == "true" && roleName == "" {
+				http.Error(w, "only_selected=true requires a role_name parameter", http.StatusBadRequest)
+				return
+			}
 			teamID := "backend:example.com"
 			if strings.TrimSpace(cfg.RolesTeamID) != "" {
 				teamID = cfg.RolesTeamID
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			resp := map[string]any{
 				"team_roles_id":        "roles-1",
 				"active_team_roles_id": "roles-1",
 				"team_id":              teamID,
 				"version":              1,
 				"updated_at":           "2026-04-18T00:00:00Z",
 				"roles":                map[string]any{},
-			})
+			}
+			if roleName != "" {
+				resp["selected_role"] = map[string]any{"role_name": roleName}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 		case "/v1/messages/inbox":
 			if !cfg.requireMessageAuth(w, r) {
 				return
@@ -281,6 +290,37 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 		t.Fatalf("doctor rewrote workspace.yaml\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 	assertNoDuplicateDoctorChecks(t, got)
+}
+
+func TestAwDoctorTeamOnlineUsesWorkspaceRoleName(t *testing.T) {
+	t.Parallel()
+
+	server := newDoctorAwebServer(t, nil)
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorLocalFixture(t, tmp, server.Server.URL)
+	workspacePath := filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if len(workspace.Memberships) != 1 {
+		t.Fatalf("memberships=%d", len(workspace.Memberships))
+	}
+	workspace.Memberships[0].RoleName = "coordinator"
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "team", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckTeamRolesRead, doctorStatusOK)
+	check := requireDoctorCheckStatus(t, got, doctorCheckTeamSelectedRoleMatches, doctorStatusOK)
+	if check.Detail["local_role_name"] != "coordinator" || check.Detail["server_role_name"] != "coordinator" {
+		t.Fatalf("role detail=%#v", check.Detail)
+	}
 }
 
 func TestAwDoctorAwebVersionHeaderReported(t *testing.T) {
