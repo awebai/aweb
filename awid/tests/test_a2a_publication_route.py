@@ -108,7 +108,15 @@ async def _seed_address(client, awid_db_infra, controller_identity):
     }
 
 
-def _delegation_body(seed: dict, *, signature_override: str | None = None, card_digest: str = _CARD_DIGEST) -> dict:
+def _delegation_body(
+    seed: dict,
+    *,
+    signature_override: str | None = None,
+    card_digest: str = _CARD_DIGEST,
+    status: str = A2A_STATUS_ACTIVE,
+    revoked_at: str | None = None,
+    revocation_reason: str | None = None,
+) -> dict:
     fields = normalize_a2a_delegation_fields(
         A2ADelegationFields(
             operation=A2A_DELEGATION_OPERATION,
@@ -129,9 +137,9 @@ def _delegation_body(seed: dict, *, signature_override: str | None = None, card_
             signer_kid=seed["identity_did_key"] + "#ed25519",
             issued_at=_ISSUED_AT,
             expires_at=_EXPIRES_AT,
-            status=A2A_STATUS_ACTIVE,
-            revoked_at=None,
-            revocation_reason=None,
+            status=status,
+            revoked_at=revoked_at,
+            revocation_reason=revocation_reason,
             registry_url=_REGISTRY_URL,
         )
     )
@@ -143,11 +151,23 @@ def _delegation_body(seed: dict, *, signature_override: str | None = None, card_
     }
 
 
-def _publication_body(seed: dict, delegation_body: dict, *, delegation_digest: str | None = None) -> dict:
+def _publication_body(
+    seed: dict,
+    delegation_body: dict | None,
+    *,
+    delegation_digest: str | None = None,
+    direct: bool = False,
+    identity_custody: str = "self",
+    authority_source: str = A2A_AUTHORITY_SELF_IDENTITY_KEY,
+) -> dict:
     if delegation_digest is None:
-        delegation_digest = signed_assertion_digest(
-            canonical_json_bytes({k: v for k, v in delegation_body.items() if k != "signature"}),
-            delegation_body["signature"],
+        delegation_digest = (
+            None
+            if direct
+            else signed_assertion_digest(
+                canonical_json_bytes({k: v for k, v in delegation_body.items() if k != "signature"}),
+                delegation_body["signature"],
+            )
         )
     fields = normalize_a2a_publication_fields(
         A2APublicationFields(
@@ -162,8 +182,8 @@ def _publication_body(seed: dict, delegation_body: dict, *, delegation_digest: s
             rpc_url="https://example.com/a2a/agents/r_research/rpc",
             route_id="r_research",
             tenant=None,
-            gateway_identity=seed["gateway_did_aw"],
-            delegation_id="del_test_01",
+            gateway_identity=seed["identity_did_aw"] if direct else seed["gateway_did_aw"],
+            delegation_id=None if direct else "del_test_01",
             delegation_digest=delegation_digest,
             card_digest_alg=A2A_CARD_DIGEST_ALG_SHA256,
             card_digest=_CARD_DIGEST,
@@ -173,8 +193,8 @@ def _publication_body(seed: dict, delegation_body: dict, *, delegation_digest: s
             published_at=_PUBLISHED_AT,
             expires_at=_EXPIRES_AT,
             registry_url=_REGISTRY_URL,
-            identity_custody="self",
-            authority_source=A2A_AUTHORITY_SELF_IDENTITY_KEY,
+            identity_custody=identity_custody,
+            authority_source=authority_source,
         )
     )
     canonical = a2a_publication_canonical(fields)
@@ -215,6 +235,25 @@ async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_i
 
 
 @pytest.mark.asyncio
+async def test_a2a_direct_hosted_publication_succeeds(client, awid_db_infra, controller_identity):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    publication = _publication_body(
+        seed,
+        None,
+        direct=True,
+        identity_custody="hosted_custodial",
+        authority_source="hosted_session",
+    )
+
+    publication_resp = await client.post("/v1/a2a/publications", json=publication)
+
+    assert publication_resp.status_code == 200, publication_resp.text
+    lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
+    assert lookup.status_code == 200, lookup.text
+    assert lookup.json()["a2a"]["gateway_identity"] == seed["identity_did_aw"]
+
+
+@pytest.mark.asyncio
 async def test_a2a_delegation_bad_signature_fails_before_writes(client, awid_db_infra, controller_identity):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     other_signing_key, _ = generate_keypair()
@@ -247,6 +286,33 @@ async def test_a2a_publication_delegation_digest_mismatch_fails_before_write(
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"]["code"] == "a2a_delegation_digest_mismatch"
     assert await _counts(awid_db_infra) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_a2a_revoked_delegation_suppresses_delegated_publication_lookup(
+    client,
+    awid_db_infra,
+    controller_identity,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    delegation = _delegation_body(seed)
+    assert (await client.post("/v1/a2a/delegations", json=delegation)).status_code == 200
+    publication = _publication_body(seed, delegation)
+    assert (await client.post("/v1/a2a/publications", json=publication)).status_code == 200
+
+    revoked = _delegation_body(
+        seed,
+        status="revoked",
+        revoked_at="2026-06-08T20:00:00Z",
+        revocation_reason="operator_revoked",
+    )
+    revoke_resp = await client.post("/v1/a2a/delegations", json=revoked)
+    assert revoke_resp.status_code == 200, revoke_resp.text
+    assert revoke_resp.json()["status"] == "revoked"
+
+    lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
+    assert lookup.status_code == 200, lookup.text
+    assert "a2a" not in lookup.json()
 
 
 @pytest.mark.asyncio

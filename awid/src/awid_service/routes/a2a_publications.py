@@ -416,7 +416,9 @@ async def publish_a2a_delegation(
         )
         existing = await tx.fetch_one(
             """
-            SELECT delegation_id, assertion_digest, assertion_canonical
+            SELECT delegation_id, delegator_did_aw, delegator_current_did_key,
+                   delegated_gateway_identity, address, route_id, assertion_digest,
+                   assertion_canonical
             FROM {{tables.a2a_bridge_delegations}}
             WHERE delegation_id = $1
             FOR UPDATE
@@ -424,6 +426,45 @@ async def publish_a2a_delegation(
             fields.delegation_id,
         )
         if existing is not None:
+            if fields.status == A2A_STATUS_REVOKED:
+                for field_name in (
+                    "delegator_did_aw",
+                    "delegator_current_did_key",
+                    "delegated_gateway_identity",
+                    "address",
+                    "route_id",
+                ):
+                    if existing[field_name] != getattr(fields, field_name):
+                        raise _error(409, _DELEGATION_DIGEST_MISMATCH, f"delegation {field_name} mismatch")
+                revoked_at = parse_contract_time(fields.revoked_at, field_name="revoked_at") if fields.revoked_at else _now()
+                await tx.execute(
+                    """
+                    UPDATE {{tables.a2a_bridge_delegations}}
+                    SET status = 'revoked',
+                        revoked_at_text = $2,
+                        revocation_reason = $3,
+                        assertion_signature = $4,
+                        assertion_canonical = $5,
+                        assertion_digest = $6,
+                        updated_at = NOW(),
+                        revoked_at = $7
+                    WHERE delegation_id = $1
+                    """,
+                    fields.delegation_id,
+                    fields.revoked_at,
+                    fields.revocation_reason,
+                    body.signature,
+                    canonical.decode("utf-8"),
+                    assertion_digest,
+                    revoked_at,
+                )
+                return A2AWriteResponse(
+                    status="revoked",
+                    delegation_id=fields.delegation_id,
+                    assertion_digest=assertion_digest,
+                    address=fields.address,
+                    route_id=fields.route_id,
+                )
             if existing["assertion_digest"] == assertion_digest:
                 return A2AWriteResponse(
                     status="already_applied",
@@ -431,8 +472,10 @@ async def publish_a2a_delegation(
                     assertion_digest=assertion_digest,
                     address=fields.address,
                     route_id=fields.route_id,
-                )
+            )
             raise _error(409, _DELEGATION_DIGEST_MISMATCH, "delegation id exists with different assertion digest")
+        if fields.status == A2A_STATUS_REVOKED:
+            raise _error(409, _DELEGATION_MISSING, "cannot revoke a delegation that is not registered")
 
         await tx.execute(
             """
@@ -555,7 +598,8 @@ async def publish_a2a_route(
 
         existing_assertion = await tx.fetch_one(
             """
-            SELECT assertion_id, assertion_digest
+            SELECT assertion_id, address, did_aw, current_did_key, gateway_identity, route_id,
+                   assertion_digest
             FROM {{tables.a2a_route_publications}}
             WHERE assertion_id = $1
             FOR UPDATE
@@ -563,6 +607,33 @@ async def publish_a2a_route(
             fields.assertion_id,
         )
         if existing_assertion is not None:
+            if fields.status == A2A_STATUS_REVOKED:
+                for field_name in ("address", "did_aw", "current_did_key", "gateway_identity", "route_id"):
+                    if existing_assertion[field_name] != getattr(fields, field_name):
+                        raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, f"publication {field_name} mismatch")
+                await tx.execute(
+                    """
+                    UPDATE {{tables.a2a_route_publications}}
+                    SET status = 'revoked',
+                        assertion_signature = $2,
+                        assertion_canonical = $3,
+                        assertion_digest = $4,
+                        updated_at = NOW(),
+                        revoked_at = NOW()
+                    WHERE assertion_id = $1
+                    """,
+                    fields.assertion_id,
+                    body.signature,
+                    canonical.decode("utf-8"),
+                    assertion_digest,
+                )
+                return A2AWriteResponse(
+                    status="revoked",
+                    assertion_id=fields.assertion_id,
+                    assertion_digest=assertion_digest,
+                    address=fields.address,
+                    route_id=fields.route_id,
+                )
             if existing_assertion["assertion_digest"] == assertion_digest:
                 return A2AWriteResponse(
                     status="already_applied",
@@ -572,26 +643,29 @@ async def publish_a2a_route(
                     route_id=fields.route_id,
                 )
             raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "publication id exists with different digest")
+        if fields.status == A2A_STATUS_REVOKED:
+            raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "cannot revoke a publication that is not registered")
 
-        active_route = await tx.fetch_one(
-            """
-            SELECT assertion_id, gateway_identity, card_digest
-            FROM {{tables.a2a_route_publications}}
-            WHERE address = $1
-              AND route_id = $2
-              AND status = 'active'
-              AND revoked_at IS NULL
-            FOR SHARE
-            """,
-            fields.address,
-            fields.route_id,
-        )
-        if active_route is not None:
-            if active_route["gateway_identity"] != fields.gateway_identity:
-                raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "active route uses different gateway")
-            if active_route["card_digest"] != fields.card_digest:
-                raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route uses different card digest")
-            raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route already has a different publication")
+        if fields.status == A2A_STATUS_ACTIVE:
+            active_route = await tx.fetch_one(
+                """
+                SELECT assertion_id, gateway_identity, card_digest
+                FROM {{tables.a2a_route_publications}}
+                WHERE address = $1
+                  AND route_id = $2
+                  AND status = 'active'
+                  AND revoked_at IS NULL
+                FOR SHARE
+                """,
+                fields.address,
+                fields.route_id,
+            )
+            if active_route is not None:
+                if active_route["gateway_identity"] != fields.gateway_identity:
+                    raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "active route uses different gateway")
+                if active_route["card_digest"] != fields.card_digest:
+                    raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route uses different card digest")
+                raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route already has a different publication")
 
         await tx.execute(
             """
@@ -671,7 +745,7 @@ async def get_a2a_publication(
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT pa.did_aw, pub.*
+        SELECT pa.did_aw AS address_did_aw, pub.*
         FROM {{tables.public_addresses}} pa
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
         LEFT JOIN LATERAL (
@@ -681,6 +755,18 @@ async def get_a2a_publication(
               AND p.status = 'active'
               AND p.revoked_at IS NULL
               AND p.expires_at > NOW()
+              AND (
+                  p.delegation_id IS NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM {{tables.a2a_bridge_delegations}} d
+                      WHERE d.delegation_id = p.delegation_id
+                        AND d.assertion_digest = p.delegation_digest
+                        AND d.status = 'active'
+                        AND d.revoked_at IS NULL
+                        AND d.expires_at > NOW()
+                  )
+              )
             ORDER BY p.default_for_host DESC, p.published_at DESC
             LIMIT 1
         ) pub ON TRUE
@@ -714,7 +800,7 @@ async def get_a2a_publication(
             published_at=row["published_at_text"],
             expires_at=row["expires_at_text"],
         )
-    return A2AAddressDirectoryResponse(address=address, did_aw=validate_stable_id(row["did_aw"]), a2a=entry)
+    return A2AAddressDirectoryResponse(address=address, did_aw=validate_stable_id(row["address_did_aw"]), a2a=entry)
 
 
 def a2a_conflict_codes() -> tuple[str, ...]:
