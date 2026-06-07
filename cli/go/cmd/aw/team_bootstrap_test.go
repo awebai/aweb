@@ -1496,7 +1496,12 @@ func TestAgentsRemoveHostedAlreadyDeprovisionedMovesLocalState(t *testing.T) {
 			t.Fatalf("unexpected hosted request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Agent not found"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": map[string]string{
+				"code":    "agent_not_found",
+				"message": "Agent not found",
+			},
+		})
 	}))
 	t.Cleanup(server.Close)
 	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
@@ -1518,6 +1523,81 @@ func TestAgentsRemoveHostedAlreadyDeprovisionedMovesLocalState(t *testing.T) {
 		t.Fatalf("runAgentsRemove: %v", err)
 	}
 	assertPathMissing(t, filepath.Join(home, ".aw"))
+}
+
+func TestAgentsRemoveHostedProseNotTreatedAsAlreadyDeprovisioned(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	templateDir := writeInRepoTeamBootstrapFixture(t)
+	if err := copyDir(templateDir, filepath.Join(repoDir, "agents")); err != nil {
+		t.Fatalf("copy layout: %v", err)
+	}
+	home := filepath.Join(repoDir, "agents", "home", "coordinator")
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(home), memberKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "circle:example.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		MemberDIDAW:   "did:aw:test-hosted-global",
+		MemberAddress: "example.com/juan-coordinator",
+		Alias:         "juan-coordinator",
+		IdentityScope: awid.IdentityModeGlobal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(home, cert.Team, cert); err != nil {
+		t.Fatalf("save cert: %v", err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
+		DID:       cert.MemberDIDKey,
+		StableID:  cert.MemberDIDAW,
+		Address:   cert.MemberAddress,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.IdentityModeGlobal,
+		CreatedAt: "2026-06-07T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/agents/me/deprovision" {
+			t.Fatalf("unexpected hosted request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Agent not found"})
+	}))
+	t.Cleanup(server.Close)
+	if err := awconfig.SaveTeamState(home, &awconfig.TeamState{
+		ActiveTeam: cert.Team,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   cert.Team,
+			Alias:    cert.Alias,
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			AwebURL:  server.URL,
+		}},
+	}); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	t.Chdir(repoDir)
+	agentsRemoveDeprovisionLocal = true
+	agentsRemoveDeleteAddress = true
+	err = runAgentsRemove(&cobra.Command{Use: "remove"}, []string{"coordinator"})
+	if err == nil {
+		t.Fatal("expected unstructured hosted error to fail")
+	}
+	assertPathExists(t, filepath.Join(home, ".aw"))
 }
 
 func TestAgentsRemoveDeprovisionRevokesBeforeMovingLocalState(t *testing.T) {

@@ -1,12 +1,14 @@
 package awid
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const AtomicAddressClaimOperation = "claim_identity_address"
@@ -108,6 +110,119 @@ type AtomicAddressClaimFields struct {
 	DryRun           bool
 	IdentityCustody  string
 	NamespaceCustody string
+}
+
+type AtomicAddressClaimDIDLogProof struct {
+	DIDAW          string  `json:"did_aw"`
+	Seq            int     `json:"seq"`
+	Operation      string  `json:"operation"`
+	PreviousDIDKey *string `json:"previous_did_key"`
+	NewDIDKey      string  `json:"new_did_key"`
+	PrevEntryHash  *string `json:"prev_entry_hash"`
+	StateHash      string  `json:"state_hash"`
+	AuthorizedBy   string  `json:"authorized_by"`
+	Timestamp      string  `json:"timestamp"`
+	Signature      string  `json:"signature"`
+}
+
+type AtomicAddressClaimIdentityProof struct {
+	Operation         string                        `json:"operation"`
+	Domain            string                        `json:"domain"`
+	AddressName       string                        `json:"address_name"`
+	DIDAW             string                        `json:"did_aw"`
+	CurrentDIDKey     string                        `json:"current_did_key"`
+	RegistryURL       string                        `json:"registry_url"`
+	Timestamp         string                        `json:"timestamp"`
+	DryRun            bool                          `json:"dry_run"`
+	IdentityCustody   string                        `json:"identity_custody"`
+	NamespaceCustody  string                        `json:"namespace_custody"`
+	IdentitySignature string                        `json:"identity_signature"`
+	DIDLogProof       AtomicAddressClaimDIDLogProof `json:"did_log_proof"`
+}
+
+func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, identitySigningKey ed25519.PrivateKey) (*AtomicAddressClaimIdentityProof, error) {
+	if identitySigningKey == nil {
+		return nil, fmt.Errorf("identity signing key is required")
+	}
+	pub, ok := identitySigningKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("identity signing key has invalid public key type")
+	}
+	if strings.TrimSpace(fields.Operation) == "" {
+		fields.Operation = AtomicAddressClaimOperation
+	}
+	if strings.TrimSpace(fields.Timestamp) == "" {
+		fields.Timestamp = registryNow().UTC().Format(time.RFC3339)
+	}
+	if strings.TrimSpace(fields.IdentityCustody) == "" {
+		fields.IdentityCustody = string(AddressClaimCustodySelf)
+	}
+	if strings.TrimSpace(fields.NamespaceCustody) == "" {
+		fields.NamespaceCustody = string(AddressClaimCustodySelf)
+	}
+	fields.CurrentDIDKey = strings.TrimSpace(fields.CurrentDIDKey)
+	if fields.CurrentDIDKey == "" {
+		fields.CurrentDIDKey = ComputeDIDKey(pub)
+	}
+	fields.DIDAW = strings.TrimSpace(fields.DIDAW)
+	if fields.DIDAW == "" {
+		fields.DIDAW = ComputeStableID(pub)
+	}
+	if did := ComputeDIDKey(pub); did != strings.TrimSpace(fields.CurrentDIDKey) {
+		return nil, fmt.Errorf("identity signing key does not match current_did_key")
+	}
+	if stableID := ComputeStableID(pub); stableID != strings.TrimSpace(fields.DIDAW) {
+		return nil, fmt.Errorf("identity signing key does not match did_aw")
+	}
+	normalized, err := normalizeAtomicAddressClaimFields(fields)
+	if err != nil {
+		return nil, err
+	}
+	identityCanonical, err := AtomicAddressClaimIdentityCanonical(normalized)
+	if err != nil {
+		return nil, err
+	}
+	identitySignature := base64.RawStdEncoding.EncodeToString(
+		ed25519.Sign(identitySigningKey, []byte(identityCanonical)),
+	)
+	stateHash := stableIdentityStateHash(normalized.DIDAW, normalized.CurrentDIDKey)
+	didLogPayload := CanonicalDidLogPayload(normalized.DIDAW, &DidKeyEvidence{
+		Seq:            1,
+		Operation:      "register_did",
+		PreviousDIDKey: nil,
+		NewDIDKey:      normalized.CurrentDIDKey,
+		PrevEntryHash:  nil,
+		StateHash:      stateHash,
+		AuthorizedBy:   normalized.CurrentDIDKey,
+		Timestamp:      normalized.Timestamp,
+	})
+	return &AtomicAddressClaimIdentityProof{
+		Operation:         normalized.Operation,
+		Domain:            normalized.Domain,
+		AddressName:       normalized.AddressName,
+		DIDAW:             normalized.DIDAW,
+		CurrentDIDKey:     normalized.CurrentDIDKey,
+		RegistryURL:       normalized.RegistryURL,
+		Timestamp:         normalized.Timestamp,
+		DryRun:            normalized.DryRun,
+		IdentityCustody:   normalized.IdentityCustody,
+		NamespaceCustody:  normalized.NamespaceCustody,
+		IdentitySignature: identitySignature,
+		DIDLogProof: AtomicAddressClaimDIDLogProof{
+			DIDAW:          normalized.DIDAW,
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      normalized.CurrentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   normalized.CurrentDIDKey,
+			Timestamp:      normalized.Timestamp,
+			Signature: base64.RawStdEncoding.EncodeToString(
+				ed25519.Sign(identitySigningKey, []byte(didLogPayload)),
+			),
+		},
+	}, nil
 }
 
 func AtomicAddressClaimIdentityCanonical(fields AtomicAddressClaimFields) (string, error) {

@@ -988,9 +988,6 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 }
 
 func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
-	if err := ensureConnectTargetClean(workingDir); err != nil {
-		return nil, err
-	}
 	alias := strings.TrimSpace(aliasHint)
 	memberAddress := strings.TrimSpace(addressOverride)
 	global := memberAddress != ""
@@ -1012,7 +1009,17 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 		return nil, usageError("--alias is required for hosted team invites")
 	}
 
-	pub, signingKey, err := awid.GenerateKeypair()
+	var pub ed25519.PublicKey
+	var signingKey ed25519.PrivateKey
+	var err error
+	if global {
+		pub, signingKey, err = hostedGlobalAcceptSigningKey(workingDir)
+	} else {
+		if err := ensureConnectTargetClean(workingDir); err != nil {
+			return nil, err
+		}
+		pub, signingKey, err = awid.GenerateKeypair()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1034,6 +1041,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 	defer cancel()
 	stableID := ""
 	registryURL := ""
+	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
 	if global {
 		stableID = awid.ComputeStableID(pub)
 		registry, err := newConfiguredRegistryClient(nil, awebURL)
@@ -1041,8 +1049,20 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 			return nil, err
 		}
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-		if err := registerHostedDID(ctx, registry, didKey, stableID, signingKey); err != nil {
-			return nil, fmt.Errorf("register hosted invite global did:aw before accepting invite: %w", err)
+		domain, _, _ := strings.Cut(memberAddress, "/")
+		atomicAddressClaim, err = awid.BuildAtomicAddressClaimIdentityProof(awid.AtomicAddressClaimFields{
+			Operation:        awid.AtomicAddressClaimOperation,
+			Domain:           domain,
+			AddressName:      addressName,
+			DIDAW:            stableID,
+			CurrentDIDKey:    didKey,
+			RegistryURL:      registryURL,
+			DryRun:           false,
+			IdentityCustody:  string(awid.AddressClaimCustodySelf),
+			NamespaceCustody: string(awid.AddressClaimCustodyHostedCustodial),
+		}, signingKey)
+		if err != nil {
+			return nil, fmt.Errorf("build hosted invite atomic address claim proof: %w", err)
 		}
 	}
 
@@ -1058,6 +1078,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 		req.Name = addressName
 		req.Lifetime = awid.LifetimePersistent
 		req.IdentityScope = awid.IdentityModeGlobal
+		req.AtomicAddressClaim = atomicAddressClaim
 	} else {
 		req.Alias = alias
 	}
@@ -1085,6 +1106,49 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 		Domain:      strings.TrimSpace(resp.Namespace),
 		TeamName:    strings.TrimSpace(resp.TeamSlug),
 	}, nil
+}
+
+func hostedGlobalAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return nil, nil, err
+	}
+	keyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if _, err := os.Stat(keyPath); err == nil {
+		paths := []string{
+			filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
+			awconfig.TeamCertificatesDir(workingDir),
+			filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				return nil, nil, usageError("refusing to overwrite existing %s", path)
+			} else if !os.IsNotExist(err) {
+				return nil, nil, err
+			}
+		}
+		signingKey, err := awid.LoadSigningKey(keyPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load pending hosted global invite signing key: %w", err)
+		}
+		pub, ok := signingKey.Public().(ed25519.PublicKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("pending hosted global invite signing key has invalid public key")
+		}
+		return pub, signingKey, nil
+	} else if !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+	if err := ensureConnectTargetClean(workingDir); err != nil {
+		return nil, nil, err
+	}
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
+		return nil, nil, fmt.Errorf("save pending hosted global invite signing key: %w", err)
+	}
+	return pub, signingKey, nil
 }
 
 func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress string) (*awid.TeamCertificate, string, error) {

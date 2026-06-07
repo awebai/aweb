@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1317,43 +1318,20 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var registeredDIDAW string
-	var registeredDIDKey string
+	var acceptedStableID string
 	var acceptBody map[string]any
 	var acceptVerifiedDID bool
 	var server *httptest.Server
 	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			var req map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatal(err)
-			}
-			registeredDIDAW, _ = req["did_aw"].(string)
-			registeredDIDKey, _ = req["new_did_key"].(string)
-			if strings.TrimSpace(registeredDIDAW) == "" || strings.TrimSpace(registeredDIDKey) == "" {
-				t.Fatalf("did registration missing fields: %v", req)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+registeredDIDAW+"/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          registeredDIDAW,
-				"current_did_key": registeredDIDKey,
-				"created_at":      "2026-06-07T00:00:00Z",
-				"updated_at":      "2026-06-07T00:00:00Z",
-			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
-			if registeredDIDAW == "" {
-				t.Fatal("spawn accept ran before did registration")
-			}
 			if err := json.Unmarshal(body, &acceptBody); err != nil {
 				t.Fatal(err)
 			}
 			didKey, _ := acceptBody["did"].(string)
-			if didKey != registeredDIDKey {
-				t.Fatalf("accept did=%q want registered %q", didKey, registeredDIDKey)
-			}
+			pub := mustExtractPublicKey(t, didKey)
+			acceptedStableID = awid.ComputeStableID(pub)
 			if acceptBody["identity_scope"] != awid.IdentityModeGlobal {
 				t.Fatalf("identity_scope=%v", acceptBody["identity_scope"])
 			}
@@ -1363,12 +1341,31 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 			if _, ok := acceptBody["alias"]; ok {
 				t.Fatalf("global hosted accept should not send alias: %v", acceptBody["alias"])
 			}
+			claim, ok := acceptBody["atomic_address_claim"].(map[string]any)
+			if !ok {
+				t.Fatalf("global hosted accept missing atomic_address_claim: %v", acceptBody)
+			}
+			if claim["domain"] != "globalhosted.aweb.ai" || claim["address_name"] != "durable-child" {
+				t.Fatalf("atomic claim address=%v/%v", claim["domain"], claim["address_name"])
+			}
+			if claim["did_aw"] != acceptedStableID || claim["current_did_key"] != didKey {
+				t.Fatalf("atomic claim did=%v/%v want %s/%s", claim["did_aw"], claim["current_did_key"], acceptedStableID, didKey)
+			}
+			if claim["identity_custody"] != string(awid.AddressClaimCustodySelf) || claim["namespace_custody"] != string(awid.AddressClaimCustodyHostedCustodial) {
+				t.Fatalf("atomic claim custody=%v/%v", claim["identity_custody"], claim["namespace_custody"])
+			}
+			if strings.TrimSpace(fmt.Sprint(claim["identity_signature"])) == "" {
+				t.Fatal("atomic claim missing identity_signature")
+			}
+			if _, ok := claim["did_log_proof"].(map[string]any); !ok {
+				t.Fatalf("atomic claim missing did_log_proof: %v", claim)
+			}
 			timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
 			parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
 			if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != didKey {
 				t.Fatalf("bad accept auth header %q", r.Header.Get("Authorization"))
 			}
-			if !verifyCloudDIDPayload(t, mustExtractPublicKey(t, didKey), http.MethodPost, "/api/v1/spawn/accept-invite", timestamp, body, parts[2]) {
+			if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/spawn/accept-invite", timestamp, body, parts[2]) {
 				t.Fatal("accept invite signature did not verify")
 			}
 			acceptVerifiedDID = true
@@ -1376,7 +1373,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
 				Team:          teamID,
 				MemberDIDKey:  didKey,
-				MemberDIDAW:   registeredDIDAW,
+				MemberDIDAW:   acceptedStableID,
 				MemberAddress: "globalhosted.aweb.ai/durable-child",
 				Alias:         "durable-child",
 				Lifetime:      awid.LifetimePersistent,
@@ -1398,7 +1395,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 				"api_key":        "aw_sk_child_not_printed",
 				"server_url":     server.URL,
 				"did":            didKey,
-				"stable_id":      registeredDIDAW,
+				"stable_id":      acceptedStableID,
 				"address":        "globalhosted.aweb.ai/durable-child",
 				"custody":        "self",
 				"identity_scope": awid.IdentityModeGlobal,
@@ -1439,8 +1436,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	if cert.Alias != "durable-child" || cert.Lifetime != awid.LifetimePersistent {
 		t.Fatalf("unexpected cert alias/lifetime: %q/%q", cert.Alias, cert.Lifetime)
 	}
-	if cert.MemberDIDAW != registeredDIDAW {
-		t.Fatalf("cert member_did_aw=%q want %q", cert.MemberDIDAW, registeredDIDAW)
+	if cert.MemberDIDAW != acceptedStableID {
+		t.Fatalf("cert member_did_aw=%q want %q", cert.MemberDIDAW, acceptedStableID)
 	}
 	if cert.MemberAddress != "globalhosted.aweb.ai/durable-child" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
@@ -1449,8 +1446,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load global identity.yaml: %v", err)
 	}
-	if identity.StableID != registeredDIDAW || identity.Address != "globalhosted.aweb.ai/durable-child" {
-		t.Fatalf("identity stable/address=%q/%q want %q/%q", identity.StableID, identity.Address, registeredDIDAW, "globalhosted.aweb.ai/durable-child")
+	if identity.StableID != acceptedStableID || identity.Address != "globalhosted.aweb.ai/durable-child" {
+		t.Fatalf("identity stable/address=%q/%q want %q/%q", identity.StableID, identity.Address, acceptedStableID, "globalhosted.aweb.ai/durable-child")
 	}
 	if identity.RegistryURL != server.URL {
 		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, server.URL)
@@ -1458,6 +1455,104 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	requireWorktreeEncryptionKeyForTest(t, acceptDir)
 	if _, err := os.Stat(filepath.Join(acceptDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
 		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
+	}
+}
+
+func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	acceptDir := filepath.Join(home, "retry-global")
+	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	teamID := "circle:globalhosted.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstDID string
+	var firstStableID string
+	var acceptCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
+			t.Fatalf("hosted global retry must not use split DID registration")
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		acceptCalls++
+		var req awid.SpawnAcceptInviteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.AtomicAddressClaim == nil {
+			t.Fatal("missing atomic_address_claim")
+		}
+		stableID := req.AtomicAddressClaim.DIDAW
+		if acceptCalls == 1 {
+			firstDID = req.DID
+			firstStableID = stableID
+			http.Error(w, `{"detail":"simulated post-awid failure"}`, http.StatusInternalServerError)
+			return
+		}
+		if req.DID != firstDID || stableID != firstStableID {
+			t.Fatalf("retry did/stable=%q/%q want %q/%q", req.DID, stableID, firstDID, firstStableID)
+		}
+		cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
+			Team:          teamID,
+			MemberDIDKey:  req.DID,
+			MemberDIDAW:   stableID,
+			MemberAddress: "globalhosted.aweb.ai/retry-child",
+			Alias:         "retry-child",
+			Lifetime:      awid.LifetimePersistent,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "server-team-id",
+			"team_slug":      "default",
+			"namespace_slug": "globalhosted",
+			"namespace":      "globalhosted.aweb.ai",
+			"identity_id":    "agent-retry-child",
+			"name":           "retry-child",
+			"api_key":        "aw_sk_child_not_printed",
+			"server_url":     server.URL,
+			"did":            req.DID,
+			"stable_id":      stableID,
+			"address":        "globalhosted.aweb.ai/retry-child",
+			"custody":        "self",
+			"identity_scope": awid.IdentityModeGlobal,
+			"access_mode":    "open",
+			"created":        true,
+			"team_cert":      encoded,
+		})
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", "", "globalhosted.aweb.ai/retry-child")
+	if err == nil {
+		t.Fatal("first accept should fail")
+	}
+	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
+
+	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", "", "globalhosted.aweb.ai/retry-child")
+	if err != nil {
+		t.Fatalf("retry accept: %v", err)
+	}
+	if accepted.Certificate.MemberDIDAW != firstStableID {
+		t.Fatalf("accepted stable=%q want %q", accepted.Certificate.MemberDIDAW, firstStableID)
+	}
+	if acceptCalls != 2 {
+		t.Fatalf("accept calls=%d want 2", acceptCalls)
 	}
 }
 

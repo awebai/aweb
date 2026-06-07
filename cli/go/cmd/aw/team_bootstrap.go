@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -915,9 +916,24 @@ func agentsRemoveHostedAlreadyDeprovisioned(err error) bool {
 	if !ok {
 		return false
 	}
-	body = strings.ToLower(body)
-	return strings.Contains(body, "agent not found") ||
-		strings.Contains(body, "only active agents can be deprovisioned")
+	code := hostedDeprovisionErrorCode(body)
+	return code == "agent_not_found" || code == "agent_already_deprovisioned"
+}
+
+func hostedDeprovisionErrorCode(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var envelope struct {
+		Detail struct {
+			Code string `json:"code"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Detail.Code)
 }
 
 func executeAgentsRemoveDeleteAddress(plan *agentsRemovePlan) error {

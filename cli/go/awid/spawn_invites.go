@@ -31,16 +31,17 @@ type SpawnCreateInviteResponse struct {
 }
 
 type SpawnAcceptInviteRequest struct {
-	Token         string `json:"token"`
-	Alias         string `json:"alias,omitempty"`
-	Name          string `json:"name,omitempty"`
-	HumanName     string `json:"human_name,omitempty"`
-	AgentType     string `json:"agent_type,omitempty"`
-	DID           string `json:"did,omitempty"`
-	PublicKey     string `json:"public_key,omitempty"`
-	Custody       string `json:"custody,omitempty"`
-	Lifetime      string `json:"lifetime,omitempty"`
-	IdentityScope string `json:"identity_scope,omitempty"`
+	Token              string                           `json:"token"`
+	Alias              string                           `json:"alias,omitempty"`
+	Name               string                           `json:"name,omitempty"`
+	HumanName          string                           `json:"human_name,omitempty"`
+	AgentType          string                           `json:"agent_type,omitempty"`
+	DID                string                           `json:"did,omitempty"`
+	PublicKey          string                           `json:"public_key,omitempty"`
+	Custody            string                           `json:"custody,omitempty"`
+	Lifetime           string                           `json:"lifetime,omitempty"`
+	IdentityScope      string                           `json:"identity_scope,omitempty"`
+	AtomicAddressClaim *AtomicAddressClaimIdentityProof `json:"atomic_address_claim,omitempty"`
 }
 
 type SpawnAcceptInviteResponse struct {
