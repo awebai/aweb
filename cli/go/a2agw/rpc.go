@@ -47,7 +47,7 @@ type sendMessageConfig struct {
 
 type getTaskParams struct {
 	ID            string `json:"id"`
-	HistoryLength int    `json:"historyLength,omitempty"`
+	HistoryLength *int   `json:"historyLength,omitempty"`
 }
 
 type listTasksParams struct {
@@ -181,10 +181,13 @@ func (g *Gateway) rpcGetTask(route Route, raw json.RawMessage, requestID string,
 		return nil, jsonRPCError(-32004, "task not found", requestID, map[string]any{"code": "task_not_found"})
 	}
 	task := record.Task
-	if params.HistoryLength == 0 {
+	if params.HistoryLength == nil {
+		return task, nil
+	}
+	if *params.HistoryLength == 0 {
 		task.History = nil
-	} else if params.HistoryLength > 0 && len(task.History) > params.HistoryLength {
-		task.History = task.History[len(task.History)-params.HistoryLength:]
+	} else if *params.HistoryLength > 0 && len(task.History) > *params.HistoryLength {
+		task.History = task.History[len(task.History)-*params.HistoryLength:]
 	}
 	return task, nil
 }

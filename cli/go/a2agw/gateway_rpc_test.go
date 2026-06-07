@@ -37,8 +37,16 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	taskID := task["id"].(string)
 
 	getAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	if rpcTaskResult(t, getAlice, "")["id"] != taskID {
+	aliceTask := rpcTaskResult(t, getAlice, "")
+	if aliceTask["id"] != taskID {
 		t.Fatal("alice should see her task")
+	}
+	if history, ok := aliceTask["history"].([]any); !ok || len(history) != 1 {
+		t.Fatalf("absent historyLength should preserve history, got %#v", aliceTask["history"])
+	}
+	getAliceNoHistory := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2b", "GetTask", map[string]any{"id": taskID, "historyLength": 0}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	if _, ok := rpcTaskResult(t, getAliceNoHistory, "")["history"]; ok {
+		t.Fatalf("explicit historyLength=0 should omit history: %#v", getAliceNoHistory)
 	}
 	getBob := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "bob"}, http.StatusOK)
 	if rpcErrorCode(getBob) != "task_not_found" {
