@@ -11,9 +11,12 @@ import tomllib
 
 import pytest
 from pgdbm.errors import QueryError
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 
 AWEB_MIGRATIONS = files("aweb") / "migrations" / "aweb"
+AWID_ENCRYPTION_KEY_API_VERSION = Version("0.5.9")
 
 
 def test_defaults_and_migrations_are_packaged():
@@ -28,7 +31,16 @@ def test_awid_service_floor_covers_encryption_key_api():
     """aapv requires awid.e2ee_keys, introduced with awid-service 0.5.9."""
     pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
     dependencies = pyproject["project"]["dependencies"]
-    assert "awid-service>=0.5.9" in dependencies
+    parsed_requirements = [Requirement(dep) for dep in dependencies]
+    awid_req = next((req for req in parsed_requirements if req.name == "awid-service"), None)
+    assert awid_req is not None
+    lower_bounds = [
+        Version(specifier.version)
+        for specifier in awid_req.specifier
+        if specifier.operator in {">=", "==", "~="}
+    ]
+    assert lower_bounds
+    assert max(lower_bounds) >= AWID_ENCRYPTION_KEY_API_VERSION
 
 
 def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
