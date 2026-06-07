@@ -270,6 +270,59 @@ async def test_a2a_delegation_bad_signature_fails_before_writes(client, awid_db_
 
 
 @pytest.mark.asyncio
+async def test_a2a_delegation_rejects_bad_signer_kid_and_extra_operations(
+    client,
+    awid_db_infra,
+    controller_identity,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+
+    bad_kid = _delegation_body(seed)
+    bad_kid["signer_kid"] = bad_kid["signer_did"] + "#other"
+    bad_kid_resp = await client.post("/v1/a2a/delegations", json=bad_kid)
+    assert bad_kid_resp.status_code == 422, bad_kid_resp.text
+    assert bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+
+    extra_op = _delegation_body(seed)
+    extra_op["allowed_operations"] = [
+        "send_task",
+        "receive_reply",
+        "cancel_task",
+        "serve_card",
+        "future_operation",
+    ]
+    extra_op_resp = await client.post("/v1/a2a/delegations", json=extra_op)
+    assert extra_op_resp.status_code == 422, extra_op_resp.text
+    assert extra_op_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    assert await _counts(awid_db_infra) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_a2a_publication_rejects_bad_signer_kid_and_malformed_signature(
+    client,
+    awid_db_infra,
+    controller_identity,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    delegation = _delegation_body(seed)
+    assert (await client.post("/v1/a2a/delegations", json=delegation)).status_code == 200
+
+    bad_kid = _publication_body(seed, delegation)
+    bad_kid["signer_kid"] = bad_kid["signer_did"] + "#other"
+    bad_kid_resp = await client.post("/v1/a2a/publications", json=bad_kid)
+    assert bad_kid_resp.status_code == 422, bad_kid_resp.text
+    assert bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+
+    malformed = _publication_body(seed, delegation)
+    malformed["assertion_id"] = "pub_bad_signature"
+    malformed["signature"] = "not*base64"
+    malformed_resp = await client.post("/v1/a2a/publications", json=malformed)
+    assert malformed_resp.status_code == 401, malformed_resp.text
+    assert malformed_resp.json()["detail"]["code"] == "a2a_identity_signature_invalid"
+    assert await _counts(awid_db_infra) == (1, 0)
+
+
+@pytest.mark.asyncio
 async def test_a2a_publication_delegation_digest_mismatch_fails_before_write(
     client,
     awid_db_infra,

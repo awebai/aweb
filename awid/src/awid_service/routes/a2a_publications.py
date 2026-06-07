@@ -32,6 +32,7 @@ from awid.a2a_publication import (
     a2a_publication_canonical,
     a2a_publication_payload,
     canonical_address,
+    decode_raw_standard_b64,
     normalize_a2a_delegation_fields,
     normalize_a2a_publication_fields,
     parse_contract_time,
@@ -280,6 +281,7 @@ def _validate_lifetime(*, start_text: str, expires_text: str) -> tuple[datetime,
 
 def _verify_signature(*, did_key: str, payload: bytes, signature: str, code: str, message: str) -> None:
     try:
+        decode_raw_standard_b64(signature, field_name="signature")
         verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=signature)
     except Exception as exc:
         raise _error(401, code, message) from exc
@@ -404,7 +406,10 @@ async def publish_a2a_delegation(
         code=_DELEGATION_SIGNATURE_INVALID,
         message="A2A delegation signature invalid",
     )
-    assertion_digest = signed_assertion_digest(canonical, body.signature)
+    try:
+        assertion_digest = signed_assertion_digest(canonical, body.signature)
+    except ValueError as exc:
+        raise _error(401, _DELEGATION_SIGNATURE_INVALID, "A2A delegation signature invalid") from exc
 
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:
@@ -559,7 +564,10 @@ async def publish_a2a_route(
         code=_IDENTITY_SIGNATURE_INVALID,
         message="A2A publication signature invalid",
     )
-    assertion_digest = signed_assertion_digest(canonical, body.signature)
+    try:
+        assertion_digest = signed_assertion_digest(canonical, body.signature)
+    except ValueError as exc:
+        raise _error(401, _IDENTITY_SIGNATURE_INVALID, "A2A publication signature invalid") from exc
 
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:

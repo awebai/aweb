@@ -247,14 +247,18 @@ def normalize_a2a_publication_fields(fields: A2APublicationFields) -> A2APublica
         raise ValueError("delegation_id and delegation_digest must be supplied together")
     if delegation_digest:
         delegation_digest = validate_signed_digest(delegation_digest, field_name="delegation_digest")
+    signer_did = _did_key(fields.signer_did, field_name="signer_did")
+    signer_kid = (fields.signer_kid or "").strip()
+    if signer_kid != signer_did + "#ed25519":
+        raise ValueError("signer_kid must be signer_did#ed25519")
     return A2APublicationFields(
         operation=operation,
         assertion_id=validate_assertion_id(fields.assertion_id, field_name="assertion_id"),
         address=address,
         did_aw=_did_aw(fields.did_aw, field_name="did_aw"),
         current_did_key=_did_key(fields.current_did_key, field_name="current_did_key"),
-        signer_did=_did_key(fields.signer_did, field_name="signer_did"),
-        signer_kid=(fields.signer_kid or "").strip(),
+        signer_did=signer_did,
+        signer_kid=signer_kid,
         card_url=card_url,
         rpc_url=rpc_url,
         route_id=route_id,
@@ -286,8 +290,8 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
     ops = tuple((op or "").strip() for op in fields.allowed_operations)
     if any(not op for op in ops):
         raise ValueError("allowed_operations must not contain empty entries")
-    if ops[: len(A2A_MIN_ALLOWED_OPERATIONS)] != A2A_MIN_ALLOWED_OPERATIONS:
-        raise ValueError("allowed_operations must begin with the v1 product operation order")
+    if ops != A2A_MIN_ALLOWED_OPERATIONS:
+        raise ValueError("allowed_operations must equal the v1 product operation order")
     custody_mode = (fields.custody_mode or "").strip()
     if custody_mode not in {A2A_CUSTODY_DELEGATED_BRIDGE, A2A_CUSTODY_HOSTED_DELEGATED_BRIDGE}:
         raise ValueError("unsupported custody_mode")
@@ -296,6 +300,10 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
         raise ValueError("revoked_at is required when status is revoked")
     if revoked_at:
         revoked_at = _format_contract_time(parse_contract_time(revoked_at, field_name="revoked_at"))
+    signer_did = _did_key(fields.signer_did, field_name="signer_did")
+    signer_kid = (fields.signer_kid or "").strip()
+    if signer_kid != signer_did + "#ed25519":
+        raise ValueError("signer_kid must be signer_did#ed25519")
     return A2ADelegationFields(
         operation=operation,
         delegation_id=validate_assertion_id(fields.delegation_id, field_name="delegation_id"),
@@ -311,8 +319,8 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
         card_digest=validate_card_digest(fields.card_digest),
         custody_mode=custody_mode,
         authority_source=(fields.authority_source or "").strip(),
-        signer_did=_did_key(fields.signer_did, field_name="signer_did"),
-        signer_kid=(fields.signer_kid or "").strip(),
+        signer_did=signer_did,
+        signer_kid=signer_kid,
         issued_at=_format_contract_time(parse_contract_time(fields.issued_at, field_name="issued_at")),
         expires_at=_format_contract_time(parse_contract_time(fields.expires_at, field_name="expires_at")),
         status=_status(fields.status),
