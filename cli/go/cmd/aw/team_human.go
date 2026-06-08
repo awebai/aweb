@@ -1,23 +1,45 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
 var (
-	teamHumanInviteTeamID string
+	teamHumanCreateBYOT        bool
+	teamHumanCreateName        string
+	teamHumanCreateNamespace   string
+	teamHumanCreateDisplayName string
+	teamHumanCreateServiceURL  string
+	teamHumanCreateRegistryURL string
+	teamHumanInviteTeamID      string
+	teamHumanRemoveTeamID      string
+	teamHumanRemoveRegistryURL string
 )
 
 var teamHumanCmd = &cobra.Command{
 	Use:   "team",
-	Short: "Everyday team membership: invite, join, list, switch, leave",
+	Short: "Everyday teams: create, invite, join, list, switch, leave, remove-agent",
 	Long: "Everyday team membership commands.\n\n" +
 		"Use these commands for the normal hosted invite/join membership flow and for\n" +
 		"checking or switching this identity's installed team memberships. Protocol/admin\n" +
 		"controller operations remain under `aw id team`.",
+}
+
+var teamHumanCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a team or get the hosted create-team entrypoint",
+	Long: "Create a team or get the hosted create-team entrypoint.\n\n" +
+		"Hosted team creation is dashboard-first in this release because it depends on\n" +
+		"the signed-in human account and organization. Customer-controlled BYOT teams\n" +
+		"can be created from the CLI by passing --byot with --name and --namespace.",
+	Args: cobra.NoArgs,
+	RunE: runTeamHumanCreate,
 }
 
 var teamHumanInviteCmd = &cobra.Command{
@@ -66,8 +88,27 @@ var teamHumanLeaveCmd = &cobra.Command{
 	RunE:  runTeamLeave,
 }
 
+var teamHumanRemoveAgentCmd = &cobra.Command{
+	Use:   "remove-agent <member-address>",
+	Short: "Remove an agent from a customer-controlled team",
+	Long: "Remove an agent from a customer-controlled team.\n\n" +
+		"This everyday verb maps to the BYOT/controller-backed certificate revocation\n" +
+		"primitive. Hosted teams keep controller authority in cloud; use the hosted\n" +
+		"dashboard removal flow there until hosted CLI removal is added.",
+	Args: cobra.ExactArgs(1),
+	RunE: runTeamHumanRemoveAgent,
+}
+
 func init() {
 	teamHumanCmd.GroupID = groupIdentity
+
+	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateBYOT, "byot", false, "Create a customer-controlled AWID team with local namespace controller authority")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateName, "name", "", "Team name")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateNamespace, "namespace", "", "Namespace domain for --byot")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateDisplayName, "display-name", "", "Team display name")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
+	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
@@ -81,7 +122,85 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanListCmd)
 	teamHumanCmd.AddCommand(teamHumanSwitchCmd)
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
+	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
 	rootCmd.AddCommand(teamHumanCmd)
+}
+
+func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
+	if teamHumanCreateBYOT {
+		teamCreateName = teamHumanCreateName
+		teamCreateNamespace = teamHumanCreateNamespace
+		teamCreateDisplayName = teamHumanCreateDisplayName
+		teamCreateRegistryURL = teamHumanCreateRegistryURL
+		return runTeamCreate(cmd, args)
+	}
+	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
+		return usageError("hosted team creation does not use --namespace or --registry; pass --byot to create a customer-controlled AWID team")
+	}
+	urls, err := resolveOnboardingServiceURLs(teamHumanCreateServiceURL)
+	if err != nil {
+		return err
+	}
+	serviceURL := strings.TrimSpace(urls.OnboardingURL)
+	if serviceURL == "" {
+		serviceURL = strings.TrimSpace(urls.AwebURL)
+	}
+	if serviceURL == "" {
+		serviceURL = DefaultAwebURL
+	}
+	if jsonFlag {
+		printOutput(map[string]any{
+			"status":        "dashboard_required",
+			"mode":          "hosted",
+			"dashboard_url": serviceURL,
+			"next_steps": []string{
+				"Create the hosted team in the dashboard",
+				"Run aw team invite from a team workspace or use the dashboard invite flow",
+			},
+		}, func(v any) string { return "" })
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Hosted team creation is dashboard-first in this release.\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "Open: %s\n\n", serviceURL)
+	fmt.Fprintf(cmd.OutOrStdout(), "After the team exists, invite agents with `aw team invite` or the dashboard invite flow.\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "For customer-controlled BYOT teams, run `aw team create --byot --name <team> --namespace <domain>`.\n")
+	return nil
+}
+
+func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
+	teamID := strings.TrimSpace(teamHumanRemoveTeamID)
+	if teamID == "" {
+		var err error
+		teamID, err = activeTeamIDForHumanTeamCommand()
+		if err != nil {
+			return err
+		}
+	}
+	domain, name, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return err
+	}
+	teamRemoveTeam = name
+	teamRemoveNamespace = domain
+	teamRemoveMember = strings.TrimSpace(args[0])
+	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
+	return runTeamRemoveMember(cmd, nil)
+}
+
+func activeTeamIDForHumanTeamCommand() (string, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil && strings.TrimSpace(teamState.ActiveTeam) != "" {
+		return strings.TrimSpace(teamState.ActiveTeam), nil
+	}
+	if sel, err := resolveSelectionForDir(workingDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
+		return strings.TrimSpace(sel.TeamID), nil
+	}
+	return "", usageError("--team-id is required when no active team is selected in this workspace")
 }
 
 func applyHumanTeamIDToInvite(teamID string) error {

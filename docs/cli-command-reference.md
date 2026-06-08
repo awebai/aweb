@@ -822,14 +822,35 @@ checking or switching this identity's installed team memberships. Protocol/admin
 controller operations remain under `aw id team`.
 
 Subcommands:
+- `create` Create a team or get the hosted create-team entrypoint
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
+- `remove-agent` Remove an agent from a customer-controlled team
 - `switch` Switch the active team for this identity
 
 Flags:
 - `-h, --help help for team`
+
+## `team create`
+
+### `team create`
+
+Create a team or get the hosted create-team entrypoint.
+
+Hosted team creation is dashboard-first in this release because it depends on
+the signed-in human account and organization. Customer-controlled BYOT teams
+can be created from the CLI by passing --byot with --name and --namespace.
+
+Flags:
+- `--byot Create a customer-controlled AWID team with local namespace controller authority`
+- `--display-name string Team display name`
+- `-h, --help help for create`
+- `--name string Team name`
+- `--namespace string Namespace domain for --byot`
+- `--registry string Registry origin override for --byot`
+- `--service string Hosted service URL for dashboard guidance`
 
 ## `team invite`
 
@@ -878,6 +899,21 @@ List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
+
+## `team remove-agent`
+
+### `team remove-agent`
+
+Remove an agent from a customer-controlled team.
+
+This everyday verb maps to the BYOT/controller-backed certificate revocation
+primitive. Hosted teams keep controller authority in cloud; use the hosted
+dashboard removal flow there until hosted CLI removal is added.
+
+Flags:
+- `-h, --help help for remove-agent`
+- `--registry string Registry origin override`
+- `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
 
 ## `team switch`
 

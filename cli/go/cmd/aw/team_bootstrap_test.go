@@ -274,7 +274,7 @@ func TestAgentsCommandSurfaceKeepsLegacyAgentsAlongsideHumanTeamVerbs(t *testing
 	if team == nil {
 		t.Fatal("root command missing aw team")
 	}
-	for _, name := range []string{"invite", "join", "list", "switch", "leave"} {
+	for _, name := range []string{"create", "invite", "join", "list", "switch", "leave", "remove-agent"} {
 		if findSubcommand(team, name) == nil {
 			t.Fatalf("aw team missing %s subcommand", name)
 		}

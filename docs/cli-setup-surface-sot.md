@@ -121,7 +121,7 @@ the categories stable unless this document is updated.
 | `aw run <provider>` | Everyday intent + runtime entrypoint | Primary way to start an agent session; may suggest setup, but setup mutations stay explicit and should not become hidden orchestration. |
 | `aw init` | Everyday connect/create workspace intent | Keep prominent. Copy should say it initializes/connects this directory as a workspace. |
 | `aw service init` / `aw workspace connect` | Everyday connect workspace intent | Keep prominent for already-certified AWID identities connecting to a service. `aw workspace connect` is the first-class human verb; `aw service init` remains the service-oriented primitive. |
-| `aw team invite` / `aw team join` / `aw team list` / `aw team switch` / `aw team leave` | Everyday team membership intent | Human-facing aliases for the normal invite/join membership flow and installed-membership management. Protocol/admin team operations remain under `aw id team`. |
+| `aw team create` / `aw team invite` / `aw team join` / `aw team list` / `aw team switch` / `aw team leave` / `aw team remove-agent` | Everyday team lifecycle intent | Human-facing verbs for team creation guidance, normal invite/join membership flow, installed-membership management, and explicit removal. Protocol/admin team operations remain under `aw id team`. |
 | `aw whoami` | Everyday check | Keep prominent. |
 | `aw workspace status` | Everyday check/doctor | Keep prominent. It should explain active team, identity, claims, locks, service binding, and mismatch symptoms. |
 | `aw check` / `aw doctor` | Everyday check/repair | Keep prominent. `aw check` is the everyday diagnostic verb; `aw doctor` remains the support/deeper diagnostics name. |
@@ -149,7 +149,7 @@ the categories stable unless this document is updated.
 | `aw id namespace prepare-controller` | Protocol/admin BYOT primitive | Show only in BYOT/controller setup docs and skills. It is local-only and creates controller authority. |
 | `aw id namespace check-txt` | Protocol/admin BYOT primitive | BYOT DNS verification; not hosted happy path. |
 | `aw id namespace assign-address` / `delete-address` / `set-delivery-origin` / `rotate-controller` / `delete` | Protocol/admin primitives | Controller-holder operations. Keep documented in protocol/admin reference. |
-| `aw id team create` | Protocol/admin BYOT primitive; possible human BYOT create-team step | Creates AWID team with customer controller. Do not present as hosted default create-team. |
+| `aw id team create` | Protocol/admin BYOT primitive; backing primitive for `aw team create --byot` | Creates AWID team with customer controller. Do not present as hosted default create-team. |
 | `aw id team add-member` / `remove-member` | Protocol/admin certificate primitives | Controller signs/revokes membership. Hosted users should normally use invite/dashboard flows. BYOT controller holders use these directly. |
 | `aw id team fetch-cert` | Protocol/admin/agent primitive bridge | Installs a cert minted elsewhere. Use in BYOT cross-machine and hosted add-existing-identity flows. |
 | `aw id team request` | Protocol/admin bridge primitive | Joiner prints the controller-side add-member command. Useful for BYOT; not the hosted invite happy path. |
@@ -181,7 +181,9 @@ the categories stable unless this document is updated.
 The hosted happy path should not require namespace, controller, certificate, or
 AWID vocabulary. The user wants a team they can invite agents into.
 
-Implementation may be dashboard-first or CLI-first, but the copy should be:
+Implementation may be dashboard-first or CLI-first. In this release, `aw team
+create` is dashboard-first for hosted teams and `aw team create --byot` wraps
+the customer-controlled AWID team primitive. The copy should be:
 
 1. create team;
 2. invite/connect agents;
