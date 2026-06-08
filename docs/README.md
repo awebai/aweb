@@ -46,7 +46,7 @@ These documents define the system:
   contract for the in-repo `agents/` bootstrap convention, legacy bootstrap
   compatibility boundary, and generated agent-home layout
 - [a2a.md](a2a.md): product contract for exposing aweb agents through A2A,
-  AWID-backed publication assertions, gateway boundaries, and outbound `aw a2a`
+  AWID publication assertions, gateway boundaries, and outbound `aw a2a`
   behavior
 - [a2a-awid-publication-contract.md](a2a-awid-publication-contract.md):
   normative AWID A2A publication and bridge-delegation assertion contract

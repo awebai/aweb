@@ -215,6 +215,21 @@ aw a2a status https://a2a.aweb.ai/a2a/agents/research/agent-card.json <task-id>
 
 The status path must show a task state produced by the gateway from a real aweb agent reply. Do not count a gateway-only fixture response as live product verification.
 
+## Verification Labels
+
+Hosted gateway reply handling may surface `verified_custodial` for an
+encrypted v2 reply that AC decrypted for the hosted gateway identity. This
+label has a narrow meaning: the normal `decrypt_e2ee_message` path verified
+the encrypted v2 envelope signature, `signing_key_id == from.did`, ciphertext
+hash/size, key-wraps hash, envelope-derived AAD, `inner_header_hash`, and the
+inner-header mirror before plaintext was accepted.
+
+`verified_custodial` is therefore valid for the gateway's strict reply gate,
+but it is not an E2EE/local-client verification claim and it is not the same as
+a legacy plaintext row-signature verification. If hosted decrypt fails, or if a
+future implementation bypasses the encrypted v2 signature/hash/header checks,
+the gateway must not promote the message to `verified_custodial`.
+
 ## Site and Copy Gate
 
 Olivia owns site-copy implementation. The release owner must not ask Olivia to publish A2A trust claims until:

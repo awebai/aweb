@@ -34,14 +34,14 @@ allowlisted_files = {
 suffixes = {".md", ".txt", ".html", ".tsx", ".ts", ".go", ".yaml", ".yml", ".json"}
 
 patterns = [
-    ("verified A2A agents", re.compile(r"\bverified\s+A2A\s+agents?\b", re.IGNORECASE)),
-    ("AWID-backed A2A routes", re.compile(r"\bAWID-backed\s+A2A\s+routes?\b", re.IGNORECASE)),
+    ("verified A2A", re.compile(r"\bverified\s+A2A\b", re.IGNORECASE)),
+    ("AWID-backed", re.compile(r"\bAWID-backed\b", re.IGNORECASE)),
     ("authorized for address", re.compile(r"\bauthorized\s+for\s+address\b", re.IGNORECASE)),
     (
         "hosted A2A gateway E2EE",
         re.compile(
-            r"\bhosted\s+A2A\s+gateway\b[^\n.]{0,120}\b(E2EE|end-to-end encrypted)\b"
-            r"|\b(E2EE|end-to-end encrypted)\b[^\n.]{0,120}\bhosted\s+A2A\s+gateway\b",
+            r"\bhosted\s+A2A\s+gateway\b[^\n.]{0,120}\b(E2EE|end[\s-]to[\s-]end\s+encrypted)\b"
+            r"|\b(E2EE|end[\s-]to[\s-]end\s+encrypted)\b[^\n.]{0,120}\bhosted\s+A2A\s+gateway\b",
             re.IGNORECASE,
         ),
     ),
@@ -56,6 +56,8 @@ for scan_root in scan_roots:
     for path in sorted(p for p in base.rglob("*") if p.is_file() and p.suffix in suffixes):
         rel = path.relative_to(root)
         if rel in allowlisted_files:
+            continue
+        if path.name.endswith("_test.go"):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for label, pattern in patterns:
