@@ -132,6 +132,54 @@ func TestA2AGatewayRunCheckPrintsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestA2AGatewayRuntimeHealthReportsBuildAndRegistry(t *testing.T) {
+	oldVersion, oldReleaseTag, oldCommit, oldDate := version, releaseTag, commit, date
+	version = "1.26.9"
+	releaseTag = "a2a-gw-v1.26.9"
+	commit = "abc123"
+	date = "2026-06-08T00:00:00Z"
+	defer func() {
+		version, releaseTag, commit, date = oldVersion, oldReleaseTag, oldCommit, oldDate
+	}()
+
+	tmp := t.TempDir()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
+	}))
+	defer registry.Close()
+	writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+	writeConfig(t, cfgPath, tmp, registry.URL)
+	gateway, err := buildGateway(mustLoadConfig(t, cfgPath))
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	runtimeHandler(gateway, mustLoadConfig(t, cfgPath)).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health["status"] != "healthy" || health["aweb_version"] != "1.26.9" || health["awid_service_version"] != ">=0.5.11" {
+		t.Fatalf("unexpected health payload: %#v", health)
+	}
+	build := health["build"].(map[string]any)
+	if build["release_tag"] != "a2a-gw-v1.26.9" || build["git_sha"] != "abc123" {
+		t.Fatalf("unexpected build payload: %#v", build)
+	}
+	awidRegistry := health["awid_registry"].(map[string]any)
+	if awidRegistry["reachable"] != true || awidRegistry["version"] != "0.5.11" {
+		t.Fatalf("unexpected registry payload: %#v", awidRegistry)
+	}
+}
+
 func writeGatewayWorkspace(t *testing.T, dir, awebURL string) {
 	t.Helper()
 	_, teamPriv, err := awid.GenerateKeypair()

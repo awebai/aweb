@@ -472,6 +472,9 @@ func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) 
 
 func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
 	domain = canonicalizeDomain(domain)
+	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
+		return DomainAuthority{RegistryURL: r.fallbackRegistryURL}, nil
+	}
 	if cached, ok := r.loadRegistryCache(domain); ok {
 		return cached, nil
 	}

@@ -1,9 +1,10 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
 	release-awid-pypi-tag release-awid-pypi-push \
+	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
 	release-channel-check release-channel-tag release-channel-push \
 	release-cli-tag release-cli-push \
 	release-awid-site \
@@ -28,6 +29,7 @@ help:
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
+	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo ""
@@ -44,6 +46,7 @@ help:
 	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
 	@echo "  release-awid-check / -tag / -push     awid service (GHCR Docker)"
 	@echo "  release-awid-pypi-tag / -push         awid service (PyPI)"
+	@echo "  release-a2a-gateway-check / -tag / -push  A2A gateway (GHCR Docker)"
 	@echo "  release-cli-tag / -push               aw CLI (goreleaser)"
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
@@ -75,6 +78,9 @@ test-e2e:
 
 test-federation-e2e:
 	./scripts/e2e-oss-federation.sh
+
+test-a2a-gateway-e2e:
+	./scripts/e2e-a2a-gateway-docker.sh
 
 selfhost-up:
 	cd server && docker compose up --build -d
@@ -160,6 +166,32 @@ release-awid-pypi-tag:
 
 release-awid-pypi-push:
 	git push origin awid-service-v$(AWID_VERSION)
+
+# ── A2A gateway release ─────────────────────────────────────────────
+
+release-a2a-gateway-check:
+	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw -count=1
+	docker build -f cli/go/Dockerfile.a2a-gw \
+		--build-arg VERSION=$(CLI_VERSION) \
+		--build-arg RELEASE_TAG=a2a-gw-v$(CLI_VERSION) \
+		--build-arg COMMIT=$$(git rev-parse HEAD) \
+		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t a2a-gateway:release-test cli/go
+	docker run --rm \
+		--user "$$(id -u):$$(id -g)" \
+		-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
+		-v "$(CURDIR):/workspace:ro" \
+		a2a-gateway:release-test \
+		sh -c 'aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check'
+	./scripts/e2e-a2a-gateway-docker.sh
+
+release-a2a-gateway-tag:
+	@git rev-parse --verify "a2a-gw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag a2a-gw-v$(CLI_VERSION) already exists."; exit 1) || true
+	git tag "a2a-gw-v$(CLI_VERSION)"
+	@echo "Created tag a2a-gw-v$(CLI_VERSION)."
+
+release-a2a-gateway-push:
+	git push origin a2a-gw-v$(CLI_VERSION)
 
 # ── Awid site deploy ────────────────────────────────────────────────
 

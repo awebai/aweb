@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+
+ARG GO_IMAGE=golang:1.24.2-bookworm
+ARG RUNTIME_IMAGE=alpine:3.22
+
+FROM ${GO_IMAGE} AS builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . ./
+
+ARG VERSION=dev
+ARG RELEASE_TAG=dev
+ARG COMMIT=none
+ARG DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.releaseTag=${RELEASE_TAG} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+    -o /out/aweb-a2a-gw ./cmd/aweb-a2a-gw
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S -g 1001 aweb \
+    && adduser -S -D -H -u 1001 -G aweb aweb
+
+COPY --from=builder /out/aweb-a2a-gw /usr/local/bin/aweb-a2a-gw
+
+ENV AWEB_A2A_GW_CONFIG=/config/gateway.yaml
+ENV PORT=8080
+
+USER aweb
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD wget -qO- "http://127.0.0.1:${PORT}/health" >/dev/null || exit 1
+
+CMD ["sh", "-c", "exec /usr/local/bin/aweb-a2a-gw -config \"${AWEB_A2A_GW_CONFIG}\" -listen \"0.0.0.0:${PORT}\""]

@@ -14,7 +14,8 @@ The A2A slice can touch these release surfaces:
 | `awid` GHCR | Hosted AWID service image for `api.awid.ai`. |
 | `aweb` PyPI / server tag | Shared server/library code if AC imports new aweb APIs. |
 | `@awebai/aw` npm | `aw a2a` CLI and packaged `aweb-a2a-gw` binary. |
-| AC / Render | Hosted gateway deployment or hosted-custodial publication paths if used. |
+| `a2a-gateway` GHCR | Hosted `a2a.aweb.ai` data-plane service running `aweb-a2a-gw`. |
+| AC / Render | Dashboard/control-plane route management and hosted-custodial publication paths if used. |
 | `site/` | Public A2A product copy after live verification only. |
 | docs/skills/Pi | Operator and agent instructions if the public workflow changes. |
 
@@ -27,12 +28,13 @@ Before any release handoff:
 1. Athena signs off all protocol-affecting A2A changes: card schema, method names, `returnImmediately` behavior, path convention, AWID publication fields, custody/delegation model, digest bytes, and idempotency natural keys.
 2. Mia signs off implementation-readiness and code slices that affect storage, publication, gateway routing, public-route security, packaging, and release sequencing.
 3. `make test-a2a` passes at the exact release candidate SHA.
-4. `scripts/regenerate-cli-reference.sh --check` passes at the exact release candidate SHA.
-5. `git diff --check` is clean.
-6. The generated `@awebai/aw` package includes both `aw` and `aweb-a2a-gw` binaries and a smoke test invokes `aweb-a2a-gw --help` from the packed artifact.
-7. No site/docs/skills copy claims `verified`, `AWID-backed`, or `authorized for address` for A2A routes unless the live AWID publication and gateway verification gates below have already passed.
-8. No site/docs/skills copy calls hosted A2A gateway traffic end-to-end encrypted.
-9. Known fixture limitation is recorded: the A2A AWID publication fixture pins canonical bytes and signed-assertion digest bytes, while real Ed25519 verification is covered by runtime AWID tests. A future release-blocking fixture upgrade should add static real-signature vectors for both publication and delegation assertions before relying on fixture-only cryptographic verification.
+4. `make test-a2a-gateway-e2e` passes locally. This starts the real aweb + AWID Docker Compose backend, runs the A2A gateway container, and proves SendMessage -> real aweb mail -> agent reply -> GetTask completion.
+5. `scripts/regenerate-cli-reference.sh --check` passes at the exact release candidate SHA.
+6. `git diff --check` is clean.
+7. The generated `@awebai/aw` package includes both `aw` and `aweb-a2a-gw` binaries and a smoke test invokes `aweb-a2a-gw --help` from the packed artifact.
+8. No site/docs/skills copy claims `verified`, `AWID-backed`, or `authorized for address` for A2A routes unless the live AWID publication and gateway verification gates below have already passed.
+9. No site/docs/skills copy calls hosted A2A gateway traffic end-to-end encrypted.
+10. Known fixture limitation is recorded: the A2A AWID publication fixture pins canonical bytes and signed-assertion digest bytes, while real Ed25519 verification is covered by runtime AWID tests. A future release-blocking fixture upgrade should add static real-signature vectors for both publication and delegation assertions before relying on fixture-only cryptographic verification.
 
 ## Release Order
 
@@ -41,7 +43,7 @@ If the release includes AWID migrations or AWID API changes:
 1. Release `awid-service` first.
 2. Let the GHCR image build.
 3. Apply AWID migrations and deploy `api.awid.ai`.
-4. Verify `api.awid.ai/health` reports the new version and all migrations are applied.
+4. Verify `api.awid.ai/health` reports the new version and all migrations are applied. The first A2A gateway release requires AWID migration `007_a2a_publications.sql` to be applied before the gateway deploy proceeds.
 5. Smoke the A2A AWID routes directly:
    - delegation publish succeeds for a self-custodial route;
    - publication publish succeeds;
@@ -61,8 +63,62 @@ Only after AWID is live:
 
 If the release includes AC or hosted gateway deployment:
 
-9. Deploy the gateway only after the exact published `aweb-a2a-gw` binary or image is available.
-10. Confirm TLS terminates at the public host and `/.well-known/agent-card.json`, `/a2a/agents/<route>/agent-card.json`, and `/a2a/agents/<route>/rpc` are reachable.
+9. Build and publish the gateway image before creating/updating the Render service:
+
+   ```bash
+   make release-a2a-gateway-check
+   make release-a2a-gateway-tag
+   make release-a2a-gateway-push
+   ```
+
+   The `a2a-gw-vX.Y.Z` tag publishes:
+
+   ```text
+   ghcr.io/awebai/a2a-gateway:X.Y.Z
+   ghcr.io/awebai/a2a-gateway:latest
+   ```
+
+10. Deploy `a2a.aweb.ai` as a Render Web Service backed by the gateway image, not as a static site. The service is the A2A data plane; it must handle JSON-RPC task calls and cannot be replaced by static card hosting.
+
+    Render does not auto-deploy from the GHCR push. After the tag workflow publishes the image, Hestia mails Juan with the exact image tag and asks him to trigger the Render deploy manually. Hestia waits for the `/health` flip before posting verified-live.
+
+    Minimum Render configuration:
+
+    ```text
+    Image: ghcr.io/awebai/a2a-gateway:X.Y.Z
+    Port: 8080 or Render-provided $PORT
+    Env:
+      AWEB_A2A_GW_CONFIG=/config/gateway.yaml
+    Command:
+      default image command is acceptable if /config/gateway.yaml exists;
+      otherwise pass: aweb-a2a-gw -config <path> -listen 0.0.0.0:$PORT
+    Persistent/secret files:
+      gateway YAML config
+      gateway aweb workspace state with the gateway identity/cert
+    ```
+
+    The first manual deployment uses static YAML routes. The future automatic product keeps the same hosted gateway service but replaces static route config with AC-managed route/card/policy lookup. AC is the control plane; `a2a.aweb.ai` remains the data-plane gateway.
+
+11. Confirm TLS terminates at the public host and `/.well-known/agent-card.json`, `/a2a/agents/<route>/agent-card.json`, and `/a2a/agents/<route>/rpc` are reachable.
+
+12. Verify `https://a2a.aweb.ai/health` before marking the gateway live. Required fields:
+
+    ```json
+    {
+      "status": "healthy",
+      "build": {
+        "release_tag": "a2a-gw-vX.Y.Z",
+        "git_sha": "<release sha>"
+      },
+      "aweb_version": "X.Y.Z",
+      "awid_service_version": ">=0.5.11",
+      "awid_registry": {
+        "reachable": true
+      }
+    }
+    ```
+
+    `build.release_tag` must match the pushed `a2a-gw-vX.Y.Z` tag, `build.git_sha` must match the release source SHA, and `awid_registry.reachable` must be true against `api.awid.ai`.
 
 ## Live Route Publication Gate
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +18,15 @@ import (
 	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
+
+var (
+	version    = "dev"
+	releaseTag = "dev"
+	commit     = "unknown"
+	date       = "unknown"
+)
+
+const minimumAWIDServiceVersion = "0.5.11"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -57,10 +67,115 @@ func run(args []string, stdout, _ *os.File) error {
 	listen := firstNonEmpty(cfg.Listen, ":8080")
 	server := &http.Server{
 		Addr:              listen,
-		Handler:           gateway,
+		Handler:           runtimeHandler(gateway, cfg),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return server.ListenAndServe()
+}
+
+type runtimeHealth struct {
+	Status             string                 `json:"status"`
+	Build              runtimeBuild           `json:"build"`
+	AwebVersion        string                 `json:"aweb_version"`
+	AWIDServiceVersion string                 `json:"awid_service_version"`
+	AWIDRegistry       runtimeRegistryHealth  `json:"awid_registry"`
+	Gateway            map[string]interface{} `json:"gateway"`
+}
+
+type runtimeBuild struct {
+	ReleaseTag string `json:"release_tag"`
+	GitSHA     string `json:"git_sha"`
+	Date       string `json:"date,omitempty"`
+}
+
+type runtimeRegistryHealth struct {
+	URL       string `json:"url,omitempty"`
+	Reachable bool   `json:"reachable"`
+	Status    string `json:"status"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			gateway.ServeHTTP(w, r)
+			return
+		}
+		writeRuntimeHealth(w, gateway, cfg)
+	})
+}
+
+func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileConfig) {
+	health := runtimeHealth{
+		Status:             "healthy",
+		Build:              runtimeBuild{ReleaseTag: releaseTag, GitSHA: commit, Date: date},
+		AwebVersion:        version,
+		AWIDServiceVersion: ">=" + minimumAWIDServiceVersion,
+		AWIDRegistry:       checkRegistryHealth(cfg.RegistryURL),
+		Gateway:            map[string]interface{}{},
+	}
+	gatewayHealthBytes, err := json.Marshal(gateway.Health())
+	if err == nil {
+		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
+	}
+	if !health.AWIDRegistry.Reachable {
+		health.Status = "unhealthy"
+	}
+	status := http.StatusOK
+	if health.Status != "healthy" {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(health)
+}
+
+func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
+	registryURL = strings.TrimRight(strings.TrimSpace(registryURL), "/")
+	if registryURL == "" {
+		return runtimeRegistryHealth{Reachable: false, Status: "missing_registry_url", Error: "registry_url is required for runtime health"}
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(registryURL + "/health")
+	if err != nil {
+		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Status: "unreachable", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Status: http.StatusText(resp.StatusCode)}
+	if len(body) > 0 {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err == nil {
+			if value := stringField(payload, "version"); value != "" {
+				out.Version = value
+			} else if value := stringField(payload, "service_version"); value != "" {
+				out.Version = value
+			}
+			if value := stringField(payload, "status"); value != "" {
+				out.Status = value
+			}
+		}
+	}
+	if !out.Reachable && out.Error == "" {
+		out.Error = fmt.Sprintf("registry health returned HTTP %d", resp.StatusCode)
+	}
+	return out
+}
+
+func stringField(payload map[string]interface{}, key string) string {
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
 }
 
 type fileConfig struct {
