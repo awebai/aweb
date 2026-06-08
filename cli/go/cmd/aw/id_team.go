@@ -250,12 +250,17 @@ var teamCleanupCloudTXTResolver awid.TXTResolver
 
 var teamCmd = &cobra.Command{
 	Use:   "team",
-	Short: "Team management (create, invite, membership)",
+	Short: "Team membership plus protocol/admin certificate operations",
+	Long: "Team membership plus protocol/admin certificate operations.\n\n" +
+		"Everyday hosted setup normally uses invite and accept-invite. Controller-backed\n" +
+		"commands such as create, add-member, remove-member, register, import-request,\n" +
+		"cleanup-cloud, and delete are protocol/admin primitives for BYOT, controller\n" +
+		"holders, service projection, or diagnostics.",
 }
 
 var teamCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a team at awid",
+	Short: "Protocol/admin: create a customer-controlled AWID team",
 	RunE:  runTeamCreate,
 }
 
@@ -318,25 +323,25 @@ var teamLeaveCmd = &cobra.Command{
 
 var teamAddMemberCmd = &cobra.Command{
 	Use:   "add-member",
-	Short: "Add a member directly to a team (controller signs certificate)",
+	Short: "Protocol/admin: add a member by signing a team certificate",
 	RunE:  runTeamAddMember,
 }
 
 var teamFetchCertCmd = &cobra.Command{
 	Use:   "fetch-cert",
-	Short: "Fetch and install an approved team certificate",
+	Short: "Protocol/admin bridge: fetch and install an approved team certificate",
 	RunE:  runTeamFetchCert,
 }
 
 var teamRemoveMemberCmd = &cobra.Command{
 	Use:   "remove-member",
-	Short: "Remove a member from a team (revoke certificate)",
+	Short: "Protocol/admin: remove a member by revoking a team certificate",
 	RunE:  runTeamRemoveMember,
 }
 
 var teamImportRequestCmd = &cobra.Command{
 	Use:   "import-request",
-	Short: "Create a signed BYOT import request for aweb cloud",
+	Short: "Protocol/admin: create a signed BYOT import request for aweb cloud",
 	Long: "Create a signed BYOT import request for aweb cloud.\n\n" +
 		"This command signs the canonical import payload with your local BYOT team\n" +
 		"controller key. It prints the request body expected by\n" +
@@ -348,7 +353,7 @@ var teamImportRequestCmd = &cobra.Command{
 
 var teamRegisterCmd = &cobra.Command{
 	Use:   "register",
-	Short: "Register or sync a customer-controlled team with a service",
+	Short: "Protocol/admin: register or sync a customer-controlled team with a service",
 	Long: "Register or sync a customer-controlled AWID team with an aw-compatible service.\n\n" +
 		"This command is service-generic: it signs a registration request with the\n" +
 		"local team controller key and sends only public/signed team facts to the\n" +
@@ -360,7 +365,7 @@ var teamRegisterCmd = &cobra.Command{
 
 var teamCleanupCloudCmd = &cobra.Command{
 	Use:   "cleanup-cloud",
-	Short: "Delete aweb Cloud's BYOT projection after registry team deletion",
+	Short: "Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion",
 	Long: "Delete aweb Cloud's imported BYOT team projection using customer-held controller authority.\n\n" +
 		"This command does not mutate AWID. In the normal path it signs the cleanup\n" +
 		"request with ~/.awid/team-keys/<namespace>/<team>.key so aweb Cloud can\n" +

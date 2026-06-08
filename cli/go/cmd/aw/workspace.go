@@ -31,9 +31,11 @@ var workspaceStatusCmd = &cobra.Command{
 
 var workspaceAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
-	Short: "Create a sibling git worktree and initialize a new coordination workspace in it",
-	Args:  cobra.RangeArgs(0, 1),
-	RunE:  runWorkspaceAddWorktree,
+	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
+	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
+		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.",
+	Args: cobra.RangeArgs(0, 1),
+	RunE: runWorkspaceAddWorktree,
 }
 
 var workspaceMigrateMultiTeamCmd = &cobra.Command{

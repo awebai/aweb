@@ -33,8 +33,8 @@ var (
 	teamDeleteReason      string
 	teamDeleteCmd         = &cobra.Command{
 		Use:   "delete",
-		Short: "Delete an AWID team using the namespace controller key",
-		Long: "Delete an AWID team using the local namespace controller key.\n\n" +
+		Short: "Protocol/admin: delete an AWID team using the namespace controller key",
+		Long: "Protocol/admin: delete an AWID team using the local namespace controller key.\n\n" +
 			"Delete-team requires the team's active certificates to be revoked first. It\n" +
 			"does not delete the namespace or any unrelated address claims.",
 		RunE: runTeamDelete,

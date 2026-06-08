@@ -30,7 +30,7 @@ var (
 
 var teamRequestCmd = &cobra.Command{
 	Use:   "request",
-	Short: "Print the add-member command the team owner should run",
+	Short: "Protocol/admin bridge: print the add-member command the team owner should run",
 	RunE:  runTeamRequest,
 }
 

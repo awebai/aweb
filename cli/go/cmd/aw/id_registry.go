@@ -96,9 +96,13 @@ var idVerifyCmd = &cobra.Command{
 
 var idNamespaceCmd = &cobra.Command{
 	Use:   "namespace [domain]",
-	Short: "Inspect or recover namespace controller state",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runIDNamespace,
+	Short: "Protocol/admin namespace controller and address operations",
+	Long: "Protocol/admin namespace controller and address operations.\n\n" +
+		"Use these commands when you hold a namespace controller key, are setting up BYOT,\n" +
+		"are assigning or deleting namespace addresses, or are diagnosing AWID registry\n" +
+		"state. Hosted happy-path setup should not require namespace controller commands.",
+	Args: cobra.MaximumNArgs(1),
+	RunE: runIDNamespace,
 }
 
 var (

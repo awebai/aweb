@@ -9,10 +9,11 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `agents`, `claim-human`, `init`, `reset`, `service`, `workspace` |
+| Workspace Setup | `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `whoami` |
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
+| Obsolete / Legacy Compatibility | `agents` |
 | Utility | `completion`, `doctor`, `help`, `upgrade`, `version` |
 
 ## Global Flags
@@ -21,185 +22,6 @@ to refresh it.
 - `-h, --help help for aw`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
-
-## `agents`
-
-### `agents`
-
-Manage repo-local agent layouts and provisioning.
-
-The agents command family manages the project-local agents/ convention:
-shared layout, agent homes, worktree-bound agents, and per-agent workspace
-provisioning. It does not manage AWID team authority in general; use aw id team
-for membership and team-controller operations.
-
-Run aw agents commands from the customer project repo root unless a subcommand
-explicitly says otherwise. The repo root itself is not an aw identity; generated
-agent homes live under agents/home/<responsibility>.
-
-Subcommands:
-- `add` Add a responsibility to the agents layout
-- `add-worktree` Create a repo-local git worktree and initialize a new local agent in it
-- `bootstrap` Bootstrap repo-local agents from a template repository
-- `plan` Plan repo-local agent names and paths
-- `provision` Provision identities for an existing agents layout
-- `remove` Remove or deprovision an agent responsibility
-
-Flags:
-- `-h, --help help for agents`
-- `--team string Override the selected team_id for this command`
-
-## `agents add`
-
-### `agents add`
-
-Add a responsibility to the agents layout
-
-Flags:
-- `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the provisioning plan without changing files or team roles`
-- `--global Add a global AWID identity/address-backed agent`
-- `-h, --help help for add`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--layout-only Only update the shared agents layout; do not create local identity state`
-- `--local Add a local team-scoped agent identity (default)`
-- `--namespace string BYOT team namespace domain to create/use`
-- `--registry string AWID registry URL override`
-- `--role string Role name to bind this responsibility to (default: responsibility)`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
-
-## `agents add-worktree`
-
-### `agents add-worktree`
-
-Create a repo-local git worktree and initialize a new local agent in it
-
-Flags:
-- `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--alias string Override the default generated alias/worktree name`
-- `--dry-run Validate and print the worktree plan without changing files or team state`
-- `-h, --help help for add-worktree`
-- `--role string Existing team role for the new worktree agent`
-
-## `agents bootstrap`
-
-### `agents bootstrap`
-
-Bootstrap repo-local agents from a template repository.
-
-The template repository is convention-first:
-
-  docs/                  shared team/project instructions
-  roles/                 role playbooks installed with aw roles set
-  home/<responsibility>/AGENTS.md
-  team.yaml              maps agent responsibility dirs to aw role names
-
-team.yaml supplies the parts that cannot be inferred safely: role bundle
-metadata, each agent responsibility's role_name, work binding, identity scope,
-and optional naming policy. Agent directory names are responsibilities (for
-example coordinator, implementation, or review), not fixed human/agent names.
-
-By default bootstrap runs in the current project git repo and creates an
-agents/ convention directory:
-
-  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
-  agents/worktrees/<worktree-name>/  generated git worktrees for worktree agents
-
-Use --agents-dir to choose a different project-local convention directory.
-Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
-
-Bootstrap allocates per-human aliases and global addresses from the template
-naming policy. If the layout uses {user}, pass --identity-prefix or set
-AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
-Pass --ask-for-agent-names only when you want an interactive prompt to override
-generated display names before provisioning.
-
-Flags:
-- `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
-- `--ask-for-agent-names Prompt for generated display names instead of using template responsibilities`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the bootstrap plan without changing files or team roles`
-- `--fork Fork the template repository with gh and clone the fork into the destination directory`
-- `-h, --help help for bootstrap`
-- `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--layout-only Only create the shared agents layout; do not create identities, team memberships, roles, or instructions`
-- `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
-- `--refresh-template Re-clone the template into the destination directory before using it`
-- `--registry string AWID registry URL override`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--template-cache-dir string Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)`
-- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
-- `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
-- `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
-
-## `agents plan`
-
-### `agents plan`
-
-Plan repo-local agent names and paths.
-
-For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
-registry to fail closed on existing team aliases and namespace addresses.
-
-Flags:
-- `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the provisioning plan without changing files or team roles`
-- `-h, --help help for plan`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--namespace string BYOT team namespace domain to create/use`
-- `--registry string AWID registry URL override`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
-
-## `agents provision`
-
-### `agents provision`
-
-Provision identities for an existing agents layout
-
-Flags:
-- `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
-- `--dry-run Validate and print the provisioning plan without changing files or team roles`
-- `-h, --help help for provision`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
-- `--invite-token string Team invite token to accept into the first generated agent workspace`
-- `--namespace string BYOT team namespace domain to create/use`
-- `--registry string AWID registry URL override`
-- `--skip-instructions Do not install shared team instructions`
-- `--skip-roles Do not install the roles bundle`
-- `--team string BYOT team name/slug to create/use`
-- `--team-display-name string Optional team display name when creating a new BYOT team`
-- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
-
-## `agents remove`
-
-### `agents remove`
-
-Remove or deprovision an agent responsibility
-
-Flags:
-- `--delete-global-address Also delete the global namespace address after membership revocation; preserves global addresses by default`
-- `--deprovision-local Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout`
-- `--dry-run Show the remove/deprovision plan without mutating local, git, or registry state`
-- `-h, --help help for remove`
-- `--remove-layout Remove the shared responsibility from agents/team.yaml and move aside generated home source files`
 
 ## `claim-human`
 
@@ -298,7 +120,7 @@ Flags:
 Manage repo-local coordination workspaces
 
 Subcommands:
-- `add-worktree` Create a sibling git worktree and initialize a new coordination workspace in it
+- `add-worktree` Legacy convenience: create a sibling git worktree and coordination workspace
 - `delete` Delete a local workspace and its local identity
 - `migrate-multi-team` Rewrite a legacy single-team workspace into the canonical multi-team shape
 - `status` Show coordination status for the current workspace/identity and team
@@ -311,7 +133,9 @@ Flags:
 
 ### `workspace add-worktree`
 
-Create a sibling git worktree and initialize a new coordination workspace in it
+Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.
+
+New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
 
 Flags:
 - `--alias string Override the default alias`
@@ -358,14 +182,14 @@ Subcommands:
 - `create` Create a standalone global identity with a DNS-backed address in .aw/
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `log` Show an identity log
-- `namespace` Inspect or recover namespace controller state
+- `namespace` Protocol/admin namespace controller and address operations
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign a canonical JSON payload with the local identity key
-- `team` Team management (create, invite, membership)
+- `team` Team membership plus protocol/admin certificate operations
 - `verify` Verify the full audit log for a did:aw
 
 Flags:
@@ -468,7 +292,11 @@ Flags:
 
 ### `id namespace`
 
-Inspect or recover namespace controller state
+Protocol/admin namespace controller and address operations.
+
+Use these commands when you hold a namespace controller key, are setting up BYOT,
+are assigning or deleting namespace addresses, or are diagnosing AWID registry
+state. Hosted happy-path setup should not require namespace controller commands.
 
 Subcommands:
 - `addresses` List registry namespace addresses
@@ -672,23 +500,28 @@ Flags:
 
 ### `id team`
 
-Team management (create, invite, membership)
+Team membership plus protocol/admin certificate operations.
+
+Everyday hosted setup normally uses invite and accept-invite. Controller-backed
+commands such as create, add-member, remove-member, register, import-request,
+cleanup-cloud, and delete are protocol/admin primitives for BYOT, controller
+holders, service projection, or diagnostics.
 
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add` Join another team with the current identity
-- `add-member` Add a member directly to a team (controller signs certificate)
-- `cleanup-cloud` Delete aweb Cloud's BYOT projection after registry team deletion
-- `create` Create a team at awid
-- `delete` Delete an AWID team using the namespace controller key
-- `fetch-cert` Fetch and install an approved team certificate
-- `import-request` Create a signed BYOT import request for aweb cloud
+- `add-member` Protocol/admin: add a member by signing a team certificate
+- `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
+- `create` Protocol/admin: create a customer-controlled AWID team
+- `delete` Protocol/admin: delete an AWID team using the namespace controller key
+- `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
+- `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
-- `register` Register or sync a customer-controlled team with a service
-- `remove-member` Remove a member from a team (revoke certificate)
-- `request` Print the add-member command the team owner should run
+- `register` Protocol/admin: register or sync a customer-controlled team with a service
+- `remove-member` Protocol/admin: remove a member by revoking a team certificate
+- `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `switch` Switch the active team for this identity
 
 Flags:
@@ -734,7 +567,7 @@ Flags:
 
 ### `id team add-member`
 
-Add a member directly to a team (controller signs certificate)
+Protocol/admin: add a member by signing a team certificate
 
 Flags:
 - `--address string Global member address when using --did; must resolve to --did-aw`
@@ -777,7 +610,7 @@ Flags:
 
 ### `id team create`
 
-Create a team at awid
+Protocol/admin: create a customer-controlled AWID team
 
 Flags:
 - `--display-name string Team display name`
@@ -790,7 +623,7 @@ Flags:
 
 ### `id team delete`
 
-Delete an AWID team using the local namespace controller key.
+Protocol/admin: delete an AWID team using the local namespace controller key.
 
 Delete-team requires the team's active certificates to be revoked first. It
 does not delete the namespace or any unrelated address claims.
@@ -806,7 +639,7 @@ Flags:
 
 ### `id team fetch-cert`
 
-Fetch and install an approved team certificate
+Protocol/admin bridge: fetch and install an approved team certificate
 
 Flags:
 - `--cert-id string Certificate id`
@@ -896,7 +729,7 @@ Flags:
 
 ### `id team remove-member`
 
-Remove a member from a team (revoke certificate)
+Protocol/admin: remove a member by revoking a team certificate
 
 Flags:
 - `-h, --help help for remove-member`
@@ -909,7 +742,7 @@ Flags:
 
 ### `id team request`
 
-Print the add-member command the team owner should run
+Protocol/admin bridge: print the add-member command the team owner should run
 
 Flags:
 - `--alias string Suggested alias for the new team membership`
@@ -1942,6 +1775,195 @@ List ready tasks that are not already claimed by other workspaces
 
 Flags:
 - `-h, --help help for ready`
+
+## `agents`
+
+### `agents`
+
+Obsolete compatibility for repo-local agent layouts and provisioning.
+
+The agents command family manages the bootstrap-era project-local agents/
+convention: shared layout, agent homes, worktree-bound agents, and per-agent
+workspace provisioning. It is kept for existing users and scripts, but it is no
+longer the product center for new setup flows.
+
+For new teams, prefer explicit team/identity/workspace primitives plus skills
+and resource packs. In particular, use invite/join/connect primitives for
+membership and normal git/filesystem operations for worktrees/resources.
+
+Run aw agents commands from the customer project repo root unless a subcommand
+explicitly says otherwise. The repo root itself is not an aw identity; generated
+agent homes live under agents/home/<responsibility>.
+
+Subcommands:
+- `add` Obsolete compatibility: add a responsibility to the agents layout
+- `add-worktree` Obsolete compatibility: create a repo-local git worktree agent
+- `bootstrap` Obsolete compatibility: bootstrap repo-local agents from a template repository
+- `plan` Compatibility: plan bootstrap-era repo-local agent names and paths
+- `provision` Obsolete compatibility: provision identities for an existing agents layout
+- `remove` Compatibility: remove or deprovision a bootstrap-era agent responsibility
+
+Flags:
+- `-h, --help help for agents`
+- `--team string Override the selected team_id for this command`
+
+## `agents add`
+
+### `agents add`
+
+Obsolete compatibility: add a responsibility to the agents layout
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the provisioning plan without changing files or team roles`
+- `--global Add a global AWID identity/address-backed agent`
+- `-h, --help help for add`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--layout-only Only update the shared agents layout; do not create local identity state`
+- `--local Add a local team-scoped agent identity (default)`
+- `--namespace string BYOT team namespace domain to create/use`
+- `--registry string AWID registry URL override`
+- `--role string Role name to bind this responsibility to (default: responsibility)`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
+
+## `agents add-worktree`
+
+### `agents add-worktree`
+
+Obsolete compatibility: create a repo-local git worktree agent
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--alias string Override the default generated alias/worktree name`
+- `--dry-run Validate and print the worktree plan without changing files or team state`
+- `-h, --help help for add-worktree`
+- `--role string Existing team role for the new worktree agent`
+
+## `agents bootstrap`
+
+### `agents bootstrap`
+
+Obsolete compatibility: bootstrap repo-local agents from a template repository.
+
+This command composes template, filesystem, team, identity, role, instruction,
+and optional git-worktree mutations. It is preserved for existing bootstrap-era
+layouts, but new setup flows should prefer explicit primitives and resource
+packs.
+
+
+The template repository is convention-first:
+
+  docs/                  shared team/project instructions
+  roles/                 role playbooks installed with aw roles set
+  home/<responsibility>/AGENTS.md
+  team.yaml              maps agent responsibility dirs to aw role names
+
+team.yaml supplies the parts that cannot be inferred safely: role bundle
+metadata, each agent responsibility's role_name, work binding, identity scope,
+and optional naming policy. Agent directory names are responsibilities (for
+example coordinator, implementation, or review), not fixed human/agent names.
+
+By default bootstrap runs in the current project git repo and creates an
+agents/ convention directory:
+
+  agents/home/<responsibility>/      agent homes; run Codex/Claude from here
+  agents/worktrees/<worktree-name>/  generated git worktrees for worktree agents
+
+Use --agents-dir to choose a different project-local convention directory.
+Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
+
+Bootstrap allocates per-human aliases and global addresses from the template
+naming policy. If the layout uses {user}, pass --identity-prefix or set
+AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
+Pass --ask-for-agent-names only when you want an interactive prompt to override
+generated display names before provisioning.
+
+Flags:
+- `--agents-dir string Project-local directory to create for in-repo bootstrap output (default "agents")`
+- `--ask-for-agent-names Prompt for generated display names instead of using template responsibilities`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the bootstrap plan without changing files or team roles`
+- `--fork Fork the template repository with gh and clone the fork into the destination directory`
+- `-h, --help help for bootstrap`
+- `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--layout-only Only create the shared agents layout; do not create identities, team memberships, roles, or instructions`
+- `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
+- `--refresh-template Re-clone the template into the destination directory before using it`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--template-cache-dir string Directory where remote templates are cloned (compatibility override; in-repo mode defaults to a temporary checkout)`
+- `--username string Hosted onboarding username to create/use (prompts when omitted and onboarding is used)`
+- `--work-directory string Legacy mode: directory symlinked into each agent workspace as ./work (mutually exclusive with --work-repo-url)`
+- `--work-repo-url string Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)`
+
+## `agents plan`
+
+### `agents plan`
+
+Plan repo-local agent names and paths.
+
+For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
+registry to fail closed on existing team aliases and namespace addresses.
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the provisioning plan without changing files or team roles`
+- `-h, --help help for plan`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
+
+## `agents provision`
+
+### `agents provision`
+
+Obsolete compatibility: provision identities for an existing agents layout
+
+Flags:
+- `--agents-dir string Project-local agents directory to read (default "agents")`
+- `--aweb-url string Aweb server base URL to connect each generated agent workspace`
+- `--dry-run Validate and print the provisioning plan without changing files or team roles`
+- `-h, --help help for provision`
+- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--invite-token string Team invite token to accept into the first generated agent workspace`
+- `--namespace string BYOT team namespace domain to create/use`
+- `--registry string AWID registry URL override`
+- `--skip-instructions Do not install shared team instructions`
+- `--skip-roles Do not install the roles bundle`
+- `--team string BYOT team name/slug to create/use`
+- `--team-display-name string Optional team display name when creating a new BYOT team`
+- `--username string Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding`
+
+## `agents remove`
+
+### `agents remove`
+
+Compatibility: remove or deprovision a bootstrap-era agent responsibility
+
+Flags:
+- `--delete-global-address Also delete the global namespace address after membership revocation; preserves global addresses by default`
+- `--deprovision-local Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout`
+- `--dry-run Show the remove/deprovision plan without mutating local, git, or registry state`
+- `-h, --help help for remove`
+- `--remove-layout Remove the shared responsibility from agents/team.yaml and move aside generated home source files`
 
 ## `completion`
 

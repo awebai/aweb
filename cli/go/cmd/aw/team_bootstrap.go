@@ -27,13 +27,17 @@ import (
 
 var agentsCmd = &cobra.Command{
 	Use:   "agents",
-	Short: "Manage repo-local agent layouts and provisioning",
-	Long: `Manage repo-local agent layouts and provisioning.
+	Short: "Obsolete compatibility for repo-local agent layouts and provisioning",
+	Long: `Obsolete compatibility for repo-local agent layouts and provisioning.
 
-The agents command family manages the project-local agents/ convention:
-shared layout, agent homes, worktree-bound agents, and per-agent workspace
-provisioning. It does not manage AWID team authority in general; use aw id team
-for membership and team-controller operations.
+The agents command family manages the bootstrap-era project-local agents/
+convention: shared layout, agent homes, worktree-bound agents, and per-agent
+workspace provisioning. It is kept for existing users and scripts, but it is no
+longer the product center for new setup flows.
+
+For new teams, prefer explicit team/identity/workspace primitives plus skills
+and resource packs. In particular, use invite/join/connect primitives for
+membership and normal git/filesystem operations for worktrees/resources.
 
 Run aw agents commands from the customer project repo root unless a subcommand
 explicitly says otherwise. The repo root itself is not an aw identity; generated
@@ -42,8 +46,14 @@ agent homes live under agents/home/<responsibility>.`,
 
 var teamBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap <template>",
-	Short: "Bootstrap repo-local agents from a template repository",
-	Long: `Bootstrap repo-local agents from a template repository.
+	Short: "Obsolete compatibility: bootstrap repo-local agents from a template repository",
+	Long: `Obsolete compatibility: bootstrap repo-local agents from a template repository.
+
+This command composes template, filesystem, team, identity, role, instruction,
+and optional git-worktree mutations. It is preserved for existing bootstrap-era
+layouts, but new setup flows should prefer explicit primitives and resource
+packs.
+
 
 The template repository is convention-first:
 
@@ -77,7 +87,7 @@ generated display names before provisioning.`,
 
 var agentsPlanCmd = &cobra.Command{
 	Use:   "plan",
-	Short: "Plan repo-local agent names and paths",
+	Short: "Compatibility: plan bootstrap-era repo-local agent names and paths",
 	Long: `Plan repo-local agent names and paths.
 
 For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
@@ -88,28 +98,28 @@ registry to fail closed on existing team aliases and namespace addresses.`,
 
 var agentsProvisionCmd = &cobra.Command{
 	Use:   "provision",
-	Short: "Provision identities for an existing agents layout",
+	Short: "Obsolete compatibility: provision identities for an existing agents layout",
 	Args:  cobra.NoArgs,
 	RunE:  runAgentsProvision,
 }
 
 var agentsAddCmd = &cobra.Command{
 	Use:   "add <responsibility>",
-	Short: "Add a responsibility to the agents layout",
+	Short: "Obsolete compatibility: add a responsibility to the agents layout",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAgentsAdd,
 }
 
 var agentsAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
-	Short: "Create a repo-local git worktree and initialize a new local agent in it",
+	Short: "Obsolete compatibility: create a repo-local git worktree agent",
 	Args:  cobra.RangeArgs(0, 1),
 	RunE:  runAgentsAddWorktree,
 }
 
 var agentsRemoveCmd = &cobra.Command{
 	Use:   "remove <responsibility>",
-	Short: "Remove or deprovision an agent responsibility",
+	Short: "Compatibility: remove or deprovision a bootstrap-era agent responsibility",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAgentsRemove,
 }
@@ -350,7 +360,7 @@ func init() {
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepoURL, "work-repo-url", "", "Legacy mode: git URL or local repo path to clone into <template-dir>/worktrees/<derived-name> (mutually exclusive with --work-directory)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapWorkRepo, "work-repo", "", "Deprecated alias for --work-directory (kept for one release cycle)")
 	_ = teamBootstrapCmd.Flags().MarkHidden("work-repo")
-	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (advanced; in-repo mode defaults to a temporary checkout)")
+	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTemplateCacheDir, "template-cache-dir", "", "Directory where remote templates are cloned (compatibility override; in-repo mode defaults to a temporary checkout)")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
@@ -395,7 +405,7 @@ func init() {
 		agentsRemoveCmd,
 	)
 	rootCmd.AddCommand(agentsCmd)
-	agentsCmd.GroupID = groupWorkspace
+	agentsCmd.GroupID = groupObsolete
 	bindTeamSelector(agentsCmd)
 }
 
