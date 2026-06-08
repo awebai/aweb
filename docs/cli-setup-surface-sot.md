@@ -118,7 +118,7 @@ the categories stable unless this document is updated.
 
 | Current command/action | Classification | Intended presentation |
 | --- | --- | --- |
-| `aw run <provider>` | Everyday intent + runtime entrypoint | Primary way to start an agent session; may guide onboarding, but should not hide destructive setup. |
+| `aw run <provider>` | Everyday intent + runtime entrypoint | Primary way to start an agent session; may suggest setup, but setup mutations stay explicit and should not become hidden orchestration. |
 | `aw init` | Everyday connect/create workspace intent | Keep prominent. Copy should say it initializes/connects this directory as a workspace. |
 | `aw service init` | Everyday connect workspace intent | Keep prominent for already-certified AWID identities connecting to a service. |
 | `aw whoami` | Everyday check | Keep prominent. |
@@ -136,7 +136,6 @@ the categories stable unless this document is updated.
 | `aw id team accept-invite <token>` | Agent primitive / human join verb | Must refuse to overwrite existing `.aw` identity/key state. Prints `aw init`/connect next step when needed. |
 | `aw id create --domain --name` | Agent primitive for standalone self-custodial global identity | Identity-only. Skills must distinguish it from `aw init --global`, which also connects a workspace. |
 | `aw id encryption-key setup|rotate|show` | Agent primitive for E2E readiness | Keep in identity skills; not a team setup happy path. |
-| `aw workspace add-worktree` | Local workspace primitive | Creates another workspace/worktree for parallel work. It should remain separate from template application. |
 | `aw service init` | Agent primitive / everyday connect workspace | Connects an existing identity+cert to a service; does not create team/identity/membership. |
 | `aw roles set|activate|show|list` | Agent primitive for team context | Publishing roles is a team-context mutation, not template bootstrap side effect. |
 | `aw instructions set|activate|show` | Agent primitive for team context | Publishing instructions is a team-context mutation, not template bootstrap side effect. |
@@ -168,7 +167,8 @@ the categories stable unless this document is updated.
 | `aw agents provision` | Obsolete/legacy compatibility | Keep for existing `agents/` layouts. Make error messages point to invite/API key/BYOT/current-workspace sources and resource-pack replacement guidance. |
 | `aw agents plan` | Compatibility diagnostic for old layout | Keep while old layouts exist; avoid teaching as new template planning model. |
 | `aw agents add` | Obsolete/legacy compatibility if it mutates shared layout + identity state | Prefer separate primitives: invite/join/connect workspace, then resource-pack/application steps. |
-| `aw agents add-worktree` | Obsolete/legacy compatibility if it couples template layout with identity/worktree setup | Prefer `aw workspace add-worktree` plus skills/resource application. |
+| `aw agents add-worktree` | Obsolete/legacy compatibility if it couples template layout with identity/worktree setup | Prefer explicit git/filesystem primitives, then `aw init`/invite/join/connect primitives and skills/resource application. |
+| `aw workspace add-worktree` | Local convenience/compatibility for existing users | Future skills should prefer explicit `git worktree`/filesystem steps followed by `aw init`/invite/join/connect primitives, unless this command is reduced to a transparent wrapper with no identity/team/template magic. |
 | `aw agents remove` | Compatibility command with strong safety constraints | Removal/deprovision may remain useful, but must clearly separate layout removal, membership revocation, local `.aw` state movement, worktree cleanup, and address deletion. |
 | `aw init --byod` wording | Retired middle-ground risk unless carefully scoped | If retained, copy must not imply the BYOT controller-first import path. BYOT docs should teach controller primitives. |
 | bootstrap-era template repos | Obsolete template model | Replace with resource-pack templates. Old repos should redirect or clearly mark legacy/compatibility. |
