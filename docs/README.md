@@ -47,7 +47,9 @@ These documents define the system:
   primitives, protocol/admin primitives, and obsolete/legacy compatibility
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
-  instructions, playbooks, skills, and adapters without identity/workspace state
+  instructions, playbooks, skills, and adapters without identity/workspace state;
+  see `resource-packs/coord-workflows` and `resource-packs/company-surfaces`
+  for successor resource packs to the bootstrap-era templates
 - [setup-surface-release-gates.md](setup-surface-release-gates.md): release
   checklist and regression gates for the primitive-first setup surface
 - [bootstrap-layout-contract.md](bootstrap-layout-contract.md): legacy/

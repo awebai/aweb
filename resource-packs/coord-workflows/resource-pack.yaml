@@ -1,0 +1,20 @@
+schema_version: 1
+name: coord-workflows
+summary: Coordinator, developer, and reviewer operating resources for a small agent team.
+resources:
+  instructions: resources/instructions.md
+  roles:
+    coordinator: resources/roles/coordinator.md
+    developer: resources/roles/developer.md
+    reviewer: resources/roles/reviewer.md
+  playbooks:
+    review-loop: resources/playbooks/review-loop.md
+    worktree-handoff: resources/playbooks/worktree-handoff.md
+  fragments:
+    agents: resources/fragments/agents.md
+adapters:
+  claude: adapters/claude/README.md
+  codex: adapters/codex/README.md
+  pi: adapters/pi/README.md
+examples:
+  apply: README.md

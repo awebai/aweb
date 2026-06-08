@@ -1,0 +1,22 @@
+schema_version: 1
+name: company-surfaces
+summary: Operating resources for agents organized around company/customer surfaces.
+resources:
+  instructions: resources/instructions.md
+  roles:
+    coordinator: resources/roles/coordinator.md
+    product: resources/roles/product.md
+    engineering: resources/roles/engineering.md
+    support: resources/roles/support.md
+    docs: resources/roles/docs.md
+  playbooks:
+    intake-triage: resources/playbooks/intake-triage.md
+    release-handoff: resources/playbooks/release-handoff.md
+  fragments:
+    agents: resources/fragments/agents.md
+adapters:
+  claude: adapters/claude/README.md
+  codex: adapters/codex/README.md
+  pi: adapters/pi/README.md
+examples:
+  apply: README.md
