@@ -9,7 +9,7 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `claim-human`, `init`, `reset`, `service`, `workspace` |
+| Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
@@ -22,6 +22,24 @@ to refresh it.
 - `-h, --help help for aw`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
+
+## `check`
+
+### `check`
+
+Check local identity, workspace, team, and service connectivity.
+
+This is the everyday setup diagnostic entrypoint. It runs the same checks as
+`aw doctor` and is safe to run before asking a teammate or support for help.
+
+Flags:
+- `--dry-run Plan fixes without applying them`
+- `--fix Apply safe doctor fixes`
+- `-h, --help help for check`
+- `--offline Run without network checks`
+- `--online Allow online checks`
+- `--team string Override the selected team_id for this command`
+- `--verbose Include verbose diagnostic details`
 
 ## `claim-human`
 

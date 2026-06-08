@@ -537,13 +537,13 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		if err := prepareInRepoBootstrapAgentsDir(layout, resolved.TemplateDir, plans); err != nil {
-			return err
+			return wrapInRepoBootstrapFailureWithRollback(err, layout, plans)
 		}
 		if err := ensureInRepoBootstrapGitignore(layout); err != nil {
-			return err
+			return wrapInRepoBootstrapFailureWithRollback(err, layout, plans)
 		}
 		if err := createInRepoBootstrapWorktrees(layout, plans); err != nil {
-			return err
+			return wrapInRepoBootstrapFailureWithRollback(err, layout, plans)
 		}
 	}
 
@@ -553,7 +553,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 			planWorkDirectory = plan.WorkDir
 		}
 		if err := materializeTeamBootstrapAgent(resolved.TemplateDir, plan, planWorkDirectory); err != nil {
-			return err
+			return wrapInRepoBootstrapFailureWithRollback(err, layout, plans)
 		}
 	}
 
@@ -565,7 +565,7 @@ func runTeamBootstrap(cmd *cobra.Command, args []string) error {
 
 	rolesInstalled, instructionsInstalled, err := bootstrapTeamAndInitAgentDirs(cmd, source, spec, resolved.TemplateDir, plans)
 	if err != nil {
-		return err
+		return wrapInRepoBootstrapFailureWithRollback(err, layout, plans)
 	}
 	out.RolesInstalled = rolesInstalled
 	out.InstructionsInstalled = instructionsInstalled
@@ -4189,6 +4189,64 @@ func installTeamBootstrapInstructionsWithClient(client *aweb.Client, spec *teamB
 		return false, err
 	}
 	return true, nil
+}
+
+func wrapInRepoBootstrapFailureWithRollback(original error, layout teamBootstrapLayout, plans []teamBootstrapAgentPlan) error {
+	if layout.Mode != teamBootstrapLayoutInRepo || strings.TrimSpace(layout.AgentsRoot) == "" {
+		return original
+	}
+	rolledBack, rollbackErr := rollbackInRepoBootstrapLayoutIfIdentityFree(layout, plans)
+	if rollbackErr != nil {
+		return fmt.Errorf("%w (bootstrap failed and rollback of %s also failed: %v)", original, layout.AgentsRoot, rollbackErr)
+	}
+	if rolledBack {
+		return fmt.Errorf("%w (rolled back newly-created agents layout at %s; retry is safe)", original, layout.AgentsRoot)
+	}
+	return fmt.Errorf("%w (left agents layout at %s in place because it contains .aw identity state; do not delete private keys; retry with `aw agents provision` or inspect the generated homes)", original, layout.AgentsRoot)
+}
+
+func rollbackInRepoBootstrapLayoutIfIdentityFree(layout teamBootstrapLayout, plans []teamBootstrapAgentPlan) (bool, error) {
+	if hasAwebIdentityState(layout.AgentsRoot) {
+		return false, nil
+	}
+	for _, plan := range plans {
+		if plan.WorkBinding != teamBootstrapWorkGitWorktree || strings.TrimSpace(plan.WorkDir) == "" {
+			continue
+		}
+		if _, err := os.Stat(plan.WorkDir); err == nil {
+			branchName, nameErr := teamBootstrapWorktreeName(plan)
+			if nameErr != nil {
+				return false, nameErr
+			}
+			cleanupWorkspaceWorktree(layout.CustomerRepoRoot, plan.WorkDir, branchName, false)
+		} else if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	if _, err := os.Stat(layout.AgentsRoot); os.IsNotExist(err) {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+	if err := os.RemoveAll(layout.AgentsRoot); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func hasAwebIdentityState(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if d.IsDir() && d.Name() == ".aw" {
+			found = true
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return found
 }
 
 func materializeTeamBootstrapAgent(templateDir string, plan teamBootstrapAgentPlan, workDirectory string) error {

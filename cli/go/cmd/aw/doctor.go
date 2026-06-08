@@ -60,23 +60,17 @@ var doctorCmd = &cobra.Command{
 	Use:   "doctor [check-id]",
 	Short: "Diagnose local identity, workspace, and coordination state",
 	Args:  cobra.RangeArgs(0, 1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 && !doctorFixFlag {
-			return usageError("check-id arguments are only supported with --fix")
-		}
-		fixTarget := ""
-		if len(args) > 0 {
-			fixTarget = args[0]
-		}
-		return runDoctorCommand(cmd, doctorRunOptions{
-			Categories: []string{"local", "identity", "workspace", "team", "registry", "messaging"},
-			Mode:       selectedDoctorMode(),
-			Verbose:    doctorVerbose,
-			Fix:        doctorFixFlag,
-			DryRun:     doctorDryRun,
-			FixTarget:  fixTarget,
-		})
-	},
+	RunE:  runDoctorAllCommand,
+}
+
+var checkCmd = &cobra.Command{
+	Use:   "check [check-id]",
+	Short: "Check local identity, workspace, team, and service connectivity",
+	Long: "Check local identity, workspace, team, and service connectivity.\n\n" +
+		"This is the everyday setup diagnostic entrypoint. It runs the same checks as\n" +
+		"`aw doctor` and is safe to run before asking a teammate or support for help.",
+	Args: cobra.RangeArgs(0, 1),
+	RunE: runDoctorAllCommand,
 }
 
 var doctorSupportBundleCmd = &cobra.Command{
@@ -184,11 +178,8 @@ type doctorRedaction struct {
 }
 
 func init() {
-	doctorCmd.PersistentFlags().BoolVar(&doctorVerbose, "verbose", false, "Include verbose diagnostic details")
-	doctorCmd.PersistentFlags().BoolVar(&doctorOffline, "offline", false, "Run without network checks")
-	doctorCmd.PersistentFlags().BoolVar(&doctorOnline, "online", false, "Allow online checks")
-	doctorCmd.Flags().BoolVar(&doctorFixFlag, "fix", false, "Apply safe doctor fixes")
-	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Plan fixes without applying them")
+	bindDoctorCommandFlags(doctorCmd)
+	bindDoctorCommandFlags(checkCmd)
 
 	for _, category := range []string{"local", "identity", "workspace", "team", "registry", "messaging"} {
 		category := category
@@ -208,7 +199,34 @@ func init() {
 
 	doctorSupportBundleCmd.Flags().StringVar(&doctorSupportBundleOutput, "output", "", "Output JSON file")
 	doctorCmd.AddCommand(doctorSupportBundleCmd)
+	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(doctorCmd)
+}
+
+func bindDoctorCommandFlags(cmd *cobra.Command) {
+	cmd.PersistentFlags().BoolVar(&doctorVerbose, "verbose", false, "Include verbose diagnostic details")
+	cmd.PersistentFlags().BoolVar(&doctorOffline, "offline", false, "Run without network checks")
+	cmd.PersistentFlags().BoolVar(&doctorOnline, "online", false, "Allow online checks")
+	cmd.Flags().BoolVar(&doctorFixFlag, "fix", false, "Apply safe doctor fixes")
+	cmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Plan fixes without applying them")
+}
+
+func runDoctorAllCommand(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 && !doctorFixFlag {
+		return usageError("check-id arguments are only supported with --fix")
+	}
+	fixTarget := ""
+	if len(args) > 0 {
+		fixTarget = args[0]
+	}
+	return runDoctorCommand(cmd, doctorRunOptions{
+		Categories: []string{"local", "identity", "workspace", "team", "registry", "messaging"},
+		Mode:       selectedDoctorMode(),
+		Verbose:    doctorVerbose,
+		Fix:        doctorFixFlag,
+		DryRun:     doctorDryRun,
+		FixTarget:  fixTarget,
+	})
 }
 
 func selectedDoctorMode() doctorMode {

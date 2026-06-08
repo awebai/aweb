@@ -67,6 +67,7 @@ func init() {
 	initCmd.GroupID = groupWorkspace
 	resetCmd.GroupID = groupWorkspace
 	workspaceCmd.GroupID = groupWorkspace
+	checkCmd.GroupID = groupWorkspace
 
 	introspectCmd.GroupID = groupIdentity
 	identityCmd.GroupID = groupIdentity
@@ -105,6 +106,7 @@ func init() {
 	bindTeamSelector(workCmd)
 	bindTeamSelector(taskCmd)
 	bindTeamSelector(workspaceCmd)
+	bindTeamSelector(checkCmd)
 	bindTeamSelector(runCmd)
 	bindTeamSelector(lockCmd)
 	bindTeamSelector(notifyCmd)

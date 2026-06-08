@@ -124,7 +124,7 @@ the categories stable unless this document is updated.
 | `aw team invite` / `aw team join` / `aw team list` / `aw team switch` / `aw team leave` | Everyday team membership intent | Human-facing aliases for the normal invite/join membership flow and installed-membership management. Protocol/admin team operations remain under `aw id team`. |
 | `aw whoami` | Everyday check | Keep prominent. |
 | `aw workspace status` | Everyday check/doctor | Keep prominent. It should explain active team, identity, claims, locks, service binding, and mismatch symptoms. |
-| `aw doctor` | Everyday check/repair | Keep prominent as the support entrypoint for confusing local state. |
+| `aw check` / `aw doctor` | Everyday check/repair | Keep prominent. `aw check` is the everyday diagnostic verb; `aw doctor` remains the support/deeper diagnostics name. |
 | `aw id team list` / `switch` / `leave` | Everyday membership management backed by primitives | Keep discoverable; consider human-facing aliases if taxonomy implementation adds `aw team ...`. |
 | `aw roles`, `aw role-name`, `aw instructions` | Everyday team context + agent primitives | Keep prominent for team operating context. |
 | `aw mail`, `aw chat`, `aw work`, `aw task`, `aw lock` | Everyday coordination | Out of setup scope, but remain primary day-to-day commands. |
@@ -164,7 +164,7 @@ the categories stable unless this document is updated.
 
 | Current command/action | Classification | Required compatibility behavior |
 | --- | --- | --- |
-| `aw agents bootstrap` | Obsolete/legacy compatibility once replacement resource-pack flow lands | Keep callable short-term. Stop teaching as happy path. Fail before filesystem/git side effects when team source cannot be resolved. Provide recovery for partial state. |
+| `aw agents bootstrap` | Obsolete/legacy compatibility once replacement resource-pack flow lands | Keep callable short-term. Stop teaching as happy path. Fail before filesystem/git side effects when team source cannot be resolved. On post-layout hosted/setup failures, roll back newly-created in-repo layouts when no `.aw` identity state exists; preserve layouts that contain `.aw` keys and print recovery guidance. |
 | `aw agents provision` | Obsolete/legacy compatibility | Keep for existing `agents/` layouts. Make error messages point to invite/API key/BYOT/current-workspace sources and resource-pack replacement guidance. |
 | `aw agents plan` | Compatibility diagnostic for old layout | Keep while old layouts exist; avoid teaching as new template planning model. |
 | `aw agents add` | Obsolete/legacy compatibility if it mutates shared layout + identity state | Prefer separate primitives: invite/join/connect workspace, then resource-pack/application steps. |
@@ -241,7 +241,9 @@ The support entrypoint should answer:
 - what exact next command fixes the mismatch?
 
 This deserves first-class visibility because many failures look like "files are
-initialized" locally but the team/service view is disconnected.
+initialized" locally but the team/service view is disconnected. `aw check` is
+the everyday spelling; `aw doctor` remains the support/deeper diagnostics
+spelling.
 
 ## Resource-pack template contract summary
 

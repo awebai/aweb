@@ -112,6 +112,11 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		t.Fatalf("expected claim-human in Workspace Setup group:\n%s", text)
 	}
 
+	checkIdx := strings.Index(text, "\n  check")
+	if checkIdx < workspaceIdx || checkIdx > identityIdx {
+		t.Fatalf("expected check in Workspace Setup group:\n%s", text)
+	}
+
 	mcpIdx := strings.Index(text, "mcp-config")
 	if mcpIdx < identityIdx || mcpIdx > networkIdx {
 		t.Fatalf("expected mcp-config in Identity group:\n%s", text)
