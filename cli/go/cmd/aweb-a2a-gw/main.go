@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -83,6 +86,8 @@ type runtimeHealth struct {
 	AwebVersion        string                 `json:"aweb_version"`
 	AWIDServiceVersion string                 `json:"awid_service_version"`
 	AWIDRegistry       runtimeRegistryHealth  `json:"awid_registry"`
+	ACConfig           runtimeACConfigHealth  `json:"ac_config"`
+	GatewayIdentity    runtimeIdentityHealth  `json:"gateway_identity"`
 	Gateway            map[string]interface{} `json:"gateway"`
 }
 
@@ -102,6 +107,21 @@ type runtimeRegistryHealth struct {
 	Error          string `json:"error,omitempty"`
 }
 
+type runtimeACConfigHealth struct {
+	Enabled        bool   `json:"enabled"`
+	GatewayID      string `json:"gateway_id,omitempty"`
+	ConfigRevision string `json:"config_revision,omitempty"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	Expired        bool   `json:"expired"`
+	Routes         int    `json:"routes"`
+}
+
+type runtimeIdentityHealth struct {
+	Identity string `json:"identity,omitempty"`
+	Status   string `json:"status"`
+	Usable   bool   `json:"usable"`
+}
+
 func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
@@ -119,13 +139,15 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 		AwebVersion:        version,
 		AWIDServiceVersion: ">=" + minimumAWIDServiceVersion,
 		AWIDRegistry:       checkRegistryHealth(cfg.RegistryURL),
+		ACConfig:           acConfigHealth(cfg),
+		GatewayIdentity:    gatewayIdentityHealth(cfg),
 		Gateway:            map[string]interface{}{},
 	}
 	gatewayHealthBytes, err := json.Marshal(gateway.Health())
 	if err == nil {
 		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
 	}
-	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible {
+	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible || health.ACConfig.Expired || !health.GatewayIdentity.Usable {
 		health.Status = "unhealthy"
 	}
 	status := http.StatusOK
@@ -135,6 +157,38 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(health)
+}
+
+func acConfigHealth(cfg fileConfig) runtimeACConfigHealth {
+	out := runtimeACConfigHealth{
+		Enabled:        acConfigEnabled(cfg.ACConfig),
+		GatewayID:      strings.TrimSpace(cfg.ACConfig.GatewayID),
+		ConfigRevision: strings.TrimSpace(cfg.ACRuntime.ConfigRevision),
+		ExpiresAt:      strings.TrimSpace(cfg.ACRuntime.ExpiresAt),
+		Routes:         len(cfg.Routes),
+	}
+	if out.ExpiresAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
+			out.Expired = time.Now().After(parsed)
+		}
+	}
+	return out
+}
+
+func gatewayIdentityHealth(cfg fileConfig) runtimeIdentityHealth {
+	identity := strings.TrimSpace(cfg.GatewayIdentity)
+	status := strings.TrimSpace(cfg.ACRuntime.GatewayIdentityStatus)
+	if !acConfigEnabled(cfg.ACConfig) && identity == "" {
+		return runtimeIdentityHealth{Status: "workspace", Usable: true}
+	}
+	if status == "" && identity != "" {
+		status = "active"
+	}
+	usable := identity != "" && (status == "" || status == "active")
+	if status == "" {
+		status = "missing"
+	}
+	return runtimeIdentityHealth{Identity: identity, Status: status, Usable: usable}
 }
 
 func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
@@ -269,12 +323,22 @@ type fileConfig struct {
 	Routes                    []routeConfig `yaml:"routes"`
 	Audit                     auditConfig   `yaml:"audit"`
 	ACConfig                  acConfig      `yaml:"ac_config"`
+	ACRuntime                 acRuntimeMeta `yaml:"-"`
 }
 
 type acConfig struct {
+	BaseURL        string `yaml:"base_url"`
 	URL            string `yaml:"url"`
+	BridgeURL      string `yaml:"bridge_url"`
+	GatewayID      string `yaml:"gateway_id"`
 	BearerToken    string `yaml:"bearer_token"`
 	BearerTokenEnv string `yaml:"bearer_token_env"`
+}
+
+type acRuntimeMeta struct {
+	GatewayIdentityStatus string
+	ConfigRevision        string
+	ExpiresAt             string
 }
 
 type routeConfig struct {
@@ -414,11 +478,14 @@ type acRuntimeAWID struct {
 }
 
 func applyACRuntimeConfig(cfg *fileConfig) error {
-	url := strings.TrimSpace(cfg.ACConfig.URL)
+	url, err := acConfigURL(cfg.ACConfig)
+	if err != nil {
+		return err
+	}
 	if url == "" {
 		return nil
 	}
-	token := firstNonEmpty(cfg.ACConfig.BearerToken, envValue(cfg.ACConfig.BearerTokenEnv))
+	token := acBearerToken(cfg.ACConfig)
 	if token == "" {
 		return fmt.Errorf("ac_config bearer token is required")
 	}
@@ -459,6 +526,14 @@ func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error
 	}
 	if strings.TrimSpace(payload.GatewayIdentity) != "" {
 		cfg.GatewayIdentity = strings.TrimSpace(payload.GatewayIdentity)
+	}
+	if cfg.ACConfig.GatewayID == "" {
+		cfg.ACConfig.GatewayID = strings.TrimSpace(payload.GatewayID)
+	}
+	cfg.ACRuntime = acRuntimeMeta{
+		GatewayIdentityStatus: strings.TrimSpace(payload.GatewayIdentityStatus),
+		ConfigRevision:        strings.TrimSpace(payload.ConfigRevision),
+		ExpiresAt:             strings.TrimSpace(payload.ExpiresAt),
 	}
 	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
 	defaultRouteID := ""
@@ -541,6 +616,50 @@ func rateLimitFromAC(value map[string]interface{}) string {
 	return ""
 }
 
+func acConfigEnabled(cfg acConfig) bool {
+	return strings.TrimSpace(cfg.URL) != "" ||
+		strings.TrimSpace(cfg.BaseURL) != "" ||
+		strings.TrimSpace(cfg.BridgeURL) != ""
+}
+
+func acBearerToken(cfg acConfig) string {
+	return firstNonEmpty(cfg.BearerToken, envValue(cfg.BearerTokenEnv))
+}
+
+func acConfigURL(cfg acConfig) (string, error) {
+	if raw := strings.TrimSpace(cfg.URL); raw != "" {
+		return raw, nil
+	}
+	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	gatewayID := strings.TrimSpace(cfg.GatewayID)
+	if base == "" {
+		return "", nil
+	}
+	if gatewayID == "" {
+		return "", fmt.Errorf("ac_config.gateway_id is required when ac_config.base_url is used")
+	}
+	return base + "/api/v1/a2a/gateway/config/" + url.PathEscape(gatewayID), nil
+}
+
+func acBridgeURL(cfg acConfig) (string, error) {
+	if raw := strings.TrimSpace(cfg.BridgeURL); raw != "" {
+		return strings.TrimRight(raw, "/"), nil
+	}
+	if base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"); base != "" {
+		return base + "/api/v1/a2a/gateway/bridge", nil
+	}
+	rawConfigURL := strings.TrimSpace(cfg.URL)
+	if rawConfigURL == "" {
+		return "", fmt.Errorf("ac_config bridge URL is required")
+	}
+	const marker = "/api/v1/a2a/gateway/config/"
+	idx := strings.Index(rawConfigURL, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("ac_config.bridge_url is required when ac_config.url is not an AC config endpoint")
+	}
+	return strings.TrimRight(rawConfigURL[:idx], "/") + "/api/v1/a2a/gateway/bridge", nil
+}
+
 func numericMapValue(value map[string]interface{}, key string) (int, bool) {
 	raw, ok := value[key]
 	if !ok {
@@ -572,15 +691,11 @@ func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
 	if strings.TrimSpace(cfg.Host) == "" {
 		return nil, fmt.Errorf("host is required")
 	}
-	workspaceDir := strings.TrimSpace(cfg.WorkspaceDir)
-	if workspaceDir == "" {
-		workspaceDir = "."
-	}
-	client, gatewayIdentity, err := workspaceMailClient(workspaceDir, cfg.TeamID, cfg.RegistryURL, cfg.GatewayIdentity)
+	audit, err := auditSinkFromConfig(cfg.Audit)
 	if err != nil {
 		return nil, err
 	}
-	audit, err := auditSinkFromConfig(cfg.Audit)
+	client, gatewayIdentity, err := mailTransportFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -624,6 +739,21 @@ func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
 	}
 	bridge.SetReplyApplier(gateway)
 	return gateway, nil
+}
+
+func mailTransportFromConfig(cfg fileConfig) (a2agw.MailTransport, string, error) {
+	if acConfigEnabled(cfg.ACConfig) {
+		client, err := acMailTransportFromConfig(cfg)
+		if err != nil {
+			return nil, "", err
+		}
+		return client, firstNonEmpty(cfg.GatewayIdentity, cfg.ACConfig.GatewayID), nil
+	}
+	workspaceDir := strings.TrimSpace(cfg.WorkspaceDir)
+	if workspaceDir == "" {
+		workspaceDir = "."
+	}
+	return workspaceMailClient(workspaceDir, cfg.TeamID, cfg.RegistryURL, cfg.GatewayIdentity)
 }
 
 func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.AuditSink) (a2agw.Config, error) {
@@ -788,6 +918,137 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 	client.SetResolver(resolver)
 	gatewayIdentity := firstNonEmpty(gatewayIdentityOverride, cert.MemberAddress, cert.MemberDIDAW, cert.MemberDIDKey, cert.Alias)
 	return client, gatewayIdentity, nil
+}
+
+type acMailTransport struct {
+	httpClient     *http.Client
+	bridgeURL      string
+	gatewayID      string
+	bearerToken    string
+	routeByAddress map[string]string
+}
+
+func acMailTransportFromConfig(cfg fileConfig) (*acMailTransport, error) {
+	bridgeURL, err := acBridgeURL(cfg.ACConfig)
+	if err != nil {
+		return nil, err
+	}
+	gatewayID := strings.TrimSpace(cfg.ACConfig.GatewayID)
+	if gatewayID == "" {
+		return nil, fmt.Errorf("ac_config.gateway_id is required")
+	}
+	token := acBearerToken(cfg.ACConfig)
+	if token == "" {
+		return nil, fmt.Errorf("ac_config bearer token is required")
+	}
+	routeByAddress := make(map[string]string, len(cfg.Routes))
+	for _, route := range cfg.Routes {
+		address := strings.TrimSpace(route.Address)
+		routeID := strings.TrimSpace(route.RouteID)
+		if address == "" || routeID == "" {
+			continue
+		}
+		routeByAddress[address] = routeID
+	}
+	return &acMailTransport{
+		httpClient:     &http.Client{Timeout: 15 * time.Second},
+		bridgeURL:      bridgeURL,
+		gatewayID:      gatewayID,
+		bearerToken:    token,
+		routeByAddress: routeByAddress,
+	}, nil
+}
+
+func (t *acMailTransport) SendMessage(ctx context.Context, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
+	return t.send(ctx, req)
+}
+
+func (t *acMailTransport) SendMessageByIdentity(ctx context.Context, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
+	return t.send(ctx, req)
+}
+
+func (t *acMailTransport) send(ctx context.Context, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("send request is required")
+	}
+	address := strings.TrimSpace(req.ToAddress)
+	if address == "" {
+		return nil, fmt.Errorf("AC-managed A2A bridge requires to_address")
+	}
+	routeID := strings.TrimSpace(t.routeByAddress[address])
+	if routeID == "" {
+		return nil, fmt.Errorf("AC-managed A2A bridge has no route for address %s", address)
+	}
+	payload := map[string]interface{}{
+		"route_id":        routeID,
+		"to_address":      address,
+		"conversation_id": strings.TrimSpace(req.ConversationID),
+		"subject":         req.Subject,
+		"body":            req.Body,
+		"content_mode":    awid.ContentModeLegacyPlaintextV1,
+		"priority":        string(req.Priority),
+		"message_id":      strings.TrimSpace(req.MessageID),
+	}
+	if payload["priority"] == "" {
+		payload["priority"] = string(awid.PriorityNormal)
+	}
+	var out awid.SendMessageResponse
+	if err := t.doJSON(ctx, http.MethodPost, "/"+url.PathEscape(t.gatewayID)+"/messages", payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (t *acMailTransport) MailConversation(ctx context.Context, conversationID string, limit int) (*awid.InboxResponse, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil, fmt.Errorf("conversation_id is required")
+	}
+	path := "/" + url.PathEscape(t.gatewayID) + "/conversations/" + url.PathEscape(conversationID)
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var out awid.InboxResponse
+	if err := t.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (t *acMailTransport) doJSON(ctx context.Context, method, path string, payload interface{}, out interface{}) error {
+	var body io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(t.bridgeURL, "/")+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+t.bearerToken)
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("AC bridge %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode AC bridge response: %w", err)
+	}
+	return nil
 }
 
 func parseOptionalDuration(field, raw string) (time.Duration, error) {
