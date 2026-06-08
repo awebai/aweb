@@ -101,6 +101,39 @@ func TestGatewayRejectsUnsafeRouteID(t *testing.T) {
 	}
 }
 
+func TestGatewayRequiresAWIDPublicationDigestToMatchServedCard(t *testing.T) {
+	route := helpRoute("r_help")
+	card, err := a2a.PerAddressCard(a2a.CardConfig{
+		Host:        "acme.com",
+		RouteID:     route.RouteID,
+		Name:        route.Card.Name,
+		Description: route.Card.Description,
+		Provider:    route.Card.Provider,
+		Skills:      route.Card.Skills,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := a2a.CardDigest(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route.AWIDPublication = &AWIDPublicationExpectation{
+		Address:    route.Address,
+		CardDigest: digest.Value,
+		Required:   true,
+	}
+	if _, err := New(Config{Host: "acme.com", Routes: []Route{route}}); err != nil {
+		t.Fatalf("New with matching digest: %v", err)
+	}
+
+	route.AWIDPublication.CardDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	_, err = New(Config{Host: "acme.com", Routes: []Route{route}})
+	if err == nil || !strings.Contains(err.Error(), "does not match AWID publication digest") {
+		t.Fatalf("New error: got %v, want AWID digest mismatch", err)
+	}
+}
+
 func TestGatewayRejectsInvalidRouteRuntimeConfig(t *testing.T) {
 	tests := []struct {
 		name string

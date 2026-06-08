@@ -163,6 +163,15 @@ func New(config Config) (*Gateway, error) {
 		if err := a2a.ValidateCard(card, a2a.ValidationOptions{CardPath: a2a.DirectCardPath(route.RouteID), RequireJSONRPCOnly: true, DisallowDirectTenant: true, RequireMediaTypeModes: true}); err != nil {
 			return nil, fmt.Errorf("route %s card validation: %w", route.RouteID, err)
 		}
+		if route.AWIDPublication != nil && route.AWIDPublication.Required {
+			digest, err := a2a.CardDigest(card)
+			if err != nil {
+				return nil, fmt.Errorf("route %s card digest: %w", route.RouteID, err)
+			}
+			if strings.TrimSpace(route.AWIDPublication.CardDigest) != digest.Value {
+				return nil, fmt.Errorf("route %s card digest %s does not match AWID publication digest %s", route.RouteID, digest.Value, strings.TrimSpace(route.AWIDPublication.CardDigest))
+			}
+		}
 		routeCards[route.RouteID] = card
 		routeConfigs[route.RouteID] = route
 	}
