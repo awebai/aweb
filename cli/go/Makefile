@@ -21,7 +21,8 @@ test:
 
 test-a2a:
 	$(GOENV) go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
-	$(GOENV) go test ./cmd/aw -run A2A -count=1
+	$(GOENV) go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1
+	cd ../.. && cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 
 tidy:
 	$(GOENV) go mod tidy

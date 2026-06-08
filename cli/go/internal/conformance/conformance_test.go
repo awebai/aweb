@@ -798,6 +798,13 @@ func TestA2AAWIDPublicationVectors(t *testing.T) {
 	if publicationCanonical != vector.Publication.Canonical {
 		t.Fatalf("publication canonical mismatch:\n got: %s\nwant: %s", publicationCanonical, vector.Publication.Canonical)
 	}
+	publicationJCSCanonical, err := canonicalJSONWithJCS(vector.Publication.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publicationJCSCanonical != publicationCanonical {
+		t.Fatalf("RFC8785/JCS publication canonicalization mismatch:\n jcs:  %s\n awid: %s", publicationJCSCanonical, publicationCanonical)
+	}
 
 	delegationCanonical, err := awid.CanonicalJSONValue(vector.Delegation.Payload)
 	if err != nil {
@@ -805,6 +812,13 @@ func TestA2AAWIDPublicationVectors(t *testing.T) {
 	}
 	if delegationCanonical != vector.Delegation.Canonical {
 		t.Fatalf("delegation canonical mismatch:\n got: %s\nwant: %s", delegationCanonical, vector.Delegation.Canonical)
+	}
+	delegationJCSCanonical, err := canonicalJSONWithJCS(vector.Delegation.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delegationJCSCanonical != delegationCanonical {
+		t.Fatalf("RFC8785/JCS delegation canonicalization mismatch:\n jcs:  %s\n awid: %s", delegationJCSCanonical, delegationCanonical)
 	}
 
 	delegationDigest, err := signedPayloadDigest(delegationCanonical, vector.Delegation.Signature)

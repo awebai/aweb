@@ -1,0 +1,111 @@
+# Example product A2A gateway config.
+#
+# Run from a real aweb workspace for the gateway identity:
+#
+#   aweb-a2a-gw --config docs/examples/a2a-gateway.yaml --check
+#   aweb-a2a-gw --config docs/examples/a2a-gateway.yaml
+#
+# Static API keys and bearer tokens can be loaded from env vars so secrets do
+# not need to be committed into config.
+
+listen: ":8080"
+host: "a2a.aweb.ai"
+workspace_dir: "."
+root_card_mode: "router"
+gateway_identity: "a2a.aweb.ai/gateway"
+poll_interval: "500ms"
+poll_timeout: "45s"
+require_verified_replies: true
+allow_unverified_local_reply: false
+
+router_card:
+  name: "aweb A2A Gateway"
+  description: "A2A gateway for aweb-hosted product agents. Exact agent cards are available at per-route URLs."
+  provider:
+    organization: "aweb"
+    url: "https://aweb.ai"
+  version: "1.0.0"
+  default_input_modes: ["text/plain"]
+  default_output_modes: ["text/plain"]
+  skills:
+    - id: "route-to-agent"
+      name: "Route to aweb agents"
+      description: "Routes A2A tasks to configured aweb agents when enough information is provided."
+      tags: ["router"]
+
+routes:
+  - route_id: "personal"
+    address: "a2a.aweb.ai/personal"
+    response_timeout: "45s"
+    auth:
+      mode: "none"
+    limits:
+      max_message_bytes: 65536
+      rate_limit: "30/min"
+      max_concurrent_tasks: 20
+      task_ttl: "1h"
+    card:
+      name: "aweb Personal"
+      description: "Personal A2A agent for demo coordination and direct questions."
+      provider:
+        organization: "aweb"
+        url: "https://aweb.ai"
+      version: "1.0.0"
+      default_input_modes: ["text/plain"]
+      default_output_modes: ["text/plain"]
+      skills:
+        - id: "personal-assistant"
+          name: "Personal assistant"
+          description: "Answers personal coordination questions and hands off when needed."
+          tags: ["personal", "coordination"]
+
+  - route_id: "customer-service"
+    address: "a2a.aweb.ai/customer-service"
+    response_timeout: "45s"
+    auth:
+      mode: "none"
+    limits:
+      max_message_bytes: 65536
+      rate_limit: "30/min"
+      max_concurrent_tasks: 20
+      task_ttl: "1h"
+    card:
+      name: "aweb Customer Service"
+      description: "Customer-service A2A agent for support and onboarding questions."
+      provider:
+        organization: "aweb"
+        url: "https://aweb.ai"
+      version: "1.0.0"
+      default_input_modes: ["text/plain"]
+      default_output_modes: ["text/plain"]
+      skills:
+        - id: "customer-service"
+          name: "Customer service"
+          description: "Answers product, onboarding, and support questions."
+          tags: ["support", "onboarding"]
+
+  - route_id: "research"
+    address: "a2a.aweb.ai/research"
+    response_timeout: "45s"
+    auth:
+      mode: "none"
+    limits:
+      max_message_bytes: 65536
+      rate_limit: "30/min"
+      max_concurrent_tasks: 20
+      task_ttl: "1h"
+    card:
+      name: "aweb Research"
+      description: "Research A2A agent for technical investigation and concise findings."
+      provider:
+        organization: "aweb"
+        url: "https://aweb.ai"
+      version: "1.0.0"
+      streaming: true
+      default_input_modes: ["text/plain"]
+      default_output_modes: ["text/plain", "application/json"]
+      skills:
+        - id: "technical-research"
+          name: "Technical research"
+          description: "Investigates technical questions and returns concise findings."
+          tags: ["research", "technical"]
