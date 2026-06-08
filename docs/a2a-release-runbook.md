@@ -32,6 +32,7 @@ Before any release handoff:
 6. The generated `@awebai/aw` package includes both `aw` and `aweb-a2a-gw` binaries and a smoke test invokes `aweb-a2a-gw --help` from the packed artifact.
 7. No site/docs/skills copy claims `verified`, `AWID-backed`, or `authorized for address` for A2A routes unless the live AWID publication and gateway verification gates below have already passed.
 8. No site/docs/skills copy calls hosted A2A gateway traffic end-to-end encrypted.
+9. Known fixture limitation is recorded: the A2A AWID publication fixture pins canonical bytes and signed-assertion digest bytes, while real Ed25519 verification is covered by runtime AWID tests. A future release-blocking fixture upgrade should add static real-signature vectors for both publication and delegation assertions before relying on fixture-only cryptographic verification.
 
 ## Release Order
 
@@ -105,7 +106,7 @@ Olivia owns site-copy implementation. The release owner must not ask Olivia to p
 4. gateway plaintext boundary copy is present;
 5. the site copy distinguishes:
    - generic A2A interop;
-   - AWID-verified publication;
+   - AWID-verified publication after the live route publication gate has passed;
    - hosted gateway plaintext boundary;
    - no E2EE claim for hosted gateway traffic.
 
