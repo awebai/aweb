@@ -48,6 +48,8 @@ These documents define the system:
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
   instructions, playbooks, skills, and adapters without identity/workspace state
+- [setup-surface-release-gates.md](setup-surface-release-gates.md): release
+  checklist and regression gates for the primitive-first setup surface
 - [bootstrap-layout-contract.md](bootstrap-layout-contract.md): legacy/
   compatibility contract for the in-repo `agents/` bootstrap convention and
   generated agent-home layout. The current setup-surface product taxonomy is
