@@ -50,6 +50,42 @@ func TestA2ACardReportsUnsignedInteropWithoutAWIDClaim(t *testing.T) {
 	}
 }
 
+func TestA2ACardDoesNotClaimSignatureVerificationWithoutAWID(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	card := testA2ACard("")
+	card.Signatures = []a2a.Signature{{Protected: "unused", Signature: "unused"}}
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/a2a/agents/r_support/agent-card.json" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(card)
+	}))
+
+	run := exec.CommandContext(ctx, bin, "--json", "a2a", "card", server.URL+"/a2a/agents/r_support/agent-card.json")
+	run.Dir = tmp
+	run.Env = testCommandEnv(tmp)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("aw a2a card failed: %v\n%s", err, string(out))
+	}
+	var got a2aCardOutput
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, string(out))
+	}
+	if got.Verification.Status != a2a.VerificationUnsigned || got.Verification.Tier != a2a.VerificationTier0 {
+		t.Fatalf("verification=%#v", got.Verification)
+	}
+	if strings.Contains(string(out), "signature_ok") || strings.Contains(string(out), "verified") {
+		t.Fatalf("signature-present output claimed verification:\n%s", string(out))
+	}
+}
+
 func TestA2ACardVerifiesAWIDPublicationDigest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -71,25 +107,22 @@ func TestA2ACardVerifiesAWIDPublicationDigest(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address": map[string]any{
-					"address_id":      "addr-1",
-					"domain":          "acme.com",
-					"name":            "help",
-					"did_aw":          "did:aw:test",
-					"current_did_key": "did:key:test",
-					"reachability":    "open",
-					"created_at":      "2026-06-07T00:00:00Z",
-				},
+				"address": "acme.com/help",
+				"did_aw":  "did:aw:test",
 				"a2a": map[string]any{
-					"card_url":      cardURL,
-					"rpc_url":       server.URL + "/a2a/agents/r_support/rpc",
-					"route_id":      "r_support",
-					"card_digest":   digest.Value,
-					"card_revision": "1",
-					"status":        "active",
-					"expires_at":    "2026-07-07T00:00:00Z",
+					"status":                   "active",
+					"card_url":                 cardURL,
+					"rpc_url":                  server.URL + "/a2a/agents/r_support/rpc",
+					"route_id":                 "r_support",
+					"gateway_identity":         "did:aw:gateway",
+					"card_digest_alg":          "sha256",
+					"card_digest":              digest.Value,
+					"card_revision":            "1",
+					"publication_assertion_id": "pub-1",
+					"published_at":             "2026-06-07T00:00:00Z",
+					"expires_at":               "2026-07-07T00:00:00Z",
+					"verification":             "awid_publication_available",
 				},
-				"verification": map[string]any{"status": "awid_publication_available"},
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -134,9 +167,24 @@ func TestA2ACardReportsDelegatedAWIDPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address":      testA2AAddressJSON(),
-				"a2a":          map[string]any{"card_url": cardURL, "rpc_url": server.URL + "/a2a/agents/r_support/rpc", "route_id": "r_support", "card_digest": digest.Value, "delegation_id": "deleg-1", "delegation_digest": "sha256:deleg", "gateway_did": "did:aw:gateway", "status": "active"},
-				"verification": map[string]any{"status": "awid_publication_available"},
+				"address": "acme.com/help",
+				"did_aw":  "did:aw:test",
+				"a2a": map[string]any{
+					"status":                   "active",
+					"card_url":                 cardURL,
+					"rpc_url":                  server.URL + "/a2a/agents/r_support/rpc",
+					"route_id":                 "r_support",
+					"gateway_identity":         "did:aw:gateway",
+					"card_digest_alg":          "sha256",
+					"card_digest":              digest.Value,
+					"card_revision":            "1",
+					"publication_assertion_id": "pub-1",
+					"delegation_id":            "deleg-1",
+					"delegation_digest":        "sha256:deleg",
+					"published_at":             "2026-06-07T00:00:00Z",
+					"expires_at":               "2026-07-07T00:00:00Z",
+					"verification":             "awid_publication_available",
+				},
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -176,17 +224,21 @@ func TestA2ACardRejectsAWIDDigestMismatch(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(card)
 		case "/v1/namespaces/acme.com/addresses/help/a2a":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address": map[string]any{
-					"address_id":      "addr-1",
-					"domain":          "acme.com",
-					"name":            "help",
-					"did_aw":          "did:aw:test",
-					"current_did_key": "did:key:test",
-					"reachability":    "open",
-					"created_at":      "2026-06-07T00:00:00Z",
+				"address": "acme.com/help",
+				"did_aw":  "did:aw:test",
+				"a2a": map[string]any{
+					"status":                   "active",
+					"card_url":                 cardURL,
+					"route_id":                 "r_support",
+					"gateway_identity":         "did:aw:gateway",
+					"card_digest_alg":          "sha256",
+					"card_digest":              "sha256:deadbeef",
+					"card_revision":            "1",
+					"publication_assertion_id": "pub-1",
+					"published_at":             "2026-06-07T00:00:00Z",
+					"expires_at":               "2026-07-07T00:00:00Z",
+					"verification":             "awid_publication_available",
 				},
-				"a2a":          map[string]any{"card_url": cardURL, "card_digest": "sha256:deadbeef", "route_id": "r_support", "status": "active"},
-				"verification": map[string]any{"status": "awid_publication_available"},
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -225,8 +277,9 @@ func TestA2ACardReportsRevokedPublicationWithoutCallingItVerified(t *testing.T) 
 			_ = json.NewEncoder(w).Encode(card)
 		case "/v1/namespaces/acme.com/addresses/help/a2a":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address":      testA2AAddressJSON(),
-				"verification": map[string]any{"status": "revoked", "code": "a2a_delegation_revoked", "message": "Delegation is revoked."},
+				"address": "acme.com/help",
+				"did_aw":  "did:aw:test",
+				"a2a":     nil,
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -244,7 +297,7 @@ func TestA2ACardReportsRevokedPublicationWithoutCallingItVerified(t *testing.T) 
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, string(out))
 	}
-	if got.Verification.Status != a2a.VerificationFailed || got.Verification.Code != "a2a_delegation_revoked" {
+	if got.Verification.Status != a2a.VerificationFailed || got.Verification.Code != "a2a_publication_missing" {
 		t.Fatalf("verification=%#v", got.Verification)
 	}
 	if strings.Contains(string(out), "awid_verified") {
@@ -499,18 +552,6 @@ func TestA2ASendInputRequiredExitCode(t *testing.T) {
 	}
 	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 3 {
 		t.Fatalf("exit=%v out=%s", err, string(out))
-	}
-}
-
-func testA2AAddressJSON() map[string]any {
-	return map[string]any{
-		"address_id":      "addr-1",
-		"domain":          "acme.com",
-		"name":            "help",
-		"did_aw":          "did:aw:test",
-		"current_did_key": "did:key:test",
-		"reachability":    "open",
-		"created_at":      "2026-06-07T00:00:00Z",
 	}
 }
 
