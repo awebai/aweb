@@ -75,6 +75,7 @@ func init() {
 	contactsCmd.GroupID = groupNetwork
 	inboundModeCmd.GroupID = groupNetwork
 	directoryCmd.GroupID = groupNetwork
+	a2aCmd.GroupID = groupNetwork
 	heartbeatCmd.GroupID = groupNetwork
 	eventsCmd.GroupID = groupNetwork
 	controlCmd.GroupID = groupNetwork
@@ -119,6 +120,7 @@ func init() {
 	bindTeamSelector(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(upgradeCmd)
+	rootCmd.AddCommand(a2aCmd)
 }
 
 func bindTeamSelector(cmd *cobra.Command) {
