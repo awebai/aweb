@@ -664,6 +664,7 @@ CLI surface:
 
 ```bash
 aw a2a card <url>
+aw a2a publish <url> [--address <domain/name>] [--gateway-identity <did:aw>] [--registry-url <url>]
 aw a2a send <url> <message> [--context <id>] [--wait|--no-wait] [--data <json>]
 aw a2a status <url> <task-id>
 aw a2a cancel <url> <task-id>
@@ -673,6 +674,7 @@ Behavior:
 
 - `card` fetches the card, validates schema, prints interface URLs, auth requirements, and verification tier.
 - Tier-2 verification consults AWID publication assertions when the card maps to an aweb address.
+- `publish` is an operator command for self-custodial global identities. It fetches a path-routed per-address card, computes its digest, publishes the bridge delegation when the gateway identity differs from the address identity, publishes the AWID route assertion, then verifies the card back through AWID. Hosted-custodial publication is performed by the hosted service, not by exporting hosted private keys to the CLI.
 - `send --wait` uses `SendStreamingMessage` when available, otherwise `SendMessage` plus polling `GetTask`.
 - On `TASK_STATE_INPUT_REQUIRED`, the CLI exits with a distinct status and prints the question.
 - Credentials are read from `.aw/a2a-credentials.yaml`, not command-line flags.
@@ -806,10 +808,14 @@ Subdomains are compatibility fallback, not the default product model.
 ## 16. Open Questions
 
 1. Whether `ListTasks` is required by the event harness.
-2. Whether first deployment uses mail threads or chat threads as the durable aweb primitive.
-3. Exact gateway wake path for Hetzner agents.
-4. Auth mode for public event routes.
-5. Minimal AWID publication implementation needed before product launch.
+2. Exact gateway wake path for Hetzner agents.
+3. Whether public event routes stay unauthenticated with strict per-route limits or move behind event-provided bearer tokens.
+4. Whether the first public deployment should expose root router discovery only, or also compatibility subdomains for event harnesses that cannot consume direct card URLs.
+
+Release and rollback sequencing is specified in
+[`a2a-release-runbook.md`](a2a-release-runbook.md). Public `verified`,
+`AWID-backed`, or `authorized for address` claims remain blocked until the
+runbook's live publication and verification gates pass.
 
 ## Appendix A: Product Examples
 

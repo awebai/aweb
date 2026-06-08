@@ -11,7 +11,7 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `agents`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `whoami` |
-| Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
+| Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `upgrade`, `version` |
 
@@ -953,6 +953,84 @@ Show the current identity
 Flags:
 - `-h, --help help for whoami`
 - `--team string Override the selected team_id for this command`
+
+## `a2a`
+
+### `a2a`
+
+Inspect and call A2A agents
+
+Subcommands:
+- `cancel` Cancel an A2A task
+- `card` Fetch and verify an A2A Agent Card
+- `publish` Publish an A2A Agent Card route to AWID
+- `send` Send a task message to an A2A agent
+- `status` Fetch an A2A task
+
+Flags:
+- `-h, --help help for a2a`
+
+## `a2a cancel`
+
+### `a2a cancel`
+
+Cancel an A2A task
+
+Flags:
+- `-h, --help help for cancel`
+
+## `a2a card`
+
+### `a2a card`
+
+Fetch and verify an A2A Agent Card
+
+Flags:
+- `--address string aweb address to verify through AWID, e.g. acme.com/help`
+- `-h, --help help for card`
+- `--registry-url string AWID registry URL for verification`
+
+## `a2a publish`
+
+### `a2a publish`
+
+Publish an A2A Agent Card route to AWID
+
+Flags:
+- `--address string aweb address to publish; defaults to current identity address`
+- `--assertion-id string Publication assertion id override`
+- `--card-revision string Card revision recorded in AWID; defaults to Agent Card version`
+- `--default-for-host Mark this route as the default A2A route for the host`
+- `--delegation-id string Bridge delegation id override`
+- `--expires-days int Publication/delegation lifetime in days (default 30)`
+- `--gateway-identity string did:aw of the A2A gateway identity; defaults to current identity for direct publication`
+- `-h, --help help for publish`
+- `--registry-url string AWID registry URL override`
+- `--route-id string Route id override; defaults to the card URL route`
+- `--rpc-url string RPC URL override; defaults to supportedInterfaces[0].url`
+
+## `a2a send`
+
+### `a2a send`
+
+Send a task message to an A2A agent
+
+Flags:
+- `--context string A2A context ID`
+- `--data string Additional JSON metadata object`
+- `-h, --help help for send`
+- `--no-wait Return immediately after task creation`
+- `--wait Wait for terminal or interrupted task state`
+
+## `a2a status`
+
+### `a2a status`
+
+Fetch an A2A task
+
+Flags:
+- `-h, --help help for status`
+- `--history int History length to request; -1 uses server default (default -1)`
 
 ## `chat`
 
