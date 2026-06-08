@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/gowebpki/jcs"
 )
 
 //go:embed vectors/*.json
@@ -434,12 +435,31 @@ func TestA2AV1AgentCardVectors(t *testing.T) {
 			if canonical != tc.CanonicalNoSignature {
 				t.Fatalf("canonical_no_signatures:\n got:  %s\n want: %s", canonical, tc.CanonicalNoSignature)
 			}
+			jcsCanonical, err := canonicalJSONWithJCS(cardForDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if jcsCanonical != canonical {
+				t.Fatalf("independent RFC8785/JCS canonicalization mismatch:\n jcs:  %s\n awid: %s", jcsCanonical, canonical)
+			}
 			sum := sha256.Sum256([]byte(canonical))
 			if got := "sha256:" + hex.EncodeToString(sum[:]); got != tc.Digest {
 				t.Fatalf("digest: got %s, want %s", got, tc.Digest)
 			}
 		})
 	}
+}
+
+func canonicalJSONWithJCS(value any) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := jcs.Transform(data)
+	if err != nil {
+		return "", err
+	}
+	return string(canonical), nil
 }
 
 func requireA2ASchemaValidationPin(t *testing.T, schema a2aSchema) {

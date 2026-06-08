@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
+	github.com/gowebpki/jcs v1.0.1
 	github.com/mr-tron/base58 v1.2.0
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2

@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e test-federation-e2e build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	release-server-check release-server-tag release-server-push \
@@ -25,6 +25,7 @@ help:
 	@echo "  test-awid    Run awid service tests"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
+	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
@@ -63,6 +64,10 @@ test-cli:
 
 test-channel:
 	cd channel && npm test
+
+test-a2a:
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw -run A2A -count=1
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
