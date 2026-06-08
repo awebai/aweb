@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,11 +90,13 @@ type runtimeBuild struct {
 }
 
 type runtimeRegistryHealth struct {
-	URL       string `json:"url,omitempty"`
-	Reachable bool   `json:"reachable"`
-	Status    string `json:"status"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
+	URL            string `json:"url,omitempty"`
+	Reachable      bool   `json:"reachable"`
+	Compatible     bool   `json:"compatible"`
+	Status         string `json:"status"`
+	Version        string `json:"version,omitempty"`
+	MinimumVersion string `json:"minimum_version,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
@@ -119,7 +122,7 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 	if err == nil {
 		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
 	}
-	if !health.AWIDRegistry.Reachable {
+	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible {
 		health.Status = "unhealthy"
 	}
 	status := http.StatusOK
@@ -134,16 +137,16 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 	registryURL = strings.TrimRight(strings.TrimSpace(registryURL), "/")
 	if registryURL == "" {
-		return runtimeRegistryHealth{Reachable: false, Status: "missing_registry_url", Error: "registry_url is required for runtime health"}
+		return runtimeRegistryHealth{Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: "missing_registry_url", Error: "registry_url is required for runtime health"}
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(registryURL + "/health")
 	if err != nil {
-		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Status: "unreachable", Error: err.Error()}
+		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: "unreachable", Error: err.Error()}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Status: http.StatusText(resp.StatusCode)}
+	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: http.StatusText(resp.StatusCode)}
 	if len(body) > 0 {
 		var payload map[string]interface{}
 		if err := json.Unmarshal(body, &payload); err == nil {
@@ -160,7 +163,73 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 	if !out.Reachable && out.Error == "" {
 		out.Error = fmt.Sprintf("registry health returned HTTP %d", resp.StatusCode)
 	}
+	if out.Reachable {
+		switch {
+		case out.Version == "":
+			out.Status = "missing_version"
+			out.Error = "registry health did not report version or service_version"
+		case !versionAtLeast(out.Version, minimumAWIDServiceVersion):
+			out.Status = "version_below_minimum"
+			out.Error = fmt.Sprintf("registry version %s is below required %s", out.Version, minimumAWIDServiceVersion)
+		default:
+			out.Compatible = true
+		}
+	}
 	return out
+}
+
+func versionAtLeast(got, minimum string) bool {
+	gotParts, ok := parseDottedVersion(got)
+	if !ok {
+		return false
+	}
+	minParts, ok := parseDottedVersion(minimum)
+	if !ok {
+		return false
+	}
+	n := len(gotParts)
+	if len(minParts) > n {
+		n = len(minParts)
+	}
+	for i := 0; i < n; i++ {
+		var gotValue, minValue int
+		if i < len(gotParts) {
+			gotValue = gotParts[i]
+		}
+		if i < len(minParts) {
+			minValue = minParts[i]
+		}
+		if gotValue > minValue {
+			return true
+		}
+		if gotValue < minValue {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDottedVersion(raw string) ([]int, bool) {
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, "v"))
+	if raw == "" {
+		return nil, false
+	}
+	if idx := strings.IndexAny(raw, "-+"); idx >= 0 {
+		raw = raw[:idx]
+	}
+	parts := strings.Split(raw, ".")
+	out := make([]int, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			return nil, false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 {
+			return nil, false
+		}
+		out = append(out, value)
+	}
+	return out, true
 }
 
 func stringField(payload map[string]interface{}, key string) string {

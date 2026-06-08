@@ -36,6 +36,30 @@ Before any release handoff:
 9. No site/docs/skills copy calls hosted A2A gateway traffic end-to-end encrypted.
 10. Known fixture limitation is recorded: the A2A AWID publication fixture pins canonical bytes and signed-assertion digest bytes, while real Ed25519 verification is covered by runtime AWID tests. A future release-blocking fixture upgrade should add static real-signature vectors for both publication and delegation assertions before relying on fixture-only cryptographic verification.
 
+## Gateway Identity Provisioning
+
+The hosted gateway is not just a static card host. It is an aweb workspace that sends bridge messages through a dedicated gateway identity, then exposes A2A cards and JSON-RPC routes for configured addresses.
+
+Before the first Render deployment, Hestia or the release operator must create and record the production gateway identity and config:
+
+1. Create a dedicated global gateway identity, for example `a2a.aweb.ai/gateway`, using the reviewed global identity path for the target team.
+2. Accept or attach that identity to the target team with a controller-signed team certificate. The gateway must not run with a human agent's private key.
+3. Confirm the gateway workspace can send an ordinary aweb message from its workspace directory before packaging the state for Render.
+4. Publish the gateway identity as a normal AWID global identity where applicable. This only proves the gateway identity exists. It is not enough to call a route verified; each public route still needs its own AWID publication and delegation assertion through the live route publication gate.
+5. Render the production `gateway.yaml` from [`docs/examples/a2a-gateway.yaml`](examples/a2a-gateway.yaml) or the equivalent release-owned template. The example file is not production truth and must not contain private state.
+6. Deliver `gateway.yaml` and the gateway workspace state to Render as private deployment state, not as committed files. The v1 acceptable mechanism is a Render secret file or base64-encoded secret tarball expanded at startup into a private directory. The state includes `.aw/workspace.yaml`, `.aw/teams.yaml`, certificate files, `.aw/signing.key`, and local encryption key state if the workspace has one.
+7. Set file permissions so private key material is readable only by the service user (`0600` files, `0700` directories where possible). The startup command must not print secrets, certificate bodies, private keys, or expanded YAML to logs.
+
+Rotation procedure:
+
+1. Create the replacement gateway identity and team certificate.
+2. Publish or update route delegations to the replacement gateway identity.
+3. Deploy Render with the replacement workspace state.
+4. Verify `/health` and the live route publication gate.
+5. Revoke the old route delegation and old gateway team certificate.
+
+For suspected gateway key compromise, stop the gateway or disable public routes first, then revoke the old delegation/certificate, then deploy the replacement identity. Do not keep a compromised gateway online while relying on future route updates to limit damage.
+
 ## Release Order
 
 If the release includes AWID migrations or AWID API changes:
@@ -65,6 +89,8 @@ If the release includes AC or hosted gateway deployment:
 
 9. Build and publish the gateway image before creating/updating the Render service:
 
+   `make release-a2a-gateway-check` is the narrow gateway container lane. It assumes the server, AWID, migration, and A2A release-ready checks for the same source SHA have already passed. For a fresh full release train, run the full server/AWID release-ready gates for that train before this narrow gateway check.
+
    ```bash
    make release-a2a-gateway-check
    make release-a2a-gateway-tag
@@ -78,7 +104,7 @@ If the release includes AC or hosted gateway deployment:
    ghcr.io/awebai/a2a-gateway:latest
    ```
 
-10. Deploy `a2a.aweb.ai` as a Render Web Service backed by the gateway image, not as a static site. The service is the A2A data plane; it must handle JSON-RPC task calls and cannot be replaced by static card hosting.
+10. Deploy `a2a.aweb.ai` as a Render Web Service backed by the gateway image, not as a static site and not as a Hetzner/systemd service for this slice. The service is the A2A data plane; it must handle JSON-RPC task calls and cannot be replaced by static card hosting. A Hetzner deployment can be revisited later only with a separate reviewed runbook.
 
     Render does not auto-deploy from the GHCR push. After the tag workflow publishes the image, Hestia mails Juan with the exact image tag and asks him to trigger the Render deploy manually. Hestia waits for the `/health` flip before posting verified-live.
 
@@ -113,12 +139,15 @@ If the release includes AC or hosted gateway deployment:
       "aweb_version": "X.Y.Z",
       "awid_service_version": ">=0.5.11",
       "awid_registry": {
-        "reachable": true
+        "reachable": true,
+        "compatible": true,
+        "version": "0.5.11",
+        "minimum_version": "0.5.11"
       }
     }
     ```
 
-    `build.release_tag` must match the pushed `a2a-gw-vX.Y.Z` tag, `build.git_sha` must match the release source SHA, and `awid_registry.reachable` must be true against `api.awid.ai`.
+    `build.release_tag` must match the pushed `a2a-gw-vX.Y.Z` tag, `build.git_sha` must match the release source SHA, `awid_registry.reachable` must be true against `api.awid.ai`, and `awid_registry.compatible` must be true. The gateway must report an AWID registry `version` or `service_version` greater than or equal to `awid_registry.minimum_version` before Hestia marks the service live.
 
 ## Live Route Publication Gate
 

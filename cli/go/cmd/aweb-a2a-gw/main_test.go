@@ -175,8 +175,92 @@ func TestA2AGatewayRuntimeHealthReportsBuildAndRegistry(t *testing.T) {
 		t.Fatalf("unexpected build payload: %#v", build)
 	}
 	awidRegistry := health["awid_registry"].(map[string]any)
-	if awidRegistry["reachable"] != true || awidRegistry["version"] != "0.5.11" {
+	if awidRegistry["reachable"] != true || awidRegistry["compatible"] != true || awidRegistry["version"] != "0.5.11" || awidRegistry["minimum_version"] != "0.5.11" {
 		t.Fatalf("unexpected registry payload: %#v", awidRegistry)
+	}
+}
+
+func TestA2AGatewayRuntimeHealthRejectsOldRegistryVersion(t *testing.T) {
+	tmp := t.TempDir()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.10"})
+	}))
+	defer registry.Close()
+	writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+	writeConfig(t, cfgPath, tmp, registry.URL)
+	gateway, err := buildGateway(mustLoadConfig(t, cfgPath))
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	runtimeHandler(gateway, mustLoadConfig(t, cfgPath)).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health["status"] != "unhealthy" {
+		t.Fatalf("unexpected health payload: %#v", health)
+	}
+	awidRegistry := health["awid_registry"].(map[string]any)
+	if awidRegistry["reachable"] != true || awidRegistry["compatible"] != false || awidRegistry["version"] != "0.5.10" || awidRegistry["status"] != "version_below_minimum" {
+		t.Fatalf("unexpected registry payload: %#v", awidRegistry)
+	}
+}
+
+func TestA2AGatewayRuntimeHealthRejectsRegistryWithoutVersion(t *testing.T) {
+	tmp := t.TempDir()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy"})
+	}))
+	defer registry.Close()
+	writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+	writeConfig(t, cfgPath, tmp, registry.URL)
+	gateway, err := buildGateway(mustLoadConfig(t, cfgPath))
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	runtimeHandler(gateway, mustLoadConfig(t, cfgPath)).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	awidRegistry := health["awid_registry"].(map[string]any)
+	if awidRegistry["reachable"] != true || awidRegistry["compatible"] != false || awidRegistry["status"] != "missing_version" {
+		t.Fatalf("unexpected registry payload: %#v", awidRegistry)
+	}
+}
+
+func TestA2AGatewayVersionAtLeast(t *testing.T) {
+	tests := []struct {
+		got     string
+		minimum string
+		want    bool
+	}{
+		{got: "0.5.11", minimum: "0.5.11", want: true},
+		{got: "0.5.12", minimum: "0.5.11", want: true},
+		{got: "0.6.0", minimum: "0.5.11", want: true},
+		{got: "v0.5.11", minimum: "0.5.11", want: true},
+		{got: "0.5.11+build", minimum: "0.5.11", want: true},
+		{got: "0.5.10", minimum: "0.5.11", want: false},
+		{got: "0.5", minimum: "0.5.1", want: false},
+		{got: "bad", minimum: "0.5.11", want: false},
+		{got: "0..11", minimum: "0.5.11", want: false},
+	}
+	for _, tt := range tests {
+		if got := versionAtLeast(tt.got, tt.minimum); got != tt.want {
+			t.Fatalf("versionAtLeast(%q, %q)=%v, want %v", tt.got, tt.minimum, got, tt.want)
+		}
 	}
 }
 
