@@ -1,6 +1,6 @@
 ---
 name: aweb-coordination
-description: This skill should be used when working in an aweb-coordinated team — checking what teammates are doing, discovering and sharing tasks, claiming work, taking manual locks on contested resources, reading or setting shared team roles and instructions, creating sibling worktrees with `aw workspace add-worktree`, and deciding whether to record coordination in shared aweb state versus private notes.
+description: This skill should be used when working in an aweb-coordinated team — checking what teammates are doing, discovering and sharing tasks, claiming work, taking manual locks on contested resources, reading or setting shared team roles and instructions, deciding when to create separate worktrees/workspaces with explicit git + aw primitives, and deciding whether to record coordination in shared aweb state versus private notes.
 allowed-tools: "Bash(aw *)"
 ---
 
@@ -22,7 +22,7 @@ A short map of the primitives this skill assumes are available. Each has its own
 - **Presence** — `aw workspace status` shows who is online; `aw heartbeat` sends an explicit presence beat.
 - **Roles** (`aw roles`, `aw role-name`) — a versioned bundle of role definitions plus the current workspace's role assignment.
 - **Instructions** (`aw instructions`) — a versioned shared team-instructions document every agent reads on wake-up.
-- **Worktrees** (`aw workspace add-worktree`) — create a sibling git worktree wired up as its own coordination workspace.
+- **Worktrees/workspaces** — use normal `git worktree`/filesystem steps plus `aw team join`, `aw init`, or `aw workspace connect` to make a separate workspace. `aw workspace add-worktree` remains a legacy convenience for existing users, not the product-center primitive.
 
 ## Start-of-session loop
 
@@ -155,15 +155,23 @@ A role name clarifies responsibility but does not bypass judgment. If a role ass
 
 ## Worktrees for parallel local work
 
-When the human (or another agent) needs a second working copy of the same repo — to run a parallel agent without disturbing your own working tree — create a sibling git worktree wired up as its own aweb workspace:
+When the human (or another agent) needs a second working copy of the same repo — to run a parallel agent without disturbing your own working tree — prefer explicit steps:
 
 ```bash
-aw workspace add-worktree
+git worktree add ../repo-feature -b feature-branch
+cd ../repo-feature
+# then join/connect this directory with the appropriate team primitive:
+aw team join <invite-token>
+aw init
+# or, for an already-certified BYOT/global workspace:
+aw workspace connect --service <service-url> --team <team>:<namespace>
 ```
 
-This creates a sibling directory next to the current worktree, materializes a fresh local identity bound to the same team, and writes a new `.aw/` so the new directory is immediately ready for an aweb agent. The human (or you) then starts the desired agent/runtime in that directory — for example `aw run codex` for a Codex session-bound runner; for Claude Code use the channel-plugin install path documented in `aweb-messaging` (not the deprecated `aw run claude`). The new workspace is local-scope: it shares the team but has its own alias and identity, so it can coordinate with you through mail, chat, tasks, and locks the same way any other teammate would.
+Ask an existing team member for `aw team invite` when this new worktree needs a fresh local identity. Use `aweb-team-membership` if you need to choose between hosted invite, BYOT request/fetch-cert, or service-init paths.
 
-Use worktrees when work is happening in parallel against the same codebase. Use separate `aw init`'d directories when the work isn't tied to one repo.
+`aw workspace add-worktree` remains available as a legacy convenience for existing users. Do not make it the default product path in new guidance unless it has been reduced to a transparent wrapper with no identity/team/template magic.
+
+Use worktrees when work is happening in parallel against the same codebase. Use separate initialized directories when the work isn't tied to one repo.
 
 ## Wrap-up at session end
 

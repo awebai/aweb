@@ -1,17 +1,26 @@
 ---
 name: aweb-bootstrap
-description: This skill should be used when helping a human create, provision, add, or remove repo-local aweb agents with the `aw agents` lifecycle from a template, choosing a team source (hosted new team, BYOT, API key, invite, or current workspace forwarding), using the project-local agents/ layout, provisioning optional worktree-bound agents, and validating/re-running safely.
+description: This skill should be used when dealing with legacy `aw agents` bootstrap/provision/add/remove layouts, recovering old bootstrap-era agents/ directories, or migrating from bootstrap templates toward primitive-first setup and resource packs. For new team/identity/workspace setup, prefer aweb-team-membership and aweb-identity primitives plus resource-pack guidance.
 allowed-tools: "Bash(aw *)"
 ---
 
 # aweb Bootstrap
 
-Use this skill when a human wants to create or extend a repo-local
-aweb agent team from a reusable template, and you need to guide them
-through `aw agents` decisions and validation.
+Use this skill when a human is working with the legacy
+`aw agents` bootstrap/provision/add/remove lifecycle, recovering an existing
+bootstrap-era `agents/` directory, or migrating from old template repos toward
+primitive-first setup and resource packs.
 
-This skill is about **mental model + decision policy + safe
-execution**, not memorizing flags.
+For a new setup, do **not** start here by default. Prefer:
+
+- `aweb-team-membership` for invite/join/remove/team-membership decisions;
+- `aweb-identity` for who the agent is and where keys live;
+- ordinary git/filesystem primitives for worktrees and copied resources;
+- resource-pack templates for roles, instructions, playbooks, and harness
+  adapters.
+
+This skill is about **legacy compatibility mental model + decision policy +
+safe recovery**, not memorizing flags.
 
 Related skills:
 
@@ -20,12 +29,36 @@ Related skills:
 - For joining an existing team, multi-team membership, custody,
   addressability, and contacts: `aweb-team-membership`
 
-Long-form reference: docs/team-bootstrap.md in the aweb repo.
+Long-form references in the aweb repo:
 
-## Mental model: what bootstrap is assembling
+- `docs/cli-setup-surface-sot.md`: current setup-surface taxonomy;
+- `docs/team-bootstrap.md`: legacy bootstrap-era reference;
+- `docs/bootstrap-layout-contract.md`: legacy compatibility contract.
 
-`aw agents bootstrap` combines five separate things that are easy to
-confuse:
+## Current product direction
+
+The product center is now **primitives + skills + resource packs**, not a
+monolithic bootstrap command. Keep these boundaries separate:
+
+1. Team/identity membership: invite, join, connect, switch, leave.
+2. Workspace connection: `aw workspace connect` or `aw service init` with an
+   existing identity/certificate.
+3. Team context: `aw roles` and `aw instructions`.
+4. Filesystem and git worktrees: normal git/filesystem primitives unless a
+   compatibility command is explicitly needed.
+5. Templates: resource packs containing harness-neutral Markdown roles,
+   instructions, playbooks, skills, and adapter examples. They must not be
+   canonical `CLAUDE.md`/Pi/Cursor-specific source of truth, and must not carry
+   final aliases, DIDs, addresses, certificates, `.aw` state, or generated
+   work symlinks.
+
+Use `aw agents ...` only for existing bootstrap-era layouts or when a human
+explicitly chooses the compatibility path.
+
+## Mental model: what legacy bootstrap is assembling
+
+`aw agents bootstrap` is obsolete/legacy compatibility because it combines five
+things that are easy to confuse:
 
 1) Template repo — the blueprint.
 
@@ -40,12 +73,13 @@ confuse:
 2) Generated project-local agents directory — where humans start agents.
 
 - By default, run bootstrap from the root of the work repo.
-- Bootstrap creates `agents/` in that repo. Every live agent home is
-  under `agents/home/<responsibility>/`.
-- The coordinator/global-style home normally has `work -> <repo-root>`.
-- Worktree-bound homes still live under
-  `agents/home/<responsibility>/`; their `work` symlink points at
-  `agents/worktrees/<worktree-name>/`.
+- Bootstrap creates `agents/` in that repo. Every responsibility has a
+  blueprint home under `agents/home/<responsibility>/`.
+- Repo-root agents use that home as the live workspace.
+- Worktree-bound agents use `agents/worktrees/<worktree-name>/` as the
+  live workspace; their `.aw/` state lives in that worktree.
+- The blueprint home's `work` symlink points at the repo root or at the
+  generated worktree for convenience.
 - Use `--agents-dir <name>` only when the repo already uses `agents/`
   for something else. If the target directory exists, bootstrap must
   fail before side effects.
@@ -68,12 +102,13 @@ confuse:
   `{user}-{classic-name}` for local aliases and
   `{user}-{responsibility}` for global address names.
 - Never commit the final planned alias/address to `team.yaml`; it
-  belongs in ignored `.aw/` state under each agent home.
+  belongs in ignored `.aw/` state under each agent's runtime workspace.
 
 5) Generated workspaces — the identities that will act.
 
-- Each `agents/home/<responsibility>/` directory becomes an aw
-  workspace with its own identity and team certificate.
+- Each planned agent gets an aw workspace with its own identity and
+  team certificate: repo-root agents under `agents/home/<responsibility>/`,
+  worktree-bound agents under `agents/worktrees/<worktree-name>/`.
 - The **first generated plan** is the anchor: bootstrap connects it
   first, installs roles/instructions from that workspace's team
   context, then invites/connects the rest.
@@ -111,28 +146,31 @@ Use `aw agents provision` when:
 
 Use `aw agents add` or `aw agents add-worktree` when:
 
-- The layout already exists and you need one more responsibility.
-- You want a repo-root agent (`add`) or isolated git worktree agent
-  (`add-worktree`).
+- The layout already exists and you need one more repo-root
+  responsibility (`add`).
+- You want one more local git worktree agent without changing the
+  committed layout (`add-worktree`).
 
 Do NOT bootstrap when:
 
 - The team already exists and you just need to add yourself: use
   `aweb-team-membership` and the `aw id team ...` commands.
 - You only need another workspace for yourself outside the repo-local
-  convention: use `aw workspace add-worktree` or create another
-  directory and `aw init` it.
+  convention: use explicit `git worktree`/filesystem steps plus `aw team join`,
+  `aw init`, or `aw workspace connect` as appropriate. `aw workspace
+  add-worktree` is a legacy convenience, not the new default.
 
 ## Pick a template
 
-Canonical templates:
+Bootstrap-era templates:
 
 - awebai/aweb-team-coord-worktrees
-  Use when you want a coordinator plus isolated developer/reviewer git
-  worktrees in the current repo.
 - awebai/aweb-team-company-surfaces
-  Use when you want a cross-functional team: direction/engineering/
-  operations/support/outreach/analytics.
+
+These are being replaced by resource-pack templates. Treat them as legacy
+compatibility inputs, not the new customer happy path. A new-design template is
+not an identity/workspace mutation plan; it is a collection of harness-neutral
+resources that an agent or human can adapt explicitly.
 
 Fork/edit vs use-as-is:
 
@@ -170,10 +208,10 @@ What to edit:
   `home_template`, and optional `work`.
 - `team.yaml` naming: for shared repos, prefer
   `naming.local_alias.pattern: "{user}-{classic-name}"`.
-- Use `work: repo_root` for an agent whose `work` symlink points to
-  the project repo root.
-- Use `work: git_worktree` for an agent whose `work` symlink points
-  to a generated git worktree under `agents/worktrees/`.
+- Use `work: repo_root` for an agent whose runtime workspace is its
+  blueprint home and whose `work` symlink points to the project repo root.
+- Use `work: git_worktree` for an agent whose runtime workspace is a
+  generated git worktree under `agents/worktrees/`.
 - `roles/*.md`: change operational playbooks installed with
   `aw roles`.
 - `docs/team.md`: change shared team instructions installed after the
@@ -203,9 +241,10 @@ team, or uses BYOT.
 3) Decide the identity prefix. Shared repos should always pass
 `--identity-prefix <human-slug>` explicitly.
 
-## Default layout: project-local agents/
+## Legacy default layout: project-local agents/
 
-New bootstrap runs should normally use the default layout:
+If you must use the obsolete/legacy bootstrap compatibility path, prefer the
+default layout:
 
 ```bash
 cd /path/to/project-repo
@@ -240,11 +279,14 @@ agents/
 ```
 
 The repo root itself is not an aw workspace. Start Codex, Claude Code,
-or Pi from an agent home:
+or Pi from an agent runtime workspace:
 
 ```bash
 cd agents/home/coordinator
 codex
+
+cd agents/worktrees/developer
+claude
 ```
 
 Bootstrap writes scoped `.gitignore` entries for
@@ -260,7 +302,10 @@ git add .gitignore agents
 git commit -m "agents: ignore generated work symlinks"
 ```
 
-## Multi-human shared repo flow
+## Legacy multi-human shared repo flow
+
+This flow exists for old bootstrap-era layouts. New resource-pack flows should
+not require a shared identity-bearing `agents/` layout.
 
 First human:
 
@@ -359,10 +404,10 @@ Add a repo-root local responsibility:
 aw agents add support --role support
 ```
 
-Add a worktree-bound local responsibility:
+Create a local worktree-bound agent without changing the shared layout:
 
 ```bash
-aw agents add-worktree developer --role developer
+aw agents add-worktree developer
 ```
 
 Add a global BYOT responsibility:

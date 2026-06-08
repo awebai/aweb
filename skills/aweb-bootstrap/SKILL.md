@@ -1,17 +1,26 @@
 ---
 name: aweb-bootstrap
-description: This skill should be used when helping a human create, provision, add, or remove repo-local aweb agents with the `aw agents` lifecycle from a template, choosing a team source (hosted new team, BYOT, API key, invite, or current workspace forwarding), using the project-local agents/ layout, provisioning optional worktree-bound agents, and validating/re-running safely.
+description: This skill should be used when dealing with legacy `aw agents` bootstrap/provision/add/remove layouts, recovering old bootstrap-era agents/ directories, or migrating from bootstrap templates toward primitive-first setup and resource packs. For new team/identity/workspace setup, prefer aweb-team-membership and aweb-identity primitives plus resource-pack guidance.
 allowed-tools: "Bash(aw *)"
 ---
 
 # aweb Bootstrap
 
-Use this skill when a human wants to create or extend a repo-local
-aweb agent team from a reusable template, and you need to guide them
-through `aw agents` decisions and validation.
+Use this skill when a human is working with the legacy
+`aw agents` bootstrap/provision/add/remove lifecycle, recovering an existing
+bootstrap-era `agents/` directory, or migrating from old template repos toward
+primitive-first setup and resource packs.
 
-This skill is about **mental model + decision policy + safe
-execution**, not memorizing flags.
+For a new setup, do **not** start here by default. Prefer:
+
+- `aweb-team-membership` for invite/join/remove/team-membership decisions;
+- `aweb-identity` for who the agent is and where keys live;
+- ordinary git/filesystem primitives for worktrees and copied resources;
+- resource-pack templates for roles, instructions, playbooks, and harness
+  adapters.
+
+This skill is about **legacy compatibility mental model + decision policy +
+safe recovery**, not memorizing flags.
 
 Related skills:
 
@@ -20,12 +29,36 @@ Related skills:
 - For joining an existing team, multi-team membership, custody,
   addressability, and contacts: `aweb-team-membership`
 
-Long-form reference: docs/team-bootstrap.md in the aweb repo.
+Long-form references in the aweb repo:
 
-## Mental model: what bootstrap is assembling
+- `docs/cli-setup-surface-sot.md`: current setup-surface taxonomy;
+- `docs/team-bootstrap.md`: legacy bootstrap-era reference;
+- `docs/bootstrap-layout-contract.md`: legacy compatibility contract.
 
-`aw agents bootstrap` combines five separate things that are easy to
-confuse:
+## Current product direction
+
+The product center is now **primitives + skills + resource packs**, not a
+monolithic bootstrap command. Keep these boundaries separate:
+
+1. Team/identity membership: invite, join, connect, switch, leave.
+2. Workspace connection: `aw workspace connect` or `aw service init` with an
+   existing identity/certificate.
+3. Team context: `aw roles` and `aw instructions`.
+4. Filesystem and git worktrees: normal git/filesystem primitives unless a
+   compatibility command is explicitly needed.
+5. Templates: resource packs containing harness-neutral Markdown roles,
+   instructions, playbooks, skills, and adapter examples. They must not be
+   canonical `CLAUDE.md`/Pi/Cursor-specific source of truth, and must not carry
+   final aliases, DIDs, addresses, certificates, `.aw` state, or generated
+   work symlinks.
+
+Use `aw agents ...` only for existing bootstrap-era layouts or when a human
+explicitly chooses the compatibility path.
+
+## Mental model: what legacy bootstrap is assembling
+
+`aw agents bootstrap` is obsolete/legacy compatibility because it combines five
+things that are easy to confuse:
 
 1) Template repo — the blueprint.
 
@@ -123,19 +156,21 @@ Do NOT bootstrap when:
 - The team already exists and you just need to add yourself: use
   `aweb-team-membership` and the `aw id team ...` commands.
 - You only need another workspace for yourself outside the repo-local
-  convention: use `aw workspace add-worktree` or create another
-  directory and `aw init` it.
+  convention: use explicit `git worktree`/filesystem steps plus `aw team join`,
+  `aw init`, or `aw workspace connect` as appropriate. `aw workspace
+  add-worktree` is a legacy convenience, not the new default.
 
 ## Pick a template
 
-Canonical templates:
+Bootstrap-era templates:
 
 - awebai/aweb-team-coord-worktrees
-  Use when you want a coordinator plus isolated developer/reviewer git
-  worktrees in the current repo.
 - awebai/aweb-team-company-surfaces
-  Use when you want a cross-functional team: direction/engineering/
-  operations/support/outreach/analytics.
+
+These are being replaced by resource-pack templates. Treat them as legacy
+compatibility inputs, not the new customer happy path. A new-design template is
+not an identity/workspace mutation plan; it is a collection of harness-neutral
+resources that an agent or human can adapt explicitly.
 
 Fork/edit vs use-as-is:
 
@@ -206,9 +241,10 @@ team, or uses BYOT.
 3) Decide the identity prefix. Shared repos should always pass
 `--identity-prefix <human-slug>` explicitly.
 
-## Default layout: project-local agents/
+## Legacy default layout: project-local agents/
 
-New bootstrap runs should normally use the default layout:
+If you must use the obsolete/legacy bootstrap compatibility path, prefer the
+default layout:
 
 ```bash
 cd /path/to/project-repo
@@ -266,7 +302,10 @@ git add .gitignore agents
 git commit -m "agents: ignore generated work symlinks"
 ```
 
-## Multi-human shared repo flow
+## Legacy multi-human shared repo flow
+
+This flow exists for old bootstrap-era layouts. New resource-pack flows should
+not require a shared identity-bearing `agents/` layout.
 
 First human:
 
