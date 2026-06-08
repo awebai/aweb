@@ -657,7 +657,7 @@ async def publish_a2a_route(
         if fields.status == A2A_STATUS_ACTIVE:
             active_route = await tx.fetch_one(
                 """
-                SELECT assertion_id, gateway_identity, card_digest, assertion_digest
+                SELECT assertion_id, gateway_identity, card_digest, card_url, rpc_url, card_revision, assertion_digest
                 FROM {{tables.a2a_route_publications}}
                 WHERE address = $1
                   AND route_id = $2
@@ -673,6 +673,9 @@ async def publish_a2a_route(
                     raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "active route uses different gateway")
                 if active_route["card_digest"] != fields.card_digest:
                     raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route uses different card digest")
+                for field_name in ("card_url", "rpc_url", "card_revision"):
+                    if active_route[field_name] != getattr(fields, field_name):
+                        raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, f"active route uses different {field_name}")
                 return A2AWriteResponse(
                     status="already_applied",
                     assertion_id=active_route["assertion_id"],

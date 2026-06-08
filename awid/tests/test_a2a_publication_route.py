@@ -168,6 +168,10 @@ def _publication_body(
     direct: bool = False,
     identity_custody: str = "self",
     authority_source: str = A2A_AUTHORITY_SELF_IDENTITY_KEY,
+    assertion_id: str = "pub_test_01",
+    card_url: str = "https://example.com/a2a/agents/r_research/agent-card.json",
+    rpc_url: str = "https://example.com/a2a/agents/r_research/rpc",
+    card_revision: str = "2026-06-07.1",
 ) -> dict:
     if delegation_digest is None:
         delegation_digest = (
@@ -181,14 +185,14 @@ def _publication_body(
     fields = normalize_a2a_publication_fields(
         A2APublicationFields(
             operation=A2A_PUBLICATION_OPERATION,
-            assertion_id="pub_test_01",
+            assertion_id=assertion_id,
             address="example.com/research",
             did_aw=seed["identity_did_aw"],
             current_did_key=seed["identity_did_key"],
             signer_did=seed["identity_did_key"],
             signer_kid=seed["identity_did_key"] + "#ed25519",
-            card_url="https://example.com/a2a/agents/r_research/agent-card.json",
-            rpc_url="https://example.com/a2a/agents/r_research/rpc",
+            card_url=card_url,
+            rpc_url=rpc_url,
             route_id="r_research",
             tenant=None,
             gateway_identity=seed["identity_did_aw"] if direct else seed["gateway_did_aw"],
@@ -196,7 +200,7 @@ def _publication_body(
             delegation_digest=delegation_digest,
             card_digest_alg=A2A_CARD_DIGEST_ALG_SHA256,
             card_digest=_CARD_DIGEST,
-            card_revision="2026-06-07.1",
+            card_revision=card_revision,
             default_for_host=False,
             status=A2A_STATUS_ACTIVE,
             published_at=_PUBLISHED_AT,
@@ -266,6 +270,40 @@ async def test_a2a_publication_same_active_route_digest_is_idempotent(client, aw
     assert payload["status"] == "already_applied"
     assert payload["assertion_id"] == "pub_test_01"
     assert await _counts(awid_db_infra) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "override"),
+    (
+        ("card_url", "https://example.com/a2a/agents/r_research_v2/agent-card.json"),
+        ("rpc_url", "https://example.com/a2a/agents/r_research_v2/rpc"),
+        ("card_revision", "2026-06-07.2"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_a2a_publication_same_digest_metadata_change_conflicts(
+    client,
+    awid_db_infra,
+    controller_identity,
+    field_name,
+    override,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+
+    first = _publication_body(seed, None, direct=True)
+    first_resp = await client.post("/v1/a2a/publications", json=first)
+    assert first_resp.status_code == 200, first_resp.text
+    assert first_resp.json()["status"] == "applied"
+
+    kwargs = {"assertion_id": "pub_test_02", field_name: override}
+    second = _publication_body(seed, None, direct=True, **kwargs)
+    second_resp = await client.post("/v1/a2a/publications", json=second)
+
+    assert second_resp.status_code == 409, second_resp.text
+    payload = second_resp.json()
+    assert payload["detail"]["code"] == "a2a_publication_exists_different_digest"
+    assert field_name in payload["detail"]["message"]
+    assert await _counts(awid_db_infra) == (0, 1)
 
 
 @pytest.mark.asyncio
