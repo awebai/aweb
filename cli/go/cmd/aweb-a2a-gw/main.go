@@ -58,6 +58,9 @@ func run(args []string, stdout, _ *os.File) error {
 	if strings.TrimSpace(*workspaceOverride) != "" {
 		cfg.WorkspaceDir = strings.TrimSpace(*workspaceOverride)
 	}
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		return err
+	}
 	gateway, err := buildGateway(cfg)
 	if err != nil {
 		return err
@@ -265,6 +268,13 @@ type fileConfig struct {
 	RouterCard                cardConfig    `yaml:"router_card"`
 	Routes                    []routeConfig `yaml:"routes"`
 	Audit                     auditConfig   `yaml:"audit"`
+	ACConfig                  acConfig      `yaml:"ac_config"`
+}
+
+type acConfig struct {
+	URL            string `yaml:"url"`
+	BearerToken    string `yaml:"bearer_token"`
+	BearerTokenEnv string `yaml:"bearer_token_env"`
 }
 
 type routeConfig struct {
@@ -338,6 +348,224 @@ func loadFileConfig(path string) (fileConfig, error) {
 		return fileConfig{}, err
 	}
 	return cfg, nil
+}
+
+type acRuntimeConfigPayload struct {
+	GatewayID             string                 `json:"gateway_id"`
+	GatewayIdentity       string                 `json:"gateway_identity"`
+	GatewayIdentityStatus string                 `json:"gateway_identity_status"`
+	ConfigRevision        string                 `json:"config_revision"`
+	ExpiresAt             string                 `json:"expires_at"`
+	Routes                []acRuntimeRoute       `json:"routes"`
+	RouteCounts           map[string]interface{} `json:"route_counts"`
+}
+
+type acRuntimeRoute struct {
+	RouteID          string                 `json:"route_id"`
+	Host             string                 `json:"host"`
+	Address          string                 `json:"address"`
+	Mode             string                 `json:"mode"`
+	Disabled         bool                   `json:"disabled"`
+	RootBehavior     string                 `json:"root_behavior"`
+	VerificationTier string                 `json:"verification_tier"`
+	CardDigest       string                 `json:"card_digest"`
+	CardRevision     string                 `json:"card_revision"`
+	Auth             acRuntimeAuth          `json:"auth"`
+	Limits           acRuntimeLimits        `json:"limits"`
+	Card             acRuntimeCard          `json:"card"`
+	AWIDPublication  acRuntimeAWID          `json:"awid_publication"`
+	Extra            map[string]interface{} `json:"-"`
+}
+
+type acRuntimeAuth struct {
+	Mode      string `json:"mode"`
+	SecretRef string `json:"secret_ref"`
+}
+
+type acRuntimeLimits struct {
+	RateLimit              map[string]interface{} `json:"rate_limit"`
+	MaxMessageBytes        int                    `json:"max_message_bytes"`
+	MaxConcurrentTasks     int                    `json:"max_concurrent_tasks"`
+	TaskTTLSeconds         int                    `json:"task_ttl_seconds"`
+	ResponseTimeoutSeconds int                    `json:"response_timeout_seconds"`
+}
+
+type acRuntimeCard struct {
+	Name               string       `json:"name"`
+	Description        string       `json:"description"`
+	Provider           providerYAML `json:"provider"`
+	Version            string       `json:"version"`
+	Streaming          bool         `json:"streaming"`
+	PushNotifications  bool         `json:"push_notifications"`
+	DefaultInputModes  []string     `json:"default_input_modes"`
+	DefaultOutputModes []string     `json:"default_output_modes"`
+	Skills             []skillYAML  `json:"skills"`
+}
+
+type acRuntimeAWID struct {
+	PublicationID        string `json:"publication_id"`
+	PublicationDigest    string `json:"publication_digest"`
+	PublicationStatus    string `json:"publication_status"`
+	PublicationExpiresAt string `json:"publication_expires_at"`
+	DelegationID         string `json:"delegation_id"`
+	DelegationDigest     string `json:"delegation_digest"`
+	DelegationStatus     string `json:"delegation_status"`
+	DelegationExpiresAt  string `json:"delegation_expires_at"`
+}
+
+func applyACRuntimeConfig(cfg *fileConfig) error {
+	url := strings.TrimSpace(cfg.ACConfig.URL)
+	if url == "" {
+		return nil
+	}
+	token := firstNonEmpty(cfg.ACConfig.BearerToken, envValue(cfg.ACConfig.BearerTokenEnv))
+	if token == "" {
+		return fmt.Errorf("ac_config bearer token is required")
+	}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch AC runtime config: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("fetch AC runtime config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var payload acRuntimeConfigPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("decode AC runtime config: %w", err)
+	}
+	return mergeACRuntimeConfig(cfg, payload)
+}
+
+func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error {
+	if strings.TrimSpace(payload.GatewayIdentityStatus) != "active" {
+		return fmt.Errorf("AC runtime config gateway identity is not active: %s", payload.GatewayIdentityStatus)
+	}
+	if expiresAt := strings.TrimSpace(payload.ExpiresAt); expiresAt != "" {
+		parsed, err := time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			return fmt.Errorf("AC runtime config expires_at: %w", err)
+		}
+		if time.Now().After(parsed) {
+			return fmt.Errorf("AC runtime config expired at %s", expiresAt)
+		}
+	}
+	if strings.TrimSpace(payload.GatewayIdentity) != "" {
+		cfg.GatewayIdentity = strings.TrimSpace(payload.GatewayIdentity)
+	}
+	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
+	defaultRouteID := ""
+	routerRoutes := 0
+	for _, route := range payload.Routes {
+		converted := routeConfig{
+			RouteID:         strings.TrimSpace(route.RouteID),
+			Address:         strings.TrimSpace(route.Address),
+			Mode:            strings.TrimSpace(route.Mode),
+			Disabled:        route.Disabled,
+			ResponseTimeout: secondsDuration(route.Limits.ResponseTimeoutSeconds),
+			Auth:            authConfig{Mode: strings.TrimSpace(route.Auth.Mode)},
+			Limits: limitsConfig{
+				MaxMessageBytes:    route.Limits.MaxMessageBytes,
+				RateLimit:          rateLimitFromAC(route.Limits.RateLimit),
+				MaxConcurrentTasks: route.Limits.MaxConcurrentTasks,
+				TaskTTL:            secondsDuration(route.Limits.TaskTTLSeconds),
+			},
+			Card: cardConfig{
+				Name:               strings.TrimSpace(route.Card.Name),
+				Description:        strings.TrimSpace(route.Card.Description),
+				Provider:           providerYAML{Organization: strings.TrimSpace(route.Card.Provider.Organization), URL: strings.TrimSpace(route.Card.Provider.URL)},
+				Version:            strings.TrimSpace(route.Card.Version),
+				Streaming:          route.Card.Streaming,
+				PushNotifications:  route.Card.PushNotifications,
+				DefaultInputModes:  route.Card.DefaultInputModes,
+				DefaultOutputModes: route.Card.DefaultOutputModes,
+				Skills:             route.Card.Skills,
+			},
+		}
+		if strings.TrimSpace(route.CardDigest) != "" && strings.TrimSpace(route.Address) != "" {
+			converted.AWIDPublication = &awidPublicationConfig{
+				Address:    strings.TrimSpace(route.Address),
+				CardDigest: strings.TrimSpace(route.CardDigest),
+				Required:   strings.TrimSpace(route.VerificationTier) == "awid_published" || strings.TrimSpace(route.VerificationTier) == "delegated",
+			}
+		}
+		if cfg.Host == "" {
+			cfg.Host = strings.TrimSpace(route.Host)
+		}
+		switch strings.TrimSpace(route.RootBehavior) {
+		case "default_for_host":
+			if defaultRouteID == "" {
+				defaultRouteID = converted.RouteID
+			}
+		case "router_member":
+			routerRoutes++
+		}
+		cfg.Routes = append(cfg.Routes, converted)
+	}
+	if defaultRouteID != "" {
+		cfg.RootCardMode = string(a2agw.RootCardDefaultAgent)
+		cfg.DefaultRouteID = defaultRouteID
+	} else if routerRoutes > 0 || len(cfg.Routes) > 1 {
+		cfg.RootCardMode = string(a2agw.RootCardRouter)
+		if strings.TrimSpace(cfg.RouterCard.Name) == "" {
+			cfg.RouterCard = defaultRouterCard(cfg.Host)
+		}
+	}
+	return nil
+}
+
+func secondsDuration(seconds int) string {
+	if seconds <= 0 {
+		return ""
+	}
+	return (time.Duration(seconds) * time.Second).String()
+}
+
+func rateLimitFromAC(value map[string]interface{}) string {
+	if len(value) == 0 {
+		return ""
+	}
+	if raw, ok := value["raw"].(string); ok && strings.TrimSpace(raw) != "" {
+		return strings.TrimSpace(raw)
+	}
+	if perMinute, ok := numericMapValue(value, "requests_per_minute"); ok && perMinute > 0 {
+		return fmt.Sprintf("%d/min", perMinute)
+	}
+	return ""
+}
+
+func numericMapValue(value map[string]interface{}, key string) (int, bool) {
+	raw, ok := value[key]
+	if !ok {
+		return 0, false
+	}
+	switch typed := raw.(type) {
+	case float64:
+		return int(typed), true
+	case int:
+		return typed, true
+	default:
+		return 0, false
+	}
+}
+
+func defaultRouterCard(host string) cardConfig {
+	return cardConfig{
+		Name:               "aweb A2A Gateway",
+		Description:        "A2A gateway for aweb agents.",
+		Provider:           providerYAML{Organization: "aweb", URL: "https://aweb.ai"},
+		Version:            "1.0.0",
+		DefaultInputModes:  []string{"text/plain"},
+		DefaultOutputModes: []string{"text/plain"},
+		Skills:             []skillYAML{{ID: "route", Name: "Route A2A tasks", Description: "Route A2A tasks to configured aweb agents.", Tags: []string{"a2a", host}}},
+	}
 }
 
 func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
