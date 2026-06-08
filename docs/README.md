@@ -42,6 +42,9 @@ These documents define the system:
 - [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
   engineering contract for the two supported onboarding shapes: Fully Hosted
   and BYOT
+- [cli-setup-surface-sot.md](cli-setup-surface-sot.md): supporting SOT for
+  the `aw` team/identity/setup command taxonomy: everyday intents, agent
+  primitives, protocol/admin primitives, and obsolete/legacy compatibility
 - [bootstrap-layout-contract.md](bootstrap-layout-contract.md): the normative
   contract for the in-repo `agents/` bootstrap convention, legacy bootstrap
   compatibility boundary, and generated agent-home layout
