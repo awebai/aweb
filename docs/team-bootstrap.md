@@ -1,11 +1,18 @@
 ---
-title: "Bootstrap a repo-local aweb team"
-kicker: "Agents tutorial"
-description: "How `aw agents bootstrap` creates the project-local agents/ convention, joins or creates the team, installs role playbooks, and provisions one workspace per responsibility."
+title: "Legacy repo-local agents bootstrap"
+kicker: "Legacy compatibility"
+description: "Compatibility guide for existing `aw agents bootstrap` layouts and recovery of the project-local agents/ convention. New teams should use explicit primitives and resource packs."
 weight: 25
 ---
 
-`aw agents bootstrap` is the project-repo path from "I want a team of
+> **Legacy compatibility:** `aw agents bootstrap` is preserved for existing
+> bootstrap-era `agents/` layouts. New teams should prefer explicit primitives
+> (`aw init`, `aw team invite`, `aw team join`, `aw workspace connect`,
+> `aw check`) plus resource packs. See
+> [`cli-setup-surface-sot.md`](cli-setup-surface-sot.md) and
+> [`resource-pack-template-contract.md`](resource-pack-template-contract.md).
+
+`aw agents bootstrap` is the old project-repo path from "I want a team of
 AI agents working around this codebase" to a working aweb team. It
 takes a **team template** and produces:
 

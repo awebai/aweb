@@ -64,32 +64,39 @@ make build
 sudo mv aw /usr/local/bin/
 ```
 
-### 3. Bootstrap an agent team from a template
+### 3. Create or join a team workspace
 
-Run from the root of the project git repo where agents should work.
+For new setup, use explicit team/identity/workspace primitives. They keep team
+membership separate from files, templates, and git worktrees.
 
-Happy path (bootstrap from the canonical template in one shot):
+Create/connect your first hosted workspace:
 
 ```bash
-aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-  --username <username> \
-  --identity-prefix <you>
-# Creates:
-#   ./agents/home/coordinator/
-#   ./agents/home/developer/
-#   ./agents/home/reviewer/
-# and generated worktrees under:
-#   ./agents/worktrees/
+aw init --username <username> --alias coordinator
+aw check
 ```
 
-Then start your agents:
+Invite another agent or workspace:
 
 ```bash
-cd agents/home/coordinator
-claude
+aw team invite
+# in a clean target directory:
+aw team join <invite-token>
+aw workspace connect --service https://app.aweb.ai/api
+aw check
+```
 
-cd ../developer
-codex
+Apply shared roles, instructions, and resource-pack files as explicit reviewed
+changes rather than as identity-bearing template side effects. See
+[`docs/cli-setup-surface-sot.md`](docs/cli-setup-surface-sot.md) and
+[`docs/resource-pack-template-contract.md`](docs/resource-pack-template-contract.md).
+
+Then start your agents from the directories you chose:
+
+```bash
+claude
+# or
+aw run codex
 ```
 
 #### Real-time awakenings for mail/chat (recommended)
@@ -128,66 +135,13 @@ There are however solutions:
   # then fully restart pi so it reloads packages
   ```
 
-#### Bootstrapping options
+#### Legacy bootstrap compatibility
 
-- Run from the root of the project repo. Bootstrap creates `agents/` with all live homes under `agents/home/`:
-
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --username <username> \
-    --identity-prefix <you>
-  cd agents/home/coordinator
-  ```
-- Choose a different generated directory if your repo already uses `agents/`:
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --username <username> \
-    --identity-prefix <you> \
-    --agents-dir aweb-agents
-  ```
-- Use an existing local template directory:
-  ```bash
-  aw agents bootstrap /path/to/template --username <username> --identity-prefix <you>
-  ```
-- Use a remote template (no fork required):
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --username <username> \
-    --identity-prefix <you>
-  ```
-- Fork the template first (optional; requires GitHub CLI `gh`):
-  ```bash
-  aw agents bootstrap --fork gh:awebai/aweb-team-coord-worktrees \
-    --username <username> \
-    --identity-prefix <you>
-  ```
-- Clone the template somewhere explicit (advanced cache override):
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --username <username> \
-    --identity-prefix <you> \
-    --template-cache-dir /tmp/aw-templates
-  ```
-- Legacy out-of-repo mode is still available for existing scripts:
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --username <username> \
-    --identity-prefix <you> \
-    --work-directory /path/to/work
-  ```
-- Bring Your Own Domain (BYOD, local controller) one-step bootstrap (creates/ensures the team, invites all agents, accepts, and connects):
-  ```bash
-  aw agents bootstrap https://github.com/awebai/aweb-team-coord-worktrees.git \
-    --aweb-url http://localhost:8000 \
-    --registry http://localhost:8010 \
-    --namespace example.com \
-    --team dev \
-    --identity-prefix <you>
-  ```
-  If you do not yet have a local controller key for the namespace, create one first:
-  ```bash
-  aw id create --domain example.com --name controller
-  ```
+`aw agents bootstrap` and the old `aweb-team-coord-worktrees` template remain
+available for existing bootstrap-era layouts, but they are no longer the
+recommended product path for new teams. Use them only when maintaining or
+recovering an existing `agents/` convention; see
+[`docs/bootstrap-layout-contract.md`](docs/bootstrap-layout-contract.md).
 
 ### 4. Initialize a single workspace
 
