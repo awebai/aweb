@@ -25,7 +25,7 @@
       "route_id": "r_research",
       "gateway_identity": "did:aw:zQmA2AGatewayStableID111111111111111111111111",
       "delegation_id": "del_01JZ0000000000000000000001",
-      "delegation_digest": "sha256:w4EkaYLFT54rvCHqdOD8UTyd74plK4TEoKXkEE8m3Zw",
+      "delegation_digest": "sha256:dZq5CfjcxVKC1lK4vL3JNfE+msS+oqmr+7RCZSp0UtA",
       "card_digest_alg": "sha256",
       "card_digest": "sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7",
       "card_revision": "2026-06-07.1",
@@ -37,7 +37,7 @@
       "identity_custody": "self",
       "authority_source": "self_identity_key"
     },
-    "canonical": "{\"address\":\"acme.com/research\",\"assertion_id\":\"pub_01JZ0000000000000000000001\",\"authority_source\":\"self_identity_key\",\"card_digest\":\"sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7\",\"card_digest_alg\":\"sha256\",\"card_revision\":\"2026-06-07.1\",\"card_url\":\"https://acme.com/a2a/agents/r_research/agent-card.json\",\"current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"default_for_host\":false,\"delegation_digest\":\"sha256:w4EkaYLFT54rvCHqdOD8UTyd74plK4TEoKXkEE8m3Zw\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"identity_custody\":\"self\",\"operation\":\"publish_a2a_route\",\"published_at\":\"2026-06-07T20:00:00Z\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_research\",\"rpc_url\":\"https://acme.com/a2a/agents/r_research/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
+    "canonical": "{\"address\":\"acme.com/research\",\"assertion_id\":\"pub_01JZ0000000000000000000001\",\"authority_source\":\"self_identity_key\",\"card_digest\":\"sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7\",\"card_digest_alg\":\"sha256\",\"card_revision\":\"2026-06-07.1\",\"card_url\":\"https://acme.com/a2a/agents/r_research/agent-card.json\",\"current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"default_for_host\":false,\"delegation_digest\":\"sha256:dZq5CfjcxVKC1lK4vL3JNfE+msS+oqmr+7RCZSp0UtA\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"identity_custody\":\"self\",\"operation\":\"publish_a2a_route\",\"published_at\":\"2026-06-07T20:00:00Z\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_research\",\"rpc_url\":\"https://acme.com/a2a/agents/r_research/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
     "signature": "cHVibGljYXRpb24tc2lnbmF0dXJlLWZpeHR1cmUtNjQtYnl0ZXMhISEhISEhISEhISEhISEhISEhISEhISE"
   },
   "delegation": {
@@ -60,7 +60,7 @@
       "card_digest_alg": "sha256",
       "card_digest": "sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7",
       "custody_mode": "self_to_delegated_bridge",
-      "authority_source": "self_identity_key",
+      "authority_source": "self_identity_delegation",
       "signer_did": "did:key:z6MkhA2APublicationCurrentKey111111111111111111",
       "signer_kid": "did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519",
       "issued_at": "2026-06-07T19:55:00Z",
@@ -68,7 +68,7 @@
       "status": "active",
       "registry_url": "https://api.awid.ai"
     },
-    "canonical": "{\"address\":\"acme.com/research\",\"allowed_operations\":[\"send_task\",\"receive_reply\",\"cancel_task\",\"serve_card\"],\"authority_source\":\"self_identity_key\",\"card_digest\":\"sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7\",\"card_digest_alg\":\"sha256\",\"card_url\":\"https://acme.com/a2a/agents/r_research/agent-card.json\",\"custody_mode\":\"self_to_delegated_bridge\",\"delegated_gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"delegator_current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"delegator_did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"issued_at\":\"2026-06-07T19:55:00Z\",\"operation\":\"delegate_a2a_bridge\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_research\",\"rpc_url\":\"https://acme.com/a2a/agents/r_research/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
+    "canonical": "{\"address\":\"acme.com/research\",\"allowed_operations\":[\"send_task\",\"receive_reply\",\"cancel_task\",\"serve_card\"],\"authority_source\":\"self_identity_delegation\",\"card_digest\":\"sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7\",\"card_digest_alg\":\"sha256\",\"card_url\":\"https://acme.com/a2a/agents/r_research/agent-card.json\",\"custody_mode\":\"self_to_delegated_bridge\",\"delegated_gateway_identity\":\"did:aw:zQmA2AGatewayStableID111111111111111111111111\",\"delegation_id\":\"del_01JZ0000000000000000000001\",\"delegator_current_did_key\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"delegator_did_aw\":\"did:aw:zQmA2APublicationStableID1111111111111111111111\",\"expires_at\":\"2026-07-07T20:00:00Z\",\"issued_at\":\"2026-06-07T19:55:00Z\",\"operation\":\"delegate_a2a_bridge\",\"registry_url\":\"https://api.awid.ai\",\"route_id\":\"r_research\",\"rpc_url\":\"https://acme.com/a2a/agents/r_research/rpc\",\"signer_did\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111\",\"signer_kid\":\"did:key:z6MkhA2APublicationCurrentKey111111111111111111#ed25519\",\"status\":\"active\"}",
     "signature": "ZGVsZWdhdGlvbi1zaWduYXR1cmUtZml4dHVyZS02NC1ieXRlcyEhISEhISEhISEhISEhISEhISEhISE"
   },
   "conflict_codes": [

@@ -46,3 +46,37 @@ func (c *RegistryClient) GetA2APublicationAt(ctx context.Context, registryURL, d
 	}
 	return &out, registryURL, nil
 }
+
+func (c *RegistryClient) PublishA2ADelegationAt(ctx context.Context, registryURL string, params A2ADelegationParams) (*A2AWriteResponse, error) {
+	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	if err != nil {
+		return nil, err
+	}
+	params.RegistryURL = registryURL
+	body, _, err := signedA2ADelegationBody(params.A2ADelegationFields, params.SigningKey)
+	if err != nil {
+		return nil, err
+	}
+	var out A2AWriteResponse
+	if err := c.requestJSON(ctx, http.MethodPost, registryURL, "/v1/a2a/delegations", nil, body, &out); err != nil {
+		return nil, a2aPublicationConflictFromError(err)
+	}
+	return &out, nil
+}
+
+func (c *RegistryClient) PublishA2APublicationAt(ctx context.Context, registryURL string, params A2APublicationParams) (*A2AWriteResponse, error) {
+	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	if err != nil {
+		return nil, err
+	}
+	params.RegistryURL = registryURL
+	body, _, err := signedA2APublicationBody(params.A2APublicationFields, params.SigningKey)
+	if err != nil {
+		return nil, err
+	}
+	var out A2AWriteResponse
+	if err := c.requestJSON(ctx, http.MethodPost, registryURL, "/v1/a2a/publications", nil, body, &out); err != nil {
+		return nil, a2aPublicationConflictFromError(err)
+	}
+	return &out, nil
+}

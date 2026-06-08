@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/a2a"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -26,6 +29,21 @@ var (
 	a2aNoWait        bool
 	a2aDataJSON      string
 	a2aHistoryLength int
+
+	a2aPublishAddress         string
+	a2aPublishRegistry        string
+	a2aPublishGatewayIdentity string
+	a2aPublishRouteID         string
+	a2aPublishRPCURL          string
+	a2aPublishCardRevision    string
+	a2aPublishAssertionID     string
+	a2aPublishDelegationID    string
+	a2aPublishExpiresDays     int
+	a2aPublishDefaultForHost  bool
+
+	a2aHTTPClient = func() *http.Client {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
 )
 
 type a2aCredentialsFile struct {
@@ -54,6 +72,20 @@ type a2aCardOutput struct {
 
 type a2aTaskEnvelope struct {
 	Task a2a.Task `json:"task"`
+}
+
+type a2aPublishOutput struct {
+	Address         string                 `json:"address"`
+	RegistryURL     string                 `json:"registry_url"`
+	CardURL         string                 `json:"card_url"`
+	RPCURL          string                 `json:"rpc_url"`
+	RouteID         string                 `json:"route_id"`
+	GatewayIdentity string                 `json:"gateway_identity"`
+	CardDigest      string                 `json:"card_digest"`
+	CardRevision    string                 `json:"card_revision"`
+	Delegation      *awid.A2AWriteResponse `json:"delegation,omitempty"`
+	Publication     *awid.A2AWriteResponse `json:"publication"`
+	Verification    a2a.VerificationResult `json:"verification"`
 }
 
 var a2aCmd = &cobra.Command{
@@ -149,6 +181,22 @@ var a2aCancelCmd = &cobra.Command{
 	},
 }
 
+var a2aPublishCmd = &cobra.Command{
+	Use:   "publish <card-url>",
+	Short: "Publish an A2A Agent Card route to AWID",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
+		defer cancel()
+		out, err := runA2APublish(ctx, args[0])
+		if err != nil {
+			return err
+		}
+		printOutput(out, formatA2APublishOutput)
+		return nil
+	},
+}
+
 func init() {
 	a2aCmd.GroupID = groupNetwork
 	a2aCardCmd.Flags().StringVar(&a2aCardAddress, "address", "", "aweb address to verify through AWID, e.g. acme.com/help")
@@ -158,7 +206,17 @@ func init() {
 	a2aSendCmd.Flags().BoolVar(&a2aNoWait, "no-wait", false, "Return immediately after task creation")
 	a2aSendCmd.Flags().StringVar(&a2aDataJSON, "data", "", "Additional JSON metadata object")
 	a2aStatusCmd.Flags().IntVar(&a2aHistoryLength, "history", -1, "History length to request; -1 uses server default")
-	a2aCmd.AddCommand(a2aCardCmd, a2aSendCmd, a2aStatusCmd, a2aCancelCmd)
+	a2aPublishCmd.Flags().StringVar(&a2aPublishAddress, "address", "", "aweb address to publish; defaults to current identity address")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishRegistry, "registry-url", "", "AWID registry URL override")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishGatewayIdentity, "gateway-identity", "", "did:aw of the A2A gateway identity; defaults to current identity for direct publication")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishRouteID, "route-id", "", "Route id override; defaults to the card URL route")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishRPCURL, "rpc-url", "", "RPC URL override; defaults to supportedInterfaces[0].url")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishCardRevision, "card-revision", "", "Card revision recorded in AWID; defaults to Agent Card version")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishAssertionID, "assertion-id", "", "Publication assertion id override")
+	a2aPublishCmd.Flags().StringVar(&a2aPublishDelegationID, "delegation-id", "", "Bridge delegation id override")
+	a2aPublishCmd.Flags().IntVar(&a2aPublishExpiresDays, "expires-days", 30, "Publication/delegation lifetime in days")
+	a2aPublishCmd.Flags().BoolVar(&a2aPublishDefaultForHost, "default-for-host", false, "Mark this route as the default A2A route for the host")
+	a2aCmd.AddCommand(a2aCardCmd, a2aSendCmd, a2aStatusCmd, a2aCancelCmd, a2aPublishCmd)
 }
 
 func buildA2ACardOutput(ctx context.Context, cardURL, address, registryURL string) (a2aCardOutput, error) {
@@ -290,6 +348,262 @@ func runA2ACancel(ctx context.Context, cardURL, taskID string) (a2a.Task, error)
 	return task, nil
 }
 
+func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error) {
+	card, _, err := a2a.FetchCard(ctx, a2aHTTPClient(), cardURL)
+	if err != nil {
+		return a2aPublishOutput{}, err
+	}
+	cardPath := ""
+	if parsed, err := url.Parse(cardURL); err == nil {
+		cardPath = parsed.Path
+	}
+	if err := a2a.ValidateCard(card, a2a.ValidationOptions{CardPath: cardPath, RequireJSONRPCOnly: true, DisallowDirectTenant: true, RequireMediaTypeModes: true}); err != nil {
+		return a2aPublishOutput{}, err
+	}
+	iface, err := a2a.SelectJSONRPCInterface(card)
+	if err != nil {
+		return a2aPublishOutput{}, err
+	}
+	if strings.TrimSpace(iface.Tenant) != "" {
+		return a2aPublishOutput{}, usageError("aw a2a publish supports path-routed per-address cards only; remove supportedInterfaces[].tenant")
+	}
+	digest, err := a2a.CardDigest(card)
+	if err != nil {
+		return a2aPublishOutput{}, err
+	}
+	selection, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{AllowEnvOverrides: true})
+	if err != nil {
+		return a2aPublishOutput{}, err
+	}
+	signingKey, err := loadA2APublishSigningKey(selection)
+	if err != nil {
+		return a2aPublishOutput{}, err
+	}
+	pub := signingKey.Public().(ed25519.PublicKey)
+	currentDIDKey := awid.ComputeDIDKey(pub)
+	didAW := awid.ComputeStableID(pub)
+	address := strings.TrimSpace(a2aPublishAddress)
+	if address == "" {
+		address = strings.TrimSpace(selection.Address)
+	}
+	if address == "" {
+		return a2aPublishOutput{}, usageError("A2A publication requires a global identity address; pass --address or run from a global identity workspace")
+	}
+	if strings.TrimSpace(selection.Address) != "" && !strings.EqualFold(address, strings.TrimSpace(selection.Address)) {
+		return a2aPublishOutput{}, usageError("--address %s does not match current identity address %s; publish from the address identity workspace", address, selection.Address)
+	}
+	if strings.TrimSpace(selection.StableID) != "" && strings.TrimSpace(selection.StableID) != didAW {
+		return a2aPublishOutput{}, usageError("current identity stable_id %s does not match signing key %s; repair .aw/identity.yaml before publishing", selection.StableID, didAW)
+	}
+	if strings.TrimSpace(selection.DID) != "" && strings.TrimSpace(selection.DID) != currentDIDKey {
+		return a2aPublishOutput{}, usageError("current identity did %s does not match signing key %s; repair .aw/identity.yaml before publishing", selection.DID, currentDIDKey)
+	}
+	registry := awid.NewAWIDRegistryClient(a2aHTTPClient(), nil)
+	registry.RequestID = "aw-a2a-publish-" + time.Now().UTC().Format("20060102T150405.000000000")
+	registryURL := strings.TrimSpace(a2aPublishRegistry)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(selection.RegistryURL)
+	}
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return a2aPublishOutput{}, fmt.Errorf("registry-url: %w", err)
+		}
+	} else {
+		domain, _, err := splitA2AAddress(address)
+		if err != nil {
+			return a2aPublishOutput{}, err
+		}
+		registryURL, err = registry.DiscoverRegistry(ctx, domain)
+		if err != nil {
+			return a2aPublishOutput{}, fmt.Errorf("discover AWID registry for %s: %w", domain, err)
+		}
+	}
+	routeID := strings.TrimSpace(a2aPublishRouteID)
+	if routeID == "" {
+		routeID, err = routeIDFromA2ACardURL(cardURL)
+		if err != nil {
+			return a2aPublishOutput{}, err
+		}
+	}
+	rpcURL := strings.TrimSpace(a2aPublishRPCURL)
+	if rpcURL == "" {
+		rpcURL = strings.TrimSpace(iface.URL)
+	}
+	cardRevision := strings.TrimSpace(a2aPublishCardRevision)
+	if cardRevision == "" {
+		cardRevision = strings.TrimSpace(card.Version)
+	}
+	if cardRevision == "" {
+		cardRevision = time.Now().UTC().Format("2006-01-02T150405Z")
+	}
+	if a2aPublishExpiresDays <= 0 {
+		return a2aPublishOutput{}, usageError("--expires-days must be positive")
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	expiresAt := now.Add(time.Duration(a2aPublishExpiresDays) * 24 * time.Hour).Format(time.RFC3339)
+	gatewayIdentity := strings.TrimSpace(a2aPublishGatewayIdentity)
+	if gatewayIdentity == "" {
+		gatewayIdentity = didAW
+	}
+	delegationID := strings.TrimSpace(a2aPublishDelegationID)
+	if delegationID == "" {
+		delegationID = a2AAssertionID("del", now, address, routeID, gatewayIdentity, digest.Value)
+	}
+	assertionID := strings.TrimSpace(a2aPublishAssertionID)
+	if assertionID == "" {
+		assertionID = a2AAssertionID("pub", now, address, routeID, gatewayIdentity, digest.Value)
+	}
+
+	var delegationResp *awid.A2AWriteResponse
+	delegationDigest := ""
+	if gatewayIdentity != didAW {
+		delegationFields := awid.A2ADelegationFields{
+			Operation:                awid.A2ADelegationOperation,
+			DelegationID:             delegationID,
+			DelegatorDIDAW:           didAW,
+			DelegatorCurrentDIDKey:   currentDIDKey,
+			DelegatedGatewayIdentity: gatewayIdentity,
+			Address:                  address,
+			RouteID:                  routeID,
+			CardURL:                  cardURL,
+			RPCURL:                   rpcURL,
+			AllowedOperations:        awid.A2AAllowedOperations,
+			CardDigestAlg:            awid.A2ACardDigestAlgSHA256,
+			CardDigest:               digest.Value,
+			CustodyMode:              awid.A2ACustodyDelegatedBridge,
+			AuthoritySource:          awid.A2AAuthoritySelfDelegation,
+			SignerDID:                currentDIDKey,
+			SignerKID:                currentDIDKey + "#ed25519",
+			IssuedAt:                 now.Format(time.RFC3339),
+			ExpiresAt:                expiresAt,
+			Status:                   awid.A2AStatusActive,
+			RegistryURL:              registryURL,
+		}
+		delegationResp, err = registry.PublishA2ADelegationAt(ctx, registryURL, awid.A2ADelegationParams{
+			A2ADelegationFields: delegationFields,
+			SigningKey:          signingKey,
+		})
+		if err != nil {
+			return a2aPublishOutput{}, a2aPublishError("publish A2A bridge delegation", err)
+		}
+		delegationDigest = delegationResp.AssertionDigest
+	}
+	publicationResp, err := registry.PublishA2APublicationAt(ctx, registryURL, awid.A2APublicationParams{
+		A2APublicationFields: awid.A2APublicationFields{
+			Operation:        awid.A2APublicationOperation,
+			AssertionID:      assertionID,
+			Address:          address,
+			DIDAW:            didAW,
+			CurrentDIDKey:    currentDIDKey,
+			SignerDID:        currentDIDKey,
+			SignerKID:        currentDIDKey + "#ed25519",
+			CardURL:          cardURL,
+			RPCURL:           rpcURL,
+			RouteID:          routeID,
+			GatewayIdentity:  gatewayIdentity,
+			DelegationID:     strings.TrimSpace(delegationIDForPublication(gatewayIdentity, didAW, delegationID)),
+			DelegationDigest: strings.TrimSpace(delegationDigest),
+			CardDigestAlg:    awid.A2ACardDigestAlgSHA256,
+			CardDigest:       digest.Value,
+			CardRevision:     cardRevision,
+			DefaultForHost:   a2aPublishDefaultForHost,
+			Status:           awid.A2AStatusActive,
+			PublishedAt:      now.Format(time.RFC3339),
+			ExpiresAt:        expiresAt,
+			RegistryURL:      registryURL,
+			IdentityCustody:  string(awid.AddressClaimCustodySelf),
+			AuthoritySource:  awid.A2AAuthoritySelfIdentityKey,
+		},
+		SigningKey: signingKey,
+	})
+	if err != nil {
+		return a2aPublishOutput{}, a2aPublishError("publish A2A route", err)
+	}
+	verification := verifyA2ACardWithAWID(ctx, cardURL, digest.Value, address, registryURL)
+	return a2aPublishOutput{
+		Address:         address,
+		RegistryURL:     registryURL,
+		CardURL:         strings.TrimSpace(cardURL),
+		RPCURL:          strings.TrimSpace(rpcURL),
+		RouteID:         strings.TrimSpace(routeID),
+		GatewayIdentity: gatewayIdentity,
+		CardDigest:      digest.Value,
+		CardRevision:    cardRevision,
+		Delegation:      delegationResp,
+		Publication:     publicationResp,
+		Verification:    verification,
+	}, nil
+}
+
+func loadA2APublishSigningKey(selection *awconfig.Selection) (ed25519.PrivateKey, error) {
+	if selection == nil {
+		return nil, usageError("A2A publication requires a current global self-custodial identity")
+	}
+	if strings.TrimSpace(selection.Custody) != awid.CustodySelf {
+		return nil, usageError("A2A publication currently requires a self-custodial identity; hosted-custodial publication must be performed by the hosted service")
+	}
+	signingKeyPath := strings.TrimSpace(selection.SigningKey)
+	if signingKeyPath == "" {
+		signingKeyPath = awconfig.WorktreeSigningKeyPath(selection.WorkingDir)
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load A2A publication signing key %s: %w", signingKeyPath, err)
+	}
+	return signingKey, nil
+}
+
+func routeIDFromA2ACardURL(cardURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(cardURL))
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) == 4 && parts[0] == "a2a" && parts[1] == "agents" && parts[3] == "agent-card.json" && strings.TrimSpace(parts[2]) != "" {
+		return parts[2], nil
+	}
+	return "", usageError("--route-id is required when card URL is not /a2a/agents/<route-id>/agent-card.json")
+}
+
+func a2AAssertionID(prefix string, timestamp time.Time, parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return fmt.Sprintf("%s_%s_%x", prefix, timestamp.UTC().Format("20060102T150405Z"), sum[:8])
+}
+
+func delegationIDForPublication(gatewayIdentity, didAW, delegationID string) string {
+	if strings.TrimSpace(gatewayIdentity) == strings.TrimSpace(didAW) {
+		return ""
+	}
+	return strings.TrimSpace(delegationID)
+}
+
+func a2aPublishError(action string, err error) error {
+	var conflict *awid.A2APublicationConflictError
+	if errors.As(err, &conflict) {
+		switch conflict.Code {
+		case awid.A2APublicationCodeDelegationMissing:
+			return usageError("%s: bridge delegation is missing; publish from the address identity with --gateway-identity so aw can create the delegation first", action)
+		case awid.A2APublicationCodeDelegationDigestMismatch:
+			return usageError("%s: bridge delegation digest mismatch; fetch the current card and rerun aw a2a publish so delegation and publication use the same card digest", action)
+		case awid.A2APublicationCodeCardDigestMismatch:
+			return usageError("%s: card digest mismatch; confirm the served card at the URL is the card you intend to publish", action)
+		case awid.A2APublicationCodeAddressNotRegistered:
+			return usageError("%s: address is not registered in AWID; create the global identity/address before publishing A2A", action)
+		case awid.A2APublicationCodeNamespaceNotRegistered:
+			return usageError("%s: namespace is not registered in AWID; run the namespace registration flow before publishing A2A", action)
+		case awid.A2APublicationCodeAuthoritySourceInvalid:
+			return usageError("%s: authority source invalid for this custody path; self-custodial publication requires the address identity signing key, hosted publication must be done by the hosted service", action)
+		case awid.A2APublicationCodeIdentitySignatureInvalid, awid.A2APublicationCodeDelegationSignatureInvalid:
+			return usageError("%s: signature invalid; run from the workspace that holds the current signing key for the address identity", action)
+		case awid.A2APublicationCodePrimitiveDisabled, awid.A2APublicationCodePrimitiveNotSupported:
+			return usageError("%s: AWID registry does not support A2A publication yet; upgrade awid-service and retry", action)
+		default:
+			return fmt.Errorf("%s: %s: %s", action, conflict.Code, strings.TrimSpace(conflict.Message))
+		}
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
+
 func resolveA2ACallTarget(ctx context.Context, cardURL string) (a2a.Card, string, a2a.Credential, error) {
 	card, _, err := a2a.FetchCard(ctx, a2aHTTPClient(), cardURL)
 	if err != nil {
@@ -359,6 +673,32 @@ func formatA2ACardOutput(out a2aCardOutput) string {
 	}
 	for _, skill := range out.Skills {
 		sb.WriteString(fmt.Sprintf("Skill:      %s — %s\n", skill.ID, skill.Name))
+	}
+	return sb.String()
+}
+
+func formatA2APublishOutput(v any) string {
+	out := v.(a2aPublishOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Published A2A route for %s\n", out.Address))
+	sb.WriteString(fmt.Sprintf("Card:      %s\n", out.CardURL))
+	sb.WriteString(fmt.Sprintf("RPC:       %s\n", out.RPCURL))
+	sb.WriteString(fmt.Sprintf("Route:     %s\n", out.RouteID))
+	sb.WriteString(fmt.Sprintf("Digest:    %s\n", out.CardDigest))
+	sb.WriteString(fmt.Sprintf("Gateway:   %s\n", out.GatewayIdentity))
+	if out.Delegation != nil {
+		sb.WriteString(fmt.Sprintf("Delegation: %s (%s)\n", out.Delegation.Status, out.Delegation.DelegationID))
+	}
+	if out.Publication != nil {
+		sb.WriteString(fmt.Sprintf("Publication: %s (%s)\n", out.Publication.Status, out.Publication.AssertionID))
+	}
+	sb.WriteString(fmt.Sprintf("Verification: %s", out.Verification.Status))
+	if out.Verification.Code != "" {
+		sb.WriteString(" (" + out.Verification.Code + ")")
+	}
+	sb.WriteString("\n")
+	if out.Verification.Message != "" {
+		sb.WriteString(fmt.Sprintf("Note:      %s\n", out.Verification.Message))
 	}
 	return sb.String()
 }
@@ -436,8 +776,4 @@ func redactedRegistryError(err error) string {
 		return fmt.Sprintf("registry http %d", target.StatusCode)
 	}
 	return err.Error()
-}
-
-func a2aHTTPClient() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second}
 }

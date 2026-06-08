@@ -16,23 +16,23 @@ echo "Publishing aw v${VERSION} to npm..."
 
 # Map goreleaser platform names to npm package directory names and archive extensions
 declare -A PLATFORM_MAP=(
-  ["linux_amd64"]="aw-linux-x64:tar.gz:aw"
-  ["linux_arm64"]="aw-linux-arm64:tar.gz:aw"
-  ["darwin_amd64"]="aw-darwin-x64:tar.gz:aw"
-  ["darwin_arm64"]="aw-darwin-arm64:tar.gz:aw"
-  ["windows_amd64"]="aw-windows-x64:zip:aw.exe"
-  ["windows_arm64"]="aw-windows-arm64:zip:aw.exe"
+  ["linux_amd64"]="aw-linux-x64:tar.gz:aw:aweb-a2a-gw"
+  ["linux_arm64"]="aw-linux-arm64:tar.gz:aw:aweb-a2a-gw"
+  ["darwin_amd64"]="aw-darwin-x64:tar.gz:aw:aweb-a2a-gw"
+  ["darwin_arm64"]="aw-darwin-arm64:tar.gz:aw:aweb-a2a-gw"
+  ["windows_amd64"]="aw-windows-x64:zip:aw.exe:aweb-a2a-gw.exe"
+  ["windows_arm64"]="aw-windows-arm64:zip:aw.exe:aweb-a2a-gw.exe"
 )
 
 # Step 1: Extract binaries and place them in the right directories
 for goreleaser_platform in "${!PLATFORM_MAP[@]}"; do
-  IFS=':' read -r npm_dir ext binary_name <<< "${PLATFORM_MAP[$goreleaser_platform]}"
+  IFS=':' read -r npm_dir ext aw_binary gw_binary <<< "${PLATFORM_MAP[$goreleaser_platform]}"
 
   archive="$ARTIFACTS_DIR/${goreleaser_platform}.${ext}"
   target_dir="$SCRIPT_DIR/$npm_dir/bin"
   mkdir -p "$target_dir"
 
-  echo "  Extracting $goreleaser_platform -> $npm_dir/bin/$binary_name"
+  echo "  Extracting $goreleaser_platform -> $npm_dir/bin/$aw_binary and $gw_binary"
 
   tmp_dir=$(mktemp -d)
   if [ "$ext" = "tar.gz" ]; then
@@ -41,8 +41,9 @@ for goreleaser_platform in "${!PLATFORM_MAP[@]}"; do
     unzip -q "$archive" -d "$tmp_dir"
   fi
 
-  cp "$tmp_dir/$binary_name" "$target_dir/$binary_name"
-  chmod +x "$target_dir/$binary_name"
+  cp "$tmp_dir/$aw_binary" "$target_dir/$aw_binary"
+  cp "$tmp_dir/$gw_binary" "$target_dir/$gw_binary"
+  chmod +x "$target_dir/$aw_binary" "$target_dir/$gw_binary"
   rm -rf "$tmp_dir"
 done
 

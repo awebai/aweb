@@ -244,6 +244,31 @@ async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_i
 
 
 @pytest.mark.asyncio
+async def test_a2a_publication_same_active_route_digest_is_idempotent(client, awid_db_infra, controller_identity):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    delegation = _delegation_body(seed)
+    delegation_resp = await client.post("/v1/a2a/delegations", json=delegation)
+    assert delegation_resp.status_code == 200, delegation_resp.text
+
+    first = _publication_body(seed, delegation)
+    first_resp = await client.post("/v1/a2a/publications", json=first)
+    assert first_resp.status_code == 200, first_resp.text
+    assert first_resp.json()["status"] == "applied"
+
+    second = _publication_body(seed, delegation)
+    second["assertion_id"] = "pub_test_02"
+    second_canonical = canonical_json_bytes({k: v for k, v in second.items() if k != "signature"})
+    second["signature"] = sign_message(seed["identity_signing_key"], second_canonical)
+    second_resp = await client.post("/v1/a2a/publications", json=second)
+
+    assert second_resp.status_code == 200, second_resp.text
+    payload = second_resp.json()
+    assert payload["status"] == "already_applied"
+    assert payload["assertion_id"] == "pub_test_01"
+    assert await _counts(awid_db_infra) == (1, 1)
+
+
+@pytest.mark.asyncio
 async def test_a2a_direct_hosted_publication_succeeds(client, awid_db_infra, controller_identity):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     publication = _publication_body(

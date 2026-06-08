@@ -8,7 +8,8 @@
   },
   "license": "MIT",
   "bin": {
-    "aw": "bin/aw"
+    "aw": "bin/aw",
+    "aweb-a2a-gw": "bin/aweb-a2a-gw"
   },
   "scripts": {
     "postinstall": "node install.js"

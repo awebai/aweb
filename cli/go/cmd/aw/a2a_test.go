@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/awebai/aw/a2a"
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestA2ACardReportsUnsignedInteropWithoutAWIDClaim(t *testing.T) {
@@ -334,6 +337,171 @@ func TestA2ACardRejectsInvalidCardAndDoesNotFetchJWKULink(t *testing.T) {
 	}
 }
 
+func TestA2APublishPostsDelegationThenPublicationAndVerifies(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	resetA2APublishFlagsForTest(t)
+	oldHTTPClient := a2aHTTPClient
+	t.Cleanup(func() { a2aHTTPClient = oldHTTPClient })
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	address := "acme.com/research"
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   address,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-06-07T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gatewayIdentity := "did:aw:zQmGatewayForA2APublishTest1111111111111111111111"
+	var cardURL string
+	var delegationDigest string
+	var sawDelegation bool
+	var sawPublication bool
+	card := testA2ACard("")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/a2a/agents/r_research/agent-card.json":
+			card.SupportedInterfaces[0].URL = "https://" + r.Host + "/a2a/agents/r_research/rpc"
+			_ = json.NewEncoder(w).Encode(card)
+		case "/v1/a2a/delegations":
+			if r.Method != http.MethodPost {
+				t.Fatalf("delegation method=%s", r.Method)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			sawDelegation = true
+			if body["authority_source"] != awid.A2AAuthoritySelfDelegation {
+				t.Fatalf("delegation authority_source=%v", body["authority_source"])
+			}
+			if body["signer_did"] != did || body["delegator_did_aw"] != stableID || body["delegated_gateway_identity"] != gatewayIdentity {
+				t.Fatalf("bad delegation body: %#v", body)
+			}
+			canonical, err := awid.A2ADelegationCanonical(awid.A2ADelegationFields{
+				Operation:                stringFieldForA2ATest(body, "operation"),
+				DelegationID:             stringFieldForA2ATest(body, "delegation_id"),
+				DelegatorDIDAW:           stringFieldForA2ATest(body, "delegator_did_aw"),
+				DelegatorCurrentDIDKey:   stringFieldForA2ATest(body, "delegator_current_did_key"),
+				DelegatedGatewayIdentity: stringFieldForA2ATest(body, "delegated_gateway_identity"),
+				Address:                  stringFieldForA2ATest(body, "address"),
+				RouteID:                  stringFieldForA2ATest(body, "route_id"),
+				CardURL:                  stringFieldForA2ATest(body, "card_url"),
+				RPCURL:                   stringFieldForA2ATest(body, "rpc_url"),
+				AllowedOperations:        []string{"send_task", "receive_reply", "cancel_task", "serve_card"},
+				CardDigestAlg:            stringFieldForA2ATest(body, "card_digest_alg"),
+				CardDigest:               stringFieldForA2ATest(body, "card_digest"),
+				CustodyMode:              stringFieldForA2ATest(body, "custody_mode"),
+				AuthoritySource:          stringFieldForA2ATest(body, "authority_source"),
+				SignerDID:                stringFieldForA2ATest(body, "signer_did"),
+				SignerKID:                stringFieldForA2ATest(body, "signer_kid"),
+				IssuedAt:                 stringFieldForA2ATest(body, "issued_at"),
+				ExpiresAt:                stringFieldForA2ATest(body, "expires_at"),
+				Status:                   stringFieldForA2ATest(body, "status"),
+				RegistryURL:              stringFieldForA2ATest(body, "registry_url"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			delegationDigest, err = awid.A2ASignedAssertionDigest(canonical, stringFieldForA2ATest(body, "signature"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":           "applied",
+				"delegation_id":    stringFieldForA2ATest(body, "delegation_id"),
+				"assertion_digest": delegationDigest,
+				"address":          address,
+				"route_id":         "r_research",
+			})
+		case "/v1/a2a/publications":
+			if !sawDelegation {
+				t.Fatal("publication arrived before delegation")
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			sawPublication = true
+			if body["authority_source"] != awid.A2AAuthoritySelfIdentityKey {
+				t.Fatalf("publication authority_source=%v", body["authority_source"])
+			}
+			if body["delegation_digest"] != delegationDigest || body["gateway_identity"] != gatewayIdentity {
+				t.Fatalf("bad publication body: %#v delegationDigest=%s", body, delegationDigest)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":           "applied",
+				"assertion_id":     stringFieldForA2ATest(body, "assertion_id"),
+				"assertion_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+				"address":          address,
+				"route_id":         "r_research",
+			})
+		case "/v1/namespaces/acme.com/addresses/research/a2a":
+			digest, err := a2a.CardDigest(card)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address": address,
+				"did_aw":  stableID,
+				"a2a": map[string]any{
+					"status":                   "active",
+					"card_url":                 cardURL,
+					"rpc_url":                  "https://" + r.Host + "/a2a/agents/r_research/rpc",
+					"route_id":                 "r_research",
+					"gateway_identity":         gatewayIdentity,
+					"card_digest_alg":          "sha256",
+					"card_digest":              digest.Value,
+					"card_revision":            "1.0.0",
+					"publication_assertion_id": "pub-1",
+					"delegation_id":            "del-1",
+					"delegation_digest":        delegationDigest,
+					"published_at":             "2026-06-07T00:00:00Z",
+					"expires_at":               "2026-07-07T00:00:00Z",
+					"verification":             "awid_publication_available",
+				},
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	a2aHTTPClient = server.Client
+	cardURL = server.URL + "/a2a/agents/r_research/agent-card.json"
+	a2aPublishRegistry = server.URL
+	a2aPublishGatewayIdentity = gatewayIdentity
+
+	out, err := runA2APublish(context.Background(), cardURL)
+	if err != nil {
+		t.Fatalf("runA2APublish: %v", err)
+	}
+	if !sawDelegation || !sawPublication {
+		t.Fatalf("sawDelegation=%v sawPublication=%v", sawDelegation, sawPublication)
+	}
+	if out.Verification.Status != a2a.VerificationAWIDVerified {
+		t.Fatalf("verification=%#v", out.Verification)
+	}
+	if out.Delegation == nil || out.Publication == nil {
+		t.Fatalf("missing write responses: %#v", out)
+	}
+}
+
 func TestA2ASendNoWaitUsesCredentialFileAndReturnImmediately(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -404,6 +572,47 @@ func TestA2ASendNoWaitUsesCredentialFileAndReturnImmediately(t *testing.T) {
 	if task.ID != "task-1" || task.Status.State != "TASK_STATE_WORKING" {
 		t.Fatalf("task=%#v", task)
 	}
+}
+
+func resetA2APublishFlagsForTest(t *testing.T) {
+	t.Helper()
+	oldAddress := a2aPublishAddress
+	oldRegistry := a2aPublishRegistry
+	oldGateway := a2aPublishGatewayIdentity
+	oldRouteID := a2aPublishRouteID
+	oldRPCURL := a2aPublishRPCURL
+	oldRevision := a2aPublishCardRevision
+	oldAssertionID := a2aPublishAssertionID
+	oldDelegationID := a2aPublishDelegationID
+	oldExpiresDays := a2aPublishExpiresDays
+	oldDefault := a2aPublishDefaultForHost
+	a2aPublishAddress = ""
+	a2aPublishRegistry = ""
+	a2aPublishGatewayIdentity = ""
+	a2aPublishRouteID = ""
+	a2aPublishRPCURL = ""
+	a2aPublishCardRevision = ""
+	a2aPublishAssertionID = ""
+	a2aPublishDelegationID = ""
+	a2aPublishExpiresDays = 30
+	a2aPublishDefaultForHost = false
+	t.Cleanup(func() {
+		a2aPublishAddress = oldAddress
+		a2aPublishRegistry = oldRegistry
+		a2aPublishGatewayIdentity = oldGateway
+		a2aPublishRouteID = oldRouteID
+		a2aPublishRPCURL = oldRPCURL
+		a2aPublishCardRevision = oldRevision
+		a2aPublishAssertionID = oldAssertionID
+		a2aPublishDelegationID = oldDelegationID
+		a2aPublishExpiresDays = oldExpiresDays
+		a2aPublishDefaultForHost = oldDefault
+	})
+}
+
+func stringFieldForA2ATest(value map[string]any, key string) string {
+	got, _ := value[key].(string)
+	return got
 }
 
 func TestA2ASendWaitReturnsFailedTaskAsExitOne(t *testing.T) {
