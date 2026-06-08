@@ -20,7 +20,7 @@ V1 ships five default skills:
 - `aweb-messaging`: mail/chat/channel-awakening response policy.
 - `aweb-identity`: keypair, `did:key`/`did:aw`, AWID registry, local vs global identity, custodial vs self-custodial custody, what `aw init` does, addressability, inbound mode, contacts, key rotation, identity-level diagnostics.
 - `aweb-team-membership`: team certificates, joining flows organized by team authority (hosted vs BYOT), the custody × authority matrix, accept-invite vs fetch-cert, multiple memberships, fresh BYOT setup. (Identity foundations split out into `aweb-identity` 2026-05-24.)
-- `aweb-bootstrap`: creating a new aweb team from a template — template choice, hosted/BYOT/manual modes, project-local `agents/` layout, legacy work-directory/work-repo-url compatibility, optional worktree-bound agents, post-bootstrap validation, re-run safety.
+- `aweb-bootstrap`: legacy bootstrap-era `aw agents` layout compatibility and migration — recovering/provisioning old project-local `agents/` layouts, understanding obsolete bootstrap template inputs, and moving toward primitive-first setup plus resource-pack templates.
 
 Do not ship separate top-level v1 skills for awid, directory, or channel internals. Those topics appear as references/sections unless a future operator/developer audience needs a dedicated non-default skill such as `awid-operator`.
 
