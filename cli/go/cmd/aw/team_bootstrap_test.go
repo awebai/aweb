@@ -262,6 +262,16 @@ func initGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "init")
 }
 
+func gitBranchExistsForTest(t *testing.T, repoDir, branch string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "-C", repoDir, "branch", "--list", branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list %s: %v\n%s", branch, err, out)
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
 func TestAgentsCommandSurfaceKeepsLegacyAgentsAlongsideHumanTeamVerbs(t *testing.T) {
 	agents := findRootSubcommand("agents")
 	if agents == nil {
@@ -2415,6 +2425,10 @@ func TestTeamBootstrapHostedNonInteractiveFailureRollsBackAgentsLayout(t *testin
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 	templateDir := writeInRepoTeamBootstrapFixture(t)
+	originalGitignore := "# existing project ignore\nnode_modules/\n"
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(originalGitignore), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(repoDir)
 	teamBootstrapUsername = "maria"
 
@@ -2434,6 +2448,16 @@ func TestTeamBootstrapHostedNonInteractiveFailureRollsBackAgentsLayout(t *testin
 		t.Fatalf("error=%q, want rollback guidance", err)
 	}
 	assertPathMissing(t, filepath.Join(repoDir, "agents"))
+	gitignoreAfter, readErr := os.ReadFile(filepath.Join(repoDir, ".gitignore"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(gitignoreAfter) != originalGitignore {
+		t.Fatalf(".gitignore was not restored after rollback:\n%s", string(gitignoreAfter))
+	}
+	if gitBranchExistsForTest(t, repoDir, "implementation") {
+		t.Fatal("generated implementation branch remained after rollback")
+	}
 }
 
 func TestTeamBootstrapRollbackPreservesAgentsLayoutWithIdentityState(t *testing.T) {

@@ -374,9 +374,9 @@ Legacy template-checkout / external-work bootstrap remains supported:
 - legacy templates using `agents/<responsibility>/AGENTS.md` remain valid in
   legacy mode.
 
-Legacy behavior may be relabeled in docs as advanced or compatibility, but it
-must not break as part of the in-repo implementation unless a later contract
-revision and release note deliberately deprecate it.
+Legacy behavior may be relabeled in docs as legacy/compatibility, but it must
+not break as part of the in-repo implementation unless a later contract revision
+and release note deliberately deprecate it.
 
 ## Required Tests
 
