@@ -10,7 +10,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `id`, `mcp-config`, `whoami` |
+| Identity | `id`, `mcp-config`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Obsolete / Legacy Compatibility | `agents` |
@@ -121,6 +121,7 @@ Manage repo-local coordination workspaces
 
 Subcommands:
 - `add-worktree` Legacy convenience: create a sibling git worktree and coordination workspace
+- `connect` Connect this workspace to a service using an existing team certificate
 - `delete` Delete a local workspace and its local identity
 - `migrate-multi-team` Rewrite a legacy single-team workspace into the canonical multi-team shape
 - `status` Show coordination status for the current workspace/identity and team
@@ -140,6 +141,21 @@ New setup flows should prefer explicit git worktree/filesystem steps followed by
 Flags:
 - `--alias string Override the default alias`
 - `-h, --help help for add-worktree`
+
+## `workspace connect`
+
+### `workspace connect`
+
+Connect this workspace to a service using the existing .aw signing key and team certificate in this directory.
+
+This is the first-class workspace connection verb. It does not create identities,
+create teams, or change AWID team membership. It is equivalent to `aw service init`.
+
+Flags:
+- `-h, --help help for connect`
+- `--role string Optional role name for this workspace`
+- `--service string Service URL to connect to`
+- `--team string Canonical AWID team id to activate before connecting`
 
 ## `workspace delete`
 
@@ -776,6 +792,83 @@ Output MCP server configuration for the current identity
 Flags:
 - `--channel Output stdio channel config instead of HTTP MCP config`
 - `-h, --help help for mcp-config`
+
+## `team`
+
+### `team`
+
+Everyday team membership commands.
+
+Use these commands for the normal hosted invite/join membership flow and for
+checking or switching this identity's installed team memberships. Protocol/admin
+controller operations remain under `aw id team`.
+
+Subcommands:
+- `invite` Invite an agent or workspace to the active team
+- `join` Join a team from an invite token
+- `leave` Remove a team membership from this identity
+- `list` List team memberships for this identity
+- `switch` Switch the active team for this identity
+
+Flags:
+- `-h, --help help for team`
+
+## `team invite`
+
+### `team invite`
+
+Invite an agent or workspace to the active team.
+
+This is the everyday add-agent entrypoint. It creates an invite token using
+the current team's authority, then the joining workspace runs `aw team join <token>`.
+
+Flags:
+- `--global Create global member invite`
+- `-h, --help help for invite`
+- `--local Create local workspace member invite (default)`
+- `--team-id string Canonical team id (<name>:<namespace>) to invite from (defaults to active team)`
+
+## `team join`
+
+### `team join`
+
+Join a team from an invite token.
+
+Run this in a clean target directory. It refuses to overwrite an existing
+.aw identity/key. After joining, run `aw init` if the output says the
+workspace still needs to be connected to the service.
+
+Flags:
+- `--address string Registered address to place in the global member certificate`
+- `--alias string Alias for the accepting agent (defaults to identity name)`
+- `-h, --help help for join`
+
+## `team leave`
+
+### `team leave`
+
+Remove a team membership from this identity
+
+Flags:
+- `-h, --help help for leave`
+
+## `team list`
+
+### `team list`
+
+List team memberships for this identity
+
+Flags:
+- `-h, --help help for list`
+
+## `team switch`
+
+### `team switch`
+
+Switch the active team for this identity
+
+Flags:
+- `-h, --help help for switch`
 
 ## `whoami`
 

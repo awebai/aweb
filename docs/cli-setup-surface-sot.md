@@ -120,7 +120,8 @@ the categories stable unless this document is updated.
 | --- | --- | --- |
 | `aw run <provider>` | Everyday intent + runtime entrypoint | Primary way to start an agent session; may suggest setup, but setup mutations stay explicit and should not become hidden orchestration. |
 | `aw init` | Everyday connect/create workspace intent | Keep prominent. Copy should say it initializes/connects this directory as a workspace. |
-| `aw service init` | Everyday connect workspace intent | Keep prominent for already-certified AWID identities connecting to a service. |
+| `aw service init` / `aw workspace connect` | Everyday connect workspace intent | Keep prominent for already-certified AWID identities connecting to a service. `aw workspace connect` is the first-class human verb; `aw service init` remains the service-oriented primitive. |
+| `aw team invite` / `aw team join` / `aw team list` / `aw team switch` / `aw team leave` | Everyday team membership intent | Human-facing aliases for the normal invite/join membership flow and installed-membership management. Protocol/admin team operations remain under `aw id team`. |
 | `aw whoami` | Everyday check | Keep prominent. |
 | `aw workspace status` | Everyday check/doctor | Keep prominent. It should explain active team, identity, claims, locks, service binding, and mismatch symptoms. |
 | `aw doctor` | Everyday check/repair | Keep prominent as the support entrypoint for confusing local state. |
@@ -136,7 +137,7 @@ the categories stable unless this document is updated.
 | `aw id team accept-invite <token>` | Agent primitive / human join verb | Must refuse to overwrite existing `.aw` identity/key state. Prints `aw init`/connect next step when needed. |
 | `aw id create --domain --name` | Agent primitive for standalone self-custodial global identity | Identity-only. Skills must distinguish it from `aw init --global`, which also connects a workspace. |
 | `aw id encryption-key setup|rotate|show` | Agent primitive for E2E readiness | Keep in identity skills; not a team setup happy path. |
-| `aw service init` | Agent primitive / everyday connect workspace | Connects an existing identity+cert to a service; does not create team/identity/membership. |
+| `aw service init` | Agent primitive / service-oriented connect workspace | Connects an existing identity+cert to a service; does not create team/identity/membership. |
 | `aw roles set|activate|show|list` | Agent primitive for team context | Publishing roles is a team-context mutation, not template bootstrap side effect. |
 | `aw instructions set|activate|show` | Agent primitive for team context | Publishing instructions is a team-context mutation, not template bootstrap side effect. |
 | `aw contacts`, `aw inbound-mode` | Agent primitives for addressability policy | Keep in identity/messaging skills. |

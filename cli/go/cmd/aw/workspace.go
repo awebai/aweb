@@ -38,6 +38,15 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	RunE: runWorkspaceAddWorktree,
 }
 
+var workspaceConnectCmd = &cobra.Command{
+	Use:   "connect",
+	Short: "Connect this workspace to a service using an existing team certificate",
+	Long: "Connect this workspace to a service using the existing .aw signing key and team certificate in this directory.\n\n" +
+		"This is the first-class workspace connection verb. It does not create identities,\n" +
+		"create teams, or change AWID team membership. It is equivalent to `aw service init`.",
+	RunE: runServiceInit,
+}
+
 var workspaceMigrateMultiTeamCmd = &cobra.Command{
 	Use:   "migrate-multi-team",
 	Short: "Rewrite a legacy single-team workspace into the canonical multi-team shape",
@@ -105,8 +114,12 @@ func init() {
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
 	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusAll, "all", false, "Show all local team memberships in addition to the selected team status")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
+	workspaceConnectCmd.Flags().StringVar(&serviceInitServiceURL, "service", "", "Service URL to connect to")
+	workspaceConnectCmd.Flags().StringVar(&serviceInitTeamID, "team", "", "Canonical AWID team id to activate before connecting")
+	workspaceConnectCmd.Flags().StringVar(&serviceInitRole, "role", "", "Optional role name for this workspace")
 
 	workspaceCmd.AddCommand(workspaceStatusCmd)
+	workspaceCmd.AddCommand(workspaceConnectCmd)
 	workspaceCmd.AddCommand(workspaceAddWorktreeCmd)
 	workspaceCmd.AddCommand(workspaceMigrateMultiTeamCmd)
 	workspaceCmd.AddCommand(workspaceDeleteCmd)

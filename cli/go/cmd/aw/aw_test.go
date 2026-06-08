@@ -117,6 +117,11 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		t.Fatalf("expected mcp-config in Identity group:\n%s", text)
 	}
 
+	teamIdx := strings.Index(text, "\n  team")
+	if teamIdx < identityIdx || teamIdx > networkIdx {
+		t.Fatalf("expected team in Identity group:\n%s", text)
+	}
+
 	whoamiIdx := strings.Index(text, "whoami")
 	if whoamiIdx < identityIdx || whoamiIdx > networkIdx {
 		t.Fatalf("expected whoami in Identity group:\n%s", text)

@@ -262,13 +262,22 @@ func initGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "init")
 }
 
-func TestAgentsCommandSurfaceReplacesTeamBootstrap(t *testing.T) {
+func TestAgentsCommandSurfaceKeepsLegacyAgentsAlongsideHumanTeamVerbs(t *testing.T) {
 	agents := findRootSubcommand("agents")
 	if agents == nil {
 		t.Fatal("root command missing aw agents")
 	}
-	if findRootSubcommand("team") != nil {
-		t.Fatal("root command should not expose aw team")
+	if agents.GroupID != groupObsolete {
+		t.Fatalf("aw agents GroupID=%q, want %q", agents.GroupID, groupObsolete)
+	}
+	team := findRootSubcommand("team")
+	if team == nil {
+		t.Fatal("root command missing aw team")
+	}
+	for _, name := range []string{"invite", "join", "list", "switch", "leave"} {
+		if findSubcommand(team, name) == nil {
+			t.Fatalf("aw team missing %s subcommand", name)
+		}
 	}
 	for _, tt := range []struct {
 		name string
