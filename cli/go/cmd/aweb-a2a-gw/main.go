@@ -765,15 +765,35 @@ func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.Audi
 		}
 		routes = append(routes, converted)
 	}
+	acceptUntil, err := acAcceptNewTasksUntil(cfg)
+	if err != nil {
+		return a2agw.Config{}, err
+	}
 	return a2agw.Config{
-		Host:           strings.TrimSpace(cfg.Host),
-		RootCardMode:   a2agw.RootCardMode(strings.TrimSpace(cfg.RootCardMode)),
-		DefaultRouteID: strings.TrimSpace(cfg.DefaultRouteID),
-		RouterCard:     convertRouterCard(cfg.RouterCard),
-		Routes:         routes,
-		Bridge:         bridge,
-		Audit:          audit,
+		Host:                strings.TrimSpace(cfg.Host),
+		RootCardMode:        a2agw.RootCardMode(strings.TrimSpace(cfg.RootCardMode)),
+		DefaultRouteID:      strings.TrimSpace(cfg.DefaultRouteID),
+		RouterCard:          convertRouterCard(cfg.RouterCard),
+		Routes:              routes,
+		Bridge:              bridge,
+		Audit:               audit,
+		AcceptNewTasksUntil: acceptUntil,
 	}, nil
+}
+
+func acAcceptNewTasksUntil(cfg fileConfig) (time.Time, error) {
+	if !acConfigEnabled(cfg.ACConfig) {
+		return time.Time{}, nil
+	}
+	expiresAt := strings.TrimSpace(cfg.ACRuntime.ExpiresAt)
+	if expiresAt == "" {
+		return time.Time{}, fmt.Errorf("AC runtime config expires_at is required in AC-managed mode")
+	}
+	parsed, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("AC runtime config expires_at: %w", err)
+	}
+	return parsed, nil
 }
 
 func convertRoute(route routeConfig) (a2agw.Route, error) {
@@ -1000,13 +1020,27 @@ func (t *acMailTransport) send(ctx context.Context, req *awid.SendMessageRequest
 }
 
 func (t *acMailTransport) MailConversation(ctx context.Context, conversationID string, limit int) (*awid.InboxResponse, error) {
+	return t.MailConversationForRoute(ctx, "", "", conversationID, limit)
+}
+
+func (t *acMailTransport) MailConversationForRoute(ctx context.Context, routeID, address, conversationID string, limit int) (*awid.InboxResponse, error) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return nil, fmt.Errorf("conversation_id is required")
 	}
 	path := "/" + url.PathEscape(t.gatewayID) + "/conversations/" + url.PathEscape(conversationID)
+	query := make([]string, 0, 3)
+	if strings.TrimSpace(routeID) != "" {
+		query = append(query, "route_id="+url.QueryEscape(strings.TrimSpace(routeID)))
+	}
+	if strings.TrimSpace(address) != "" {
+		query = append(query, "to_address="+url.QueryEscape(strings.TrimSpace(address)))
+	}
 	if limit > 0 {
-		path += "?limit=" + strconv.Itoa(limit)
+		query = append(query, "limit="+strconv.Itoa(limit))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
 	}
 	var out awid.InboxResponse
 	if err := t.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {

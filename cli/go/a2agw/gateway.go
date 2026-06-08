@@ -19,13 +19,14 @@ const (
 )
 
 type Config struct {
-	Host           string
-	RootCardMode   RootCardMode
-	DefaultRouteID string
-	RouterCard     RouterCard
-	Routes         []Route
-	Bridge         Bridge
-	Audit          AuditSink
+	Host                string
+	RootCardMode        RootCardMode
+	DefaultRouteID      string
+	RouterCard          RouterCard
+	Routes              []Route
+	Bridge              Bridge
+	Audit               AuditSink
+	AcceptNewTasksUntil time.Time
 }
 
 type Route struct {

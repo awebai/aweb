@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
@@ -108,6 +109,7 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 func TestA2AGatewayBuildsFromACRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
 	var posted map[string]any
+	var pollPath string
 
 	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
@@ -155,6 +157,9 @@ func TestA2AGatewayBuildsFromACRuntimeConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+		case "/api/v1/a2a/gateway/bridge/gw-test/conversations/conv-1":
+			pollPath = r.URL.String()
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
 			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
 		}
@@ -193,6 +198,19 @@ func TestA2AGatewayBuildsFromACRuntimeConfig(t *testing.T) {
 	}
 	if body, ok := posted["body"].(string); !ok || !strings.Contains(body, "hello") {
 		t.Fatalf("posted body=%#v", posted["body"])
+	}
+
+	transport, err := acMailTransportFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("acMailTransportFromConfig: %v", err)
+	}
+	if _, err := transport.MailConversationForRoute(context.Background(), "r_personal", "a2a.aweb.ai/personal", "conv-1", 20); err != nil {
+		t.Fatalf("MailConversationForRoute: %v", err)
+	}
+	for _, want := range []string{"route_id=r_personal", "to_address=a2a.aweb.ai%2Fpersonal", "limit=20"} {
+		if !strings.Contains(pollPath, want) {
+			t.Fatalf("poll path %q missing %q", pollPath, want)
+		}
 	}
 }
 
