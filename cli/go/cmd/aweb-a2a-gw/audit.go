@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,6 +28,7 @@ func (s *jsonlAuditSink) RecordA2A(event a2agw.AuditEvent) {
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "aweb-a2a-gw: audit marshal failed: %v\n", err)
 		return
 	}
 	data = append(data, '\n')
@@ -34,8 +36,11 @@ func (s *jsonlAuditSink) RecordA2A(event a2agw.AuditEvent) {
 	defer s.mu.Unlock()
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "aweb-a2a-gw: audit open %s failed: %v\n", s.path, err)
 		return
 	}
 	defer f.Close()
-	_, _ = f.Write(data)
+	if _, err := f.Write(data); err != nil {
+		fmt.Fprintf(os.Stderr, "aweb-a2a-gw: audit write %s failed: %v\n", s.path, err)
+	}
 }

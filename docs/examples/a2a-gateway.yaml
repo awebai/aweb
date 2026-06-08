@@ -7,6 +7,10 @@
 #
 # Static API keys and bearer tokens can be loaded from env vars so secrets do
 # not need to be committed into config.
+#
+# Production TLS is expected to terminate at a reverse proxy or load balancer in
+# front of this HTTP listener. workspace_dir defaults to the process CWD; set it
+# explicitly in systemd/container deployments.
 
 listen: ":8080"
 host: "a2a.aweb.ai"
@@ -44,6 +48,11 @@ routes:
       rate_limit: "30/min"
       max_concurrent_tasks: 20
       task_ttl: "1h"
+    # After `aw a2a publish` succeeds, pin the live AWID publication here:
+    # awid_publication:
+    #   address: "a2a.aweb.ai/personal"
+    #   card_digest: "sha256:<digest from aw a2a card>"
+    #   required: true
     card:
       name: "aweb Personal"
       description: "Personal A2A agent for demo coordination and direct questions."
@@ -69,6 +78,10 @@ routes:
       rate_limit: "30/min"
       max_concurrent_tasks: 20
       task_ttl: "1h"
+    # awid_publication:
+    #   address: "a2a.aweb.ai/customer-service"
+    #   card_digest: "sha256:<digest from aw a2a card>"
+    #   required: true
     card:
       name: "aweb Customer Service"
       description: "Customer-service A2A agent for support and onboarding questions."
@@ -94,6 +107,10 @@ routes:
       rate_limit: "30/min"
       max_concurrent_tasks: 20
       task_ttl: "1h"
+    # awid_publication:
+    #   address: "a2a.aweb.ai/research"
+    #   card_digest: "sha256:<digest from aw a2a card>"
+    #   required: true
     card:
       name: "aweb Research"
       description: "Research A2A agent for technical investigation and concise findings."
@@ -101,7 +118,6 @@ routes:
         organization: "aweb"
         url: "https://aweb.ai"
       version: "1.0.0"
-      streaming: true
       default_input_modes: ["text/plain"]
       default_output_modes: ["text/plain", "application/json"]
       skills:
