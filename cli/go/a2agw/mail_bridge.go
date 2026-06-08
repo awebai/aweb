@@ -18,6 +18,10 @@ type MailTransport interface {
 	MailConversation(context.Context, string, int) (*awid.InboxResponse, error)
 }
 
+type RouteScopedMailTransport interface {
+	MailConversationForRoute(context.Context, string, string, string, int) (*awid.InboxResponse, error)
+}
+
 type ReplyApplier interface {
 	ApplyBridgeReply(BridgeReply) (Task, bool, error)
 }
@@ -325,7 +329,7 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 		if time.Now().After(deadline) {
 			return
 		}
-		resp, err := b.client.MailConversation(context.Background(), thread.ConversationID, 20)
+		resp, err := b.mailConversationForThread(context.Background(), thread, 20)
 		if err == nil && resp != nil {
 			for _, msg := range resp.Messages {
 				if _, ok, _ := b.IngestInboxMessage(context.Background(), msg); ok {
@@ -335,6 +339,13 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 		}
 		time.Sleep(b.pollInterval)
 	}
+}
+
+func (b *MailBridge) mailConversationForThread(ctx context.Context, thread *mailBridgeThread, limit int) (*awid.InboxResponse, error) {
+	if scoped, ok := b.client.(RouteScopedMailTransport); ok {
+		return scoped.MailConversationForRoute(ctx, thread.RouteID, thread.TargetAddress, thread.ConversationID, limit)
+	}
+	return b.client.MailConversation(ctx, thread.ConversationID, limit)
 }
 
 func (b *MailBridge) verifyReplyMessage(msg awid.InboxMessage) error {

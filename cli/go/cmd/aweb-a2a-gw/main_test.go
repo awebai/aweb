@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
@@ -100,6 +103,210 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 		if !strings.Contains(posted.Body, want) {
 			t.Fatalf("posted body missing %q:\n%s", want, posted.Body)
 		}
+	}
+}
+
+func TestA2AGatewayBuildsFromACRuntimeConfig(t *testing.T) {
+	tmp := t.TempDir()
+	var posted map[string]any
+	var pollPath string
+
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/a2a/gateway/config/gw-test":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gateway_id":              "gw-test",
+				"gateway_identity":        "did:aw:gateway",
+				"gateway_identity_status": "active",
+				"config_revision":         "rev-1",
+				"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+				"route_counts":            map[string]any{"active": 1, "disabled": 0},
+				"routes": []map[string]any{{
+					"route_id":          "r_personal",
+					"host":              "a2a.aweb.ai",
+					"address":           "a2a.aweb.ai/personal",
+					"mode":              "mail",
+					"disabled":          false,
+					"root_behavior":     "default_for_host",
+					"verification_tier": "unsigned",
+					"auth":              map[string]any{"mode": "none"},
+					"limits": map[string]any{
+						"rate_limit":               map[string]any{"requests_per_minute": 30},
+						"max_message_bytes":        32768,
+						"max_concurrent_tasks":     8,
+						"task_ttl_seconds":         3600,
+						"response_timeout_seconds": 30,
+					},
+					"card": map[string]any{
+						"name":                 "Personal",
+						"description":          "Personal agent",
+						"provider":             map[string]any{"organization": "aweb", "url": "https://aweb.ai"},
+						"version":              "1.0.0",
+						"default_input_modes":  []string{"text/plain"},
+						"default_output_modes": []string{"text/plain"},
+						"skills":               []map[string]any{{"id": "personal", "name": "Personal", "description": "Personal task", "tags": []string{"a2a"}}},
+					},
+				}},
+			})
+		case "/api/v1/a2a/gateway/bridge/gw-test/messages":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+		case "/api/v1/a2a/gateway/bridge/gw-test/conversations/conv-1":
+			pollPath = r.URL.String()
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+		default:
+			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer acServer.Close()
+	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
+	writeACConfig(t, cfgPath, "http://registry.invalid", acServer.URL, "gw-test", "test-token")
+	cfg := mustLoadConfig(t, cfgPath)
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		t.Fatalf("applyACRuntimeConfig: %v", err)
+	}
+	if cfg.Host != "a2a.aweb.ai" || cfg.DefaultRouteID != "r_personal" || len(cfg.Routes) != 1 {
+		t.Fatalf("unexpected merged config: %#v", cfg)
+	}
+	if cfg.Routes[0].Limits.RateLimit != "30/min" {
+		t.Fatalf("RateLimit=%q", cfg.Routes[0].Limits.RateLimit)
+	}
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+	body := `{"jsonrpc":"2.0","id":"req-1","method":"SendMessage","params":{"message":{"messageId":"m-1","contextId":"ctx-1","role":"ROLE_USER","parts":[{"text":"hello","mediaType":"text/plain"}]},"configuration":{"returnImmediately":true}}}`
+	req := httptest.NewRequest(http.MethodPost, "/a2a/agents/r_personal/rpc", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-A2A-Caller-ID", "tester")
+	resp := httptest.NewRecorder()
+	gateway.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("rpc status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if posted["route_id"] != "r_personal" || posted["to_address"] != "a2a.aweb.ai/personal" {
+		t.Fatalf("posted bridge payload=%#v", posted)
+	}
+	if posted["content_mode"] != string(awid.ContentModeLegacyPlaintextV1) {
+		t.Fatalf("posted content_mode=%#v", posted["content_mode"])
+	}
+	if body, ok := posted["body"].(string); !ok || !strings.Contains(body, "hello") {
+		t.Fatalf("posted body=%#v", posted["body"])
+	}
+
+	transport, err := acMailTransportFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("acMailTransportFromConfig: %v", err)
+	}
+	if _, err := transport.MailConversationForRoute(context.Background(), "r_personal", "a2a.aweb.ai/personal", "conv-1", 20); err != nil {
+		t.Fatalf("MailConversationForRoute: %v", err)
+	}
+	for _, want := range []string{"route_id=r_personal", "to_address=a2a.aweb.ai%2Fpersonal", "limit=20"} {
+		if !strings.Contains(pollPath, want) {
+			t.Fatalf("poll path %q missing %q", pollPath, want)
+		}
+	}
+}
+
+func TestA2AGatewayRejectsExpiredACRuntimeConfig(t *testing.T) {
+	tmp := t.TempDir()
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"gateway_id":              "gw-test",
+			"gateway_identity":        "did:aw:gateway",
+			"gateway_identity_status": "active",
+			"config_revision":         "rev-expired",
+			"expires_at":              time.Now().Add(-time.Minute).Format(time.RFC3339),
+			"routes":                  []map[string]any{},
+		})
+	}))
+	defer acServer.Close()
+	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
+	writeACConfig(t, cfgPath, "http://aweb.invalid", acServer.URL, "gw-test", "test-token")
+	cfg := mustLoadConfig(t, cfgPath)
+	if err := applyACRuntimeConfig(&cfg); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("applyACRuntimeConfig err=%v, want expired", err)
+	}
+}
+
+func TestA2AGatewayRuntimeHealthReportsACManagedConfig(t *testing.T) {
+	tmp := t.TempDir()
+	expiresAt := time.Now().Add(time.Hour).Format(time.RFC3339)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
+	}))
+	defer registry.Close()
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api/v1/a2a/gateway/config/gw-test" {
+			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"gateway_id":              "gw-test",
+			"gateway_identity":        "did:aw:gateway",
+			"gateway_identity_status": "active",
+			"config_revision":         "gw-test:42",
+			"expires_at":              expiresAt,
+			"routes": []map[string]any{{
+				"route_id":      "r_personal",
+				"host":          "a2a.aweb.ai",
+				"address":       "a2a.aweb.ai/personal",
+				"mode":          "mail",
+				"root_behavior": "default_for_host",
+				"auth":          map[string]any{"mode": "none"},
+				"limits": map[string]any{
+					"task_ttl_seconds":         3600,
+					"response_timeout_seconds": 30,
+				},
+				"card": map[string]any{
+					"name":                 "Personal",
+					"description":          "Personal agent",
+					"provider":             map[string]any{"organization": "aweb", "url": "https://aweb.ai"},
+					"default_input_modes":  []string{"text/plain"},
+					"default_output_modes": []string{"text/plain"},
+					"skills":               []map[string]any{{"id": "personal", "name": "Personal", "description": "Personal task"}},
+				},
+			}},
+		})
+	}))
+	defer acServer.Close()
+
+	cfgPath := filepath.Join(tmp, "a2a-gw-ac-health.yaml")
+	writeACConfig(t, cfgPath, registry.URL, acServer.URL, "gw-test", "test-token")
+	cfg := mustLoadConfig(t, cfgPath)
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		t.Fatalf("applyACRuntimeConfig: %v", err)
+	}
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	runtimeHandler(gateway, cfg).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	acConfig := health["ac_config"].(map[string]any)
+	if acConfig["enabled"] != true || acConfig["gateway_id"] != "gw-test" || acConfig["config_revision"] != "gw-test:42" || acConfig["expired"] != false || acConfig["routes"].(float64) != 1 {
+		t.Fatalf("unexpected ac_config health: %#v", acConfig)
+	}
+	gatewayIdentity := health["gateway_identity"].(map[string]any)
+	if gatewayIdentity["identity"] != "did:aw:gateway" || gatewayIdentity["status"] != "active" || gatewayIdentity["usable"] != true {
+		t.Fatalf("unexpected gateway_identity health: %#v", gatewayIdentity)
 	}
 }
 
@@ -367,6 +574,24 @@ routes:
           tags: ["personal"]
 `)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeACConfig(t *testing.T, path, registryURL, acBaseURL, gatewayID, token string) {
+	t.Helper()
+	data := fmt.Sprintf(`
+registry_url: %q
+poll_interval: "10ms"
+poll_timeout: "10ms"
+require_verified_replies: false
+allow_unverified_local_reply: true
+ac_config:
+  base_url: %q
+  gateway_id: %q
+  bearer_token: %q
+`, registryURL, acBaseURL, gatewayID, token)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

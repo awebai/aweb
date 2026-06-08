@@ -61,6 +61,25 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 	}
 }
 
+func TestGatewayRPCRejectsNewTasksAfterConfigExpiry(t *testing.T) {
+	bridge := &fakeBridge{}
+	gw := newTestGateway(t, Config{
+		Host:                "team.aweb.ai",
+		Bridge:              bridge,
+		Routes:              []Route{supportRoute("r_support")},
+		AcceptNewTasksUntil: time.Now().Add(-time.Minute),
+	})
+	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-expired", "SendMessage", map[string]any{
+		"message": testUserMessage("msg-1", "ctx-1", "hello"),
+	}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
+	if got := rpcErrorCode(resp); got != "ac_config_expired" {
+		t.Fatalf("rpc error code=%q, want ac_config_expired; resp=%#v", got, resp)
+	}
+	if len(bridge.sent) != 0 {
+		t.Fatalf("expired config must not send bridge tasks: %#v", bridge.sent)
+	}
+}
+
 func TestGatewayRPCConsumesPinnedImmediateFixture(t *testing.T) {
 	var fixtures struct {
 		JSONRPC []struct {
