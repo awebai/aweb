@@ -62,6 +62,8 @@ ac_config:
 ```
 
 The hosted deployment config must not contain route definitions, `.aw` workspace state, signing keys, controller keys, user API keys, raw A2A caller identifiers, or caller plaintext. Static YAML route files remain supported only for local development, self-host, and test fixtures such as [`docs/examples/a2a-gateway.yaml`](examples/a2a-gateway.yaml).
+[`docs/examples/a2a-gateway-ac-managed.yaml`](examples/a2a-gateway-ac-managed.yaml)
+is the hosted-shape config template.
 
 Before first hosted deployment:
 
@@ -111,6 +113,20 @@ If the release includes AC or hosted gateway deployment:
 9. Deploy AC after its migrations and backend/frontend release gates pass. AC must expose route management, gateway identity custody, publication/refresh/revoke, runtime config, bridge send, bridge poll, route-change audit events, dashboard plaintext-boundary copy, and the AC-managed Docker e2e command listed above.
 
 10. Build and publish the gateway image before creating/updating the Render service:
+
+   The banked `ghcr.io/awebai/a2a-gateway:1.26.9` image does not support
+   AC-managed runtime config. It was built before the gateway learned
+   `ac_config`, AC bridge transport, AWID served-card digest enforcement, and
+   AC config expiry rejection for new tasks. Do not deploy that image for the
+   AC-managed product path.
+
+   Because the gateway tag currently follows `CLI_VERSION`, and
+   `CLI_VERSION` follows `server/pyproject.toml`, cutting an AC-managed
+   gateway image requires a fresh aweb server/CLI version bump at a source SHA
+   that includes the AC-managed gateway commits. The next AC-managed gateway
+   release must use a fresh tag such as `a2a-gw-v1.26.10` or the next reviewed
+   release-train version. If the gateway is later versioned independently,
+   update this runbook before release.
 
    `make release-a2a-gateway-check` is the narrow gateway container lane. It assumes the server, AWID, migration, and A2A release-ready checks for the same source SHA have already passed. For a fresh full release train, run the full server/AWID release-ready gates for that train before this narrow gateway check.
 

@@ -1,0 +1,14 @@
+# Example hosted-product A2A gateway config.
+#
+# This is intentionally minimal. AC is the hosted control plane and provides
+# route/card/auth/task policy, gateway identity state, and AWID publication
+# projection at runtime. Do not add route definitions or .aw workspace state to
+# this file for hosted deployments.
+
+listen: ":8080"
+registry_url: "https://api.awid.ai"
+
+ac_config:
+  base_url: "https://app.aweb.ai"
+  gateway_id: "a2a-gateway"
+  bearer_token_env: "AWEB_A2A_GATEWAY_CONFIG_TOKEN"
