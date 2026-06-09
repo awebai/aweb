@@ -143,7 +143,7 @@ type managedACGateway struct {
 }
 
 func runManagedACGateway(base fileConfig, listen string) error {
-	initial, err := buildManagedACSnapshot(base)
+	initial, err := buildManagedACSnapshot(base, true)
 	if err != nil {
 		return err
 	}
@@ -162,10 +162,13 @@ type managedACSnapshot struct {
 	gateway *a2agw.Gateway
 }
 
-func buildManagedACSnapshot(base fileConfig) (managedACSnapshot, error) {
+func buildManagedACSnapshot(base fileConfig, allowDegraded bool) (managedACSnapshot, error) {
 	cfg := base
 	if err := applyACRuntimeConfig(&cfg); err != nil {
 		if isFatalInitialACRuntimeConfigError(err) {
+			return managedACSnapshot{}, err
+		}
+		if !allowDegraded {
 			return managedACSnapshot{}, err
 		}
 		cfg = degradedACConfig(base, err)
@@ -182,7 +185,7 @@ func (m *managedACGateway) refreshLoop(base fileConfig) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		snapshot, err := buildManagedACSnapshot(base)
+		snapshot, err := buildManagedACSnapshot(base, false)
 		if err != nil {
 			m.markRefreshError(err)
 			continue
@@ -242,6 +245,9 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 	}
 	if health.ACConfig.Status == "pending" {
 		health.Status = "pending"
+	}
+	if health.ACConfig.Status == "stale" && health.ACConfig.ConfigRevision == "" {
+		health.Status = "unhealthy"
 	}
 	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible || health.ACConfig.Expired || (health.ACConfig.Routes > 0 && !health.GatewayIdentity.Usable) {
 		health.Status = "unhealthy"

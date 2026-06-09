@@ -329,7 +329,7 @@ func TestA2AGatewayManagedACStartsPendingWhenIdentityMissing(t *testing.T) {
 			BearerToken: "test-token",
 		},
 	}
-	snapshot, err := buildManagedACSnapshot(cfg)
+	snapshot, err := buildManagedACSnapshot(cfg, true)
 	if err != nil {
 		t.Fatalf("buildManagedACSnapshot: %v", err)
 	}
@@ -378,8 +378,79 @@ func TestA2AGatewayManagedACRejectsBadTokenAtStartup(t *testing.T) {
 			BearerToken: "wrong-token",
 		},
 	}
-	if _, err := buildManagedACSnapshot(cfg); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+	if _, err := buildManagedACSnapshot(cfg, true); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("buildManagedACSnapshot err=%v, want HTTP 401", err)
+	}
+}
+
+func TestA2AGatewayManagedACRefreshFailureKeepsLastGoodRoutes(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
+	}))
+	defer registry.Close()
+	cfg := fileConfig{
+		Host:        "a2a.aweb.ai",
+		RegistryURL: registry.URL,
+		ACConfig: acConfig{
+			BaseURL:     "http://ac.invalid",
+			GatewayID:   "a2a-gateway",
+			BearerToken: "test-token",
+		},
+	}
+	expiresAt := time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := mergeACRuntimeConfig(&cfg, acRuntimeConfigPayload{
+		GatewayID:             "a2a-gateway",
+		GatewayIdentity:       "did:aw:gateway",
+		GatewayIdentityStatus: "active",
+		ConfigRevision:        "rev-good",
+		ExpiresAt:             expiresAt,
+		Routes: []acRuntimeRoute{{
+			RouteID:      "r_personal",
+			Host:         "a2a.aweb.ai",
+			Address:      "a2a.aweb.ai/personal",
+			Mode:         "mail",
+			RootBehavior: "default_for_host",
+			Auth:         acRuntimeAuth{Mode: "none"},
+			Limits: acRuntimeLimits{
+				TaskTTLSeconds:         3600,
+				ResponseTimeoutSeconds: 30,
+			},
+			Card: acRuntimeCard{
+				Name:               "Personal",
+				Description:        "Personal agent",
+				Provider:           providerYAML{Organization: "aweb", URL: "https://aweb.ai"},
+				DefaultInputModes:  []string{"text/plain"},
+				DefaultOutputModes: []string{"text/plain"},
+				Skills:             []skillYAML{{ID: "personal", Name: "Personal", Description: "Personal task"}},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("mergeACRuntimeConfig: %v", err)
+	}
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+	manager := &managedACGateway{cfg: cfg, gateway: gateway}
+	manager.markRefreshError(&acRuntimeConfigFetchError{StatusCode: http.StatusInternalServerError, Message: "fetch AC runtime config: HTTP 500: down"})
+
+	cardResp := httptest.NewRecorder()
+	manager.ServeHTTP(cardResp, httptest.NewRequest(http.MethodGet, "/a2a/agents/r_personal/agent-card.json", nil))
+	if cardResp.Code != http.StatusOK {
+		t.Fatalf("card status=%d body=%s", cardResp.Code, cardResp.Body.String())
+	}
+	healthResp := httptest.NewRecorder()
+	manager.ServeHTTP(healthResp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if healthResp.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", healthResp.Code, healthResp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(healthResp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	acConfig := health["ac_config"].(map[string]any)
+	if acConfig["status"] != "stale" || acConfig["config_revision"] != "rev-good" || acConfig["routes"].(float64) != 1 {
+		t.Fatalf("unexpected stale health: %#v", acConfig)
 	}
 }
 
