@@ -412,10 +412,18 @@ Roles define what each agent in the team focuses on. They are
 team-wide and versioned. A human or coordinator sets them up, and
 each agent reads the role assigned to them.
 
-A roles bundle is a JSON file that maps role names to their
-definitions. Each role has a title and a playbook (markdown
-instructions for the agent in that role). The canonical shape is an
-object with a `roles` map keyed by role name:
+Each role has a title and a playbook (markdown instructions for the
+agent in that role). For resource packs or first-time setup, add roles
+one by one from Markdown files:
+
+```bash
+aw roles add developer --title "Developer" --playbook-file resources/roles/developer.md
+aw roles add reviewer --title "Reviewer" --playbook-file resources/roles/reviewer.md
+```
+
+For reviewed bulk updates, a roles bundle is a JSON file that maps role
+names to their definitions. The canonical shape is an object with a
+`roles` map keyed by role name:
 
 ```json
 {
@@ -454,8 +462,9 @@ sending it to the server:
 Roles are opt-in. The two server flavors differ in what they ship:
 
 - **Hosted aweb.ai**: new teams start with an **empty** roles bundle.
-  Use `aw roles set --bundle-file <path>` to install one if you want
-  role-based coordination.
+  Use `aw roles add <role> --playbook-file <path>` to add roles one at
+  a time, or `aw roles set --bundle-file <path>` to install a reviewed
+  full bundle.
 - **Self-hosted OSS aweb**: new teams default to a sample bundle with
   `developer`, `reviewer`, `coordinator`, `backend`, and `frontend`
   roles. Replace it with `aw roles set` or wipe it with
@@ -469,7 +478,8 @@ aw roles show                          # Your current role's playbook
 aw roles show --all-roles              # All roles in the team
 aw roles list                          # Role names and titles
 aw roles history                       # Version history
-aw roles set --bundle-file <path>      # Set roles from a JSON file
+aw roles add <role> --playbook-file <path>  # Add one role from Markdown
+aw roles set --bundle-file <path>      # Replace roles from a JSON file
 aw roles activate <team-roles-id>      # Switch to a previous version
 aw roles deactivate                    # Deactivate roles
 aw roles reset                         # Reset to defaults

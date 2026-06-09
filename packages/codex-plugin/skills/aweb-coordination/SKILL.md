@@ -154,6 +154,31 @@ Team instructions and individual role playbooks are markdown. For resource packs
 
 A role name clarifies responsibility but does not bypass judgment. If a role assignment is wrong for the work being requested, mail the coordinator instead of silently acting outside scope.
 
+## Applying resource packs safely
+
+A resource pack is a set of reusable resources, not a setup command. Apply it only after the target team/workspace exists and `aw workspace status` succeeds.
+
+Novice-friendly order:
+
+```bash
+# 1. Inspect the pack first.
+ls <pack-dir>
+
+# 2. Publish team-wide instructions from Markdown.
+aw instructions set --body-file <pack-dir>/resources/instructions.md
+
+# 3. Add roles one by one from Markdown playbooks.
+aw roles add coordinator --title "Coordinator" --playbook-file <pack-dir>/resources/roles/coordinator.md
+aw roles add developer --title "Developer" --playbook-file <pack-dir>/resources/roles/developer.md
+
+# 4. Verify what the team now sees.
+aw instructions show
+aw roles list
+aw roles show --all-roles
+```
+
+If a role already exists, stop and ask whether to update it; do not pass `--replace` silently. Use `aw roles set --bundle-file` only for a reviewed full-bundle replacement, not as the default novice path. Apply harness adapters (Claude/Codex/Pi/Cursor files) only after the human chooses that harness. Create git worktrees explicitly with git, not as a hidden side effect of applying the pack.
+
 ## Worktrees for parallel local work
 
 When the human (or another agent) needs a second working copy of the same repo — to run a parallel agent without disturbing your own working tree — prefer explicit steps:

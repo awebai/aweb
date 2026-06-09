@@ -88,6 +88,61 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	}
 }
 
+func TestAwRolesShowAcceptsPositionalRoleName(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			if r.URL.Query().Get("role_name") != "developer" {
+				t.Fatalf("role_name=%q", r.URL.Query().Get("role_name"))
+			}
+			if r.URL.Query().Get("only_selected") != "true" {
+				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"team_id":       "backend:proj-1",
+				"version":       1,
+				"updated_at":    "2026-03-10T10:00:00Z",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer", "playbook_md": "Ship code."},
+				},
+				"selected_role": map[string]any{
+					"role_name":   "developer",
+					"role":        "developer",
+					"title":       "Developer",
+					"playbook_md": "Ship code.",
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "show", "developer")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Ship code.") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
 func TestAwRolesListListsSortedRoles(t *testing.T) {
 	t.Parallel()
 

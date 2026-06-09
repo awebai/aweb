@@ -19,17 +19,20 @@ scripts/check-setup-surface.sh
 This checks:
 
 - generated CLI reference is current;
+- resource-pack manifests and paths are valid;
 - root help still exposes the intended command buckets;
 - `aw agents` remains marked obsolete/legacy compatibility;
 - no-source bootstrap/provision failures occur before layout mutation;
 - hosted bootstrap failures roll back newly-created `agents/` layouts when no
   `.aw` identity state exists;
-- hosted bootstrap failures preserve layouts that contain `.aw` key state.
+- hosted bootstrap failures preserve layouts that contain `.aw` key state;
+- resource-pack role application stays novice-friendly through `aw roles add`.
 
 ## Full CLI gate
 
 ```bash
 scripts/regenerate-cli-reference.sh --check
+scripts/check-resource-packs.sh
 cd cli/go && go test ./cmd/aw
 ```
 

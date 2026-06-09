@@ -22,8 +22,9 @@ var rolesCmd = &cobra.Command{
 }
 
 var rolesShowCmd = &cobra.Command{
-	Use:   "show",
+	Use:   "show [role-name]",
 	Short: "Show role guidance from the active team roles bundle",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runTeamRolesShow,
 }
 
@@ -163,7 +164,11 @@ func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	roleName := resolveRequestedRoleName(sel, rolesShowRoleNameFlag)
+	requestedRole := rolesShowRoleNameFlag
+	if strings.TrimSpace(requestedRole) == "" && len(args) > 0 {
+		requestedRole = args[0]
+	}
+	roleName := resolveRequestedRoleName(sel, requestedRole)
 	onlySelected := !rolesShowAllFlag
 	if roleName == "" {
 		// No role resolvable: list the bundle instead of asking the server
