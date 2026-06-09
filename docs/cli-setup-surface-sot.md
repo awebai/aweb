@@ -172,7 +172,7 @@ the categories stable unless this document is updated.
 | `aw workspace add-worktree` | Local convenience/compatibility for existing users | Future skills should prefer explicit `git worktree`/filesystem steps followed by `aw init`/invite/join/connect primitives, unless this command is reduced to a transparent wrapper with no identity/team/template magic. |
 | `aw agents remove` | Compatibility command with strong safety constraints | Removal/deprovision may remain useful, but must clearly separate layout removal, membership revocation, local `.aw` state movement, worktree cleanup, and address deletion. |
 | `aw init --byod` wording | Retired middle-ground risk unless carefully scoped | If retained, copy must not imply the BYOT controller-first import path. BYOT docs should teach controller primitives. |
-| bootstrap-era template repos | Obsolete template model | Replace with resource-pack templates. Old repos should redirect or clearly mark legacy/compatibility. |
+| bootstrap-era template repos | Obsolete template model | Replace with team blueprints (see [team-blueprints-sot.md](team-blueprints-sot.md)). Old repos should redirect or clearly mark legacy/compatibility. |
 
 ## Desired everyday flows
 
@@ -249,7 +249,9 @@ spelling.
 
 ## Resource-pack template contract summary
 
-New templates are resource packs. They may include:
+New templates are **team blueprints**: repos packaging a resource pack plus
+the skills and architecture knowledge an agent needs to create a team from it
+([team-blueprints-sot.md](team-blueprints-sot.md)). They may include:
 
 - harness-neutral Markdown roles, instructions, playbooks, and operating notes;
 - AGENTS.md fragments/resources;

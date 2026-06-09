@@ -14,6 +14,11 @@ A new-design template is a **resource pack**. It packages reusable team
 operating resources that a human or agent can inspect and adapt. It is not an
 identity, team, workspace, filesystem, or git-worktree mutation plan.
 
+A repo that packages a resource pack together with the skills and
+architecture knowledge an agent needs to create a team from it is a **team
+blueprint** ([team-blueprints-sot.md](team-blueprints-sot.md)). This document
+defines the manifest layer that blueprints build on.
+
 ## Design goals
 
 Resource packs should make it easy to answer:
@@ -126,6 +131,7 @@ Allowed top-level fields:
 | `summary` | no | Human-readable description. |
 | `resources.instructions` | no | Path to harness-neutral shared instructions Markdown. |
 | `resources.roles` | no | Map of role name to harness-neutral role Markdown. |
+| `resources.souls` | no | Map of soul name to a soul directory (`soul.yaml`, `AGENTS.md`, seed `docs/`/`decisions/`/`memory/`). Souls are identity-free canonical agent bodies. |
 | `resources.playbooks` | no | Map of playbook key to Markdown. |
 | `resources.fragments` | no | Map of fragment key to Markdown snippets. |
 | `skills` | no | List of included skill entrypoints. |

@@ -38,7 +38,14 @@ Key boundary:
 
 ## Vocabulary
 
-Locked with Olivia on 2026-06-09:
+**Superseded 2026-06-09 (later the same day), per Juan:** the product noun is
+now **blueprint** (repos: blueprints; external submissions: **community
+blueprints**; the activity: **create a team from a blueprint**, skill name
+`create-team`). See `docs/team-blueprints-sot.md`, which is the SOT for this
+vocabulary and the souls/instances model. "Resource pack" remains the
+manifest layer. Olivia must be informed before her AC lane lands.
+
+Originally locked with Olivia on 2026-06-09 (now superseded):
 
 - Product/category: **team operating patterns**
 - GitHub/sample repos: **pattern repos**

@@ -16,8 +16,8 @@ For a new setup, do **not** start here by default. Prefer:
 - `aweb-team-membership` for invite/join/remove/team-membership decisions;
 - `aweb-identity` for who the agent is and where keys live;
 - ordinary git/filesystem primitives for worktrees and copied resources;
-- resource-pack templates for roles, instructions, playbooks, and harness
-  adapters.
+- team blueprints for souls, roles, instructions, playbooks, skills, and
+  harness adapters.
 
 This skill is about **legacy compatibility mental model + decision policy +
 safe recovery**, not memorizing flags.
@@ -46,11 +46,11 @@ monolithic bootstrap command. Keep these boundaries separate:
 3. Team context: `aw roles` and `aw instructions`.
 4. Filesystem and git worktrees: normal git/filesystem primitives unless a
    compatibility command is explicitly needed.
-5. Templates: resource packs containing harness-neutral Markdown roles,
-   instructions, playbooks, skills, and adapter examples. They must not be
-   canonical `CLAUDE.md`/Pi/Cursor-specific source of truth, and must not carry
-   final aliases, DIDs, addresses, certificates, `.aw` state, or generated
-   work symlinks.
+5. Templates: team blueprints containing harness-neutral souls, Markdown
+   roles, instructions, playbooks, skills, and adapter examples. They must not
+   be canonical `CLAUDE.md`/Pi/Cursor-specific source of truth, and must not
+   carry final aliases, DIDs, addresses, certificates, `.aw` state, or
+   generated work symlinks.
 
 Use `aw agents ...` only for existing bootstrap-era layouts or when a human
 explicitly chooses the compatibility path.
@@ -167,10 +167,11 @@ Bootstrap-era templates:
 - awebai/aweb-team-coord-worktrees
 - awebai/aweb-team-company-surfaces
 
-These are being replaced by resource-pack templates. Treat them as legacy
-compatibility inputs, not the new customer happy path. A new-design template is
-not an identity/workspace mutation plan; it is a collection of harness-neutral
-resources that an agent or human can adapt explicitly.
+These are being replaced by team blueprints (`docs/team-blueprints-sot.md`).
+Treat them as legacy compatibility inputs, not the new customer happy path. A
+blueprint is not an identity/workspace mutation plan; it is a collection of
+harness-neutral souls, roles, skills, and playbooks that an agent applies
+explicitly with its `create-team` skill.
 
 Fork/edit vs use-as-is:
 
