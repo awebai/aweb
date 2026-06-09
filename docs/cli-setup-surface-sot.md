@@ -249,12 +249,9 @@ spelling.
 
 ## Resource-pack template contract summary
 
-New templates are resource packs for team operating patterns: choose souls,
-roles, skills, and playbooks, then explicitly create instances when needed. They
-may include:
+New templates are resource packs. They may include:
 
 - harness-neutral Markdown roles, instructions, playbooks, and operating notes;
-- durable soul directories with `soul.yaml`, `AGENTS.md`, docs, decisions, and memory placeholders;
 - AGENTS.md fragments/resources;
 - skills and references;
 - adapter examples for Claude Code, Pi, Codex, Cursor, or other harnesses;

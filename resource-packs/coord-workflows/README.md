@@ -1,21 +1,10 @@
-# coord-workflows team operating pattern
+# coord-workflows resource pack
 
 Successor to the bootstrap-era `aweb-team-coord-worktrees` template.
 
-Choose this pattern when you want a coordinator, a developer, and an independent
-reviewer. The pack gives you souls, roles, skills, playbooks, and adapters. You
-then explicitly create concrete agent instances when you need them.
-
-It does **not** create identities, teams, `.aw` state, git worktrees, or
+This pack provides harness-neutral resources for a coordinator/developer/reviewer
+team. It does **not** create identities, teams, `.aw` state, git worktrees, or
 runtime-specific canonical files.
-
-## What is included
-
-- `resources/souls/`: durable agent bodies (`soul.yaml`, `AGENTS.md`, memory/docs placeholders).
-- `resources/roles/`: team role playbooks publishable with `aw roles add`.
-- `resources/playbooks/`: review and worktree handoff playbooks.
-- `skills/`: optional operating skills for spawning instances and soul maintenance.
-- `adapters/`: harness notes for Claude Code, Codex, and Pi.
 
 ## Apply
 
@@ -29,13 +18,7 @@ runtime-specific canonical files.
    aw check
    ```
 
-2. Copy/adapt the souls and resources into your repo for review. A common shape is:
-
-   ```text
-   souls/<role>/...
-   .agents/skills/<skill>/...
-   ```
-
+2. Copy/adapt the resources under `resources/` into your repo for review.
 3. Publish shared operating context explicitly:
 
    ```bash
@@ -45,9 +28,8 @@ runtime-specific canonical files.
    aw roles add reviewer --title "Reviewer" --playbook-file resources/roles/reviewer.md
    ```
 
-4. Create instances only when needed. Use normal `git worktree`/filesystem
-   commands, then initialize/connect each workspace with `aw init`, `aw team
-   join`, or `aw workspace connect`. See `skills/spawn-instance/SKILL.md` for a
-   concrete explicit flow.
+4. Use normal `git worktree` commands when you want separate working copies;
+   then initialize/connect each workspace with `aw init`, `aw team join`, or
+   `aw workspace connect`.
 
 See `docs/resource-pack-template-contract.md` in the aweb repo for the contract.

@@ -16,8 +16,8 @@ For a new setup, do **not** start here by default. Prefer:
 - `aweb-team-membership` for invite/join/remove/team-membership decisions;
 - `aweb-identity` for who the agent is and where keys live;
 - ordinary git/filesystem primitives for worktrees and copied resources;
-- resource-pack/team-operating-pattern templates for souls, roles,
-  instructions, playbooks, skills, and harness adapters.
+- resource-pack templates for roles, instructions, playbooks, and harness
+  adapters.
 
 This skill is about **legacy compatibility mental model + decision policy +
 safe recovery**, not memorizing flags.
@@ -46,7 +46,7 @@ monolithic bootstrap command. Keep these boundaries separate:
 3. Team context: `aw roles` and `aw instructions`.
 4. Filesystem and git worktrees: normal git/filesystem primitives unless a
    compatibility command is explicitly needed.
-5. Templates: resource packs containing harness-neutral Markdown souls, roles,
+5. Templates: resource packs containing harness-neutral Markdown roles,
    instructions, playbooks, skills, and adapter examples. They must not be
    canonical `CLAUDE.md`/Pi/Cursor-specific source of truth, and must not carry
    final aliases, DIDs, addresses, certificates, `.aw` state, or generated

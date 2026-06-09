@@ -10,17 +10,14 @@ weight: 24
 This document defines the replacement model for the bootstrap-era template
 repos such as `aweb-team-coord-worktrees` and `aweb-team-company-surfaces`.
 
-A new-design template is a **resource pack** for a **team operating pattern**.
-It packages reusable souls, roles, skills, playbooks, instructions, and adapters
-that a human or agent can inspect and adapt. It is not an identity, team,
-workspace, filesystem, or git-worktree mutation plan.
+A new-design template is a **resource pack**. It packages reusable team
+operating resources that a human or agent can inspect and adapt. It is not an
+identity, team, workspace, filesystem, or git-worktree mutation plan.
 
 ## Design goals
 
 Resource packs should make it easy to answer:
 
-- What operating pattern is this team choosing?
-- What durable agent souls should exist?
 - What roles should this team have?
 - What shared instructions should agents read?
 - What operating playbooks, checklists, handoff shapes, and review patterns are
@@ -75,13 +72,6 @@ resources/
     <playbook>.md
   fragments/
     agents.md
-  souls/
-    <soul-name>/
-      soul.yaml
-      AGENTS.md
-      docs/
-      decisions/
-      memory/
 skills/
   <skill-name>/
     SKILL.md
@@ -97,8 +87,8 @@ examples/
 ```
 
 Only `resource-pack.yaml` and `README.md` are required. Everything else is
-optional, but packs that define roles, souls, or shared instructions should keep
-them under `resources/`.
+optional, but packs that define roles or shared instructions should keep them
+under `resources/`.
 
 ## `resource-pack.yaml`
 
@@ -119,11 +109,7 @@ resources:
     reviewer: resources/roles/reviewer.md
   playbooks:
     review-loop: resources/playbooks/review-loop.md
-  souls:
-    developer: resources/souls/developer
-    reviewer: resources/souls/reviewer
 skills:
-  - skills/spawn-instance/SKILL.md
   - skills/aweb-coordination/SKILL.md
 adapters:
   claude: adapters/claude/README.md
@@ -142,7 +128,6 @@ Allowed top-level fields:
 | `resources.roles` | no | Map of role name to harness-neutral role Markdown. |
 | `resources.playbooks` | no | Map of playbook key to Markdown. |
 | `resources.fragments` | no | Map of fragment key to Markdown snippets. |
-| `resources.souls` | no | Map of soul name to a directory containing `soul.yaml` and `AGENTS.md`. |
 | `skills` | no | List of included skill entrypoints. |
 | `adapters` | no | Map of harness/runtime name to adapter docs or generators. |
 | `examples` | no | List or map of example application docs. |
@@ -166,9 +151,6 @@ Allowed:
 - `resources/instructions.md` as canonical shared team instructions;
 - `resources/roles/developer.md` as a canonical role playbook;
 - `resources/fragments/agents.md` as a reusable AGENTS.md fragment;
-- `resources/souls/developer/AGENTS.md` as a durable agent-body resource;
-- `resources/souls/developer/soul.yaml` as a small metadata hint (`role`,
-  `work`, `runtime`) that does not name a concrete identity;
 - `adapters/claude/README.md` explaining how to render or copy resources into
   Claude Code-specific files;
 - generated examples that are clearly examples, not identity-bearing state.
@@ -180,37 +162,7 @@ Forbidden:
   keys;
 - embedding final aliases, addresses, DIDs, or certificate IDs;
 - relying on a monolithic `aw agents bootstrap` command as the normal apply
-  path;
-- creating concrete `instances/<name>/` directories as an automatic side effect
-  of applying the pack.
-
-## Souls and instances
-
-A resource pack may include **souls**: durable agent bodies that future
-instances can link to or copy from. A soul directory should contain:
-
-```text
-resources/souls/<soul-name>/
-  soul.yaml
-  AGENTS.md
-  docs/
-  decisions/
-  memory/
-```
-
-`soul.yaml` is intentionally small and identity-free:
-
-```yaml
-role: developer
-work: worktree      # main | worktree | home
-runtime: claude     # claude | codex | pi | other
-```
-
-A soul is not a running workspace. It must not contain `.aw` state. Creating an
-**instance** of a soul is an explicit later operation: invite/join or initialize
-the identity, optionally create a git worktree, then link/copy the soul body.
-Resource-pack helpers may print those steps or dry-run a plan; they must not
-silently create identities or git worktrees.
+  path.
 
 ## Applying a pack
 
@@ -270,10 +222,10 @@ Bootstrap-era `team.yaml` fields map to resource-pack resources as follows:
 | --- | --- |
 | `instructions.file` | `resources.instructions` |
 | `roles.<name>.file` | `resources.roles.<name>` |
-| `home/<responsibility>/AGENTS.md` | `resources/souls/<responsibility>/AGENTS.md` or `resources/fragments/` |
-| `agents.<responsibility>.role_name` | `resources.souls.<name>.soul.yaml` `role`, plus `resources.roles.<role>` |
-| `agents.<responsibility>.identity_scope` | Remove from template; choose identity with setup primitives when creating an instance |
-| `agents.<responsibility>.work` | `soul.yaml` `work` hint only; use explicit git/filesystem steps when creating an instance |
+| `home/<responsibility>/AGENTS.md` | `resources/fragments/` or harness adapter examples |
+| `agents.<responsibility>.role_name` | Suggested application note, not identity state |
+| `agents.<responsibility>.identity_scope` | Remove from template; choose identity with setup primitives |
+| `agents.<responsibility>.work` | Remove from template; use explicit git/filesystem steps |
 | `naming.*` | Remove from template; choose aliases/addresses at invite/join/identity time |
 | generated `agents/home/*/.aw` | Forbidden |
 | generated `agents/worktrees/` | Forbidden |

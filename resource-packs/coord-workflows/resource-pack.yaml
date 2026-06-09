@@ -12,13 +12,6 @@ resources:
     worktree-handoff: resources/playbooks/worktree-handoff.md
   fragments:
     agents: resources/fragments/agents.md
-  souls:
-    coordinator: resources/souls/coordinator
-    developer: resources/souls/developer
-    reviewer: resources/souls/reviewer
-skills:
-  - skills/spawn-instance/SKILL.md
-  - skills/self-maintenance/SKILL.md
 adapters:
   claude: adapters/claude/README.md
   codex: adapters/codex/README.md
