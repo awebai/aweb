@@ -129,9 +129,6 @@ func New(config Config) (*Gateway, error) {
 	if strings.TrimSpace(config.Host) == "" {
 		return nil, fmt.Errorf("host is required")
 	}
-	if len(config.Routes) == 0 {
-		return nil, fmt.Errorf("at least one route is required")
-	}
 	routeCards := make(map[string]a2a.Card, len(config.Routes))
 	routeConfigs := make(map[string]Route, len(config.Routes))
 	for _, route := range config.Routes {
@@ -180,6 +177,9 @@ func New(config Config) (*Gateway, error) {
 	if mode == "" && len(config.Routes) == 1 {
 		mode = RootCardDefaultAgent
 		config.DefaultRouteID = config.Routes[0].RouteID
+	}
+	if mode == "" && len(config.Routes) == 0 {
+		mode = RootCardRouter
 	}
 	if mode == "" {
 		return nil, fmt.Errorf("root_card mode is required when multiple routes are configured")

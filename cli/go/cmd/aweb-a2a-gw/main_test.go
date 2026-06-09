@@ -307,6 +307,82 @@ func TestA2AGatewayRejectsExpiredACRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestA2AGatewayManagedACStartsPendingWhenIdentityMissing(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
+	}))
+	defer registry.Close()
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, `{"detail":{"code":"gateway_identity_missing"}}`, http.StatusNotFound)
+	}))
+	defer acServer.Close()
+	cfg := fileConfig{
+		Host:        "a2a.aweb.ai",
+		RegistryURL: registry.URL,
+		ACConfig: acConfig{
+			BaseURL:     acServer.URL,
+			GatewayID:   "a2a-gateway",
+			BearerToken: "test-token",
+		},
+	}
+	snapshot, err := buildManagedACSnapshot(cfg)
+	if err != nil {
+		t.Fatalf("buildManagedACSnapshot: %v", err)
+	}
+	if len(snapshot.cfg.Routes) != 0 || snapshot.cfg.ACRuntime.FetchStatus != "pending" {
+		t.Fatalf("unexpected pending config: %#v", snapshot.cfg)
+	}
+	resp := httptest.NewRecorder()
+	runtimeHandler(snapshot.gateway, snapshot.cfg).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health["status"] != "pending" {
+		t.Fatalf("health status=%#v", health["status"])
+	}
+	acConfig := health["ac_config"].(map[string]any)
+	if acConfig["status"] != "pending" || acConfig["routes"].(float64) != 0 {
+		t.Fatalf("unexpected ac_config health: %#v", acConfig)
+	}
+	cardResp := httptest.NewRecorder()
+	snapshot.gateway.ServeHTTP(cardResp, httptest.NewRequest(http.MethodGet, "/.well-known/agent-card.json", nil))
+	if cardResp.Code != http.StatusOK {
+		t.Fatalf("root card status=%d body=%s", cardResp.Code, cardResp.Body.String())
+	}
+	routeResp := httptest.NewRecorder()
+	snapshot.gateway.ServeHTTP(routeResp, httptest.NewRequest(http.MethodPost, "/a2a/agents/r_missing/rpc", strings.NewReader(`{}`)))
+	if routeResp.Code != http.StatusNotFound {
+		t.Fatalf("missing route status=%d body=%s", routeResp.Code, routeResp.Body.String())
+	}
+}
+
+func TestA2AGatewayManagedACRejectsBadTokenAtStartup(t *testing.T) {
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":{"code":"gateway_config_auth_invalid"}}`, http.StatusUnauthorized)
+	}))
+	defer acServer.Close()
+	cfg := fileConfig{
+		Host:        "a2a.aweb.ai",
+		RegistryURL: "http://registry.invalid",
+		ACConfig: acConfig{
+			BaseURL:     acServer.URL,
+			GatewayID:   "a2a-gateway",
+			BearerToken: "wrong-token",
+		},
+	}
+	if _, err := buildManagedACSnapshot(cfg); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Fatalf("buildManagedACSnapshot err=%v, want HTTP 401", err)
+	}
+}
+
 func TestA2AGatewayRuntimeHealthReportsACManagedConfig(t *testing.T) {
 	tmp := t.TempDir()
 	expiresAt := time.Now().Add(time.Hour).Format(time.RFC3339)

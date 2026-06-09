@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awebai/aw/a2a"
@@ -58,6 +60,10 @@ func run(args []string, stdout, _ *os.File) error {
 	if strings.TrimSpace(*workspaceOverride) != "" {
 		cfg.WorkspaceDir = strings.TrimSpace(*workspaceOverride)
 	}
+	listen := firstNonEmpty(cfg.Listen, ":8080")
+	if acConfigEnabled(cfg.ACConfig) && !*checkOnly {
+		return runManagedACGateway(cfg, listen)
+	}
 	if err := applyACRuntimeConfig(&cfg); err != nil {
 		return err
 	}
@@ -68,7 +74,6 @@ func run(args []string, stdout, _ *os.File) error {
 	if *checkOnly {
 		return json.NewEncoder(stdout).Encode(gateway.Diagnostics())
 	}
-	listen := firstNonEmpty(cfg.Listen, ":8080")
 	server := &http.Server{
 		Addr:              listen,
 		Handler:           runtimeHandler(gateway, cfg),
@@ -111,6 +116,8 @@ type runtimeACConfigHealth struct {
 	ExpiresAt      string `json:"expires_at,omitempty"`
 	Expired        bool   `json:"expired"`
 	Routes         int    `json:"routes"`
+	Status         string `json:"status,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 type runtimeIdentityHealth struct {
@@ -129,6 +136,95 @@ func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
 	})
 }
 
+type managedACGateway struct {
+	mu      sync.RWMutex
+	cfg     fileConfig
+	gateway *a2agw.Gateway
+}
+
+func runManagedACGateway(base fileConfig, listen string) error {
+	initial, err := buildManagedACSnapshot(base)
+	if err != nil {
+		return err
+	}
+	manager := &managedACGateway{cfg: initial.cfg, gateway: initial.gateway}
+	go manager.refreshLoop(base)
+	server := &http.Server{
+		Addr:              listen,
+		Handler:           manager,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return server.ListenAndServe()
+}
+
+type managedACSnapshot struct {
+	cfg     fileConfig
+	gateway *a2agw.Gateway
+}
+
+func buildManagedACSnapshot(base fileConfig) (managedACSnapshot, error) {
+	cfg := base
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		if isFatalInitialACRuntimeConfigError(err) {
+			return managedACSnapshot{}, err
+		}
+		cfg = degradedACConfig(base, err)
+	}
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		return managedACSnapshot{}, err
+	}
+	return managedACSnapshot{cfg: cfg, gateway: gateway}, nil
+}
+
+func (m *managedACGateway) refreshLoop(base fileConfig) {
+	interval := acConfigPollInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		snapshot, err := buildManagedACSnapshot(base)
+		if err != nil {
+			m.markRefreshError(err)
+			continue
+		}
+		m.mu.Lock()
+		m.cfg = snapshot.cfg
+		m.gateway = snapshot.gateway
+		m.mu.Unlock()
+	}
+}
+
+func (m *managedACGateway) markRefreshError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.ACRuntime.FetchStatus = "stale"
+	m.cfg.ACRuntime.FetchError = err.Error()
+}
+
+func (m *managedACGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	m.mu.RLock()
+	gateway := m.gateway
+	cfg := m.cfg
+	m.mu.RUnlock()
+	if r.URL.Path == "/health" {
+		writeRuntimeHealth(w, gateway, cfg)
+		return
+	}
+	gateway.ServeHTTP(w, r)
+}
+
+func acConfigPollInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("AWEB_A2A_GW_CONFIG_POLL_INTERVAL"))
+	if raw == "" {
+		return 10 * time.Second
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed < time.Second {
+		return 10 * time.Second
+	}
+	return parsed
+}
+
 func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileConfig) {
 	health := runtimeHealth{
 		Status:             "healthy",
@@ -144,7 +240,10 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 	if err == nil {
 		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
 	}
-	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible || health.ACConfig.Expired || !health.GatewayIdentity.Usable {
+	if health.ACConfig.Status == "pending" {
+		health.Status = "pending"
+	}
+	if !health.AWIDRegistry.Reachable || !health.AWIDRegistry.Compatible || health.ACConfig.Expired || (health.ACConfig.Routes > 0 && !health.GatewayIdentity.Usable) {
 		health.Status = "unhealthy"
 	}
 	status := http.StatusOK
@@ -163,6 +262,11 @@ func acConfigHealth(cfg fileConfig) runtimeACConfigHealth {
 		ConfigRevision: strings.TrimSpace(cfg.ACRuntime.ConfigRevision),
 		ExpiresAt:      strings.TrimSpace(cfg.ACRuntime.ExpiresAt),
 		Routes:         len(cfg.Routes),
+		Status:         strings.TrimSpace(cfg.ACRuntime.FetchStatus),
+		Error:          strings.TrimSpace(cfg.ACRuntime.FetchError),
+	}
+	if out.Status == "" && out.Enabled {
+		out.Status = "ok"
 	}
 	if out.ExpiresAt != "" {
 		if parsed, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
@@ -336,6 +440,8 @@ type acRuntimeMeta struct {
 	GatewayIdentityStatus string
 	ConfigRevision        string
 	ExpiresAt             string
+	FetchStatus           string
+	FetchError            string
 }
 
 type routeConfig struct {
@@ -434,6 +540,7 @@ func hostedEnvConfig() (fileConfig, bool) {
 		return fileConfig{}, false
 	}
 	return fileConfig{
+		Host:        firstNonEmpty(os.Getenv("AWEB_A2A_GW_HOST"), "a2a.aweb.ai"),
 		RegistryURL: firstNonEmpty(os.Getenv("AWEB_A2A_GW_REGISTRY_URL"), "https://api.awid.ai"),
 		ACConfig: acConfig{
 			BaseURL:        firstNonEmpty(os.Getenv("AWEB_A2A_GW_AC_BASE_URL"), "https://app.aweb.ai"),
@@ -506,6 +613,15 @@ type acRuntimeAWID struct {
 	DelegationExpiresAt  string `json:"delegation_expires_at"`
 }
 
+type acRuntimeConfigFetchError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *acRuntimeConfigFetchError) Error() string {
+	return e.Message
+}
+
 func applyACRuntimeConfig(cfg *fileConfig) error {
 	url, err := acConfigURL(cfg.ACConfig)
 	if err != nil {
@@ -526,18 +642,49 @@ func applyACRuntimeConfig(cfg *fileConfig) error {
 	req.Header.Set("Accept", "application/json")
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch AC runtime config: %w", err)
+		return &acRuntimeConfigFetchError{Message: fmt.Sprintf("fetch AC runtime config: %v", err)}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("fetch AC runtime config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return &acRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("fetch AC runtime config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
 	var payload acRuntimeConfigPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return fmt.Errorf("decode AC runtime config: %w", err)
 	}
 	return mergeACRuntimeConfig(cfg, payload)
+}
+
+func isFatalInitialACRuntimeConfigError(err error) bool {
+	var fetchErr *acRuntimeConfigFetchError
+	if err != nil && strings.Contains(err.Error(), "bearer token is required") {
+		return true
+	}
+	if err != nil && errors.As(err, &fetchErr) {
+		return fetchErr.StatusCode == http.StatusUnauthorized || fetchErr.StatusCode == http.StatusForbidden
+	}
+	return false
+}
+
+func degradedACConfig(base fileConfig, err error) fileConfig {
+	cfg := base
+	cfg.Routes = nil
+	cfg.DefaultRouteID = ""
+	cfg.RootCardMode = string(a2agw.RootCardRouter)
+	if strings.TrimSpace(cfg.Host) == "" {
+		cfg.Host = firstNonEmpty(os.Getenv("AWEB_A2A_GW_HOST"), "a2a.aweb.ai")
+	}
+	if strings.TrimSpace(cfg.RouterCard.Name) == "" {
+		cfg.RouterCard = defaultRouterCard(cfg.Host)
+	}
+	cfg.GatewayIdentity = ""
+	cfg.ACRuntime = acRuntimeMeta{
+		GatewayIdentityStatus: "missing",
+		FetchStatus:           "pending",
+		FetchError:            err.Error(),
+	}
+	return cfg
 }
 
 func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error {
@@ -563,6 +710,7 @@ func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error
 		GatewayIdentityStatus: strings.TrimSpace(payload.GatewayIdentityStatus),
 		ConfigRevision:        strings.TrimSpace(payload.ConfigRevision),
 		ExpiresAt:             strings.TrimSpace(payload.ExpiresAt),
+		FetchStatus:           "ok",
 	}
 	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
 	defaultRouteID := ""
@@ -617,6 +765,11 @@ func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error
 		cfg.RootCardMode = string(a2agw.RootCardDefaultAgent)
 		cfg.DefaultRouteID = defaultRouteID
 	} else if routerRoutes > 0 || len(cfg.Routes) > 1 {
+		cfg.RootCardMode = string(a2agw.RootCardRouter)
+		if strings.TrimSpace(cfg.RouterCard.Name) == "" {
+			cfg.RouterCard = defaultRouterCard(cfg.Host)
+		}
+	} else if len(cfg.Routes) == 0 {
 		cfg.RootCardMode = string(a2agw.RootCardRouter)
 		if strings.TrimSpace(cfg.RouterCard.Name) == "" {
 			cfg.RouterCard = defaultRouterCard(cfg.Host)
@@ -794,6 +947,12 @@ func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.Audi
 		}
 		routes = append(routes, converted)
 	}
+	if len(routes) == 0 && strings.TrimSpace(cfg.RootCardMode) == "" {
+		cfg.RootCardMode = string(a2agw.RootCardRouter)
+	}
+	if a2agw.RootCardMode(strings.TrimSpace(cfg.RootCardMode)) == a2agw.RootCardRouter && strings.TrimSpace(cfg.RouterCard.Name) == "" {
+		cfg.RouterCard = defaultRouterCard(cfg.Host)
+	}
 	acceptUntil, err := acAcceptNewTasksUntil(cfg)
 	if err != nil {
 		return a2agw.Config{}, err
@@ -816,6 +975,9 @@ func acAcceptNewTasksUntil(cfg fileConfig) (time.Time, error) {
 	}
 	expiresAt := strings.TrimSpace(cfg.ACRuntime.ExpiresAt)
 	if expiresAt == "" {
+		if strings.TrimSpace(cfg.ACRuntime.FetchStatus) == "pending" {
+			return time.Time{}, nil
+		}
 		return time.Time{}, fmt.Errorf("AC runtime config expires_at is required in AC-managed mode")
 	}
 	parsed, err := time.Parse(time.RFC3339, expiresAt)
