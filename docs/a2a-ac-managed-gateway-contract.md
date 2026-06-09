@@ -43,14 +43,22 @@ aweb-a2a-gw data plane
 AC must be able to stop or disable all public hosted A2A routes without
 requiring access to Render shell or to a local gateway workspace.
 
+Hosted deployments use one platform-managed gateway identity for the hosted
+data plane, normally `a2a-gateway` at `a2a.aweb.ai/gateway`. That identity is
+created, rotated, and audited by AC operators through an admin-only setup path.
+It is not created per customer, not chosen in customer route forms, and not a
+customer-facing concept. Customers create route records for their own target
+agents; AC assigns the hosted gateway identity and collision-safe route ids
+server-side.
+
 ## Route Data Model
 
 AC stores one route record per exposed A2A address. Minimum fields:
 
 | Field | Required | Notes |
 |---|---:|---|
-| `route_id` | yes | Opaque stable route id used in `/a2a/agents/{route_id}`. |
-| `host` | yes | Public gateway host, e.g. `a2a.aweb.ai`. |
+| `route_id` | yes | Opaque stable route id used in `/a2a/agents/{route_id}`. AC assigns this server-side for hosted routes; operator-supplied ids are reserved for admin/test/self-host flows. |
+| `host` | yes | Public gateway host, e.g. `a2a.aweb.ai`. Hosted customer route creation uses the configured platform host. |
 | `address` | yes | Target aweb address, e.g. `a2a.aweb.ai/research`. |
 | `target_kind` | yes | `aweb_address` in v1. Future values need contract review. |
 | `mode` | yes | `mail` in v1. |
@@ -68,7 +76,7 @@ AC stores one route record per exposed A2A address. Minimum fields:
 | `max_concurrent_tasks` | yes | Per route concurrency bound. |
 | `task_ttl_seconds` | yes | Task expiry. |
 | `response_timeout_seconds` | yes | Wait timeout for non-`returnImmediately` calls. |
-| `gateway_identity_id` | yes | AC reference to the hosted gateway identity. |
+| `gateway_identity_id` | yes | AC reference to the platform-managed hosted gateway identity. Hosted customer route creation must not accept this as user input. |
 | `verification_tier` | yes | `unsigned`, `local_configured`, `awid_published`, `delegated`, `mismatch`, `expired`, or `revoked`. |
 | `card_digest` | no | Required once served card material is active. |
 | `card_revision` | no | Required for AWID publication. |
@@ -275,6 +283,7 @@ Minimum hosted route management:
 Permission rules:
 
 - users can manage only routes for identities/teams they control;
+- users must not create, choose, or rotate the hosted gateway identity;
 - self-custodial delegation requires the self-custodial signer to authorize;
 - hosted-custodial publication uses hosted session authority;
 - AC operators can disable public routes for abuse/safety but cannot silently

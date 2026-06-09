@@ -44,7 +44,7 @@ The hosted gateway is not a static card host and is not a manually packaged aweb
 
 AC owns:
 
-- gateway identity creation, hosted custody, and team/service certificate state;
+- platform gateway identity creation, hosted custody, and team/service certificate state;
 - encrypted storage of gateway signing material;
 - route/card/auth/rate/task policy;
 - AWID publication/delegation projection and verification state;
@@ -69,9 +69,10 @@ Before first hosted deployment:
 
 1. AC production has `AWEB_A2A_GATEWAY_CONFIG_TOKEN` set to the same secret value mounted in the gateway Render service. The token is a service credential for fetching runtime config and bridge endpoints; it is not a user API key.
 2. AC production has the hosted-custodial key protection env vars required by the gateway identity custody implementation.
-3. An operator creates or ensures the gateway identity from the AC dashboard/API. The identity must be dedicated to the gateway and must not reuse a human agent key.
-4. An operator creates the initial route records in AC and publishes/refreshes AWID publication state there. The hosted product path does not require Render shell access.
-5. The gateway Render service starts with the minimal config above, fetches runtime config from AC, and reports AC config plus gateway identity dimensions in `/health`.
+3. An AC operator provisions the single platform-managed hosted gateway identity through the guarded admin setup path. The default identity is `a2a-gateway` at `a2a.aweb.ai/gateway`. It must be dedicated to the gateway, must not reuse a human agent key, and must not be exposed as a customer dashboard control.
+4. Customers or operators create route records in AC for target agents they control. AC assigns the hosted gateway identity and collision-safe route ids server-side; route forms must not ask customers to choose a gateway identity.
+5. An operator publishes/refreshes AWID publication state in AC for routes that should become customer-visible as verified. The hosted product path does not require Render shell access.
+6. The gateway Render service starts with the minimal config above, fetches runtime config from AC, and reports AC config plus gateway identity dimensions in `/health`.
 
 Rotation procedure:
 
