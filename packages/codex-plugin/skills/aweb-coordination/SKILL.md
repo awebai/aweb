@@ -143,13 +143,14 @@ aw instructions set --body-file <path>      # publish a new version of team inst
 aw instructions activate <version-id>       # roll back/forward to a previous version
 aw instructions history                     # see what changed and when
 
-aw roles set --bundle-file <path>           # publish a new role bundle (JSON bundle)
-aw roles activate <version-id>              # roll to a previous bundle
+aw roles add <role-name> --title <title> --playbook-file <path>  # add/update one role from Markdown
+aw roles set --bundle-file <path>                                # publish a full JSON role bundle
+aw roles activate <version-id>                                   # roll to a previous bundle
 aw roles history
-aw role-name set <role-name>                # assign a role to THIS workspace
+aw role-name set <role-name>                                     # assign a role to THIS workspace
 ```
 
-Team instructions are markdown; a role bundle is JSON (one entry per role, each with name + guidance). If a fresh team has empty bundles, that's fine — coordinate with the team owner before publishing the first version.
+Team instructions and individual role playbooks are markdown. For resource packs or novice application, prefer `aw roles add ... --playbook-file <path>` one role at a time. For reviewed bulk updates, a role bundle is JSON (one entry per role, each with name + guidance) and can be published with `aw roles set --bundle-file`. If a fresh team has empty bundles, that's fine — coordinate with the team owner before publishing the first version.
 
 A role name clarifies responsibility but does not bypass judgment. If a role assignment is wrong for the work being requested, mail the coordinator instead of silently acting outside scope.
 

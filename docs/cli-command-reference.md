@@ -1574,6 +1574,7 @@ Read and manage team roles bundles and role definitions
 
 Subcommands:
 - `activate` Activate an existing team roles bundle version
+- `add` Add or update one role in the active team roles bundle
 - `deactivate` Deactivate team roles by replacing the active bundle with an empty bundle
 - `history` List team roles history
 - `list` List roles defined in the active team roles bundle
@@ -1593,6 +1594,23 @@ Activate an existing team roles bundle version
 
 Flags:
 - `-h, --help help for activate`
+
+## `roles add`
+
+### `roles add`
+
+Add or update one role in the active team roles bundle.
+
+This is the novice-friendly way to build a roles bundle from resource-pack
+role Markdown files one role at a time. It reads the active bundle, adds the
+role, creates a new bundle version, and activates it.
+
+Flags:
+- `-h, --help help for add`
+- `--playbook string Role playbook Markdown body`
+- `--playbook-file string Read role playbook Markdown from file ('-' for stdin)`
+- `--replace Replace an existing role with the same name`
+- `--title string Human-readable role title (defaults to role name)`
 
 ## `roles deactivate`
 

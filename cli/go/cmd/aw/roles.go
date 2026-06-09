@@ -45,6 +45,17 @@ var rolesSetCmd = &cobra.Command{
 	RunE:  runRolesSet,
 }
 
+var rolesAddCmd = &cobra.Command{
+	Use:   "add <role-name>",
+	Short: "Add or update one role in the active team roles bundle",
+	Long: "Add or update one role in the active team roles bundle.\n\n" +
+		"This is the novice-friendly way to build a roles bundle from resource-pack\n" +
+		"role Markdown files one role at a time. It reads the active bundle, adds the\n" +
+		"role, creates a new bundle version, and activates it.",
+	Args: cobra.ExactArgs(1),
+	RunE: runRolesAdd,
+}
+
 var rolesActivateCmd = &cobra.Command{
 	Use:   "activate <team-roles-id>",
 	Short: "Activate an existing team roles bundle version",
@@ -70,6 +81,10 @@ var (
 	rolesHistoryLimit     int
 	rolesSetBundleJSON    string
 	rolesSetBundleFile    string
+	rolesAddTitle         string
+	rolesAddPlaybook      string
+	rolesAddPlaybookFile  string
+	rolesAddReplace       bool
 )
 
 type teamRolesShowOutput struct {
@@ -87,6 +102,15 @@ type teamRolesSetOutput struct {
 	TeamRolesID string `json:"team_roles_id"`
 	Version     int    `json:"version"`
 	Activated   bool   `json:"activated"`
+}
+
+type teamRolesAddOutput struct {
+	TeamRolesID string `json:"team_roles_id"`
+	Version     int    `json:"version"`
+	Activated   bool   `json:"activated"`
+	RoleName    string `json:"role_name"`
+	Title       string `json:"title"`
+	Replaced    bool   `json:"replaced"`
 }
 
 type teamRolesActivateOutput struct {
@@ -110,11 +134,16 @@ func init() {
 	rolesHistoryCmd.Flags().IntVar(&rolesHistoryLimit, "limit", 20, "Max role bundle versions")
 	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Team roles bundle JSON")
 	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read team roles bundle JSON from file ('-' for stdin)")
+	rolesAddCmd.Flags().StringVar(&rolesAddTitle, "title", "", "Human-readable role title (defaults to role name)")
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybook, "playbook", "", "Role playbook Markdown body")
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybookFile, "playbook-file", "", "Read role playbook Markdown from file ('-' for stdin)")
+	rolesAddCmd.Flags().BoolVar(&rolesAddReplace, "replace", false, "Replace an existing role with the same name")
 
 	rolesCmd.AddCommand(rolesShowCmd)
 	rolesCmd.AddCommand(rolesListCmd)
 	rolesCmd.AddCommand(rolesHistoryCmd)
 	rolesCmd.AddCommand(rolesSetCmd)
+	rolesCmd.AddCommand(rolesAddCmd)
 	rolesCmd.AddCommand(rolesActivateCmd)
 	rolesCmd.AddCommand(rolesResetCmd)
 	rolesCmd.AddCommand(rolesDeactivateCmd)
@@ -210,20 +239,8 @@ func runRolesSet(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
+	created, err := createAndActivateTeamRolesBundle(ctx, client, bundle, "")
 	if err != nil {
-		return err
-	}
-
-	created, err := client.CreateTeamRoles(ctx, &aweb.CreateTeamRolesRequest{
-		Bundle:          bundle,
-		BaseTeamRolesID: active.TeamRolesID,
-	})
-	if err != nil {
-		return err
-	}
-
-	if _, err := client.ActivateTeamRoles(ctx, created.TeamRolesID); err != nil {
 		return err
 	}
 
@@ -233,6 +250,86 @@ func runRolesSet(cmd *cobra.Command, args []string) error {
 		Activated:   true,
 	}, formatTeamRolesSet)
 	return nil
+}
+
+func runRolesAdd(cmd *cobra.Command, args []string) error {
+	roleName := strings.TrimSpace(args[0])
+	if roleName == "" {
+		return usageError("role-name is required")
+	}
+	playbook, err := resolveRolesAddPlaybook(cmd.InOrStdin(), rolesAddPlaybook, rolesAddPlaybookFile)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(playbook) == "" {
+		return usageError("role playbook is empty; pass --playbook or --playbook-file")
+	}
+	title := strings.TrimSpace(rolesAddTitle)
+	if title == "" {
+		title = roleName
+	}
+
+	client, _, err := resolveClientSelection()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
+	if err != nil {
+		return err
+	}
+	bundle := aweb.TeamRolesBundle{
+		Roles:    map[string]aweb.RoleDefinition{},
+		Adapters: active.Adapters,
+	}
+	for name, role := range active.Roles {
+		bundle.Roles[name] = role
+	}
+	_, existed := bundle.Roles[roleName]
+	if existed && !rolesAddReplace {
+		return usageError("role %q already exists; pass --replace to update it", roleName)
+	}
+	bundle.Roles[roleName] = aweb.RoleDefinition{Title: title, PlaybookMD: playbook}
+
+	created, err := createAndActivateTeamRolesBundle(ctx, client, bundle, active.TeamRolesID)
+	if err != nil {
+		return err
+	}
+
+	printOutput(teamRolesAddOutput{
+		TeamRolesID: created.TeamRolesID,
+		Version:     created.Version,
+		Activated:   true,
+		RoleName:    roleName,
+		Title:       title,
+		Replaced:    existed,
+	}, formatTeamRolesAdd)
+	return nil
+}
+
+func createAndActivateTeamRolesBundle(ctx context.Context, client *aweb.Client, bundle aweb.TeamRolesBundle, baseTeamRolesID string) (*aweb.CreateTeamRolesResponse, error) {
+	if strings.TrimSpace(baseTeamRolesID) == "" {
+		active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
+		if err != nil {
+			return nil, err
+		}
+		baseTeamRolesID = active.TeamRolesID
+	}
+	created, err := client.CreateTeamRoles(ctx, &aweb.CreateTeamRolesRequest{
+		Bundle:          bundle,
+		BaseTeamRolesID: baseTeamRolesID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := client.ActivateTeamRoles(ctx, created.TeamRolesID); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func runRolesActivate(cmd *cobra.Command, args []string) error {
@@ -329,6 +426,31 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 	// back to listing the bundle instead of forcing a name like "developer"
 	// that may not exist in the team's bundle (new teams bootstrap empty).
 	return ""
+}
+
+func resolveRolesAddPlaybook(stdin io.Reader, playbook, playbookFile string) (string, error) {
+	playbook = strings.TrimSpace(playbook)
+	playbookFile = strings.TrimSpace(playbookFile)
+	switch {
+	case playbook != "" && playbookFile != "":
+		return "", usageError("use only one of --playbook or --playbook-file")
+	case playbook != "":
+		return playbook, nil
+	case playbookFile == "":
+		return "", usageError("missing required flag: --playbook or --playbook-file")
+	case playbookFile == "-":
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
+		data, err := os.ReadFile(playbookFile)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
 }
 
 func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.TeamRolesBundle, error) {
@@ -598,6 +720,15 @@ func formatTeamRolesHistory(v any) string {
 func formatTeamRolesSet(v any) string {
 	out := v.(teamRolesSetOutput)
 	return fmt.Sprintf("Activated team roles v%d (%s)\n", out.Version, out.TeamRolesID)
+}
+
+func formatTeamRolesAdd(v any) string {
+	out := v.(teamRolesAddOutput)
+	action := "Added"
+	if out.Replaced {
+		action = "Updated"
+	}
+	return fmt.Sprintf("%s role %s and activated team roles v%d (%s)\n", action, out.RoleName, out.Version, out.TeamRolesID)
 }
 
 func formatTeamRolesActivate(v any) string {

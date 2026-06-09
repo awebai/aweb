@@ -403,6 +403,149 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 	}
 }
 
+func TestAwRolesAddAddsOneRoleToActiveBundle(t *testing.T) {
+	t.Parallel()
+
+	var createBody map[string]any
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			if r.URL.Query().Get("only_selected") != "false" {
+				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id":        "roles-1",
+				"active_team_roles_id": "roles-1",
+				"team_id":              "backend:proj-1",
+				"version":              1,
+				"updated_at":           "2026-03-10T10:00:00Z",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer", "playbook_md": "Ship code."},
+				},
+				"adapters": map[string]any{"codex": map[string]any{"enabled": true}},
+			})
+		case "/v1/roles":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-2",
+				"team_id":       "backend:proj-1",
+				"version":       2,
+				"created":       true,
+			})
+		case "/v1/roles/roles-2/activate":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"activated":            true,
+				"active_team_roles_id": "roles-2",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, tmp, server.URL)
+
+	playbookPath := filepath.Join(tmp, "reviewer.md")
+	if err := os.WriteFile(playbookPath, []byte("Review carefully.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := exec.CommandContext(ctx, bin, "roles", "add", "reviewer", "--title", "Reviewer", "--playbook-file", playbookPath)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	if createBody["base_team_roles_id"] != "roles-1" {
+		t.Fatalf("base_team_roles_id=%v", createBody["base_team_roles_id"])
+	}
+	bundle := createBody["bundle"].(map[string]any)
+	roles := bundle["roles"].(map[string]any)
+	if len(roles) != 2 {
+		t.Fatalf("roles=%#v", roles)
+	}
+	developer := roles["developer"].(map[string]any)
+	if developer["title"] != "Developer" || developer["playbook_md"] != "Ship code." {
+		t.Fatalf("developer role not preserved: %#v", developer)
+	}
+	reviewer := roles["reviewer"].(map[string]any)
+	if reviewer["title"] != "Reviewer" || reviewer["playbook_md"] != "Review carefully.\n" {
+		t.Fatalf("reviewer=%#v", reviewer)
+	}
+	adapters := bundle["adapters"].(map[string]any)
+	if adapters["codex"] == nil {
+		t.Fatalf("adapters not preserved: %#v", adapters)
+	}
+	if !strings.Contains(string(out), "Added role reviewer and activated team roles v2 (roles-2)") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwRolesAddRefusesExistingRoleWithoutReplace(t *testing.T) {
+	t.Parallel()
+
+	createCalled := false
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"team_id":       "backend:proj-1",
+				"version":       1,
+				"updated_at":    "2026-03-10T10:00:00Z",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer", "playbook_md": "Ship code."},
+				},
+			})
+		case "/v1/roles":
+			createCalled = true
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "add", "developer", "--title", "Developer", "--playbook", "New body")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected duplicate role failure:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "role \"developer\" already exists") || !strings.Contains(string(out), "--replace") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if createCalled {
+		t.Fatal("create should not be called without --replace")
+	}
+}
+
 func TestAwRolesSetAcceptsArrayBundleShape(t *testing.T) {
 	t.Parallel()
 

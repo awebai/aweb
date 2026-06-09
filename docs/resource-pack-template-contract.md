@@ -48,6 +48,7 @@ aw team invite
 aw team join <invite-token>
 aw init
 aw workspace connect --service <service-url> --team <team>:<namespace>
+aw roles add <role-name> --title <title> --playbook-file <path>
 aw roles set --bundle-file <path>
 aw instructions set --body-file <path>
 ```
@@ -173,10 +174,18 @@ An agent applying a resource pack should:
    workspace connect`).
 3. Copy/adapt harness-neutral resources into a reviewable location in the
    target repo.
-4. Publish shared team context explicitly:
+4. Publish shared team context explicitly. For a novice, add roles one by one
+   from Markdown files:
 
    ```bash
    aw instructions set --body-file <adapted-instructions.md>
+   aw roles add coordinator --title "Coordinator" --playbook-file resources/roles/coordinator.md
+   aw roles add developer --title "Developer" --playbook-file resources/roles/developer.md
+   ```
+
+   For scripted/bulk updates, publish a reviewed JSON bundle:
+
+   ```bash
    aw roles set --bundle-file <adapted-roles.json>
    ```
 

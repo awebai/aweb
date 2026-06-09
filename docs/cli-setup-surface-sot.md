@@ -126,7 +126,7 @@ the categories stable unless this document is updated.
 | `aw workspace status` | Everyday check/doctor | Keep prominent. It should explain active team, identity, claims, locks, service binding, and mismatch symptoms. |
 | `aw check` / `aw doctor` | Everyday check/repair | Keep prominent. `aw check` is the everyday diagnostic verb; `aw doctor` remains the support/deeper diagnostics name. |
 | `aw id team list` / `switch` / `leave` | Everyday membership management backed by primitives | Keep discoverable; consider human-facing aliases if taxonomy implementation adds `aw team ...`. |
-| `aw roles`, `aw role-name`, `aw instructions` | Everyday team context + agent primitives | Keep prominent for team operating context. |
+| `aw roles`, `aw role-name`, `aw instructions` | Everyday team context + agent primitives | Keep prominent for team operating context. `aw roles add ... --playbook-file` is the novice/resource-pack path; `aw roles set --bundle-file` remains the bulk/scripted path. |
 | `aw mail`, `aw chat`, `aw work`, `aw task`, `aw lock` | Everyday coordination | Out of setup scope, but remain primary day-to-day commands. |
 
 ### Agent primitives to keep sharp
@@ -138,7 +138,7 @@ the categories stable unless this document is updated.
 | `aw id create --domain --name` | Agent primitive for standalone self-custodial global identity | Identity-only. Skills must distinguish it from `aw init --global`, which also connects a workspace. |
 | `aw id encryption-key setup|rotate|show` | Agent primitive for E2E readiness | Keep in identity skills; not a team setup happy path. |
 | `aw service init` | Agent primitive / service-oriented connect workspace | Connects an existing identity+cert to a service; does not create team/identity/membership. |
-| `aw roles set|activate|show|list` | Agent primitive for team context | Publishing roles is a team-context mutation, not template bootstrap side effect. |
+| `aw roles add|set|activate|show|list` | Agent primitive for team context | Publishing roles is a team-context mutation, not template bootstrap side effect. Prefer `add` for one-role-at-a-time resource-pack application; use `set` for full-bundle replacement. |
 | `aw instructions set|activate|show` | Agent primitive for team context | Publishing instructions is a team-context mutation, not template bootstrap side effect. |
 | `aw contacts`, `aw inbound-mode` | Agent primitives for addressability policy | Keep in identity/messaging skills. |
 
