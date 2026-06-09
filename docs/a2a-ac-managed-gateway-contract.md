@@ -31,7 +31,8 @@ hosted A2A routes: AC is the control plane; `aweb-a2a-gw` is the data plane.
 ```text
 AC control plane
   owns route records, card config, auth policy, verification state,
-  gateway identity custody, and AWID publication/delegation state
+  platform gateway service identity custody, transport authority references,
+  and AWID publication/delegation state
 
 aweb-a2a-gw data plane
   authenticates as the hosted gateway service
@@ -43,13 +44,36 @@ aweb-a2a-gw data plane
 AC must be able to stop or disable all public hosted A2A routes without
 requiring access to Render shell or to a local gateway workspace.
 
-Hosted deployments use one platform-managed gateway identity for the hosted
-data plane, normally `a2a-gateway` at `a2a.aweb.ai/gateway`. That identity is
-created, rotated, and audited by AC operators through an admin-only setup path.
-It is not created per customer, not chosen in customer route forms, and not a
-customer-facing concept. Customers create route records for their own target
-agents; AC assigns the hosted gateway identity and collision-safe route ids
-server-side.
+Hosted deployments use one platform-managed gateway service identity for the
+hosted data plane, normally `a2a-gateway` at `a2a.aweb.ai/gateway`. This is the
+bridge sender identity used when the gateway translates an external A2A task
+into a durable aweb message for a target agent. It must not impersonate the
+target agent, must not hold a target agent's self-custodial private key, and
+must not be described as the customer owning or operating the gateway.
+
+The gateway service identity is created, rotated, and audited by AC operators
+through an admin-only setup path. It is not created per customer, not chosen in
+customer route forms, and not a customer-facing concept. Customers create route
+records for their own target agents; AC assigns the hosted gateway identity and
+collision-safe route ids server-side.
+
+The product identity and the aweb transport credential are separate concepts:
+
+- `gateway_id` / `host` / `did_aw` / `did_key` identify the platform gateway
+  service for A2A/AWID publication and delegation checks.
+- `transport_authority_ref` is AC's internal reference to the credential that
+  lets the gateway inject and poll bridge messages in the current aweb
+  transport. In v1 this may be backed by the existing hosted workspace/team-cert
+  machinery, but that team-bound membership is an implementation detail only.
+  It must not appear in customer route creation, dashboard UI, Agent Cards,
+  AWID publication copy, or public documentation as "gateway ownership".
+- A future first-class service-transport path may replace the team-cert-backed
+  transport reference without changing public A2A route semantics.
+
+An AWID identity alone is sufficient to name and verify the gateway service in
+publication/delegation records, but it is not sufficient to send through the
+current team-scoped aweb mail/chat APIs unless AC also has a valid internal
+transport authority. Implementations must keep these authorities separate.
 
 ## Route Data Model
 
@@ -128,19 +152,35 @@ headers, or caller plaintext.
 Hosted AC deployments use a dedicated gateway identity. It must not reuse a
 human agent key.
 
+Minimum gateway identity fields are `gateway_id`, `host`, `did_aw`, `did_key`,
+`signing_material_ref`, `key_version` or equivalent rotation marker,
+`key_state`, and an internal `transport_authority_ref` when the credential used
+for aweb message delivery is separate from the public gateway signing identity.
+`transport_authority_ref` is an AC-only implementation reference and must not be
+exposed to customers or generic A2A clients.
+
 AC owns:
 
 - gateway identity creation or lookup;
-- gateway team/service certificate issuance;
+- gateway service transport authority issuance or lookup;
 - encrypted storage of gateway signing material using the existing hosted
   custodial key protection;
 - rotation and compromise response;
 - runtime credentials that let `aweb-a2a-gw` fetch config and sign/send bridge
   messages as the gateway identity.
 
+If the current implementation reuses hosted workspace/team-certificate
+machinery to satisfy aweb transport authorization, AC must treat that membership
+as an internal `transport_authority_ref`. Setup APIs and operator runbooks must
+not require a customer or deployer to choose an `owner_team_id` for the gateway.
+AC may derive the transport membership from a platform-admin context or a
+server-side platform setting, but it remains an implementation detail.
+
 AC must not deliver namespace controller keys to Render or to the gateway data
 plane. Self-custodial route delegation is a signed AWID delegation, not private
-key sharing.
+key sharing. The gateway identity authenticates the bridge; target-agent
+authority comes from route ownership plus AWID publication/delegation/digest
+checks, not from the gateway possessing the target agent's key.
 
 Missing or unusable gateway signing material fails closed:
 

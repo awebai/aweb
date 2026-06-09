@@ -44,7 +44,7 @@ The hosted gateway is not a static card host and is not a manually packaged aweb
 
 AC owns:
 
-- platform gateway identity creation, hosted custody, and team/service certificate state;
+- platform gateway service identity creation, hosted custody, and internal transport authority state;
 - encrypted storage of gateway signing material;
 - route/card/auth/rate/task policy;
 - AWID publication/delegation projection and verification state;
@@ -164,6 +164,16 @@ If the release includes AC or hosted gateway deployment:
     ```
 
     Do not upload `.aw` workspace tarballs, route YAML, signing keys, controller keys, or customer-specific route state to Render for the hosted product path. The abandoned manual lane is not customer documentation and must not be used for the product deploy.
+
+    The hosted gateway identity is a platform service identity and bridge
+    sender, not a customer-owned team member. Operators must not be asked to
+    choose a customer `owner_team_id` for the gateway. If the current AC
+    implementation reuses hosted workspace/team-certificate machinery for aweb
+    transport authorization, AC must resolve that as an internal
+    transport-authority reference from platform-admin context or server-side
+    platform configuration. Customer route records still carry their own
+    `owner_team_id`; that field scopes the customer's route, not the gateway
+    service identity.
 
 12. Confirm TLS terminates at the public host and `/.well-known/agent-card.json`, `/a2a/agents/<route>/agent-card.json`, and `/a2a/agents/<route>/rpc` are reachable.
 
