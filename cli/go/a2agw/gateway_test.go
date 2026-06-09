@@ -174,6 +174,45 @@ func TestGatewayRejectsInvalidRouteRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestGatewayAllowsDisabledRouteWithUnavailableAuthSecret(t *testing.T) {
+	route := helpRoute("r_help")
+	route.Disabled = true
+	route.Auth = AuthConfig{Mode: "static_api_key"}
+	gw := newTestGateway(t, Config{Host: "acme.com", Routes: []Route{route}})
+
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/a2a/agents/r_help/agent-card.json", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled card status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	gw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, a2a.WellKnownAgentCardPath, nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled root default status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGatewayPreservingRuntimeCarriesTasksAcrossRebuild(t *testing.T) {
+	route := helpRoute("r_help")
+	gw := newTestGateway(t, Config{Host: "acme.com", Routes: []Route{route}})
+	record, err := gw.tasks.create(route.RouteID, "caller-1", "req-1", A2AMessage{
+		MessageID: "m-1",
+		Role:      RoleUser,
+		Parts:     []A2APart{{Text: "hello", MediaType: "text/plain"}},
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rebuilt, err := NewPreservingRuntime(Config{Host: "acme.com", Routes: []Route{route}}, gw)
+	if err != nil {
+		t.Fatalf("NewPreservingRuntime: %v", err)
+	}
+	if _, ok := rebuilt.tasks.getVisible(route.RouteID, "caller-1", "", record.ID); !ok {
+		t.Fatal("rebuilt gateway lost in-flight task")
+	}
+}
+
 func newTestGateway(t *testing.T, config Config) *Gateway {
 	t.Helper()
 	gw, err := New(config)

@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	release-server-check release-server-tag release-server-push \
@@ -30,6 +30,7 @@ help:
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
+	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo ""
@@ -72,6 +73,7 @@ test-a2a:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
+	./scripts/check-a2a-copy-guardrails.sh
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
@@ -81,6 +83,9 @@ test-federation-e2e:
 
 test-a2a-gateway-e2e:
 	./scripts/e2e-a2a-gateway-docker.sh
+
+check-a2a-copy-guardrails:
+	./scripts/check-a2a-copy-guardrails.sh
 
 selfhost-up:
 	cd server && docker compose up --build -d
@@ -170,6 +175,7 @@ release-awid-pypi-push:
 # ── A2A gateway release ─────────────────────────────────────────────
 
 release-a2a-gateway-check:
+	./scripts/check-a2a-copy-guardrails.sh
 	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw -count=1
 	docker build -f cli/go/Dockerfile.a2a-gw \
 		--build-arg VERSION=$(CLI_VERSION) \

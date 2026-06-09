@@ -117,20 +117,33 @@ func (b *MailBridge) SetReplyApplier(applier ReplyApplier) {
 	b.applier = applier
 }
 
+func (b *MailBridge) SetGatewayIdentity(identity string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.gatewayIdentity = strings.TrimSpace(identity)
+}
+
+func (b *MailBridge) gatewayIdentitySnapshot() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.gatewayIdentity
+}
+
 func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	start := time.Now()
+	gatewayIdentity := b.gatewayIdentitySnapshot()
 	body, err := FormatA2ATaskMessage(a2aTaskEnvelope{
 		TaskID:          task.TaskID,
 		ContextID:       task.ContextID,
 		RouteID:         task.RouteID,
 		TargetAddress:   task.Address,
-		GatewayIdentity: b.gatewayIdentity,
+		GatewayIdentity: gatewayIdentity,
 		CallerScope:     bridgeVisibleCallerScope(task.CallerScope),
 		State:           TaskStateWorking,
 		RequestID:       task.RequestID,
 	}, task.Text)
 	if err != nil {
-		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "format_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "format_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
 	}
 	req := &awid.SendMessageRequest{
@@ -142,7 +155,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	}
 	resp, err := b.send(ctx, req)
 	if err != nil {
-		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "send_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "send_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
 	}
 	thread := &mailBridgeThread{
@@ -158,14 +171,14 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		CreatedAt:      time.Now(),
 	}
 	if thread.ConversationID == "" {
-		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "missing_conversation_id", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "missing_conversation_id", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return errors.New("mail bridge send response missing conversation_id")
 	}
 	b.mu.Lock()
 	b.threads[task.TaskID] = thread
 	shouldPoll := b.applier != nil && b.pollTimeout > 0
 	b.mu.Unlock()
-	b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "ok", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+	b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "ok", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	if shouldPoll {
 		go b.pollTaskReplies(task.TaskID)
 	}
@@ -174,6 +187,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 
 func (b *MailBridge) CancelTask(ctx context.Context, cancel BridgeCancel) error {
 	start := time.Now()
+	gatewayIdentity := b.gatewayIdentitySnapshot()
 	thread := b.thread(cancel.TaskID)
 	body := FormatA2ACancelMessage(cancel.TaskID, cancel.ContextID, cancel.RequestID)
 	req := &awid.SendMessageRequest{
@@ -194,11 +208,12 @@ func (b *MailBridge) CancelTask(ctx context.Context, cancel BridgeCancel) error 
 		outcome = "error"
 		code = "cancel_send_failed"
 	}
-	b.recordAudit(AuditEvent{Stage: "bridge_cancel", RequestID: cancel.RequestID, RouteID: cancel.RouteID, TaskID: cancel.TaskID, GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(cancel.Address), Outcome: outcome, Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+	b.recordAudit(AuditEvent{Stage: "bridge_cancel", RequestID: cancel.RequestID, RouteID: cancel.RouteID, TaskID: cancel.TaskID, GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(cancel.Address), Outcome: outcome, Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	return err
 }
 
 func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessage) (Task, bool, error) {
+	gatewayIdentity := b.gatewayIdentitySnapshot()
 	reply, found, err := ParseA2AReply(msg.Body, b.allowQuestionReply)
 	if err != nil || !found {
 		if err != nil {
@@ -219,21 +234,21 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 		return Task{}, false, nil
 	}
 	if thread.ConversationID != "" && msg.ConversationID != thread.ConversationID {
-		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ignored", Code: "conversation_mismatch", VerificationTier: string(msg.VerificationStatus)})
+		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ignored", Code: "conversation_mismatch", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, nil
 	}
 	if msg.MessageID != "" && thread.SeenMessages[msg.MessageID] {
 		return Task{}, false, nil
 	}
 	if thread.ContextID != "" && reply.ContextID != thread.ContextID {
-		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ignored", Code: "context_mismatch", VerificationTier: string(msg.VerificationStatus)})
+		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ignored", Code: "context_mismatch", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, nil
 	}
 	if err := b.verifyReplyMessage(msg); err != nil {
-		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "error", Code: "verification_failed", VerificationTier: string(msg.VerificationStatus)})
+		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "error", Code: "verification_failed", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, err
 	}
-	b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ok", VerificationTier: string(msg.VerificationStatus)})
+	b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: "ok", VerificationTier: string(msg.VerificationStatus)})
 	b.mu.Lock()
 	if msg.MessageID != "" {
 		b.markSeenLocked(thread.TaskID, msg.MessageID)
@@ -254,7 +269,7 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 		outcome = "ignored"
 		code = "state_transition_ignored"
 	}
-	b.recordAudit(AuditEvent{Stage: "task_state_transition", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(b.gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: outcome, Code: code, LatencyMS: latencyMS(start), VerificationTier: string(msg.VerificationStatus)})
+	b.recordAudit(AuditEvent{Stage: "task_state_transition", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: outcome, Code: code, LatencyMS: latencyMS(start), VerificationTier: string(msg.VerificationStatus)})
 	return task, ok, err
 }
 

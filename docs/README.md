@@ -61,7 +61,7 @@ These documents define the system:
   generated agent-home layout. The current setup-surface product taxonomy is
   [cli-setup-surface-sot.md](cli-setup-surface-sot.md).
 - [a2a.md](a2a.md): product contract for exposing aweb agents through A2A,
-  AWID-backed publication assertions, gateway boundaries, and outbound `aw a2a`
+  AWID publication assertions, gateway boundaries, and outbound `aw a2a`
   behavior
 - [a2a-awid-publication-contract.md](a2a-awid-publication-contract.md):
   normative AWID A2A publication and bridge-delegation assertion contract

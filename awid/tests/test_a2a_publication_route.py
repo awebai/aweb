@@ -25,6 +25,7 @@ from awid.a2a_publication import (
     validate_route_id,
 )
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.log import identity_state_hash, log_entry_payload, sha256_hex
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers
@@ -75,6 +76,51 @@ async def _register_namespace(client, signing_key, controller_did, domain="examp
     return resp.json()
 
 
+async def _insert_did_mapping_with_log(db, *, did_aw: str, did_key: str, signing_key) -> None:
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+    payload = log_entry_payload(
+        did_aw=did_aw,
+        seq=1,
+        operation="register_did",
+        previous_did_key=None,
+        new_did_key=did_key,
+        prev_entry_hash=None,
+        state_hash=state_hash,
+        authorized_by=did_key,
+        timestamp=_ISSUED_AT,
+    )
+    signature = sign_message(signing_key, payload)
+    entry_hash = sha256_hex(payload)
+    await db.execute(
+        """
+        INSERT INTO {{tables.did_aw_mappings}} (did_aw, current_did_key)
+        VALUES ($1, $2)
+        """,
+        did_aw,
+        did_key,
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.did_aw_log}}
+            (did_aw, seq, operation, previous_did_key, new_did_key,
+             prev_entry_hash, entry_hash, state_hash, authorized_by, signature,
+             timestamp)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        """,
+        did_aw,
+        1,
+        "register_did",
+        None,
+        did_key,
+        None,
+        entry_hash,
+        state_hash,
+        did_key,
+        signature,
+        _ISSUED_AT,
+    )
+
+
 async def _seed_address(client, awid_db_infra, controller_identity):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
@@ -90,15 +136,17 @@ async def _seed_address(client, awid_db_infra, controller_identity):
         "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1",
         "example.com",
     )
-    await db.execute(
-        """
-        INSERT INTO {{tables.did_aw_mappings}} (did_aw, current_did_key)
-        VALUES ($1, $2), ($3, $4)
-        """,
-        identity_did_aw,
-        identity_did_key,
-        gateway_did_aw,
-        gateway_did_key,
+    await _insert_did_mapping_with_log(
+        db,
+        did_aw=identity_did_aw,
+        did_key=identity_did_key,
+        signing_key=identity_signing_key,
+    )
+    await _insert_did_mapping_with_log(
+        db,
+        did_aw=gateway_did_aw,
+        did_key=gateway_did_key,
+        signing_key=gateway_signing_key,
     )
     await db.execute(
         """
@@ -323,6 +371,48 @@ async def test_a2a_direct_hosted_publication_succeeds(client, awid_db_infra, con
     lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
     assert lookup.status_code == 200, lookup.text
     assert lookup.json()["a2a"]["gateway_identity"] == seed["identity_did_aw"]
+
+
+@pytest.mark.asyncio
+async def test_a2a_publication_missing_identity_key_history_fails_before_write(
+    client,
+    awid_db_infra,
+    controller_identity,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute("DELETE FROM {{tables.did_aw_log}} WHERE did_aw = $1", seed["identity_did_aw"])
+    publication = _publication_body(seed, None, direct=True)
+
+    resp = await client.post("/v1/a2a/publications", json=publication)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "a2a_identity_key_history_invalid"
+    assert await _counts(awid_db_infra) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_a2a_publication_authority_error_names_expected_and_supplied(
+    client,
+    awid_db_infra,
+    controller_identity,
+):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    publication = _publication_body(
+        seed,
+        None,
+        direct=True,
+        identity_custody="self",
+        authority_source="hosted_session",
+    )
+
+    resp = await client.post("/v1/a2a/publications", json=publication)
+
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "a2a_authority_source_invalid"
+    assert "self_identity_key" in detail["message"]
+    assert "hosted_session" in detail["message"]
 
 
 @pytest.mark.asyncio

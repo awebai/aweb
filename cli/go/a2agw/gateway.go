@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/awebai/aw/a2a"
@@ -92,6 +93,7 @@ type Gateway struct {
 	bridge        Bridge
 	tasks         *taskStore
 	rateLimiter   *rateLimiter
+	acceptUntil   atomic.Int64
 	taskExecution bool
 	auditSink     AuditSink
 }
@@ -126,11 +128,16 @@ type RouteDiagnostic struct {
 }
 
 func New(config Config) (*Gateway, error) {
+	return newGateway(config, nil)
+}
+
+func NewPreservingRuntime(config Config, previous *Gateway) (*Gateway, error) {
+	return newGateway(config, previous)
+}
+
+func newGateway(config Config, previous *Gateway) (*Gateway, error) {
 	if strings.TrimSpace(config.Host) == "" {
 		return nil, fmt.Errorf("host is required")
-	}
-	if len(config.Routes) == 0 {
-		return nil, fmt.Errorf("at least one route is required")
 	}
 	routeCards := make(map[string]a2a.Card, len(config.Routes))
 	routeConfigs := make(map[string]Route, len(config.Routes))
@@ -180,6 +187,9 @@ func New(config Config) (*Gateway, error) {
 	if mode == "" && len(config.Routes) == 1 {
 		mode = RootCardDefaultAgent
 		config.DefaultRouteID = config.Routes[0].RouteID
+	}
+	if mode == "" && len(config.Routes) == 0 {
+		mode = RootCardRouter
 	}
 	if mode == "" {
 		return nil, fmt.Errorf("root_card mode is required when multiple routes are configured")
@@ -238,18 +248,46 @@ func New(config Config) (*Gateway, error) {
 		bridge = notReadyBridge{}
 		taskExecution = false
 	}
-	return &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: newTaskStore(time.Now), rateLimiter: newRateLimiter(time.Now), taskExecution: taskExecution, auditSink: config.Audit}, nil
+	tasks := newTaskStore(time.Now)
+	rateLimiter := newRateLimiter(time.Now)
+	if previous != nil {
+		if previous.tasks != nil {
+			tasks = previous.tasks
+		}
+		if previous.rateLimiter != nil {
+			rateLimiter = previous.rateLimiter
+		}
+	}
+	gateway := &Gateway{config: config, rootCard: rootCard, routeCards: routeCards, routeConfigs: routeConfigs, bridge: bridge, tasks: tasks, rateLimiter: rateLimiter, taskExecution: taskExecution, auditSink: config.Audit}
+	gateway.SetAcceptNewTasksUntil(config.AcceptNewTasksUntil)
+	return gateway, nil
+}
+
+func (g *Gateway) SetAcceptNewTasksUntil(until time.Time) {
+	var nanos int64
+	if !until.IsZero() {
+		nanos = until.UnixNano()
+	}
+	g.acceptUntil.Store(nanos)
+}
+
+func (g *Gateway) AcceptNewTasksUntil() time.Time {
+	nanos := g.acceptUntil.Load()
+	if nanos == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nanos)
 }
 
 func validateRouteRuntimeConfig(route Route) error {
 	switch normalizedAuthMode(route.Auth.Mode) {
 	case "", "none":
 	case "static_api_key":
-		if strings.TrimSpace(route.Auth.StaticAPIKey) == "" {
+		if strings.TrimSpace(route.Auth.StaticAPIKey) == "" && !route.Disabled {
 			return fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey", route.RouteID)
 		}
 	case "bearer":
-		if strings.TrimSpace(route.Auth.BearerToken) == "" {
+		if strings.TrimSpace(route.Auth.BearerToken) == "" && !route.Disabled {
 			return fmt.Errorf("route %s: bearer mode requires Auth.BearerToken", route.RouteID)
 		}
 	default:
@@ -270,12 +308,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/config":
 		writeJSON(w, http.StatusOK, g.Diagnostics())
 	case r.URL.Path == a2a.WellKnownAgentCardPath:
+		if g.config.RootCardMode == RootCardDefaultAgent {
+			if route := g.routeConfigs[strings.TrimSpace(g.config.DefaultRouteID)]; route.Disabled {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "route_disabled"})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, g.rootCard)
 	case strings.HasPrefix(r.URL.Path, "/a2a/agents/") && strings.HasSuffix(r.URL.Path, "/agent-card.json"):
 		routeID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/a2a/agents/"), "/agent-card.json")
 		card, ok := g.routeCards[routeID]
 		if !ok {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "route_not_found"})
+			return
+		}
+		if route := g.routeConfigs[routeID]; route.Disabled {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "route_disabled"})
 			return
 		}
 		writeJSON(w, http.StatusOK, card)

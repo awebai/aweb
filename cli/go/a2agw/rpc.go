@@ -149,7 +149,7 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 	if !g.taskExecution {
 		return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})
 	}
-	if !g.config.AcceptNewTasksUntil.IsZero() && time.Now().After(g.config.AcceptNewTasksUntil) {
+	if acceptUntil := g.AcceptNewTasksUntil(); !acceptUntil.IsZero() && time.Now().After(acceptUntil) {
 		return nil, jsonRPCError(-32003, "A2A gateway config is expired", requestID, map[string]any{"code": "ac_config_expired"})
 	}
 	var params sendMessageParams

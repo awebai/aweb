@@ -41,6 +41,7 @@ const (
 	A2APublicationCodeRPCURLInvalid                     = "a2a_rpc_url_invalid"
 	A2APublicationCodeRouteIDInvalid                    = "a2a_route_id_invalid"
 	A2APublicationCodeIdentitySignatureInvalid          = "a2a_identity_signature_invalid"
+	A2APublicationCodeIdentityKeyHistoryInvalid         = "a2a_identity_key_history_invalid"
 	A2APublicationCodeDelegationSignatureInvalid        = "a2a_delegation_signature_invalid"
 	A2APublicationCodeTimestampStale                    = "a2a_timestamp_stale"
 	A2APublicationCodeNamespaceNotRegistered            = "a2a_namespace_not_registered"
@@ -71,6 +72,7 @@ var A2APublicationConflictCodes = []string{
 	A2APublicationCodeRPCURLInvalid,
 	A2APublicationCodeRouteIDInvalid,
 	A2APublicationCodeIdentitySignatureInvalid,
+	A2APublicationCodeIdentityKeyHistoryInvalid,
 	A2APublicationCodeDelegationSignatureInvalid,
 	A2APublicationCodeTimestampStale,
 	A2APublicationCodeNamespaceNotRegistered,
