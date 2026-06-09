@@ -42,6 +42,8 @@ from awid.atomic_claim import CUSTODY_HOSTED, CUSTODY_SELF
 from awid.did import validate_stable_id
 from awid.dns_auth import enforce_timestamp_skew
 from awid.log import sha256_hex as awid_sha256_hex
+from awid.log import identity_state_hash as awid_identity_state_hash
+from awid.log import log_entry_payload
 from awid.ratelimit import rate_limit_dep
 from awid.signing import verify_did_key_signature
 from awid_service.deps import get_db
@@ -63,6 +65,7 @@ _CARD_URL_INVALID = "a2a_card_url_invalid"
 _RPC_URL_INVALID = "a2a_rpc_url_invalid"
 _ROUTE_ID_INVALID = "a2a_route_id_invalid"
 _IDENTITY_SIGNATURE_INVALID = "a2a_identity_signature_invalid"
+_IDENTITY_KEY_HISTORY_INVALID = "a2a_identity_key_history_invalid"
 _DELEGATION_SIGNATURE_INVALID = "a2a_delegation_signature_invalid"
 _TIMESTAMP_STALE = "a2a_timestamp_stale"
 _NAMESPACE_NOT_REGISTERED = "a2a_namespace_not_registered"
@@ -293,7 +296,10 @@ def _validate_delegation_authority(fields: A2ADelegationFields) -> None:
             raise _error(
                 403,
                 _AUTHORITY_INVALID,
-                "expected self_identity_delegation authority for self-custodial bridge delegation",
+                (
+                    "expected authority_source self_identity_delegation for "
+                    f"self-custodial bridge delegation, got {fields.authority_source}"
+                ),
             )
         if fields.signer_did != fields.delegator_current_did_key:
             raise _error(
@@ -307,7 +313,10 @@ def _validate_delegation_authority(fields: A2ADelegationFields) -> None:
             raise _error(
                 403,
                 _AUTHORITY_INVALID,
-                "expected hosted_delegation authority for hosted-custodial bridge delegation",
+                (
+                    "expected authority_source hosted_delegation for hosted-custodial "
+                    f"bridge delegation, got {fields.authority_source}"
+                ),
             )
         if fields.signer_did != fields.delegator_current_did_key:
             raise _error(
@@ -322,7 +331,11 @@ def _validate_delegation_authority(fields: A2ADelegationFields) -> None:
 def _validate_publication_authority(fields: A2APublicationFields) -> None:
     if fields.identity_custody == CUSTODY_SELF:
         if fields.authority_source != A2A_AUTHORITY_SELF_IDENTITY_KEY:
-            raise _error(403, _AUTHORITY_INVALID, "expected self_identity_key authority for self publication")
+            raise _error(
+                403,
+                _AUTHORITY_INVALID,
+                f"expected authority_source self_identity_key for self publication, got {fields.authority_source}",
+            )
         if fields.signer_did != fields.current_did_key:
             raise _error(401, _IDENTITY_SIGNATURE_INVALID, "self publication must be signed by current did:key")
         return
@@ -331,7 +344,10 @@ def _validate_publication_authority(fields: A2APublicationFields) -> None:
             raise _error(
                 403,
                 _AUTHORITY_INVALID,
-                "expected hosted_session authority for hosted-custodial publication",
+                (
+                    "expected authority_source hosted_session for hosted-custodial "
+                    f"publication, got {fields.authority_source}"
+                ),
             )
         if fields.signer_did != fields.current_did_key:
             raise _error(
@@ -377,6 +393,58 @@ async def _ensure_address_matches(tx, *, address: str, did_aw: str, current_did_
         raise _error(409, _ADDRESS_NOT_REGISTERED, "address is registered to a different identity")
 
 
+async def _ensure_identity_key_history(tx, *, did_aw: str, current_did_key: str) -> None:
+    rows = await tx.fetch_all(
+        """
+        SELECT seq, operation, previous_did_key, new_did_key, prev_entry_hash,
+               entry_hash, state_hash, authorized_by, signature, timestamp
+        FROM {{tables.did_aw_log}}
+        WHERE did_aw = $1
+        ORDER BY seq ASC
+        """,
+        did_aw,
+    )
+    if not rows:
+        raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history is missing")
+
+    previous_hash = None
+    latest_key = None
+    for index, row in enumerate(rows, start=1):
+        if row["seq"] != index:
+            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history sequence is not contiguous")
+        if row["prev_entry_hash"] != previous_hash:
+            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history hash chain is broken")
+        expected_state_hash = awid_identity_state_hash(did_aw=did_aw, current_did_key=row["new_did_key"])
+        if row["state_hash"] != expected_state_hash:
+            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history state hash mismatch")
+        payload = log_entry_payload(
+            did_aw=did_aw,
+            seq=row["seq"],
+            operation=row["operation"],
+            previous_did_key=row["previous_did_key"],
+            new_did_key=row["new_did_key"],
+            prev_entry_hash=row["prev_entry_hash"],
+            state_hash=row["state_hash"],
+            authorized_by=row["authorized_by"],
+            timestamp=row["timestamp"],
+        )
+        if awid_sha256_hex(payload) != row["entry_hash"]:
+            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history entry hash mismatch")
+        try:
+            verify_did_key_signature(
+                did_key=row["authorized_by"],
+                payload=payload,
+                signature_b64=row["signature"],
+            )
+        except Exception as exc:
+            raise _error(401, _IDENTITY_KEY_HISTORY_INVALID, "identity key history signature invalid") from exc
+        previous_hash = row["entry_hash"]
+        latest_key = row["new_did_key"]
+
+    if latest_key != current_did_key:
+        raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history head does not match current did:key")
+
+
 def _row_delegation_digest(row) -> str:
     return row["assertion_digest"]
 
@@ -416,6 +484,11 @@ async def publish_a2a_delegation(
         await _ensure_address_matches(
             tx,
             address=fields.address,
+            did_aw=fields.delegator_did_aw,
+            current_did_key=fields.delegator_current_did_key,
+        )
+        await _ensure_identity_key_history(
+            tx,
             did_aw=fields.delegator_did_aw,
             current_did_key=fields.delegator_current_did_key,
         )
@@ -574,6 +647,11 @@ async def publish_a2a_route(
         await _ensure_address_matches(
             tx,
             address=fields.address,
+            did_aw=fields.did_aw,
+            current_did_key=fields.current_did_key,
+        )
+        await _ensure_identity_key_history(
+            tx,
             did_aw=fields.did_aw,
             current_did_key=fields.current_did_key,
         )

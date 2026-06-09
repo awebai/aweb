@@ -39,6 +39,7 @@ A2A_CONFLICT_CODES = (
     "a2a_rpc_url_invalid",
     "a2a_route_id_invalid",
     "a2a_identity_signature_invalid",
+    "a2a_identity_key_history_invalid",
     "a2a_delegation_signature_invalid",
     "a2a_timestamp_stale",
     "a2a_namespace_not_registered",

@@ -140,6 +140,7 @@ type managedACGateway struct {
 	mu      sync.RWMutex
 	cfg     fileConfig
 	gateway *a2agw.Gateway
+	runtime *gatewayRuntime
 }
 
 func runManagedACGateway(base fileConfig, listen string) error {
@@ -147,7 +148,7 @@ func runManagedACGateway(base fileConfig, listen string) error {
 	if err != nil {
 		return err
 	}
-	manager := &managedACGateway{cfg: initial.cfg, gateway: initial.gateway}
+	manager := &managedACGateway{cfg: initial.cfg, gateway: initial.gateway, runtime: initial.runtime}
 	go manager.refreshLoop(base)
 	server := &http.Server{
 		Addr:              listen,
@@ -160,24 +161,33 @@ func runManagedACGateway(base fileConfig, listen string) error {
 type managedACSnapshot struct {
 	cfg     fileConfig
 	gateway *a2agw.Gateway
+	runtime *gatewayRuntime
 }
 
 func buildManagedACSnapshot(base fileConfig, allowDegraded bool) (managedACSnapshot, error) {
-	cfg := base
-	if err := applyACRuntimeConfig(&cfg); err != nil {
-		if isFatalInitialACRuntimeConfigError(err) {
-			return managedACSnapshot{}, err
-		}
-		if !allowDegraded {
-			return managedACSnapshot{}, err
-		}
-		cfg = degradedACConfig(base, err)
-	}
-	gateway, err := buildGateway(cfg)
+	cfg, err := loadManagedACConfig(base, allowDegraded)
 	if err != nil {
 		return managedACSnapshot{}, err
 	}
-	return managedACSnapshot{cfg: cfg, gateway: gateway}, nil
+	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
+	if err != nil {
+		return managedACSnapshot{}, err
+	}
+	return managedACSnapshot{cfg: cfg, gateway: gateway, runtime: runtime}, nil
+}
+
+func loadManagedACConfig(base fileConfig, allowDegraded bool) (fileConfig, error) {
+	cfg := base
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		if isFatalInitialACRuntimeConfigError(err) {
+			return fileConfig{}, err
+		}
+		if !allowDegraded {
+			return fileConfig{}, err
+		}
+		return degradedACConfig(base, err), nil
+	}
+	return cfg, nil
 }
 
 func (m *managedACGateway) refreshLoop(base fileConfig) {
@@ -185,16 +195,49 @@ func (m *managedACGateway) refreshLoop(base fileConfig) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		snapshot, err := buildManagedACSnapshot(base, false)
+		cfg, err := loadManagedACConfig(base, false)
 		if err != nil {
 			m.markRefreshError(err)
 			continue
 		}
-		m.mu.Lock()
-		m.cfg = snapshot.cfg
-		m.gateway = snapshot.gateway
-		m.mu.Unlock()
+		if err := m.applyRefreshSnapshot(cfg); err != nil {
+			m.markRefreshError(err)
+		}
 	}
+}
+
+func (m *managedACGateway) applyRefreshSnapshot(cfg fileConfig) error {
+	acceptUntil, err := acAcceptNewTasksUntil(cfg)
+	if err != nil {
+		return err
+	}
+	m.mu.RLock()
+	sameRevision := strings.TrimSpace(cfg.ACRuntime.ConfigRevision) != "" &&
+		strings.TrimSpace(cfg.ACRuntime.ConfigRevision) == strings.TrimSpace(m.cfg.ACRuntime.ConfigRevision)
+	runtime := m.runtime
+	previous := m.gateway
+	m.mu.RUnlock()
+	if sameRevision {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.cfg.ACRuntime = cfg.ACRuntime
+		m.cfg.GatewayIdentity = cfg.GatewayIdentity
+		if m.gateway != nil {
+			m.gateway.SetAcceptNewTasksUntil(acceptUntil)
+		}
+		return nil
+	}
+	runtime, gateway, err := buildGatewayWithRuntime(cfg, runtime, previous)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	runtime.applyConfig(cfg, gateway, gatewayIdentityFromConfig(cfg))
+	m.cfg = cfg
+	m.gateway = gateway
+	m.runtime = runtime
+	return nil
 }
 
 func (m *managedACGateway) markRefreshError(err error) {
@@ -726,7 +769,7 @@ func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error
 			RouteID:         strings.TrimSpace(route.RouteID),
 			Address:         strings.TrimSpace(route.Address),
 			Mode:            strings.TrimSpace(route.Mode),
-			Disabled:        route.Disabled,
+			Disabled:        route.Disabled || acRuntimeAuthRequiresUnavailableSecret(route.Auth),
 			ResponseTimeout: secondsDuration(route.Limits.ResponseTimeoutSeconds),
 			Auth:            authConfig{Mode: strings.TrimSpace(route.Auth.Mode)},
 			Limits: limitsConfig{
@@ -782,6 +825,10 @@ func mergeACRuntimeConfig(cfg *fileConfig, payload acRuntimeConfigPayload) error
 		}
 	}
 	return nil
+}
+
+func acRuntimeAuthRequiresUnavailableSecret(auth acRuntimeAuth) bool {
+	return strings.TrimSpace(auth.Mode) == "static_api_key" && strings.TrimSpace(auth.SecretRef) != ""
 }
 
 func secondsDuration(seconds int) string {
@@ -875,25 +922,54 @@ func defaultRouterCard(host string) cardConfig {
 	}
 }
 
-func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
-	if strings.TrimSpace(cfg.Host) == "" {
-		return nil, fmt.Errorf("host is required")
+type gatewayRuntime struct {
+	audit       a2agw.AuditSink
+	bridge      *a2agw.MailBridge
+	acTransport *acMailTransport
+}
+
+func (r *gatewayRuntime) applyConfig(cfg fileConfig, gateway *a2agw.Gateway, gatewayIdentity string) {
+	if r == nil {
+		return
 	}
-	audit, err := auditSinkFromConfig(cfg.Audit)
-	if err != nil {
-		return nil, err
+	if r.acTransport != nil {
+		r.acTransport.UpdateFromConfig(cfg)
+	}
+	if r.bridge != nil {
+		r.bridge.SetGatewayIdentity(gatewayIdentity)
+		r.bridge.SetReplyApplier(gateway)
+	}
+}
+
+func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
+	_, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
+	return gateway, err
+}
+
+func buildGatewayWithRuntime(cfg fileConfig, runtime *gatewayRuntime, previous *a2agw.Gateway) (*gatewayRuntime, *a2agw.Gateway, error) {
+	if strings.TrimSpace(cfg.Host) == "" {
+		return nil, nil, fmt.Errorf("host is required")
+	}
+	var err error
+	createdRuntime := runtime == nil
+	if runtime == nil {
+		runtime = &gatewayRuntime{}
+		runtime.audit, err = auditSinkFromConfig(cfg.Audit)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	client, gatewayIdentity, err := mailTransportFromConfig(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pollInterval, err := parseOptionalDuration("poll_interval", cfg.PollInterval)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pollTimeout, err := parseOptionalDuration("poll_timeout", cfg.PollTimeout)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	requireVerified := true
 	if cfg.RequireVerifiedReplies != nil {
@@ -903,30 +979,46 @@ func buildGateway(cfg fileConfig) (*a2agw.Gateway, error) {
 	if cfg.UseIdentityAuth != nil {
 		useIdentityAuth = *cfg.UseIdentityAuth
 	}
-	bridge, err := a2agw.NewMailBridge(a2agw.MailBridgeConfig{
-		Client:                    client,
-		GatewayIdentity:           gatewayIdentity,
-		UseIdentityAuth:           useIdentityAuth,
-		PollInterval:              pollInterval,
-		PollTimeout:               pollTimeout,
-		RequireVerifiedReplies:    requireVerified,
-		AllowUnverifiedLocalReply: cfg.AllowUnverifiedLocalReply,
-		AllowQuestionReply:        cfg.AllowQuestionReply,
-		Audit:                     audit,
-	})
-	if err != nil {
-		return nil, err
+	if acTransport, ok := client.(*acMailTransport); ok {
+		if runtime.acTransport == nil {
+			if !createdRuntime {
+				return nil, nil, fmt.Errorf("existing gateway runtime is missing AC mail transport")
+			}
+			runtime.acTransport = acTransport
+		}
+		client = runtime.acTransport
 	}
-	gatewayConfig, err := gatewayConfigFromFile(cfg, bridge, audit)
-	if err != nil {
-		return nil, err
+	if runtime.bridge == nil {
+		if !createdRuntime {
+			return nil, nil, fmt.Errorf("existing gateway runtime is missing mail bridge")
+		}
+		runtime.bridge, err = a2agw.NewMailBridge(a2agw.MailBridgeConfig{
+			Client:                    client,
+			GatewayIdentity:           gatewayIdentity,
+			UseIdentityAuth:           useIdentityAuth,
+			PollInterval:              pollInterval,
+			PollTimeout:               pollTimeout,
+			RequireVerifiedReplies:    requireVerified,
+			AllowUnverifiedLocalReply: cfg.AllowUnverifiedLocalReply,
+			AllowQuestionReply:        cfg.AllowQuestionReply,
+			Audit:                     runtime.audit,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	gateway, err := a2agw.New(gatewayConfig)
+	gatewayConfig, err := gatewayConfigFromFile(cfg, runtime.bridge, runtime.audit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	bridge.SetReplyApplier(gateway)
-	return gateway, nil
+	gateway, err := a2agw.NewPreservingRuntime(gatewayConfig, previous)
+	if err != nil {
+		return nil, nil, err
+	}
+	if createdRuntime {
+		runtime.applyConfig(cfg, gateway, gatewayIdentity)
+	}
+	return runtime, gateway, nil
 }
 
 func mailTransportFromConfig(cfg fileConfig) (a2agw.MailTransport, string, error) {
@@ -942,6 +1034,13 @@ func mailTransportFromConfig(cfg fileConfig) (a2agw.MailTransport, string, error
 		workspaceDir = "."
 	}
 	return workspaceMailClient(workspaceDir, cfg.TeamID, cfg.RegistryURL, cfg.GatewayIdentity)
+}
+
+func gatewayIdentityFromConfig(cfg fileConfig) string {
+	if acConfigEnabled(cfg.ACConfig) {
+		return firstNonEmpty(cfg.GatewayIdentity, cfg.ACConfig.GatewayID)
+	}
+	return strings.TrimSpace(cfg.GatewayIdentity)
 }
 
 func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.AuditSink) (a2agw.Config, error) {
@@ -1138,6 +1237,7 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 }
 
 type acMailTransport struct {
+	mu             sync.RWMutex
 	httpClient     *http.Client
 	bridgeURL      string
 	gatewayID      string
@@ -1176,6 +1276,33 @@ func acMailTransportFromConfig(cfg fileConfig) (*acMailTransport, error) {
 	}, nil
 }
 
+func (t *acMailTransport) UpdateFromConfig(cfg fileConfig) {
+	bridgeURL, bridgeErr := acBridgeURL(cfg.ACConfig)
+	token := acBearerToken(cfg.ACConfig)
+	gatewayID := strings.TrimSpace(cfg.ACConfig.GatewayID)
+	routeByAddress := make(map[string]string, len(cfg.Routes))
+	for _, route := range cfg.Routes {
+		address := strings.TrimSpace(route.Address)
+		routeID := strings.TrimSpace(route.RouteID)
+		if address == "" || routeID == "" {
+			continue
+		}
+		routeByAddress[address] = routeID
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if bridgeErr == nil && strings.TrimSpace(bridgeURL) != "" {
+		t.bridgeURL = bridgeURL
+	}
+	if gatewayID != "" {
+		t.gatewayID = gatewayID
+	}
+	if token != "" {
+		t.bearerToken = token
+	}
+	t.routeByAddress = routeByAddress
+}
+
 func (t *acMailTransport) SendMessage(ctx context.Context, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
 	return t.send(ctx, req)
 }
@@ -1192,7 +1319,10 @@ func (t *acMailTransport) send(ctx context.Context, req *awid.SendMessageRequest
 	if address == "" {
 		return nil, fmt.Errorf("AC-managed A2A bridge requires to_address")
 	}
+	t.mu.RLock()
 	routeID := strings.TrimSpace(t.routeByAddress[address])
+	gatewayID := t.gatewayID
+	t.mu.RUnlock()
 	if routeID == "" {
 		return nil, fmt.Errorf("AC-managed A2A bridge has no route for address %s", address)
 	}
@@ -1210,7 +1340,7 @@ func (t *acMailTransport) send(ctx context.Context, req *awid.SendMessageRequest
 		payload["priority"] = string(awid.PriorityNormal)
 	}
 	var out awid.SendMessageResponse
-	if err := t.doJSON(ctx, http.MethodPost, "/"+url.PathEscape(t.gatewayID)+"/messages", payload, &out); err != nil {
+	if err := t.doJSON(ctx, http.MethodPost, "/"+url.PathEscape(gatewayID)+"/messages", payload, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -1225,7 +1355,10 @@ func (t *acMailTransport) MailConversationForRoute(ctx context.Context, routeID,
 	if conversationID == "" {
 		return nil, fmt.Errorf("conversation_id is required")
 	}
-	path := "/" + url.PathEscape(t.gatewayID) + "/conversations/" + url.PathEscape(conversationID)
+	t.mu.RLock()
+	gatewayID := t.gatewayID
+	t.mu.RUnlock()
+	path := "/" + url.PathEscape(gatewayID) + "/conversations/" + url.PathEscape(conversationID)
 	query := make([]string, 0, 3)
 	if strings.TrimSpace(routeID) != "" {
 		query = append(query, "route_id="+url.QueryEscape(strings.TrimSpace(routeID)))
@@ -1247,6 +1380,10 @@ func (t *acMailTransport) MailConversationForRoute(ctx context.Context, routeID,
 }
 
 func (t *acMailTransport) doJSON(ctx context.Context, method, path string, payload interface{}, out interface{}) error {
+	t.mu.RLock()
+	bridgeURL := t.bridgeURL
+	bearerToken := t.bearerToken
+	t.mu.RUnlock()
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -1255,11 +1392,11 @@ func (t *acMailTransport) doJSON(ctx context.Context, method, path string, paylo
 		}
 		body = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(t.bridgeURL, "/")+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(bridgeURL, "/")+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+t.bearerToken)
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
