@@ -45,6 +45,9 @@ These documents define the system:
 - [cli-setup-surface-sot.md](cli-setup-surface-sot.md): supporting SOT for
   the `aw` team/identity/setup command taxonomy: everyday intents, agent
   primitives, protocol/admin primitives, and obsolete/legacy compatibility
+- [team-operating-patterns.md](team-operating-patterns.md): product model for
+  choosing souls, roles, skills, and playbooks, then explicitly creating agent
+  instances when needed
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
   instructions, playbooks, skills, and adapters without identity/workspace state;

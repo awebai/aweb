@@ -42,6 +42,30 @@ for pack in sorted(p for p in root.iterdir() if p.is_dir()):
     if role_files and 'aw roles add' not in readme.read_text():
         raise SystemExit(f'{readme}: packs with Markdown roles must teach aw roles add')
 
+    soul_dirs = []
+    in_souls = False
+    for line in text.splitlines():
+        if re.match(r'^\s{2}souls:\s*$', line):
+            in_souls = True
+            continue
+        if in_souls and re.match(r'^\s{2}[-a-zA-Z0-9_]+:', line):
+            in_souls = False
+        if in_souls:
+            m = re.match(r'^\s{4}[-a-zA-Z0-9_]+:\s+(.+?)\s*$', line)
+            if m:
+                soul_dirs.append(pack / m.group(1).strip().strip('"\''))
+    for soul in soul_dirs:
+        if not soul.is_dir():
+            raise SystemExit(f'{manifest}: soul path is not a directory: {soul}')
+        if not (soul / 'soul.yaml').exists():
+            raise SystemExit(f'{soul}: missing soul.yaml')
+        if not (soul / 'AGENTS.md').exists():
+            raise SystemExit(f'{soul}: missing AGENTS.md')
+        soul_yaml = (soul / 'soul.yaml').read_text()
+        for required in ('role', 'work', 'runtime'):
+            if not re.search(rf'^{required}:\s*\S+', soul_yaml, re.M):
+                raise SystemExit(f'{soul / "soul.yaml"}: missing {required}')
+
     forbidden_file_parts = {'.aw', 'team-certs', 'signing.key', 'encryption.key'}
     for path in pack.rglob('*'):
         parts = set(path.relative_to(pack).parts)

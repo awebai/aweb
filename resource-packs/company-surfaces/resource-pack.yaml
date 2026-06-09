@@ -14,6 +14,14 @@ resources:
     release-handoff: resources/playbooks/release-handoff.md
   fragments:
     agents: resources/fragments/agents.md
+  souls:
+    coordinator: resources/souls/coordinator
+    product: resources/souls/product
+    engineering: resources/souls/engineering
+    support: resources/souls/support
+    docs: resources/souls/docs
+skills:
+  - skills/self-maintenance/SKILL.md
 adapters:
   claude: adapters/claude/README.md
   codex: adapters/codex/README.md
