@@ -125,7 +125,7 @@ If the release includes AC or hosted gateway deployment:
    `CLI_VERSION` follows `server/pyproject.toml`, cutting an AC-managed
    gateway image requires a fresh aweb server/CLI version bump at a source SHA
    that includes the AC-managed gateway commits. The next AC-managed gateway
-   release must use a fresh tag such as `a2a-gw-v1.26.10` or the next reviewed
+   release must use a fresh tag such as `a2a-gw-v1.26.11` or the next reviewed
    release-train version. If the gateway is later versioned independently,
    update this runbook before release.
 
@@ -154,14 +154,21 @@ If the release includes AC or hosted gateway deployment:
     Image: ghcr.io/awebai/a2a-gateway:X.Y.Z
     Port: 8080 or Render-provided $PORT
     Env:
-      AWEB_A2A_GW_CONFIG=/etc/secrets/ac-managed-gateway.yaml
       AWEB_A2A_GATEWAY_CONFIG_TOKEN=<same service token configured in AC>
+      AWEB_A2A_GW_AC_BASE_URL=https://app.aweb.ai
+      AWEB_A2A_GW_ID=a2a-gateway
+      AWEB_A2A_GW_REGISTRY_URL=https://api.awid.ai
     Command:
-      default image command is acceptable if the minimal config exists;
-      otherwise pass: aweb-a2a-gw -config /etc/secrets/ac-managed-gateway.yaml -listen 0.0.0.0:$PORT
+      default image command is acceptable.
     Secret files:
-      minimal AC-managed gateway config only
+      none required for the hosted AC-managed product path
     ```
+
+    If a mounted config file is present, it still takes precedence. If the
+    configured file is missing and `AWEB_A2A_GATEWAY_CONFIG_TOKEN` is set, the
+    gateway falls back to the hosted AC-managed environment above. This keeps
+    Render deploys from failing before they can reach AC while still failing
+    closed when the service token is absent.
 
     Do not upload `.aw` workspace tarballs, route YAML, signing keys, controller keys, or customer-specific route state to Render for the hosted product path. The abandoned manual lane is not customer documentation and must not be used for the product deploy.
 

@@ -214,6 +214,78 @@ func TestA2AGatewayBuildsFromACRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestA2AGatewayFallsBackToHostedEnvWhenConfigFileMissing(t *testing.T) {
+	t.Setenv("AWEB_A2A_GATEWAY_CONFIG_TOKEN", "test-token")
+	t.Setenv("AWEB_A2A_GW_REGISTRY_URL", "http://registry.invalid")
+	t.Setenv("AWEB_A2A_GW_ID", "gw-test")
+
+	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/api/v1/a2a/gateway/config/gw-test" {
+			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"gateway_id":              "gw-test",
+			"gateway_identity":        "did:aw:gateway",
+			"gateway_identity_status": "active",
+			"config_revision":         "rev-env",
+			"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+			"routes": []map[string]any{{
+				"route_id":      "r_personal",
+				"host":          "a2a.aweb.ai",
+				"address":       "a2a.aweb.ai/personal",
+				"mode":          "mail",
+				"root_behavior": "default_for_host",
+				"auth":          map[string]any{"mode": "none"},
+				"limits": map[string]any{
+					"task_ttl_seconds":         3600,
+					"response_timeout_seconds": 30,
+				},
+				"card": map[string]any{
+					"name":                 "Personal",
+					"description":          "Personal agent",
+					"provider":             map[string]any{"organization": "aweb", "url": "https://aweb.ai"},
+					"default_input_modes":  []string{"text/plain"},
+					"default_output_modes": []string{"text/plain"},
+					"skills":               []map[string]any{{"id": "personal", "name": "Personal", "description": "Personal task"}},
+				},
+			}},
+		})
+	}))
+	defer acServer.Close()
+	t.Setenv("AWEB_A2A_GW_AC_BASE_URL", acServer.URL)
+
+	cfg, err := loadConfigOrHostedEnv(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err != nil {
+		t.Fatalf("loadConfigOrHostedEnv: %v", err)
+	}
+	if cfg.ACConfig.BaseURL != acServer.URL || cfg.ACConfig.GatewayID != "gw-test" || cfg.RegistryURL != "http://registry.invalid" {
+		t.Fatalf("unexpected env config: %#v", cfg)
+	}
+	if err := applyACRuntimeConfig(&cfg); err != nil {
+		t.Fatalf("applyACRuntimeConfig: %v", err)
+	}
+	if cfg.ACRuntime.ConfigRevision != "rev-env" || len(cfg.Routes) != 1 {
+		t.Fatalf("unexpected runtime config: %#v", cfg)
+	}
+}
+
+func TestA2AGatewayMissingConfigWithoutHostedEnvFailsActionably(t *testing.T) {
+	t.Setenv("AWEB_A2A_GATEWAY_CONFIG_TOKEN", "")
+	_, err := loadConfigOrHostedEnv(filepath.Join(t.TempDir(), "missing.yaml"))
+	if err == nil {
+		t.Fatal("expected missing config error")
+	}
+	for _, want := range []string{"no such file", "AWEB_A2A_GATEWAY_CONFIG_TOKEN"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
 func TestA2AGatewayRejectsExpiredACRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
 	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

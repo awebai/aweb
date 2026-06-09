@@ -48,10 +48,7 @@ func run(args []string, stdout, _ *os.File) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*configPath) == "" {
-		return fmt.Errorf("--config or AWEB_A2A_GW_CONFIG is required")
-	}
-	cfg, err := loadFileConfig(*configPath)
+	cfg, err := loadConfigOrHostedEnv(*configPath)
 	if err != nil {
 		return err
 	}
@@ -412,6 +409,38 @@ func loadFileConfig(path string) (fileConfig, error) {
 		return fileConfig{}, err
 	}
 	return cfg, nil
+}
+
+func loadConfigOrHostedEnv(path string) (fileConfig, error) {
+	cfg, err := loadFileConfig(path)
+	if err == nil {
+		return cfg, nil
+	}
+	if path != "" && !os.IsNotExist(err) {
+		return fileConfig{}, err
+	}
+	envCfg, ok := hostedEnvConfig()
+	if ok {
+		return envCfg, nil
+	}
+	if path == "" {
+		return fileConfig{}, fmt.Errorf("--config or AWEB_A2A_GW_CONFIG is required unless AWEB_A2A_GATEWAY_CONFIG_TOKEN is set")
+	}
+	return fileConfig{}, fmt.Errorf("open %s: no such file or directory; set a mounted config file or set AWEB_A2A_GATEWAY_CONFIG_TOKEN for hosted AC-managed env config", path)
+}
+
+func hostedEnvConfig() (fileConfig, bool) {
+	if strings.TrimSpace(os.Getenv("AWEB_A2A_GATEWAY_CONFIG_TOKEN")) == "" {
+		return fileConfig{}, false
+	}
+	return fileConfig{
+		RegistryURL: firstNonEmpty(os.Getenv("AWEB_A2A_GW_REGISTRY_URL"), "https://api.awid.ai"),
+		ACConfig: acConfig{
+			BaseURL:        firstNonEmpty(os.Getenv("AWEB_A2A_GW_AC_BASE_URL"), "https://app.aweb.ai"),
+			GatewayID:      firstNonEmpty(os.Getenv("AWEB_A2A_GW_ID"), "a2a-gateway"),
+			BearerTokenEnv: "AWEB_A2A_GATEWAY_CONFIG_TOKEN",
+		},
+	}, true
 }
 
 type acRuntimeConfigPayload struct {
