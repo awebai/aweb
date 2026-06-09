@@ -133,6 +133,7 @@ Allowed top-level fields:
 | `resources.roles` | no | Map of role name to harness-neutral role Markdown. |
 | `resources.souls` | no | Map of soul name to a soul directory (`soul.yaml`, `AGENTS.md`, seed `docs/`/`decisions/`/`memory/`). Souls are identity-free canonical agent bodies. |
 | `resources.playbooks` | no | Map of playbook key to Markdown. |
+| `resources.docs` | no | Map of doc key to shared team docs Markdown (e.g. a team architecture doc copied into the target). |
 | `resources.fragments` | no | Map of fragment key to Markdown snippets. |
 | `skills` | no | List of included skill entrypoints. |
 | `adapters` | no | Map of harness/runtime name to adapter docs or generators. |

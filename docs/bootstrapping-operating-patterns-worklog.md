@@ -13,6 +13,25 @@ This is a restart handoff for the recent redesign of aweb team setup. It records
 what changed, what vocabulary is now canonical, which repos were touched, and
 what is still in flight.
 
+## 2026-06-09 (evening) update: team blueprints
+
+Everything below the vocabulary section still describes real history, but the
+product noun moved again, per Juan, after the a2am customer model review:
+
+- **Blueprint** is the product noun (`docs/team-blueprints-sot.md` is the SOT).
+- Both sample repos are converted and pushed: `aweb-team-coord-worktrees`
+  `3c673a9`, `aweb-team-company-surfaces` `007ea91`. Skill is `create-team`
+  (was `bootstrapping-a-team`); target layout is a2am-shaped: committed
+  `agents/souls|roles|docs|instructions.md`, gitignored `agents/instances/`,
+  shared `.agents/skills` (`spawn-instance`, `self-maintenance`) and
+  `.agents/bin/launch-session.sh`.
+- AC `/orchestration` re-patched with blueprint vocabulary: `dde40eb4`
+  (supersedes the `33ff3e42` phrasing). Olivia has the phrasing to mirror and
+  ACKed the vocabulary; her lane is still gated on Juan's structure answers.
+- Epic `aweb-aaqe` tracks this work (all subtasks closed 2026-06-09).
+  CLI follow-up candidates from a2am feedback: `aweb-aaqd.10` (`work: home`
+  mode), `aweb-aaqd.11` (skills mirror ownership).
+
 ## North star
 
 The product motion is no longer “apply a template” or “run one bootstrap
