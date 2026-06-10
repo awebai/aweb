@@ -53,8 +53,12 @@ def canonicalize_git_url(origin_url: str) -> str:
 
     url = origin_url.strip()
 
-    # Handle SSH format: git@host:path
-    ssh_match = re.match(r"^git@([^:]+):(.+)$", url)
+    # Handle scp-like SSH format: [user@]host:path. The host may be an
+    # SSH-config alias (a `Host github-co-aweb` block routing to a deploy
+    # key), so it is not required to look like a DNS name.
+    ssh_match = None
+    if "://" not in url:
+        ssh_match = re.match(r"^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9._-]+):([^/\\].*)$", url)
     if ssh_match:
         host = ssh_match.group(1)
         path = ssh_match.group(2)

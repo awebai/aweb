@@ -44,10 +44,11 @@ type connectResponse struct {
 }
 
 // connectRequest is the body sent to POST /v1/connect.
+// Identities are repo-independent: the request carries no repo_origin, and
+// the CLI never sends the cwd git origin for identity/workspace init.
 type connectRequest struct {
 	Hostname      string `json:"hostname"`
 	WorkspacePath string `json:"workspace_path"`
-	RepoOrigin    string `json:"repo_origin,omitempty"`
 	Role          string `json:"role,omitempty"`
 	HumanName     string `json:"human_name,omitempty"`
 	AgentType     string `json:"agent_type,omitempty"`
@@ -85,12 +86,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	}
 
 	hostname, _ := os.Hostname()
-	repoOrigin := discoverRepoOrigin(workingDir)
 
 	reqBody := connectRequest{
 		Hostname:      hostname,
 		WorkspacePath: workingDir,
-		RepoOrigin:    repoOrigin,
 		Role:          strings.TrimSpace(opts.Role),
 		HumanName:     resolveHumanNameValue(strings.TrimSpace(opts.HumanName)),
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
@@ -152,7 +151,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
 	})
 	workspaceState.RepoID = resp.RepoID
-	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
+	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(discoverRepoOrigin(workingDir))
 	workspaceState.HumanName = reqBody.HumanName
 	workspaceState.AgentType = reqBody.AgentType
 	workspaceState.Hostname = hostname

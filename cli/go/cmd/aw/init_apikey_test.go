@@ -991,3 +991,369 @@ func externalLikeTestURL(t *testing.T, raw string) string {
 	}
 	return u.String()
 }
+
+func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var connectBody map[string]any
+	var registeredDIDKey string
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			registeredDIDKey, _ = body["new_did_key"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": registeredDIDKey,
+				"created_at":      "2026-04-18T00:00:00Z",
+				"updated_at":      "2026-04-18T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/workspaces/init":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			pubKeyB64, _ := body["public_key"].(string)
+			pubKeyBytes, _ := base64.StdEncoding.DecodeString(pubKeyB64)
+			stableID := awid.ComputeStableID(ed25519.PublicKey(pubKeyBytes))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:ama.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   stableID,
+				MemberAddress: "ama.aweb.ai/ama",
+				Alias:         "ama",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "ama",
+				"team_id":        "default:ama.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      stableID,
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-ama",
+			})
+		case r.URL.Path == "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:ama.aweb.ai",
+				"alias":        "ama",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:ama.aweb.ai", "ama")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	runGitForTest(t, tmp, "init")
+	runGitForTest(t, tmp, "remote", "add", "origin", "github-co-aweb:awebai/co.aweb.git")
+
+	if _, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir:  tmp,
+		AwebURL:     externalLikeTestURL(t, server.URL),
+		RegistryURL: server.URL,
+		APIKey:      "aw_sk_test_no_repo_origin",
+		Name:        "ama",
+		Persistent:  true,
+	}); err != nil {
+		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
+	}
+	if connectBody == nil {
+		t.Fatal("connect request was not captured")
+	}
+	if value, ok := connectBody["repo_origin"]; ok {
+		t.Fatalf("connect request must not carry repo_origin; got %v", value)
+	}
+}
+
+func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "")
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var registeredDIDKeys []string
+	var workspaceInitDIDKeys []string
+	var connectCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["new_did_key"].(string)
+			registeredDIDKeys = append(registeredDIDKeys, didKey)
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": registeredDIDKeys[0],
+				"created_at":      "2026-04-18T00:00:00Z",
+				"updated_at":      "2026-04-18T00:00:00Z",
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/key"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/key")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": registeredDIDKeys[0],
+			})
+		case r.URL.Path == "/api/v1/workspaces/init":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			workspaceInitDIDKeys = append(workspaceInitDIDKeys, didKey)
+			pubKeyB64, _ := body["public_key"].(string)
+			pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyB64)
+			if err != nil {
+				t.Fatalf("decode public_key: %v", err)
+			}
+			stableID := awid.ComputeStableID(ed25519.PublicKey(pubKeyBytes))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:ama.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   stableID,
+				MemberAddress: "ama.aweb.ai/ama",
+				Alias:         "ama",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "ama",
+				"team_id":        "default:ama.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            didKey,
+				"stable_id":      stableID,
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-ama",
+			})
+		case r.URL.Path == "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			connectCalls++
+			if connectCalls == 1 {
+				http.Error(w, `{"detail":"induced connect failure"}`, http.StatusUnprocessableEntity)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:ama.aweb.ai",
+				"alias":        "ama",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:ama.aweb.ai", "ama")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	preExisting := filepath.Join(tmp, ".aw", "pre-existing.txt")
+	if err := os.MkdirAll(filepath.Dir(preExisting), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preExisting, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := apiKeyInitRequest{
+		WorkingDir:  tmp,
+		AwebURL:     externalLikeTestURL(t, server.URL),
+		RegistryURL: server.URL,
+		APIKey:      "aw_sk_test_connect_rollback",
+		Name:        "ama",
+		Persistent:  true,
+	}
+
+	if _, err := runAPIKeyBootstrapInit(req); err == nil || !strings.Contains(err.Error(), "422") {
+		t.Fatalf("unexpected first-run error: %v", err)
+	}
+	if _, err := os.Stat(preExisting); err != nil {
+		t.Fatalf("rollback must preserve pre-existing .aw content: %v", err)
+	}
+	for _, leftover := range []string{
+		filepath.Join(tmp, ".aw", "signing.key"),
+		filepath.Join(tmp, ".aw", "identity.yaml"),
+		filepath.Join(tmp, ".aw", "workspace.yaml"),
+		awconfig.TeamCertificatesDir(tmp),
+	} {
+		if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+			t.Fatalf("connect failure left local state behind at %s (stat err=%v)", leftover, err)
+		}
+	}
+	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); err != nil {
+		t.Fatalf("partial init state should survive connect failure for resume: %v", err)
+	}
+
+	result, err := runAPIKeyBootstrapInit(req)
+	if err != nil {
+		t.Fatalf("retry runAPIKeyBootstrapInit: %v", err)
+	}
+	if result.TeamID != "default:ama.aweb.ai" {
+		t.Fatalf("team_id=%q", result.TeamID)
+	}
+	if len(workspaceInitDIDKeys) != 2 || workspaceInitDIDKeys[0] != workspaceInitDIDKeys[1] {
+		t.Fatalf("retry must reuse the same identity; workspace init DID keys=%v", workspaceInitDIDKeys)
+	}
+	signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatalf("load signing key after retry: %v", err)
+	}
+	if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != workspaceInitDIDKeys[0] {
+		t.Fatalf("persisted signing key DID=%q want %q", got, workspaceInitDIDKeys[0])
+	}
+	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(err) {
+		t.Fatalf("partial init state should be removed after success: %v", err)
+	}
+}
+
+func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "")
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = teamPub
+
+	existingPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingDIDKey := awid.ComputeDIDKey(existingPub)
+	existingStableID := awid.ComputeStableID(existingPub)
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": existingDIDKey,
+				"created_at":      "2026-04-18T00:00:00Z",
+				"updated_at":      "2026-04-18T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/workspaces/init":
+			// Simulate a server that already has this global name registered to a
+			// different identity and returns the existing identity material.
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:ama.aweb.ai",
+				MemberDIDKey:  existingDIDKey,
+				MemberDIDAW:   existingStableID,
+				MemberAddress: "ama.aweb.ai/ama",
+				Alias:         "ama",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":     server.URL,
+				"team_cert":      encoded,
+				"alias":          "ama",
+				"team_id":        "default:ama.aweb.ai",
+				"workspace_id":   "ws-1",
+				"did":            existingDIDKey,
+				"stable_id":      existingStableID,
+				"identity_scope": awid.IdentityModeGlobal,
+				"custody":        awid.CustodySelf,
+				"api_key":        "workspace-sk-ama",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir:  tmp,
+		AwebURL:     externalLikeTestURL(t, server.URL),
+		RegistryURL: server.URL,
+		APIKey:      "aw_sk_test_taken_name",
+		Name:        "ama",
+		Persistent:  true,
+	})
+	if err == nil {
+		t.Fatal("expected already-registered name to fail")
+	}
+	if !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("error should say the name is already registered: %v", err)
+	}
+	if !strings.Contains(err.Error(), existingDIDKey) {
+		t.Fatalf("error should name the server-side did: %v", err)
+	}
+	if !strings.Contains(err.Error(), "signing key") || !strings.Contains(err.Error(), "operator") {
+		t.Fatalf("error should give recovery guidance: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(statErr) {
+		t.Fatalf("already-registered name must not write a signing key: %v", statErr)
+	}
+	if _, statErr := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(statErr) {
+		t.Fatalf("already-registered name must clean up partial init state: %v", statErr)
+	}
+}
