@@ -191,8 +191,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 			if removeErr := removeAPIKeyPartialInit(req.WorkingDir); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove partial init state: %v\n", removeErr)
 			}
+			pruneEmptyAwDir(req.WorkingDir)
 			return connectOutput{}, fmt.Errorf(
-				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nTo use this name you need its original signing key (restore the original .aw directory), or ask an operator to remove the server-side identity record, then rerun.\nNo signing key was written and no local state was changed.",
+				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nTo use this name you need its original signing key (restore the original .aw directory), or ask an operator to remove the server-side identity record, then rerun.\nNo signing key was written; stale partial-init state was cleaned up.",
 				name,
 				responseDID,
 				didKey,
@@ -300,9 +301,15 @@ func rollbackAwTree(workingDir string, snapshot map[string]bool) {
 		}
 	}
 	if snapshot == nil {
-		if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
-			_ = os.Remove(awDir)
-		}
+		pruneEmptyAwDir(workingDir)
+	}
+}
+
+// pruneEmptyAwDir removes .aw when it exists and is empty.
+func pruneEmptyAwDir(workingDir string) {
+	awDir := filepath.Join(workingDir, ".aw")
+	if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
+		_ = os.Remove(awDir)
 	}
 }
 
