@@ -65,6 +65,7 @@ type mailBridgeThread struct {
 	MessageID      string
 	SeenMessages   map[string]bool
 	CreatedAt      time.Time
+	ReplyDeadline  time.Time
 }
 
 type a2aTaskEnvelope struct {
@@ -169,6 +170,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		MessageID:      strings.TrimSpace(resp.MessageID),
 		SeenMessages:   map[string]bool{strings.TrimSpace(resp.MessageID): true},
 		CreatedAt:      time.Now(),
+		ReplyDeadline:  replyDeadline(time.Now(), task.TaskTTL, b.pollTimeout),
 	}
 	if thread.ConversationID == "" {
 		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "missing_conversation_id", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
@@ -176,7 +178,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	}
 	b.mu.Lock()
 	b.threads[task.TaskID] = thread
-	shouldPoll := b.applier != nil && b.pollTimeout > 0
+	shouldPoll := b.applier != nil
 	b.mu.Unlock()
 	b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "ok", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	if shouldPoll {
@@ -339,9 +341,8 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 	if thread == nil || thread.ConversationID == "" {
 		return
 	}
-	deadline := time.Now().Add(b.pollTimeout)
 	for {
-		if time.Now().After(deadline) {
+		if time.Now().After(thread.ReplyDeadline) {
 			return
 		}
 		resp, err := b.mailConversationForThread(context.Background(), thread, 20)
@@ -352,8 +353,34 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 				}
 			}
 		}
-		time.Sleep(b.pollInterval)
+		time.Sleep(replyPollInterval(b.pollInterval, time.Since(thread.CreatedAt)))
 	}
+}
+
+// replyDeadline bounds reply polling by the task TTL (default one hour) and,
+// when configured, by an explicit poll timeout cap.
+func replyDeadline(start time.Time, taskTTL, pollTimeout time.Duration) time.Time {
+	ttl := taskTTL
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	if pollTimeout > 0 && pollTimeout < ttl {
+		ttl = pollTimeout
+	}
+	return start.Add(ttl)
+}
+
+// replyPollInterval keeps the configured cadence for the first minute, when
+// most agents answer, then backs off so long-lived tasks poll gently.
+func replyPollInterval(base time.Duration, elapsed time.Duration) time.Duration {
+	if elapsed <= time.Minute {
+		return base
+	}
+	backoff := 5 * time.Second
+	if base > backoff {
+		return base
+	}
+	return backoff
 }
 
 func (b *MailBridge) mailConversationForThread(ctx context.Context, thread *mailBridgeThread, limit int) (*awid.InboxResponse, error) {
@@ -387,7 +414,25 @@ func FormatA2ATaskMessage(env a2aTaskEnvelope, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "```a2a-task\n" + string(body) + "\n```\n\nCustomer message (untrusted):\n\n" + text, nil
+	reply := map[string]any{
+		"task_id": env.TaskID,
+		"state":   "completed",
+		"artifacts": []map[string]string{
+			{"type": "text", "text": "<your answer>"},
+		},
+	}
+	if strings.TrimSpace(env.ContextID) != "" {
+		reply["context_id"] = env.ContextID
+	}
+	replyBody, err := json.MarshalIndent(reply, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	instructions := "To complete this task, reply in this mail conversation with a fenced a2a-reply block:\n\n" +
+		"```a2a-reply\n" + string(replyBody) + "\n```\n\n" +
+		"Allowed state values: completed, input_required, failed, rejected. " +
+		"Replies without a valid a2a-reply block do not change the task.\n"
+	return "```a2a-task\n" + string(body) + "\n```\n\n" + instructions + "\nCustomer message (untrusted):\n\n" + text, nil
 }
 
 func FormatA2ACancelMessage(taskID, contextID, requestID string) string {

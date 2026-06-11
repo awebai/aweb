@@ -1173,8 +1173,8 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
 				t.Fatalf("decode connect request: %v", err)
 			}
-			if connectBody["repo_origin"] != origin {
-				t.Fatalf("repo_origin=%v", connectBody["repo_origin"])
+			if value, ok := connectBody["repo_origin"]; ok {
+				t.Fatalf("connect request must not carry repo_origin; got %v", value)
 			}
 			role, _ := connectBody["role"].(string)
 			if role != "developer" {

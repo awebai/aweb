@@ -186,6 +186,21 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
+	if req.Persistent {
+		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
+			if removeErr := removeAPIKeyPartialInit(req.WorkingDir); removeErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove partial init state: %v\n", removeErr)
+			}
+			pruneEmptyAwDir(req.WorkingDir)
+			return connectOutput{}, fmt.Errorf(
+				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nTo use this name you need its original signing key (restore the original .aw directory), or ask an operator to remove the server-side identity record, then rerun.\nNo signing key was written; stale partial-init state was cleaned up.",
+				name,
+				responseDID,
+				didKey,
+			)
+		}
+	}
+
 	encodedCert := strings.TrimSpace(resp.TeamCert)
 	if encodedCert == "" {
 		return connectOutput{}, fmt.Errorf("workspace init response is missing team_cert")
@@ -205,21 +220,97 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
 	}
 
-	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
+	snapshot, err := snapshotAwTree(req.WorkingDir)
+	if err != nil {
 		return connectOutput{}, err
+	}
+	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
+		rollbackAwTree(req.WorkingDir, snapshot)
+		return connectOutput{}, err
+	}
+
+	out, err := initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
+		Role:      strings.TrimSpace(req.Role),
+		HumanName: strings.TrimSpace(req.HumanName),
+		AgentType: strings.TrimSpace(req.AgentType),
+		APIKey:    strings.TrimSpace(resp.APIKey),
+	})
+	if err != nil {
+		// Roll back everything this run created. The partial-init state (when
+		// present) survives via the snapshot, so a retry resumes with the same
+		// signing key the server already has on record.
+		rollbackAwTree(req.WorkingDir, snapshot)
+		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
 	if persistent {
 		if err := removeAPIKeyPartialInit(req.WorkingDir); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
 		}
 	}
+	return out, nil
+}
 
-	return initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
-		Role:      strings.TrimSpace(req.Role),
-		HumanName: strings.TrimSpace(req.HumanName),
-		AgentType: strings.TrimSpace(req.AgentType),
-		APIKey:    strings.TrimSpace(resp.APIKey),
+// snapshotAwTree records the set of paths currently present under .aw so a
+// later failure can remove exactly what the current run created. A nil map
+// means .aw itself did not exist.
+func snapshotAwTree(workingDir string) (map[string]bool, error) {
+	awDir := filepath.Join(workingDir, ".aw")
+	if _, err := os.Stat(awDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	existing := map[string]bool{}
+	err := filepath.WalkDir(awDir, func(path string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		existing[path] = true
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+// rollbackAwTree removes every path under .aw that is not in the snapshot,
+// preserving everything that existed before (including resumable
+// partial-init state). If .aw did not exist at snapshot time and nothing of
+// it remains, the directory itself is removed.
+func rollbackAwTree(workingDir string, snapshot map[string]bool) {
+	awDir := filepath.Join(workingDir, ".aw")
+	if _, err := os.Stat(awDir); err != nil {
+		return
+	}
+	var created []string
+	_ = filepath.WalkDir(awDir, func(path string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if snapshot == nil || !snapshot[path] {
+			created = append(created, path)
+		}
+		return nil
+	})
+	// Remove deepest paths first so directories empty out before removal.
+	for i := len(created) - 1; i >= 0; i-- {
+		if err := os.Remove(created[i]); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: rollback could not remove %s: %v\n", created[i], err)
+		}
+	}
+	if snapshot == nil {
+		pruneEmptyAwDir(workingDir)
+	}
+}
+
+// pruneEmptyAwDir removes .aw when it exists and is empty.
+func pruneEmptyAwDir(workingDir string) {
+	awDir := filepath.Join(workingDir, ".aw")
+	if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
+		_ = os.Remove(awDir)
+	}
 }
 
 func initIdentityScopeValue(persistent bool) string {

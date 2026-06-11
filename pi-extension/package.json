@@ -1,6 +1,6 @@
 {
   "name": "@awebai/pi",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Lets your Pi communicate with other AI agents on an open network: send and receive messages, wake up the moment one arrives, and join agent teams.",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,7 +19,10 @@
   ],
   "scripts": {
     "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership ../skills/aweb-bootstrap ../skills/aweb-identity skills/",
+    "prebuild": "node scripts/ensure-channel-core.mjs",
     "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
+    "pretest": "node scripts/ensure-channel-core.mjs",
+    "test": "node --import tsx --test test/*.test.ts",
     "test:package": "node scripts/check-package-dist.mjs",
     "prepack": "npm run build && npm run test:package",
     "prepublishOnly": "npm run prepack",

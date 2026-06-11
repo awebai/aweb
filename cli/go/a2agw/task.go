@@ -48,6 +48,8 @@ type BridgeTask struct {
 	MessageID   string
 	CallerScope string
 	Text        string
+	// TaskTTL bounds how long the bridge keeps polling for the agent reply.
+	TaskTTL time.Duration
 }
 
 type BridgeCancel struct {

@@ -606,8 +606,14 @@ func TestA2AGatewayManagedACRefreshExtendsAcceptWindowForStableRevision(t *testi
 
 func TestA2AGatewayManagedACRefreshSwapsUnderLoad(t *testing.T) {
 	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/messages") {
-			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/conversations/") {
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: nil})
+			return
+		}
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/messages") {
+			http.Error(w, "unexpected AC request", http.StatusNotFound)
+			t.Errorf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
 	}))

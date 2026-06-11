@@ -2,12 +2,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createChannelClient,
   createRegistryResolver,
-  formatAwakeningForAgent,
   loadPinStore,
   resolveConfig,
   SenderTrustManager,
   startChannelLoop,
-  type ChannelAwakening,
 } from "@awebai/channel-core";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -15,6 +13,12 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+import {
+  createWakeDispatcher,
+  createWakeLogger,
+  installWakeDiagnostics,
+  type WakeDispatcher,
+} from "./wake.js";
 
 interface AwResolution {
   command: string;
@@ -152,30 +156,24 @@ async function sendFirstSessionWelcome(pi: ExtensionAPI, cwd: string, teamID: st
   );
 }
 
-function sendAwakening(pi: ExtensionAPI, awakening: ChannelAwakening): void {
-  const options = awakening.deliveryIntent === "ambient"
-    ? { deliverAs: "nextTurn" as const }
-    : awakening.deliveryIntent === "steer"
-      ? { deliverAs: "steer" as const, triggerTurn: true }
-      : { triggerTurn: true };
-
-  pi.sendMessage(
-    {
-      customType: "aweb-channel",
-      content: formatAwakeningForAgent(awakening),
-      display: true,
-      details: awakening.meta,
-    },
-    options,
-  );
-}
-
 export default function awebPiExtension(pi: ExtensionAPI) {
   let abortController: AbortController | undefined;
+  let wakeDispatcher: WakeDispatcher | undefined;
+  const wakeLog = createWakeLogger();
+  installWakeDiagnostics(wakeLog);
+
+  pi.on("turn_start", () => {
+    wakeDispatcher?.setTurnActive(true);
+  });
+
+  pi.on("turn_end", () => {
+    wakeDispatcher?.setTurnActive(false);
+  });
 
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = undefined;
+    wakeDispatcher = undefined;
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -241,6 +239,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     });
 
     const signal = abortController.signal;
+    wakeDispatcher = createWakeDispatcher(pi, wakeLog);
     void startChannelLoop({
       client,
       pinStore,
@@ -253,7 +252,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       },
       signal,
       workdir: ctx.cwd,
-      onAwakening: (awakening) => sendAwakening(pi, awakening),
+      onAwakening: (awakening) => wakeDispatcher?.enqueue(awakening),
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       },

@@ -1,0 +1,68 @@
+{
+  "description": "Pins the v0 A2A inbound bridge envelope per docs/a2a.md section 10.1: semantic sections, their order, and required JSON fields. Prose wording is deliberately NOT pinned; conformance checks section markers and JSON structure only.",
+  "source": "docs/a2a.md section 10.1 (normative for v0 inbound bridge envelopes)",
+  "envelope": {
+    "input": {
+      "task_id": "t_vec_1",
+      "context_id": "c_vec_1",
+      "route_id": "r_vector",
+      "target_address": "team.aweb.ai/vector",
+      "gateway_identity": "did:aw:vectorgateway",
+      "caller_scope": "anonymous",
+      "state": "TASK_STATE_WORKING",
+      "request_id": "req-vec-1",
+      "customer_text": "Vector customer text?"
+    },
+    "ordered_section_markers": [
+      "```a2a-task",
+      "```a2a-reply",
+      "(untrusted)"
+    ],
+    "task_block_required_fields": [
+      "task_id",
+      "route_id",
+      "target_address",
+      "state",
+      "request_id"
+    ],
+    "task_block_expected_values": {
+      "task_id": "t_vec_1",
+      "context_id": "c_vec_1",
+      "route_id": "r_vector",
+      "target_address": "team.aweb.ai/vector",
+      "gateway_identity": "did:aw:vectorgateway",
+      "caller_scope": "anonymous",
+      "state": "TASK_STATE_WORKING",
+      "request_id": "req-vec-1"
+    },
+    "reply_template_required_fields": [
+      "task_id",
+      "state",
+      "artifacts"
+    ],
+    "reply_template_expected_values": {
+      "task_id": "t_vec_1",
+      "context_id": "c_vec_1"
+    },
+    "required_phrases": [
+      "completed",
+      "input_required",
+      "failed",
+      "rejected"
+    ],
+    "customer_text_must_be_final_content": true
+  },
+  "envelope_without_context": {
+    "input": {
+      "task_id": "t_vec_2",
+      "route_id": "r_vector",
+      "target_address": "team.aweb.ai/vector",
+      "state": "TASK_STATE_WORKING",
+      "request_id": "req-vec-2",
+      "customer_text": "No context id here."
+    },
+    "reply_template_forbidden_fields": [
+      "context_id"
+    ]
+  }
+}
