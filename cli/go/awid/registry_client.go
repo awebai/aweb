@@ -434,7 +434,7 @@ func (c *RegistryClient) httpClient() *http.Client {
 	if c != nil && c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return &http.Client{Timeout: DefaultTimeout}
+	return &http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}
 }
 
 func signedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[string]string {

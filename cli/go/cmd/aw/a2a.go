@@ -42,7 +42,7 @@ var (
 	a2aPublishDefaultForHost  bool
 
 	a2aHTTPClient = func() *http.Client {
-		return &http.Client{Timeout: 30 * time.Second}
+		return &http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()}
 	}
 )
 

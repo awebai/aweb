@@ -312,7 +312,7 @@ func probeDoctorAwebEndpoint(ctx context.Context, baseURL string) (int, bool, st
 		return 0, false, "", err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}).Do(req)
 	if err != nil {
 		return 0, false, "", err
 	}

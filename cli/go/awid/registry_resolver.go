@@ -92,7 +92,7 @@ type RegistryResolver struct {
 
 func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *RegistryResolver {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: DefaultTimeout}
+		httpClient = &http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}
 	}
 	if dnsResolver == nil {
 		dnsResolver = &NetTXTResolver{}

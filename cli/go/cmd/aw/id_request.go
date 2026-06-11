@@ -181,6 +181,8 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	req.Header = headers.Clone()
 
 	client := &http.Client{
+		Timeout:   awid.APITimeout(),
+		Transport: awid.NewAPITransport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

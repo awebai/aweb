@@ -243,7 +243,7 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	req.Header.Set("X-AWID-Team-Certificate", certEncoded)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

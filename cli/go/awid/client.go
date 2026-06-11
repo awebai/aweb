@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -163,7 +164,10 @@ func isRoutableAddressTarget(target string) bool {
 
 const (
 	// DefaultTimeout is the default HTTP timeout used by the client.
-	DefaultTimeout = 10 * time.Second
+	// 20s leaves headroom for venue WiFi where TLS setup plus header wait
+	// can exceed 10s against a healthy server. Override per-process with
+	// AWEB_HTTP_TIMEOUT.
+	DefaultTimeout = 20 * time.Second
 
 	MaxResponseSize = 10 * 1024 * 1024
 )
@@ -211,9 +215,12 @@ func New(baseURL string) (*Client, error) {
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
+			Timeout:   APITimeout(),
+			Transport: NewAPITransport(),
 		},
-		sseClient: &http.Client{},
+		// No Timeout: SSE streams are long-lived. The transport still
+		// bounds dial/TLS/header waits.
+		sseClient: &http.Client{Transport: NewSSETransport()},
 	}, nil
 }
 
@@ -294,6 +301,9 @@ func (c *Client) SetSSEClient(httpClient *http.Client) {
 
 // HTTPClient returns the HTTP client used for standard JSON API calls.
 func (c *Client) HTTPClient() *http.Client { return c.httpClient }
+
+// SSEClient returns the HTTP client used for SSE requests.
+func (c *Client) SSEClient() *http.Client { return c.sseClient }
 
 // SigningKey returns the client's signing key, or nil for legacy/custodial clients.
 func (c *Client) SigningKey() ed25519.PrivateKey { return c.signingKey }
@@ -939,12 +949,28 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, decorateTimeoutError(method, err)
 	}
 	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
 		c.latestClientVersion.Store(v)
 	}
 	return resp, nil
+}
+
+// decorateTimeoutError marks timed-out mutating requests as ambiguous: the
+// request may have reached the server and applied before the response was
+// lost, so blind retries risk duplicate writes. Reads stay undecorated —
+// retrying a timed-out read is always safe.
+func decorateTimeoutError(method string, err error) error {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return err
+	}
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		return err
+	}
+	return fmt.Errorf("%w\nRequest timed out before a response was received; it may have applied. Check current state before retrying.", err)
 }
 
 // certAuthSignPayload builds the canonical JSON bytes for certificate auth:

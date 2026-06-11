@@ -524,7 +524,7 @@ func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}).Do(req)
 	if err != nil {
 		return false, err
 	}
@@ -628,15 +628,17 @@ func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL s
 		},
 	}
 	c.SetHTTPClient(&http.Client{
-		Timeout: awid.DefaultTimeout,
+		Timeout: awid.APITimeout(),
 		Transport: &baseURLFallbackTransport{
-			base:  http.DefaultTransport,
+			base:  awid.NewAPITransport(),
 			state: state,
 		},
 	})
+	// No Timeout: SSE streams are long-lived. The SSE transport still
+	// bounds dial/TLS/header waits.
 	c.SetSSEClient(&http.Client{
 		Transport: &baseURLFallbackTransport{
-			base:  http.DefaultTransport,
+			base:  awid.NewSSETransport(),
 			state: state,
 		},
 	})
