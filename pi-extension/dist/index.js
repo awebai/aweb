@@ -6368,6 +6368,115 @@ import { homedir as homedir2 } from "node:os";
 import { delimiter, dirname as dirname3, join as join3 } from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+
+// src/wake.ts
+var diagnosticsInstalled = false;
+function errorFields(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+  return { message: String(error) };
+}
+function awakeningFields(awakening) {
+  return {
+    kind: awakening.kind,
+    delivery_intent: awakening.deliveryIntent,
+    message_id: awakening.meta.message_id,
+    conversation_id: awakening.meta.conversation_id,
+    session_id: awakening.meta.session_id,
+    sender_waiting: awakening.meta.sender_waiting,
+    sender_leaving: awakening.meta.sender_leaving
+  };
+}
+function createWakeLogger(prefix = "aweb-pi-extension") {
+  return (event, fields = {}) => {
+    const line = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      component: prefix,
+      event,
+      ...fields
+    };
+    console.error(JSON.stringify(line));
+  };
+}
+function installWakeDiagnostics(log) {
+  if (diagnosticsInstalled) return;
+  diagnosticsInstalled = true;
+  log("diagnostics_installed");
+  process.on("exit", (code) => {
+    log("process_exit", { code });
+  });
+  process.on("warning", (warning) => {
+    log("process_warning", errorFields(warning));
+  });
+  process.on("unhandledRejection", (reason) => {
+    log("unhandled_rejection", errorFields(reason));
+  });
+  process.on("uncaughtExceptionMonitor", (error) => {
+    log("uncaught_exception", errorFields(error));
+  });
+}
+function deliveryOptionsForAwakening(awakening, turnActive) {
+  if (awakening.deliveryIntent === "ambient") {
+    return { deliverAs: "nextTurn" };
+  }
+  if (awakening.deliveryIntent === "steer") {
+    return turnActive ? { deliverAs: "steer" } : { deliverAs: "steer", triggerTurn: true };
+  }
+  return turnActive ? { deliverAs: "followUp" } : { triggerTurn: true };
+}
+function createWakeDispatcher(pi, log) {
+  const queue = [];
+  let draining = false;
+  let turnActive = false;
+  const drain = () => {
+    if (draining) return;
+    draining = true;
+    setImmediate(() => {
+      try {
+        let next;
+        while (next = queue.shift()) {
+          const options = deliveryOptionsForAwakening(next, turnActive);
+          const fields = { ...awakeningFields(next), options };
+          log("wake_delivering", fields);
+          try {
+            pi.sendMessage(
+              {
+                customType: "aweb-channel",
+                content: formatAwakeningForAgent(next),
+                display: true,
+                details: next.meta
+              },
+              options
+            );
+            log("wake_delivered", fields);
+          } catch (error) {
+            log("wake_delivery_failed", { ...fields, ...errorFields(error) });
+          }
+        }
+      } finally {
+        draining = false;
+        if (queue.length > 0) drain();
+      }
+    });
+  };
+  return {
+    enqueue(awakening) {
+      queue.push(awakening);
+      log("wake_enqueued", { ...awakeningFields(awakening), queue_length: queue.length });
+      drain();
+    },
+    setTurnActive(active) {
+      turnActive = active;
+    }
+  };
+}
+
+// src/index.ts
 var require2 = createRequire(import.meta.url);
 var WELCOME_VERSION = "0.1.0";
 var WELCOME_STATE_PATH = join3(homedir2(), ".config", "aw", "pi-welcome.json");
@@ -6506,23 +6615,21 @@ async function sendFirstSessionWelcome(pi, cwd, teamID, alias) {
     { deliverAs: "followUp", triggerTurn: true }
   );
 }
-function sendAwakening(pi, awakening) {
-  const options = awakening.deliveryIntent === "ambient" ? { deliverAs: "nextTurn" } : awakening.deliveryIntent === "steer" ? { deliverAs: "steer", triggerTurn: true } : { triggerTurn: true };
-  pi.sendMessage(
-    {
-      customType: "aweb-channel",
-      content: formatAwakeningForAgent(awakening),
-      display: true,
-      details: awakening.meta
-    },
-    options
-  );
-}
 function awebPiExtension(pi) {
   let abortController;
+  let wakeDispatcher;
+  const wakeLog = createWakeLogger();
+  installWakeDiagnostics(wakeLog);
+  pi.on("turn_start", () => {
+    wakeDispatcher?.setTurnActive(true);
+  });
+  pi.on("turn_end", () => {
+    wakeDispatcher?.setTurnActive(false);
+  });
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = void 0;
+    wakeDispatcher = void 0;
   });
   pi.on("session_start", async (_event, ctx) => {
     abortController?.abort();
@@ -6584,6 +6691,7 @@ ${message}`),
       if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
     });
     const signal = abortController.signal;
+    wakeDispatcher = createWakeDispatcher(pi, wakeLog);
     void startChannelLoop({
       client,
       pinStore,
@@ -6596,7 +6704,7 @@ ${message}`),
       },
       signal,
       workdir: ctx.cwd,
-      onAwakening: (awakening) => sendAwakening(pi, awakening),
+      onAwakening: (awakening) => wakeDispatcher?.enqueue(awakening),
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       }
