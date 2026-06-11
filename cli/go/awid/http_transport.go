@@ -56,9 +56,14 @@ func NewAPITransport() *http.Transport {
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// Follows the effective API timeout: the observed venue failure
+		// class is "Client.Timeout exceeded while awaiting headers", so a
+		// header timeout below AWEB_HTTP_TIMEOUT would make the documented
+		// override a no-op for exactly that class. Short-lived callers
+		// (probes) still bound the total via their http.Client.Timeout.
+		ResponseHeaderTimeout: APITimeout(),
 		ExpectContinueTimeout: 1 * time.Second,
 		IdleConnTimeout:       15 * time.Second,
 		MaxIdleConns:          10,

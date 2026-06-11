@@ -135,3 +135,17 @@ func TestMutatingRequestTimeoutErrorSaysMayHaveApplied(t *testing.T) {
 		t.Fatalf("read timeout must not carry the mutation warning; got: %v", getErr)
 	}
 }
+
+func TestNewAPITransportHeaderTimeoutFollowsAPITimeout(t *testing.T) {
+	// The observed venue failure class is "Client.Timeout exceeded while
+	// awaiting headers": a hard-coded header timeout below AWEB_HTTP_TIMEOUT
+	// would make the documented override a no-op for exactly that class.
+	t.Setenv("AWEB_HTTP_TIMEOUT", "30s")
+	if got := NewAPITransport().ResponseHeaderTimeout; got != 30*time.Second {
+		t.Fatalf("ResponseHeaderTimeout=%s, want 30s following AWEB_HTTP_TIMEOUT", got)
+	}
+	t.Setenv("AWEB_HTTP_TIMEOUT", "")
+	if got := NewAPITransport().ResponseHeaderTimeout; got != 20*time.Second {
+		t.Fatalf("ResponseHeaderTimeout=%s, want 20s default", got)
+	}
+}

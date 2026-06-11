@@ -755,6 +755,8 @@ type baseURLFallbackTransport struct {
 func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	if base == nil {
+		// Defensive only: configureBaseURLFallback always sets base to a
+		// tuned transport. Reaching this means a hand-constructed value.
 		base = http.DefaultTransport
 	}
 	if t.state == nil {
@@ -767,7 +769,7 @@ func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response,
 		return nil, err
 	}
 	resp, err := base.RoundTrip(prepared)
-	if !shouldRetryBaseURLRequest(resp, err) {
+	if !shouldRetryBaseURLRequest(req.Method, resp, err) {
 		return resp, err
 	}
 
@@ -844,10 +846,20 @@ func (t *baseURLFallbackTransport) requestForBase(req *http.Request, baseURL str
 // base URLs (e.g. user stored /api in the URL and the path doubled). This does
 // mean legitimate API 404s (agent not found, task not found) also trigger a
 // retry, adding one extra round-trip before the real 404 propagates.
-func shouldRetryBaseURLRequest(resp *http.Response, err error) bool {
+func shouldRetryBaseURLRequest(method string, resp *http.Response, err error) bool {
 	if err != nil {
-		return true
+		// A transport error on a write is ambiguous: the request may have
+		// reached the server before the response was lost, so replaying it
+		// risks duplicate application. Only safe reads are retried; the
+		// caller surfaces the may-have-applied warning for writes.
+		switch strings.ToUpper(strings.TrimSpace(method)) {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			return true
+		}
+		return false
 	}
+	// A concrete 404 response means the server answered and nothing was
+	// applied, so replaying any method against the corrected base is safe.
 	return resp != nil && resp.StatusCode == http.StatusNotFound
 }
 
