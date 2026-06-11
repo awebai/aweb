@@ -181,6 +181,7 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 		MessageID:   params.Message.MessageID,
 		CallerScope: caller.Value,
 		Text:        text,
+		TaskTTL:     effectiveTaskTTL(route),
 	}); err != nil {
 		if errors.Is(err, errBridgeNotConfigured) {
 			return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})

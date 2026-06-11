@@ -810,3 +810,94 @@ func writeA2ACredentialsForTest(t *testing.T, dir, hostURL, apiKey, callerID, ta
 		t.Fatalf("write credentials: %v", err)
 	}
 }
+
+func TestA2ASendPersistsTaskTokenForLaterStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var statusSawToken string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/a2a/agents/r_support/agent-card.json":
+			card := testA2ACard("http://" + r.Host + "/a2a/agents/r_support/rpc")
+			_ = json.NewEncoder(w).Encode(card)
+		case "/a2a/agents/r_support/rpc":
+			var req struct {
+				ID     string `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			switch req.Method {
+			case "SendMessage":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"result": map[string]any{"task": map[string]any{
+						"id":        "task-async-1",
+						"contextId": "ctx-1",
+						"status":    map[string]any{"state": "TASK_STATE_WORKING", "timestamp": "2026-06-07T00:00:00Z"},
+						"metadata":  map[string]any{"task_bearer_token": "issued-task-token"},
+					}},
+				})
+			case "GetTask":
+				statusSawToken = r.Header.Get("X-A2A-Task-Token")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"result": map[string]any{
+						"id":     "task-async-1",
+						"status": map[string]any{"state": "TASK_STATE_COMPLETED", "timestamp": "2026-06-07T00:00:01Z"},
+					},
+				})
+			default:
+				t.Fatalf("unexpected method %s", req.Method)
+			}
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	send := exec.CommandContext(ctx, bin, "--json", "a2a", "send", server.URL+"/a2a/agents/r_support/agent-card.json", "hello", "--no-wait")
+	send.Dir = tmp
+	send.Env = testCommandEnv(tmp)
+	out, err := send.CombinedOutput()
+	if err != nil {
+		t.Fatalf("aw a2a send failed: %v\n%s", err, string(out))
+	}
+
+	credPath := filepath.Join(tmp, ".aw", "a2a-credentials.yaml")
+	credData, err := os.ReadFile(credPath)
+	if err != nil {
+		t.Fatalf("send must persist the task token to %s: %v", credPath, err)
+	}
+	if !strings.Contains(string(credData), "issued-task-token") {
+		t.Fatalf("credentials file missing issued token:\n%s", string(credData))
+	}
+	info, err := os.Stat(credPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("credentials file mode=%#o want 0600", got)
+	}
+
+	status := exec.CommandContext(ctx, bin, "--json", "a2a", "status", server.URL+"/a2a/agents/r_support/agent-card.json", "task-async-1")
+	status.Dir = tmp
+	status.Env = testCommandEnv(tmp)
+	out, err = status.CombinedOutput()
+	if err != nil {
+		t.Fatalf("aw a2a status failed: %v\n%s", err, string(out))
+	}
+	if statusSawToken != "issued-task-token" {
+		t.Fatalf("status sent X-A2A-Task-Token=%q want issued-task-token", statusSawToken)
+	}
+}

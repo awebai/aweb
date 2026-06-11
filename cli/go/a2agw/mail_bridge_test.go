@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awid"
 )
@@ -321,5 +322,144 @@ func assertAuditRedacted(t *testing.T, events []AuditEvent, forbidden string) {
 	}
 	if strings.Contains(body, forbidden) {
 		t.Fatalf("audit leaked forbidden plaintext %q: %#v", forbidden, events)
+	}
+}
+
+// lateReplyTransport returns the a2a-reply only after several conversation
+// polls, simulating an agent that answers minutes after SendMessage returned.
+type lateReplyTransport struct {
+	fakeMailTransport
+	mu          sync.Mutex
+	pollCount   int
+	replyAfter  int
+	replyTaskID string
+}
+
+func (f *lateReplyTransport) MailConversation(_ context.Context, conversationID string, _ int) (*awid.InboxResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pollCount++
+	if f.pollCount < f.replyAfter {
+		return &awid.InboxResponse{}, nil
+	}
+	return &awid.InboxResponse{Messages: []awid.InboxMessage{{
+		MessageID:          "late-reply-1",
+		ConversationID:     conversationID,
+		Body:               "```a2a-reply\n{\"task_id\":\"" + f.replyTaskID + "\",\"context_id\":\"ctx-1\",\"state\":\"completed\",\"artifacts\":[{\"type\":\"text\",\"text\":\"late but real\"}]}\n```",
+		VerificationStatus: awid.Verified,
+	}}}, nil
+}
+
+func TestMailBridgePollsForRepliesUntilTaskTTLWhenPollTimeoutUnset(t *testing.T) {
+	transport := &lateReplyTransport{replyAfter: 4}
+	audit := &memoryAuditSink{}
+	bridge, err := NewMailBridge(MailBridgeConfig{
+		Client:          transport,
+		GatewayIdentity: "did:aw:gateway",
+		Audit:           audit,
+		PollInterval:    20 * time.Millisecond,
+		// PollTimeout deliberately unset: hosted deployments configure no
+		// poll window, and replies must still be ingested for the lifetime
+		// of the task.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Audit: audit, Routes: []Route{supportRoute("r_support")}})
+	bridge.SetReplyApplier(gw)
+
+	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-late", "SendMessage", map[string]any{
+		"message":       testUserMessage("msg-late", "ctx-1", "answer me eventually"),
+		"configuration": map[string]any{"returnImmediately": true},
+	}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+	sentTask := rpcTaskResult(t, resp, "task")
+	taskID := sentTask["id"].(string)
+	transport.mu.Lock()
+	transport.replyTaskID = taskID
+	transport.mu.Unlock()
+	token := taskBearerToken(t, sentTask)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-late-get", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, 200)
+		got := rpcTaskResult(t, get, "")
+		if taskStatus(got) == TaskStateCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("late reply was never ingested; state=%s polls=%d", taskStatus(got), transport.pollCount)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestMailBridgePollingStopsAtTaskTTL(t *testing.T) {
+	transport := &lateReplyTransport{replyAfter: 1 << 30} // never replies
+	audit := &memoryAuditSink{}
+	bridge, err := NewMailBridge(MailBridgeConfig{
+		Client:          transport,
+		GatewayIdentity: "did:aw:gateway",
+		Audit:           audit,
+		PollInterval:    10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := supportRoute("r_support")
+	route.Limits.TaskTTL = 150 * time.Millisecond
+	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Audit: audit, Routes: []Route{route}})
+	bridge.SetReplyApplier(gw)
+
+	postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-ttl", "SendMessage", map[string]any{
+		"message":       testUserMessage("msg-ttl", "ctx-1", "nobody answers"),
+		"configuration": map[string]any{"returnImmediately": true},
+	}), map[string]string{"X-A2A-Caller-ID": "alice"}, 200)
+
+	time.Sleep(300 * time.Millisecond)
+	transport.mu.Lock()
+	atTTL := transport.pollCount
+	transport.mu.Unlock()
+	time.Sleep(200 * time.Millisecond)
+	transport.mu.Lock()
+	after := transport.pollCount
+	transport.mu.Unlock()
+	if after != atTTL {
+		t.Fatalf("polling continued past task TTL: %d -> %d", atTTL, after)
+	}
+}
+
+func TestFormatA2ATaskMessageTeachesReplyProtocol(t *testing.T) {
+	body, err := FormatA2ATaskMessage(a2aTaskEnvelope{
+		TaskID:          "t_42",
+		ContextID:       "c_7",
+		RouteID:         "r_support",
+		TargetAddress:   "team.aweb.ai/support",
+		GatewayIdentity: "did:aw:gateway",
+		CallerScope:     "anonymous",
+		State:           TaskStateWorking,
+	}, "Where is order 1234?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"```a2a-task",
+		"```a2a-reply",
+		`"task_id": "t_42"`,
+		`"context_id": "c_7"`,
+		"completed",
+		"input_required",
+		"reply in this mail conversation",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("envelope missing %q:\n%s", want, body)
+		}
+	}
+	// The untrusted customer text must come last so instructions cannot be
+	// spoofed by message content.
+	if strings.LastIndex(body, "Customer message (untrusted):") < strings.LastIndex(body, "a2a-reply") {
+		t.Fatalf("customer text must follow the reply instructions:\n%s", body)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(body), "Where is order 1234?") {
+		t.Fatalf("customer text must be the final content:\n%s", body)
 	}
 }
