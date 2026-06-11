@@ -101,3 +101,17 @@ test("dispatcher serializes delivery and logs sendMessage failures", async () =>
   assert.equal(logs.some((entry) => entry.event === "wake_delivery_failed"), true);
   assert.equal(logs.some((entry) => entry.fields?.message === "pi rejected custom message"), true);
 });
+
+test("dispatcher awaits async sendMessage rejection without relying on global unhandledRejection", async () => {
+  const logs: Array<{ event: WakeLogEvent; fields?: Record<string, unknown> }> = [];
+  const dispatcher = createWakeDispatcher(fakePi((async () => {
+    throw new Error("async pi rejection");
+  }) as ExtensionAPI["sendMessage"]), (event, fields) => logs.push({ event, fields }));
+
+  dispatcher.enqueue(awakening());
+  await waitForDrain();
+
+  assert.equal(logs.some((entry) => entry.event === "wake_delivery_failed"), true);
+  assert.equal(logs.some((entry) => entry.fields?.message === "async pi rejection"), true);
+  assert.equal(logs.some((entry) => entry.event === "wake_delivered"), false);
+});

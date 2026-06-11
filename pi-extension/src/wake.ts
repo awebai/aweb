@@ -10,7 +10,6 @@ export type WakeLogEvent =
   | "diagnostics_installed"
   | "process_exit"
   | "process_warning"
-  | "unhandled_rejection"
   | "uncaught_exception"
   | "wake_enqueued"
   | "wake_delivering"
@@ -67,9 +66,6 @@ export function installWakeDiagnostics(log: WakeLogger): void {
   process.on("warning", (warning) => {
     log("process_warning", errorFields(warning));
   });
-  process.on("unhandledRejection", (reason) => {
-    log("unhandled_rejection", errorFields(reason));
-  });
   process.on("uncaughtExceptionMonitor", (error) => {
     log("uncaught_exception", errorFields(error));
   });
@@ -87,6 +83,10 @@ export function deliveryOptionsForAwakening(
       ? { deliverAs: "steer" }
       : { deliverAs: "steer", triggerTurn: true };
   }
+  // Pi's followUp queue is explicitly delivered after the current agent work
+  // finishes. Use it for active-turn non-waiting mail/chat so a normal wake
+  // cannot request a nested triggerTurn while the runtime is still unwinding
+  // tool results or assistant output.
   return turnActive
     ? { deliverAs: "followUp" }
     : { triggerTurn: true };
@@ -108,7 +108,7 @@ export function createWakeDispatcher(
   const drain = () => {
     if (draining) return;
     draining = true;
-    setImmediate(() => {
+    setImmediate(async () => {
       try {
         let next: ChannelAwakening | undefined;
         while ((next = queue.shift())) {
@@ -116,7 +116,14 @@ export function createWakeDispatcher(
           const fields = { ...awakeningFields(next), options };
           log("wake_delivering", fields);
           try {
-            pi.sendMessage(
+            // Pi's public extension type currently declares sendMessage as void,
+            // but the runtime implementation is async. Await thenables here so
+            // wake-path rejections are logged locally without changing global
+            // unhandledRejection semantics for the whole Pi host process.
+            const result = (pi.sendMessage as unknown as (
+              message: Parameters<ExtensionAPI["sendMessage"]>[0],
+              options: SendMessageOptions,
+            ) => unknown)(
               {
                 customType: "aweb-channel",
                 content: formatAwakeningForAgent(next),
@@ -125,6 +132,7 @@ export function createWakeDispatcher(
               },
               options,
             );
+            if (isThenable(result)) await result;
             log("wake_delivered", fields);
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
@@ -147,4 +155,9 @@ export function createWakeDispatcher(
       turnActive = active;
     },
   };
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && "then" in value
+    && typeof (value as { then?: unknown }).then === "function";
 }

@@ -6413,9 +6413,6 @@ function installWakeDiagnostics(log) {
   process.on("warning", (warning) => {
     log("process_warning", errorFields(warning));
   });
-  process.on("unhandledRejection", (reason) => {
-    log("unhandled_rejection", errorFields(reason));
-  });
   process.on("uncaughtExceptionMonitor", (error) => {
     log("uncaught_exception", errorFields(error));
   });
@@ -6436,7 +6433,7 @@ function createWakeDispatcher(pi, log) {
   const drain = () => {
     if (draining) return;
     draining = true;
-    setImmediate(() => {
+    setImmediate(async () => {
       try {
         let next;
         while (next = queue.shift()) {
@@ -6444,7 +6441,7 @@ function createWakeDispatcher(pi, log) {
           const fields = { ...awakeningFields(next), options };
           log("wake_delivering", fields);
           try {
-            pi.sendMessage(
+            const result = pi.sendMessage(
               {
                 customType: "aweb-channel",
                 content: formatAwakeningForAgent(next),
@@ -6453,6 +6450,7 @@ function createWakeDispatcher(pi, log) {
               },
               options
             );
+            if (isThenable(result)) await result;
             log("wake_delivered", fields);
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
@@ -6474,6 +6472,9 @@ function createWakeDispatcher(pi, log) {
       turnActive = active;
     }
   };
+}
+function isThenable(value) {
+  return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
 }
 
 // src/index.ts
