@@ -32,9 +32,12 @@ them and defines the product story they serve.
 The human then runs the team: `cd agents/instances/<name>` and launch the
 harness. The agent that created the team has no role in the finished team.
 
-There is no monolithic bootstrap command. If a convenience command ever
-exists, it may only clone a blueprint to a local directory — something the
-agent can already do with `git clone`.
+There is no monolithic bootstrap command in the CLI. Each blueprint may ship
+a `create-team` program that performs the whole creation in one go — but it
+must compose the same explicit primitives, show every `aw` command it runs,
+refuse to overwrite existing identities or published team context, and on
+failure report what exists rather than delete anything. The fast path and
+the agent-driven skill are two speeds of the same explicit procedure.
 
 ## Why
 
