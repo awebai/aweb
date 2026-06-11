@@ -374,7 +374,10 @@ func saveA2ATaskTokenBestEffort(rpcURL string, task a2a.Task) {
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not persist task token: %v\n", err)
+		return
 	}
+	// WriteFile only applies the mode on create; tighten pre-existing files.
+	_ = os.Chmod(path, 0o600)
 }
 
 // loadA2ATaskTokenBestEffort returns the stored token for a specific task.
