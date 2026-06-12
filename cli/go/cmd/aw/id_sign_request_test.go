@@ -386,6 +386,9 @@ func TestAwIDRequestTeamAuthSignsLocalWorkspaceRequest(t *testing.T) {
 	if sawPayload["body_sha256"] != wantBodyHash {
 		t.Fatalf("body_sha256=%v want %s", sawPayload["body_sha256"], wantBodyHash)
 	}
+	if sawPayload["v"] != float64(2) {
+		t.Fatalf("v=%v want 2", sawPayload["v"])
+	}
 	if sawPayload["operation"] != "awco_task_create" {
 		t.Fatalf("operation=%v", sawPayload["operation"])
 	}
@@ -442,6 +445,7 @@ func TestAwIDRequestTeamAuthAllowsOmittedSignPayload(t *testing.T) {
 		"team_id":     true,
 		"body_sha256": true,
 		"timestamp":   true,
+		"v":           true,
 	}
 
 	var sawPayload map[string]any

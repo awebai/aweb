@@ -81,11 +81,12 @@ Three controller keys exist, each with its own scope:
   and team key rotation; held by the team controller (BYOD) or by
   the hosted deployment (managed)
 
-This is the **awid pattern**, distinct from the aweb pattern
-(`{team_id, timestamp, body_sha256}`) and the hosted deployment pattern
-(`{body_sha256, method, path, timestamp}`). The three patterns are not
-interchangeable; see the per-endpoint signed payload examples below for
-each operation's exact envelope shape.
+This is the **awid pattern**, distinct from the legacy aweb compact pattern
+(`{team_id, timestamp, body_sha256}`), the request-bound aweb team-auth
+envelope (`docs/team-auth-envelope-v2.md`), and the hosted deployment pattern
+(`{body_sha256, method, path, timestamp}`). The patterns are not
+interchangeable; see the per-endpoint signed payload examples below for each
+operation's exact envelope shape.
 
 Read endpoints (`GET /v1/namespaces/{domain}`, `GET /v1/did/{did_aw}/key`,
 team metadata, revocations, etc.) are public and rate-limited. They do

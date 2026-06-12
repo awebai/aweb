@@ -289,6 +289,7 @@ func teamSignedRequestPayload(identity *localSigningIdentity, target *url.URL, m
 		"path":        requestTargetPath(target),
 		"team_id":     strings.TrimSpace(identity.TeamID),
 		"body_sha256": fmt.Sprintf("%x", sha256.Sum256(body)),
+		"v":           2,
 	}
 	for key, value := range custom {
 		if _, reserved := teamSignedRequestReservedFields[key]; reserved {
@@ -317,6 +318,7 @@ var teamSignedRequestReservedFields = map[string]struct{}{
 	"team_id":     {},
 	"body_sha256": {},
 	"timestamp":   {},
+	"v":           {},
 }
 
 func loadJSONObjectInput(inline, filePath, flagName string) (map[string]any, error) {

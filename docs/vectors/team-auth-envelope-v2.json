@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "replay_window_seconds": 300,
+  "cases": [
+    {
+      "name": "a2a_route_create",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "body": "{\"route\":\"aida\"}",
+      "payload": {
+        "aud": "https://app.aweb.ai",
+        "body_sha256": "98dc597b7fdd7801c863c72c43ee51faccf89e683050e44e31d93ed806abfcdb",
+        "method": "POST",
+        "operation": "a2a_route_create",
+        "path": "/api/v1/a2a/gateway/routes?dry_run=true",
+        "team_id": "default:aweb.ai",
+        "timestamp": "2026-06-12T10:00:00Z",
+        "v": 2
+      },
+      "canonical_payload": "{\"aud\":\"https://app.aweb.ai\",\"body_sha256\":\"98dc597b7fdd7801c863c72c43ee51faccf89e683050e44e31d93ed806abfcdb\",\"method\":\"POST\",\"operation\":\"a2a_route_create\",\"path\":\"/api/v1/a2a/gateway/routes?dry_run=true\",\"team_id\":\"default:aweb.ai\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
+      "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2FwcC5hd2ViLmFpIiwiYm9keV9zaGEyNTYiOiI5OGRjNTk3YjdmZGQ3ODAxYzg2M2M3MmM0M2VlNTFmYWNjZjg5ZTY4MzA1MGU0NGUzMWQ5M2VkODA2YWJmY2RiIiwibWV0aG9kIjoiUE9TVCIsIm9wZXJhdGlvbiI6ImEyYV9yb3V0ZV9jcmVhdGUiLCJwYXRoIjoiL2FwaS92MS9hMmEvZ2F0ZXdheS9yb3V0ZXM_ZHJ5X3J1bj10cnVlIiwidGVhbV9pZCI6ImRlZmF1bHQ6YXdlYi5haSIsInRpbWVzdGFtcCI6IjIwMjYtMDYtMTJUMTA6MDA6MDBaIiwidiI6Mn0",
+      "signature_b64": "o3MxU+e7wduCS3Ss5/03knJlqzfj51NRfSX9LD7jTeIrlQIs50QlICpFKxPQSGXy52WWC204mTP5vVWabckABA"
+    }
+  ],
+  "negative_cases": [
+    {
+      "name": "cross_endpoint_replay",
+      "derived_from": "a2a_route_create",
+      "presented_path": "/api/v1/tasks?dry_run=true",
+      "expected_error": "signed request payload does not match request"
+    },
+    {
+      "name": "cross_origin_replay",
+      "derived_from": "a2a_route_create",
+      "allowed_audiences": ["https://other.example"],
+      "expected_error": "signed request payload audience is not allowed"
+    },
+    {
+      "name": "tampered_body",
+      "derived_from": "a2a_route_create",
+      "presented_body": "{\"route\":\"mallory\"}",
+      "expected_error": "signed request payload does not match request"
+    },
+    {
+      "name": "missing_version",
+      "derived_from": "a2a_route_create",
+      "remove_field": "v",
+      "expected_error": "unsupported team-auth envelope version"
+    }
+  ]
+}

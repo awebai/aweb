@@ -17,11 +17,13 @@ from fastapi import Depends, HTTPException, Request
 from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import verify_did_key_signature
 from awid.team_ids import parse_team_id
 from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
+from aweb.config import get_settings
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
+from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
 
@@ -147,18 +149,34 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     cert_team_id = cert_data.get("team_id", "")
 
-    # Verify Ed25519 signature over {team_id, timestamp, body_sha256}
+    # Verify Ed25519 signature over the team-auth request envelope.
+    # Legacy clients sign compact v1: {team_id, timestamp, body_sha256}.
+    # `aw id request --team-auth` signs request-bound v2 bytes in
+    # X-AWEB-Signed-Payload and the verifier binds those claims below.
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is None:
         import hashlib as _hashlib
         body_sha256 = _hashlib.sha256(b"").hexdigest()
-    sig_payload = canonical_json_bytes({
-        "body_sha256": body_sha256,
-        "team_id": cert_team_id,
-        "timestamp": timestamp,
-    })
+    allowed_audiences = [
+        str(getattr(request.app.state, "public_origin", "") or "").strip(),
+        get_settings().public_origin,
+    ]
     try:
-        verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
+        envelope = team_auth_signature_payload(
+            request,
+            team_id=cert_team_id,
+            timestamp=timestamp,
+            body_sha256=body_sha256,
+            allowed_audiences=allowed_audiences,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    try:
+        verify_did_key_signature(
+            did_key=did_key,
+            payload=envelope.canonical_payload,
+            signature_b64=signature_b64,
+        )
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 

@@ -1348,8 +1348,10 @@ X-AWEB-Signed-Payload: <base64url canonical JSON>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
-The signed payload must bind `aud`, `method`, `path`, `team_id`,
-`body_sha256`, and `timestamp`, plus operation-specific fields. The
+The signed payload is the versioned team-auth request envelope described in
+[`team-auth-envelope-v2.md`](team-auth-envelope-v2.md). Version 2 binds `aud`,
+`method`, `path`, `team_id`, `body_sha256`, `timestamp`, and `v: 2`, plus
+operation-specific fields. The
 service verifier extracts the DIDKey public key, verifies the signature
 over `X-AWEB-Signed-Payload`, decodes and verifies
 `X-AWID-Team-Certificate` against AWID team authority/revocation state,
@@ -1357,6 +1359,10 @@ requires `certificate.member_did_key == signed did:key`, checks the
 request target/body hash against the live HTTP request, and then applies
 service-local authorization. No AWID identity row is required for local
 agents; the team certificate is the team-membership credential.
+
+Version 2 is request-bound but not replay-proof: a byte-identical request can
+be replayed inside the accepted timestamp skew window. Do not describe
+team-auth as replay-proof until the nonce follow-up lands.
 
 The external verifier's AWID lookup path is:
 
