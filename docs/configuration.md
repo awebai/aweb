@@ -237,17 +237,17 @@ aw mail inbox
 
 ## Network Timeouts and Hostile Venue WiFi
 
-Normal `aw` API requests use a 20s timeout by default. Override it with
+Normal `aw` API requests use a 30s timeout by default. Override it with
 `AWEB_HTTP_TIMEOUT` (Go duration syntax):
 
 ```bash
-AWEB_HTTP_TIMEOUT=30s aw work ready
+AWEB_HTTP_TIMEOUT=45s aw work ready
 ```
 
 On conference or venue WiFi (NAT pressure, captive portals, silent
-blackholing), set `AWEB_HTTP_TIMEOUT=30s` and retry reads freely. For a
-timed-out write (task create/update, mail send), the request may have
-reached the server before the response was lost: check current state with
+blackholing), raise `AWEB_HTTP_TIMEOUT` above the 30s default and retry reads
+freely. For a timed-out write (task create/update, mail send), the request may
+have reached the server before the response was lost: check current state with
 the matching read command before retrying, instead of resending blindly.
 
 ## Related Runtime Config

@@ -80,10 +80,10 @@ func TestNewClientUsesTunedTransportsAndNoSSETimeout(t *testing.T) {
 	}
 }
 
-func TestAPITimeoutDefaultsTo20s(t *testing.T) {
+func TestAPITimeoutDefaultsTo30s(t *testing.T) {
 	t.Setenv("AWEB_HTTP_TIMEOUT", "")
-	if got := APITimeout(); got != 20*time.Second {
-		t.Fatalf("APITimeout()=%s, want 20s default", got)
+	if got := APITimeout(); got != 30*time.Second {
+		t.Fatalf("APITimeout()=%s, want 30s default", got)
 	}
 }
 
@@ -101,8 +101,8 @@ func TestAPITimeoutReadsEnvDuration(t *testing.T) {
 func TestAPITimeoutInvalidEnvFallsBackToDefault(t *testing.T) {
 	for _, invalid := range []string{"banana", "-5s", "0"} {
 		t.Setenv("AWEB_HTTP_TIMEOUT", invalid)
-		if got := APITimeout(); got != 20*time.Second {
-			t.Fatalf("APITimeout() with %q = %s, want 20s fallback", invalid, got)
+		if got := APITimeout(); got != 30*time.Second {
+			t.Fatalf("APITimeout() with %q = %s, want 30s fallback", invalid, got)
 		}
 	}
 }
@@ -145,7 +145,7 @@ func TestNewAPITransportHeaderTimeoutFollowsAPITimeout(t *testing.T) {
 		t.Fatalf("ResponseHeaderTimeout=%s, want 30s following AWEB_HTTP_TIMEOUT", got)
 	}
 	t.Setenv("AWEB_HTTP_TIMEOUT", "")
-	if got := NewAPITransport().ResponseHeaderTimeout; got != 20*time.Second {
-		t.Fatalf("ResponseHeaderTimeout=%s, want 20s default", got)
+	if got := NewAPITransport().ResponseHeaderTimeout; got != 30*time.Second {
+		t.Fatalf("ResponseHeaderTimeout=%s, want 30s default", got)
 	}
 }

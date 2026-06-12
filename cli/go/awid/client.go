@@ -164,10 +164,10 @@ func isRoutableAddressTarget(target string) bool {
 
 const (
 	// DefaultTimeout is the default HTTP timeout used by the client.
-	// 20s leaves headroom for venue WiFi where TLS setup plus header wait
-	// can exceed 10s against a healthy server. Override per-process with
-	// AWEB_HTTP_TIMEOUT.
-	DefaultTimeout = 20 * time.Second
+	// 30s leaves headroom for venue WiFi or mobile links where large request
+	// bodies plus TLS setup and header wait can exceed shorter ceilings against
+	// a healthy server. Override per-process with AWEB_HTTP_TIMEOUT.
+	DefaultTimeout = 30 * time.Second
 
 	MaxResponseSize = 10 * 1024 * 1024
 )
