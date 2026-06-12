@@ -183,6 +183,19 @@ func (s *taskStore) getVisible(routeID, callerScope, token, taskID string) (*tas
 	return cloneRecord(record), true
 }
 
+func (s *taskStore) getPublicAnonymous(routeID, taskID string) (*taskRecord, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.tasks[taskID]
+	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
+		return nil, false
+	}
+	if record.CallerScope != "" && record.CallerScope != "anonymous:unscoped" {
+		return nil, false
+	}
+	return cloneRecord(record), true
+}
+
 func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, limit int, includeArtifacts bool) []Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()

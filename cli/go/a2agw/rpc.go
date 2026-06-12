@@ -201,10 +201,6 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 	if !ok {
 		return nil, jsonRPCError(-32000, "task unavailable", requestID, nil)
 	}
-	if !waited.Terminal && !isInterruptedState(waited.Status.State) {
-		timeoutText := "A2A route timed out before the agent produced a terminal or interrupted reply."
-		waited, _ = g.tasks.failTask(record.ID, timeoutText)
-	}
 	return map[string]any{"task": waited.Task}, nil
 }
 
@@ -218,6 +214,9 @@ func (g *Gateway) rpcGetTask(route Route, raw json.RawMessage, requestID string,
 		return nil, jsonRPCError(-32602, "task id is required", requestID, nil)
 	}
 	record, ok := g.tasks.getVisible(route.RouteID, caller.Value, caller.TaskToken, taskID)
+	if !ok && publicAnonymousTaskLookupAllowed(route, caller) {
+		record, ok = g.tasks.getPublicAnonymous(route.RouteID, taskID)
+	}
 	if !ok {
 		return nil, jsonRPCError(-32004, "task not found", requestID, map[string]any{"code": "task_not_found"})
 	}
@@ -327,6 +326,11 @@ func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 		}
 	}
 	return callerScope{TaskToken: token}
+}
+
+func publicAnonymousTaskLookupAllowed(route Route, caller callerScope) bool {
+	mode := normalizedAuthMode(route.Auth.Mode)
+	return (mode == "" || mode == "none") && caller.Value == "anonymous:unscoped"
 }
 
 func normalizedAuthMode(mode string) string {

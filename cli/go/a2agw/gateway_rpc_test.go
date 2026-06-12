@@ -148,8 +148,16 @@ func TestGatewayRPCWaitSuccessInputRequiredAndTimeout(t *testing.T) {
 	timeoutBridge := &fakeBridge{}
 	gwTimeout := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: timeoutBridge, Routes: []Route{timeoutRoute}})
 	timeoutResp := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "SendMessage", map[string]any{"message": testUserMessage("msg-3", "ctx-3", "Slow order")}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	if got := taskStatus(rpcTaskResult(t, timeoutResp, "task")); got != TaskStateFailed {
+	timeoutTask := rpcTaskResult(t, timeoutResp, "task")
+	if got := taskStatus(timeoutTask); got != TaskStateWorking {
 		t.Fatalf("timeout state: got %s", got)
+	}
+	if _, ok, err := gwTimeout.ApplyBridgeReply(BridgeReply{TaskID: timeoutTask["id"].(string), ContextID: "ctx-3", State: "completed", Text: "Late answer"}); err != nil || !ok {
+		t.Fatalf("late reply should complete timed-out response task: ok=%v err=%v", ok, err)
+	}
+	timeoutGet := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": timeoutTask["id"].(string)}), nil, http.StatusOK)
+	if got := taskStatus(rpcTaskResult(t, timeoutGet, "")); got != TaskStateCompleted {
+		t.Fatalf("late reply state: got %s", got)
 	}
 }
 
@@ -214,8 +222,16 @@ func TestGatewayRPCRejectsUnsupportedMethodAndContent(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCUnscopedPublicListDisabledAndBearerGet(t *testing.T) {
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{supportRoute("r_support")}})
+func TestGatewayRPCUnscopedPublicListDisabledAndPublicGet(t *testing.T) {
+	otherRoute := supportRoute("r_other")
+	otherRoute.Address = "other@team.aweb.ai"
+	gw := newTestGateway(t, Config{
+		Host:           "team.aweb.ai",
+		RootCardMode:   RootCardDefaultAgent,
+		DefaultRouteID: "r_support",
+		Bridge:         &fakeBridge{},
+		Routes:         []Route{supportRoute("r_support"), otherRoute},
+	})
 	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
 		"message":       testUserMessage("msg-1", "ctx-1", "No caller header"),
 		"configuration": map[string]any{"returnImmediately": true},
@@ -227,13 +243,17 @@ func TestGatewayRPCUnscopedPublicListDisabledAndBearerGet(t *testing.T) {
 	if rpcErrorCode(list) != "list_tasks_scope_required" {
 		t.Fatalf("list error code: got %#v", list)
 	}
+	publicGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3a", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
+	if rpcTaskResult(t, publicGet, "")["id"] != taskID {
+		t.Fatal("public route should fetch anonymous task by task id")
+	}
 	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, http.StatusOK)
 	if rpcTaskResult(t, get, "")["id"] != taskID {
 		t.Fatal("bearer token should fetch unscoped task")
 	}
-	spoofedGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	if rpcErrorCode(spoofedGet) != "task_not_found" {
-		t.Fatalf("public caller id must not grant task visibility: %#v", spoofedGet)
+	otherRouteGet := postRPC(t, gw, "/a2a/agents/r_other/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
+	if rpcErrorCode(otherRouteGet) != "task_not_found" {
+		t.Fatalf("public task id must not cross route boundaries: %#v", otherRouteGet)
 	}
 }
 
