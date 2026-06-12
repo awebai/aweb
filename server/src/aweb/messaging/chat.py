@@ -493,8 +493,20 @@ async def get_pending_conversations(
             s.wait_started_by,
             COALESCE(wait_ext.total_seconds, 0) AS extended_wait_seconds
         FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_participants}} p
-          ON p.session_id = s.session_id AND p.did = $1
+        JOIN LATERAL (
+            SELECT participant.did, participant.agent_id
+            FROM {{tables.chat_participants}} participant
+            WHERE participant.session_id = s.session_id
+              AND (
+                    participant.did = $1
+                    OR (
+                        $3::uuid IS NOT NULL
+                        AND participant.agent_id = $3
+                    )
+                  )
+            ORDER BY CASE WHEN participant.did = $1 THEN 0 ELSE 1 END
+            LIMIT 1
+        ) p ON TRUE
         JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
@@ -506,14 +518,14 @@ async def get_pending_conversations(
             LIMIT 1
         ) lm ON TRUE
         LEFT JOIN {{tables.chat_read_receipts}} rr
-          ON rr.session_id = s.session_id AND rr.did = $1
+          ON rr.session_id = s.session_id AND rr.did = p.did
         LEFT JOIN {{tables.chat_messages}} last_read_msg
           ON last_read_msg.message_id = rr.last_read_message_id
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS cnt
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = s.session_id
-              AND m.from_did <> $1
+              AND m.from_did <> p.did
               AND m.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
         ) unread ON TRUE
         LEFT JOIN LATERAL (
@@ -540,6 +552,7 @@ async def get_pending_conversations(
             s.wait_seconds,
             s.wait_started_at,
             s.wait_started_by,
+            p.did,
             wait_ext.total_seconds
         HAVING COALESCE(unread.cnt, 0) > 0
             OR (
@@ -552,7 +565,7 @@ async def get_pending_conversations(
                 )
                 AND (
                     lm.from_did IS NULL
-                    OR lm.from_did <> $1
+                    OR lm.from_did <> p.did
                     OR COALESCE(lm.hang_on, FALSE) = TRUE
                 )
                 AND s.wait_started_at

@@ -10,6 +10,7 @@ from uuid import UUID
 from awid.did import did_from_public_key
 from aweb.messaging.chat import (
     ensure_session,
+    get_pending_conversations,
     send_in_session,
     get_message_history,
 )
@@ -225,6 +226,37 @@ async def test_send_and_read_message(aweb_cloud_db):
     assert len(history) == 1
     assert history[0]["from_alias"] == "alice"
     assert history[0]["body"] == "Hello Bob!"
+
+
+@pytest.mark.asyncio
+async def test_pending_conversations_match_agent_id_when_actor_did_differs(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+
+    session_id = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+    await send_in_session(
+        db_shim,
+        session_id=session_id,
+        sender_did="did:aw:alice",
+        sender_agent_id=str(alice["agent_id"]),
+        body="Hello Bob!",
+    )
+
+    pending = await get_pending_conversations(
+        db_shim,
+        participant_did=bob["did_key"],
+        participant_agent_id=str(bob["agent_id"]),
+    )
+
+    assert len(pending) == 1
+    assert pending[0]["session_id"] == str(session_id)
+    assert pending[0]["last_message"] == "Hello Bob!"
+    assert pending[0]["unread_count"] == 1
 
 
 @pytest.mark.asyncio
