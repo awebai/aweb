@@ -515,7 +515,7 @@ The gateway MUST NOT require synchronous agent liveness for `SendMessage` to suc
 
 For the product async path, A2A clients SHOULD send `configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
 
-If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route wait timeout expires before an agent reply, the gateway transitions the task to `TASK_STATE_FAILED` with a timeout message and returns that failed task. Callers that want durable async follow-up SHOULD set `configuration.returnImmediately: true` and poll `GetTask`.
+If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route response wait timeout expires before an agent reply, the gateway returns the current non-terminal task state, usually `TASK_STATE_WORKING`, and leaves the task pollable until task TTL expiry. The route response timeout is only an HTTP wait bound; it is not a terminal task failure.
 
 Our own CLI mapping:
 
@@ -532,7 +532,7 @@ Tasks MUST be scoped by caller/auth context. One caller MUST NOT be able to fetc
 
 Returns only tasks created by the authenticated caller for the requested route/interface. Pagination is required before public product launch.
 
-For unauthenticated public/event routes, caller scope MUST still be isolated. Acceptable v0 scopes include anonymous session cookie, explicit opaque task bearer token, or IP/token-bucket scope when no better identity exists. If the gateway cannot isolate unauthenticated callers safely, `ListTasks` MUST be disabled for that route and `GetTask` MUST require an unguessable task bearer token.
+For unauthenticated public/event routes, caller scope MUST still be isolated. Acceptable v0 scopes include anonymous session cookie, explicit opaque task bearer token, or IP/token-bucket scope when no better identity exists. When no caller scope exists, `ListTasks` MUST be disabled for that route. `GetTask` MAY return an anonymous task by route plus unguessable UUIDv4 task id so standard A2A clients can poll without a proprietary header; the opaque task bearer token remains a supported extension, not the only visibility path.
 
 ### 9.5 `CancelTask`
 
