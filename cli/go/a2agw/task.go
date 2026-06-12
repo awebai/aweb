@@ -190,7 +190,7 @@ func (s *taskStore) getPublicAnonymous(routeID, taskID string) (*taskRecord, boo
 	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
 		return nil, false
 	}
-	if record.CallerScope != "" && record.CallerScope != "anonymous:unscoped" {
+	if record.CallerScope != "anonymous:unscoped" {
 		return nil, false
 	}
 	return cloneRecord(record), true
