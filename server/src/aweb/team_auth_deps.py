@@ -32,6 +32,13 @@ def _aweb_db(db_or_manager):
     return db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
 
 
+def _team_auth_allowed_audiences(request: Request) -> list[str]:
+    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
+    if configured:
+        return [configured]
+    return [get_settings().public_origin]
+
+
 @dataclass(frozen=True)
 class TeamIdentity:
     """Authenticated agent identity within a team.
@@ -157,10 +164,11 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     if body_sha256 is None:
         import hashlib as _hashlib
         body_sha256 = _hashlib.sha256(b"").hexdigest()
-    allowed_audiences = [
-        str(getattr(request.app.state, "public_origin", "") or "").strip(),
-        get_settings().public_origin,
-    ]
+    allowed_audiences = (
+        _team_auth_allowed_audiences(request)
+        if str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
+        else []
+    )
     try:
         envelope = team_auth_signature_payload(
             request,

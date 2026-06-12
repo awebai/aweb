@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +20,7 @@ import aweb.team_auth_deps as _team_auth_mod
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IdentityAuth, get_messaging_auth
+from aweb.team_auth_envelope import compact_team_auth_payload
 from aweb.team_auth_deps import TeamIdentity
 
 
@@ -63,6 +66,30 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
+        }
+    )
+
+
+def _request_with_app_state(
+    headers: dict[str, str],
+    *,
+    public_origin: str = "https://local.example",
+    body_sha256: str | None = None,
+) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/tasks",
+            "raw_path": b"/v1/tasks",
+            "query_string": b"",
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "scheme": "https",
+            "server": ("local.example", 443),
+            "client": ("127.0.0.1", 12345),
+            "http_version": "1.1",
+            "app": SimpleNamespace(state=SimpleNamespace(public_origin=public_origin)),
+            "state": {"body_sha256": body_sha256 or hashlib.sha256(b"").hexdigest()},
         }
     )
 
@@ -229,6 +256,117 @@ async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch)
     assert identity.agent_id == connected["agent_id"]
     assert identity.did_aw == "did:aw:alice"
     assert identity.address == "acme.com/alice"
+
+
+@pytest.mark.asyncio
+async def test_verify_request_certificate_uses_app_public_origin_without_settings(monkeypatch):
+    from aweb.team_auth_deps import verify_request_certificate
+
+    team_sk, _, team_did_key = _make_keypair()
+    member_sk, _, member_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    body_sha256 = hashlib.sha256(b"").hexdigest()
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        member_did_key,
+        team_id=team_id,
+        certificate_id="cert-no-settings",
+    )
+    signed_payload = canonical_json_bytes(
+        {
+            "aud": "https://local.example",
+            "body_sha256": body_sha256,
+            "method": "GET",
+            "path": "/v1/tasks",
+            "team_id": team_id,
+            "timestamp": timestamp,
+            "v": 2,
+        }
+    )
+    signature = sign_message(member_sk, signed_payload)
+    request = _request_with_app_state(
+        {
+            "Authorization": f"DIDKey {member_did_key} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": _encode_certificate(cert),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed_payload).rstrip(b"=").decode("ascii"),
+        },
+        public_origin="https://local.example",
+        body_sha256=body_sha256,
+    )
+
+    async def _fake_resolve_team_key(_request, _team_id):
+        return team_did_key
+
+    async def _fake_revoked_certificates(_request, _team_id):
+        return set()
+
+    def _settings_should_not_be_loaded():
+        raise AssertionError("get_settings should not be required when app.state.public_origin is set")
+
+    monkeypatch.setattr(_team_auth_mod, "_resolve_team_key", _fake_resolve_team_key)
+    monkeypatch.setattr(_team_auth_mod, "_get_revoked_certificates", _fake_revoked_certificates)
+    monkeypatch.setattr(_team_auth_mod, "get_settings", _settings_should_not_be_loaded)
+
+    cert_info = await verify_request_certificate(request, db=object())
+
+    assert cert_info["team_id"] == team_id
+    assert cert_info["did_key"] == member_did_key
+    assert cert_info["certificate_id"] == "cert-no-settings"
+
+
+@pytest.mark.asyncio
+async def test_verify_request_certificate_legacy_compact_does_not_require_public_origin(monkeypatch):
+    from aweb.team_auth_deps import verify_request_certificate
+
+    team_sk, _, team_did_key = _make_keypair()
+    member_sk, _, member_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    body_sha256 = hashlib.sha256(b"").hexdigest()
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        member_did_key,
+        team_id=team_id,
+        certificate_id="cert-legacy-no-origin",
+    )
+    signature = sign_message(
+        member_sk,
+        compact_team_auth_payload(
+            team_id=team_id,
+            timestamp=timestamp,
+            body_sha256=body_sha256,
+        ),
+    )
+    request = _request_with_headers(
+        {
+            "Authorization": f"DIDKey {member_did_key} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": _encode_certificate(cert),
+        }
+    )
+
+    async def _fake_resolve_team_key(_request, _team_id):
+        return team_did_key
+
+    async def _fake_revoked_certificates(_request, _team_id):
+        return set()
+
+    def _settings_should_not_be_loaded():
+        raise AssertionError("legacy compact team auth must not load public-origin settings")
+
+    monkeypatch.setattr(_team_auth_mod, "_resolve_team_key", _fake_resolve_team_key)
+    monkeypatch.setattr(_team_auth_mod, "_get_revoked_certificates", _fake_revoked_certificates)
+    monkeypatch.setattr(_team_auth_mod, "get_settings", _settings_should_not_be_loaded)
+
+    cert_info = await verify_request_certificate(request, db=object())
+
+    assert cert_info["team_id"] == team_id
+    assert cert_info["did_key"] == member_did_key
+    assert cert_info["certificate_id"] == "cert-legacy-no-origin"
 
 
 @pytest.mark.asyncio
