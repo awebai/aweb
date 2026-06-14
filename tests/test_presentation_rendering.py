@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+from fastapi.testclient import TestClient
+
+import folio.api as folio_api
 from folio.presentation import (
     render_presented_markdown,
     render_presented_page,
@@ -58,12 +61,67 @@ def test_render_presented_markdown_allows_only_our_origin_allowed_asset_images()
     assert ".svg" not in html.lower()
 
 
+def test_render_presented_markdown_renders_only_trusted_video_embeds() -> None:
+    video_id = UUID("33333333-3333-4333-8333-333333333333")
+    other_id = UUID("44444444-4444-4444-8444-444444444444")
+    html = render_presented_markdown(
+        "\n".join(
+            [
+                f"![demo video](https://folio.aweb.ai/assets/{video_id})",
+                f"![other video](https://folio.aweb.ai/assets/{other_id})",
+                '<iframe src="https://evil.example/embed"></iframe>',
+                '<iframe src="https://iframe.videodelivery.net/user-controlled"></iframe>',
+            ]
+        ),
+        public_origin="https://folio.aweb.ai",
+        asset_embeds={
+            video_id: {
+                "kind": "video",
+                "iframe_url": "https://customer-example.cloudflarestream.com/signed-token/iframe",
+                "status": "ready",
+            }
+        },
+    )
+
+    assert html.count("<iframe") == 1
+    assert "customer-example.cloudflarestream.com/signed-token/iframe" in html
+    assert "demo video" in html
+    assert str(other_id) not in html
+    assert "evil.example" not in html
+    assert "user-controlled" not in html
+    assert "sandbox=\"allow-scripts allow-same-origin allow-presentation\"" in html
+
+
 def test_render_presented_markdown_without_asset_context_strips_images() -> None:
     safe_id = UUID("11111111-1111-4111-8111-111111111111")
     html = render_presented_markdown(f"![safe](https://folio.aweb.ai/assets/{safe_id})")
 
     assert "<img" not in html.lower()
     assert str(safe_id) not in html
+
+
+def test_present_surface_is_noindex() -> None:
+    html = render_presented_page(body="# Private", public_origin="https://folio.aweb.ai")
+
+    assert '<meta name="robots" content="noindex,nofollow,noarchive">' in html
+
+
+def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
+    app = folio_api.create_app()
+    present_route = next(route for route in app.routes if getattr(route, "path", None) == "/present/{token}")
+    db_dependency = present_route.dependant.dependencies[0].call
+    app.dependency_overrides[db_dependency] = lambda: object()
+
+    async def fake_get_presented_document(_database, *, token: str) -> dict:
+        assert token == "secret-token"
+        return {"body": "# Private", "theme": None, "allowed_assets": {}}
+
+    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+
+    response = TestClient(app).get("/present/secret-token")
+
+    assert response.status_code == 200
+    assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
 
 
 def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> None:
@@ -115,8 +173,13 @@ def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
     assert "CREATE TABLE IF NOT EXISTS {{tables.assets}}" in migration
     assert "asset_id UUID PRIMARY KEY" in migration
     assert "team_id TEXT NOT NULL REFERENCES {{tables.teams}}" in migration
-    assert "bytes BYTEA NOT NULL" in migration
-    assert "content_type TEXT NOT NULL CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp'))" in migration
+    assert "kind TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image', 'video'))" in migration
+    assert "bytes BYTEA" in migration
+    assert "content_type TEXT CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'))" in migration
+    assert "stream_uid TEXT UNIQUE" in migration
+    assert "stream_status TEXT CHECK" in migration
+    assert "upload_expires_at TIMESTAMPTZ" in migration
+    assert "CHECK ((kind = 'image' AND bytes IS NOT NULL AND stream_uid IS NULL) OR (kind = 'video' AND bytes IS NULL AND stream_uid IS NOT NULL))" in migration
     assert "CREATE TABLE IF NOT EXISTS {{tables.themes}}" in migration
     assert "team_id TEXT PRIMARY KEY REFERENCES {{tables.teams}}" in migration
     assert "tokens JSONB NOT NULL DEFAULT '{}'::jsonb" in migration

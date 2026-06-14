@@ -41,6 +41,13 @@ All runtime env vars use the `FOLIO_` prefix:
 - `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
 - `FOLIO_FREE_MAX_DOCUMENTS` — inherited free-tier cap, default `3`.
 - `FOLIO_FREE_MAX_VERSIONS_PER_DOC` — inherited version cap, default `50`.
+- `FOLIO_CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id for Stream.
+- `FOLIO_CLOUDFLARE_STREAM_API_TOKEN` — Stream API token for direct uploads/status.
+- `FOLIO_CLOUDFLARE_STREAM_PLAYBACK_HOST` — signed playback host, for example `customer-<code>.cloudflarestream.com`.
+- `FOLIO_CLOUDFLARE_STREAM_SIGNING_KEY_ID` / `FOLIO_CLOUDFLARE_STREAM_SIGNING_KEY_PEM` — key material for signed playback JWTs.
+- `FOLIO_CLOUDFLARE_STREAM_DIRECT_UPLOAD_TTL_SECONDS` — default `3600`.
+- `FOLIO_CLOUDFLARE_STREAM_SIGNED_PLAYBACK_TTL_SECONDS` — default `3600`.
+- `FOLIO_CLOUDFLARE_STREAM_MAX_DURATION_SECONDS` — default `600`.
 
 Production public origin is expected to be `https://folio.aweb.ai`.
 
@@ -69,6 +76,12 @@ PY
 aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw \
   --body-file image-upload.json
 # Embed the returned url in Markdown: ![chart](http://127.0.0.1:8765/assets/<asset_id>)
+
+aw id request POST "$FOLIO_ORIGIN/v1/assets/video/direct-upload" --team-auth --raw \
+  --body '{"content_type":"video/mp4","max_duration_seconds":600}'
+# Upload the video bytes to the returned upload_url, then poll:
+aw id request GET "$FOLIO_ORIGIN/v1/assets/<asset_id>" --team-auth --raw
+# Embed the same asset URL in Markdown: ![demo video](http://127.0.0.1:8765/assets/<asset_id>)
 
 aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw \
   --body '{"tokens":{"colors":{"background":"#0b1020","surface":"#ffffff","accent":"#7c5cff"},"fonts":{"body":"serif"}},"header":"Team memo","footer":"Confidential"}'

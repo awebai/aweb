@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from folio.auth import Principal
+from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
 from folio.presentation import sanitize_theme_tokens
 
@@ -426,7 +427,7 @@ async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dic
         "body": body,
         "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
-        "allowed_asset_ids": await _allowed_asset_ids_for_body(db, team_id=str(row["team_id"]), body=body),
+        "allowed_assets": await _allowed_assets_for_body(db, team_id=str(row["team_id"]), body=body),
     }
 
 
@@ -462,10 +463,13 @@ def _theme_from_row(row: Any, *, public_origin: str | None) -> dict[str, Any] | 
 
 def _asset_response(row: Any) -> dict[str, Any]:
     data = dict(row)
+    if data.get("kind") != "image" or data.get("bytes") is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
     return {"bytes": bytes(data["bytes"]), "content_type": data["content_type"]}
 
 
 _SAFE_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+_SAFE_VIDEO_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
 _ASSET_REFERENCE_RE = re.compile(r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
 
 
@@ -512,16 +516,20 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_asset_ids_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> set[UUID]:
+async def _allowed_assets_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
-        return set()
+        return {}
     rows = await db.fetch_all(
-        "SELECT asset_id FROM {{tables.assets}} WHERE team_id = $1 AND asset_id = ANY($2::uuid[])",
+        """
+        SELECT asset_id, kind, content_type, stream_uid, stream_status
+        FROM {{tables.assets}}
+        WHERE team_id = $1 AND asset_id = ANY($2::uuid[])
+        """,
         team_id,
         list(referenced),
     )
-    return {row["asset_id"] for row in rows}
+    return {row["asset_id"]: dict(row) for row in rows}
 
 
 async def upload_image_asset(
@@ -535,8 +543,8 @@ async def upload_image_asset(
     asset_id = uuid4()
     await db.execute(
         """
-        INSERT INTO {{tables.assets}} (asset_id, team_id, bytes, content_type)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO {{tables.assets}} (asset_id, team_id, kind, bytes, content_type)
+        VALUES ($1, $2, 'image', $3, $4)
         """,
         asset_id,
         principal.team_id,
@@ -545,9 +553,94 @@ async def upload_image_asset(
     )
     return {
         "asset_id": asset_id,
+        "kind": "image",
         "url": f"{settings.public_origin.rstrip('/')}/assets/{asset_id}",
         "content_type": content_type,
     }
+
+
+def _validate_video_request(video: Any, *, settings: Settings) -> tuple[str, int]:
+    content_type = str(video.content_type).strip().lower()
+    if content_type not in _SAFE_VIDEO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Video content_type must be video/mp4, video/quicktime, or video/webm")
+    requested_duration = video.max_duration_seconds or settings.cloudflare_stream_max_duration_seconds
+    max_duration = min(requested_duration, settings.cloudflare_stream_max_duration_seconds)
+    return content_type, max_duration
+
+
+async def create_video_direct_upload(
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    settings: Settings,
+    video: Any,
+) -> dict[str, Any]:
+    content_type, max_duration = _validate_video_request(video, settings=settings)
+    expires_at = stream_direct_upload_expires_at(settings)
+    direct_upload = await CloudflareStreamClient(settings).create_direct_upload(
+        max_duration_seconds=max_duration,
+        expires_at=expires_at,
+    )
+    asset_id = uuid4()
+    await db.execute(
+        """
+        INSERT INTO {{tables.assets}}
+          (asset_id, team_id, kind, bytes, content_type, stream_uid, stream_status, upload_expires_at)
+        VALUES ($1, $2, 'video', NULL, $3, $4, $5, $6)
+        """,
+        asset_id,
+        principal.team_id,
+        content_type,
+        direct_upload.uid,
+        direct_upload.status,
+        direct_upload.expires_at,
+    )
+    return {
+        "asset_id": asset_id,
+        "kind": "video",
+        "stream_uid": direct_upload.uid,
+        "upload_url": direct_upload.upload_url,
+        "upload_expires_at": direct_upload.expires_at,
+        "status": direct_upload.status,
+        "content_type": content_type,
+    }
+
+
+async def get_asset_metadata(
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    settings: Settings,
+    asset_id: UUID,
+) -> dict[str, Any]:
+    row = await db.fetch_one(
+        """
+        SELECT asset_id, kind, content_type, stream_uid, stream_status, upload_expires_at, created_at, updated_at
+        FROM {{tables.assets}}
+        WHERE team_id = $1 AND asset_id = $2
+        """,
+        principal.team_id,
+        asset_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    data = dict(row)
+    if data.get("kind") == "video" and data.get("stream_uid"):
+        try:
+            status = await CloudflareStreamClient(settings).get_video_status(stream_uid=str(data["stream_uid"]))
+        except HTTPException as exc:
+            if exc.status_code != 503:
+                raise
+        else:
+            data["stream_status"] = status.status
+            await db.execute(
+                "UPDATE {{tables.assets}} SET stream_status = $1, updated_at = NOW() WHERE asset_id = $2",
+                status.status,
+                asset_id,
+            )
+    if data.get("kind") == "image":
+        data["url"] = f"{settings.public_origin.rstrip('/')}/assets/{asset_id}"
+    return data
 
 
 async def get_theme(
@@ -596,8 +689,8 @@ async def upsert_theme(
             logo_asset_id = uuid4()
             await tx.execute(
                 """
-                INSERT INTO {{tables.assets}} (asset_id, team_id, bytes, content_type)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO {{tables.assets}} (asset_id, team_id, kind, bytes, content_type)
+                VALUES ($1, $2, 'image', $3, $4)
                 """,
                 logo_asset_id,
                 principal.team_id,
@@ -626,7 +719,7 @@ async def upsert_theme(
 
 async def get_public_asset(db: AsyncDatabaseManager, *, asset_id: UUID) -> dict[str, Any]:
     row = await db.fetch_one(
-        "SELECT bytes, content_type FROM {{tables.assets}} WHERE asset_id = $1",
+        "SELECT kind, bytes, content_type FROM {{tables.assets}} WHERE asset_id = $1",
         asset_id,
     )
     if row is None:

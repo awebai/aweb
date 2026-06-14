@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from html import escape
 from typing import Any
 from urllib.parse import urlparse
@@ -79,6 +80,7 @@ _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$
 _RGB_COLOR_RE = re.compile(r"^rgba?\(([^)]+)\)$", re.IGNORECASE)
 _ASSET_PATH_RE = re.compile(r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
 _IMG_WITHOUT_SRC_RE = re.compile(r"<img\b(?![^>]*\bsrc=)[^>]*>", re.IGNORECASE)
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 
 def _valid_rgb_color(value: str) -> bool:
@@ -159,8 +161,8 @@ def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:
     return "\n" + "\n".join(declarations) + "\n"
 
 
-def _safe_image_src(src: str, *, public_origin: str | None, allowed_asset_ids: set[UUID]) -> str | None:
-    if public_origin is None or not allowed_asset_ids:
+def _asset_id_from_same_origin_src(src: str, *, public_origin: str | None) -> UUID | None:
+    if public_origin is None:
         return None
     candidate = src.strip()
     if not candidate:
@@ -171,20 +173,62 @@ def _safe_image_src(src: str, *, public_origin: str | None, allowed_asset_ids: s
     if parsed.scheme or parsed.netloc:
         if parsed.scheme != origin.scheme or parsed.netloc != origin.netloc:
             return None
-    path = parsed.path
     if parsed.params or parsed.query or parsed.fragment:
         return None
 
-    match = _ASSET_PATH_RE.fullmatch(path)
+    match = _ASSET_PATH_RE.fullmatch(parsed.path)
     if match is None:
         return None
     try:
-        asset_id = UUID(match.group(1))
+        return UUID(match.group(1))
     except ValueError:
         return None
-    if asset_id not in allowed_asset_ids:
+
+
+def _safe_image_src(src: str, *, public_origin: str | None, image_asset_ids: set[UUID]) -> str | None:
+    asset_id = _asset_id_from_same_origin_src(src, public_origin=public_origin)
+    if asset_id is None or asset_id not in image_asset_ids:
         return None
-    return candidate
+    return src.strip()
+
+
+def _video_iframe_html(*, iframe_url: str, title: str) -> str:
+    safe_url = escape(iframe_url, quote=True)
+    safe_title = escape(title or "Embedded video", quote=True)
+    return (
+        '<figure class="folio-video">'
+        f'<iframe src="{safe_url}" title="{safe_title}" loading="lazy" '
+        'allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" '
+        'allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>'
+        f'<figcaption>{safe_title}</figcaption>'
+        '</figure>'
+    )
+
+
+def _replace_video_markdown(
+    body: str,
+    *,
+    public_origin: str | None,
+    video_embeds: dict[UUID, dict[str, str]],
+) -> tuple[str, dict[str, str]]:
+    replacements: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        src = match.group(2)
+        asset_id = _asset_id_from_same_origin_src(src, public_origin=public_origin)
+        embed = video_embeds.get(asset_id) if asset_id is not None else None
+        if embed is None:
+            return match.group(0)
+        iframe_url = str(embed.get("iframe_url") or "")
+        if not iframe_url:
+            status = escape(str(embed.get("status") or "processing"))
+            return f'\n\n<div class="folio-video-pending">Video is {status}.</div>\n\n'
+        token = f"FOLIO_VIDEO_{secrets.token_urlsafe(24)}"
+        replacements[token] = _video_iframe_html(iframe_url=iframe_url, title=alt or "Embedded video")
+        return f"\n\n{token}\n\n"
+
+    return _MARKDOWN_IMAGE_RE.sub(replace, body), replacements
 
 
 def render_presented_markdown(
@@ -192,18 +236,31 @@ def render_presented_markdown(
     *,
     public_origin: str | None = None,
     allowed_asset_ids: set[UUID] | None = None,
+    asset_embeds: dict[UUID, dict[str, str]] | None = None,
 ) -> str:
     """Render Markdown to sanitized HTML safe for unauthenticated public pages."""
 
-    allowed_assets = set(allowed_asset_ids or set())
+    embeds = asset_embeds or {}
+    image_asset_ids = {
+        asset_id for asset_id, embed in embeds.items() if str(embed.get("kind") or "image") == "image"
+    }
+    image_asset_ids.update(allowed_asset_ids or set())
+    video_embeds = {
+        asset_id: embed for asset_id, embed in embeds.items() if str(embed.get("kind") or "") == "video"
+    }
+    preprocessed_body, trusted_video_replacements = _replace_video_markdown(
+        body,
+        public_origin=public_origin,
+        video_embeds=video_embeds,
+    )
 
     def attribute_filter(tag: str, attribute: str, value: str) -> str | None:
         if tag == "img" and attribute == "src":
-            return _safe_image_src(value, public_origin=public_origin, allowed_asset_ids=allowed_assets)
+            return _safe_image_src(value, public_origin=public_origin, image_asset_ids=image_asset_ids)
         return value
 
     unsafe_html = markdown.markdown(
-        body,
+        preprocessed_body,
         extensions=["extra", "sane_lists"],
         output_format="html",
     )
@@ -215,7 +272,11 @@ def render_presented_markdown(
         url_schemes=_ALLOWED_PROTOCOLS,
         link_rel="noopener noreferrer",
     )
-    return _IMG_WITHOUT_SRC_RE.sub("", sanitized)
+    sanitized = _IMG_WITHOUT_SRC_RE.sub("", sanitized)
+    for token, iframe_html in trusted_video_replacements.items():
+        sanitized = sanitized.replace(f"<p>{token}</p>", iframe_html)
+        sanitized = sanitized.replace(token, iframe_html)
+    return sanitized
 
 
 def render_presented_page(
@@ -224,8 +285,14 @@ def render_presented_page(
     theme: dict[str, Any] | None = None,
     public_origin: str | None = None,
     allowed_asset_ids: set[UUID] | None = None,
+    asset_embeds: dict[UUID, dict[str, str]] | None = None,
 ) -> str:
-    content = render_presented_markdown(body, public_origin=public_origin, allowed_asset_ids=allowed_asset_ids)
+    content = render_presented_markdown(
+        body,
+        public_origin=public_origin,
+        allowed_asset_ids=allowed_asset_ids,
+        asset_embeds=asset_embeds,
+    )
     safe_tokens = sanitize_theme_tokens((theme or {}).get("tokens"))
     theme_css = _theme_css(safe_tokens)
     logo_url = str((theme or {}).get("logo_url") or "")
@@ -244,6 +311,7 @@ def render_presented_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
   <title>{title}</title>
   <style>
     :root {{
@@ -317,6 +385,17 @@ def render_presented_page(
       border-radius: 12px;
       margin: 1rem 0;
     }}
+    .folio-video {{ margin: 1.5rem 0; }}
+    .folio-video iframe {{
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 0;
+      border-radius: 14px;
+      background: #000;
+    }}
+    .folio-video figcaption, .folio-video-pending {{ color: var(--muted); font-size: 0.9rem; }}
+    .folio-video-pending {{ border: 1px dashed var(--border); border-radius: 12px; padding: 1rem; }}
     .document-body table {{ border-collapse: collapse; width: 100%; }}
     .document-body th, .document-body td {{ border: 1px solid var(--border); padding: 0.5rem; }}
   </style>
