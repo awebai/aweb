@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: atext
-      POSTGRES_PASSWORD: atext
-      POSTGRES_DB: atext
+      POSTGRES_USER: folio
+      POSTGRES_PASSWORD: folio
+      POSTGRES_DB: folio
     ports:
-      - "${ATEXT_E2E_POSTGRES_PORT:-55432}:5432"
+      - "${FOLIO_E2E_POSTGRES_PORT:-55432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U atext -d atext"]
+      test: ["CMD-SHELL", "pg_isready -U folio -d folio"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -25,10 +25,10 @@ services:
 
   awid:
     build:
-      context: ${ATEXT_E2E_AWEB_CONTEXT:-../aweb}
+      context: ${FOLIO_E2E_AWEB_CONTEXT:-../aweb}
       dockerfile: awid/Dockerfile
     environment:
-      AWID_DATABASE_URL: postgresql://atext:atext@postgres:5432/atext
+      AWID_DATABASE_URL: postgresql://folio:folio@postgres:5432/folio
       AWID_REDIS_URL: redis://redis:6379/0
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
@@ -38,7 +38,7 @@ services:
       AWID_RATE_LIMIT_DISABLED: "true"
       AWID_SKIP_DNS_VERIFY: "1"
     ports:
-      - "${ATEXT_E2E_AWID_PORT:-18010}:8010"
+      - "${FOLIO_E2E_AWID_PORT:-18010}:8010"
     depends_on:
       postgres:
         condition: service_healthy

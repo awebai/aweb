@@ -20,12 +20,12 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-AWID_URL = os.environ.get("ATEXT_E2E_AWID_URL", "http://127.0.0.1:18010")
+AWID_URL = os.environ.get("FOLIO_E2E_AWID_URL", "http://127.0.0.1:18010")
 POSTGRES_URL = os.environ.get(
-    "ATEXT_E2E_DATABASE_URL",
-    "postgresql://atext:atext@127.0.0.1:55432/atext",
+    "FOLIO_E2E_DATABASE_URL",
+    "postgresql://folio:folio@127.0.0.1:55432/folio",
 )
-COMPOSE = ["docker", "compose", "-p", "atext-e2e", "-f", "docker-compose.e2e.yml"]
+COMPOSE = ["docker", "compose", "-p", "folio-e2e", "-f", "docker-compose.e2e.yml"]
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
 
 
 @dataclass(frozen=True)
-class RunningAText:
+class RunningFolio:
     origin: str
     backend_origin: str
     proxy: RecordingProxy
@@ -142,8 +142,8 @@ class E2ETeam:
 
 
 def _require_e2e_enabled() -> None:
-    if os.environ.get("ATEXT_E2E") != "1":
-        pytest.skip("set ATEXT_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
+    if os.environ.get("FOLIO_E2E") != "1":
+        pytest.skip("set FOLIO_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
 def _free_port() -> int:
@@ -267,7 +267,7 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 
 @pytest.fixture(scope="session")
-def atext() -> Iterator[RunningAText]:
+def folio() -> Iterator[RunningFolio]:
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
@@ -278,10 +278,10 @@ def atext() -> Iterator[RunningAText]:
     env = os.environ.copy()
     env.update(
         {
-            "ATEXT_DATABASE_URL": POSTGRES_URL,
-            "ATEXT_AWID_REGISTRY_URL": AWID_URL,
-            "ATEXT_AUTH_CACHE_TTL_SECONDS": "2",
-            "ATEXT_PUBLIC_ORIGIN": proxy_origin,
+            "FOLIO_DATABASE_URL": POSTGRES_URL,
+            "FOLIO_AWID_REGISTRY_URL": AWID_URL,
+            "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
+            "FOLIO_PUBLIC_ORIGIN": proxy_origin,
         }
     )
     proc = subprocess.Popen(
@@ -289,7 +289,7 @@ def atext() -> Iterator[RunningAText]:
             sys.executable,
             "-m",
             "uvicorn",
-            "atext.api:create_app",
+            "folio.api:create_app",
             "--factory",
             "--host",
             "127.0.0.1",
@@ -302,11 +302,11 @@ def atext() -> Iterator[RunningAText]:
         stderr=subprocess.PIPE,
     )
     proxy = RecordingProxy(("127.0.0.1", proxy_port), backend_origin)
-    thread = threading.Thread(target=proxy.serve_forever, name="atext-e2e-proxy", daemon=True)
+    thread = threading.Thread(target=proxy.serve_forever, name="folio-e2e-proxy", daemon=True)
     thread.start()
     try:
         _wait_http_ok(f"{proxy_origin}/health")
-        yield RunningAText(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy)
+        yield RunningFolio(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy)
     finally:
         proxy.shutdown()
         proxy.server_close()
@@ -324,8 +324,8 @@ def atext() -> Iterator[RunningAText]:
 
 
 @pytest.fixture(scope="session")
-def atext_origin(atext: RunningAText) -> str:
-    return atext.origin
+def folio_origin(folio: RunningFolio) -> str:
+    return folio.origin
 
 
 @pytest.fixture()
@@ -378,7 +378,7 @@ updated_at: \"{now}\"
 
 def _provision_team(workspace: AWWorkspace, *, alias: str = "alice") -> E2ETeam:
     unique = uuid.uuid4().hex[:12]
-    namespace = f"atext-{unique}.test"
+    namespace = f"folio-{unique}.test"
     team = "default"
     address = f"{namespace}/{alias}"
 
@@ -458,77 +458,77 @@ def _provision_real_team_certificate(workspace: AWWorkspace) -> str:
     return _provision_team(workspace).team_id
 
 
-def _create_document(atext: RunningAText, team: E2ETeam, *, slug: str, title: str, body: str) -> dict[str, Any]:
+def _create_document(folio: RunningFolio, team: E2ETeam, *, slug: str, title: str, body: str) -> dict[str, Any]:
     payload = json.dumps({"slug": slug, "title": title, "body": body}, separators=(",", ":"))
-    result = _aw_request(team, "POST", f"{atext.origin}/v1/documents", body=payload)
+    result = _aw_request(team, "POST", f"{folio.origin}/v1/documents", body=payload)
     data = _aw_json(result, context=f"create document {slug}")
     assert isinstance(data, dict)
     return data
 
 
-def _get_document(atext: RunningAText, team: E2ETeam, slug: str) -> dict[str, Any]:
-    result = _aw_request(team, "GET", f"{atext.origin}/v1/documents/{slug}")
+def _get_document(folio: RunningFolio, team: E2ETeam, slug: str) -> dict[str, Any]:
+    result = _aw_request(team, "GET", f"{folio.origin}/v1/documents/{slug}")
     data = _aw_json(result, context=f"get document {slug}")
     assert isinstance(data, dict)
     return data
 
 
-def _list_documents(atext: RunningAText, team: E2ETeam) -> list[dict[str, Any]]:
-    result = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+def _list_documents(folio: RunningFolio, team: E2ETeam) -> list[dict[str, Any]]:
+    result = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     data = _aw_json(result, context="list documents")
     assert isinstance(data, list)
     return data
 
 
-def _append_version(atext: RunningAText, team: E2ETeam, *, slug: str, body: str, tmp_path: Path) -> dict[str, Any]:
+def _append_version(folio: RunningFolio, team: E2ETeam, *, slug: str, body: str, tmp_path: Path) -> dict[str, Any]:
     body_file = tmp_path / f"{slug}-{uuid.uuid4().hex}.txt"
     body_file.write_text(body, encoding="utf-8")
-    result = _aw_request(team, "POST", f"{atext.origin}/v1/documents/{slug}/versions", body_file=body_file)
+    result = _aw_request(team, "POST", f"{folio.origin}/v1/documents/{slug}/versions", body_file=body_file)
     data = _aw_json(result, context=f"append version {slug}")
     assert isinstance(data, dict)
     return data
 
 
-def _list_versions(atext: RunningAText, team: E2ETeam, slug: str) -> list[dict[str, Any]]:
-    result = _aw_request(team, "GET", f"{atext.origin}/v1/documents/{slug}/versions")
+def _list_versions(folio: RunningFolio, team: E2ETeam, slug: str) -> list[dict[str, Any]]:
+    result = _aw_request(team, "GET", f"{folio.origin}/v1/documents/{slug}/versions")
     data = _aw_json(result, context=f"list versions {slug}")
     assert isinstance(data, list)
     return data
 
 
-def _get_billing(atext: RunningAText, team: E2ETeam) -> dict[str, Any]:
-    result = _aw_request(team, "GET", f"{atext.origin}/v1/billing")
+def _get_billing(folio: RunningFolio, team: E2ETeam) -> dict[str, Any]:
+    result = _aw_request(team, "GET", f"{folio.origin}/v1/billing")
     data = _aw_json(result, context="get billing")
     assert isinstance(data, dict)
     return data
 
 
-def test_health_endpoints_are_public(atext: RunningAText) -> None:
+def test_health_endpoints_are_public(folio: RunningFolio) -> None:
     for path in ("/health", "/live", "/ready"):
-        response = httpx.get(f"{atext.origin}{path}", timeout=10.0)
+        response = httpx.get(f"{folio.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
-        assert response.json()["status"] == "ok"
+        assert response.json() == {"status": "ok", "service": "folio"}
 
 
-def test_no_envelope_fails_closed(atext_origin: str) -> None:
-    response = httpx.get(f"{atext_origin}/v1/documents", timeout=10.0)
+def test_no_envelope_fails_closed(folio_origin: str) -> None:
+    response = httpx.get(f"{folio_origin}/v1/documents", timeout=10.0)
     assert response.status_code == 401, response.text
 
 
-def test_real_aw_team_auth_smoke(atext: RunningAText, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
-    result = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+    result = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     assert _assert_aw_success(result, context="list documents smoke").strip() == "[]"
 
 
 def test_document_endpoints_versions_raw_utf8_and_attribution(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace: AWWorkspace,
     tmp_path: Path,
 ) -> None:
     team = _provision_team(aw_workspace)
 
-    created = _create_document(atext, team, slug="handoff", title="Handoff", body="first")
+    created = _create_document(folio, team, slug="handoff", title="Handoff", body="first")
     assert created["slug"] == "handoff"
     assert created["body"] == "first"
     assert created["current_version"] == 1
@@ -536,27 +536,27 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
     assert created["latest"]["created_by_alias"] == team.alias
     assert created["latest"]["certificate_id"] == team.certificate_id
 
-    listed = _list_documents(atext, team)
+    listed = _list_documents(folio, team)
     assert [(item["slug"], item["current_version"]) for item in listed] == [("handoff", 1)]
 
-    fetched = _get_document(atext, team, "handoff")
+    fetched = _get_document(folio, team, "handoff")
     assert fetched["body"] == "first"
 
-    appended = _append_version(atext, team, slug="handoff", body="second plain text\nnot json", tmp_path=tmp_path)
+    appended = _append_version(folio, team, slug="handoff", body="second plain text\nnot json", tmp_path=tmp_path)
     assert appended["body"] == "second plain text\nnot json"
     assert appended["current_version"] == 2
     assert appended["latest"]["created_by_did_key"] == team.did_key
     assert appended["latest"]["created_by_alias"] == team.alias
     assert appended["latest"]["certificate_id"] == team.certificate_id
 
-    billing = _get_billing(atext, team)
+    billing = _get_billing(folio, team)
     assert billing["team_id"] == team.team_id
     assert billing["tier"] == "free"
     assert billing["caps"]["max_documents"] >= 1
     assert billing["caps"]["max_versions_per_doc"] >= 2
     assert billing["usage"] == {"documents": 1, "max_versions_per_doc": 2}
 
-    versions = _list_versions(atext, team, "handoff")
+    versions = _list_versions(folio, team, "handoff")
     assert [item["version_number"] for item in versions] == [2, 1]
     assert all(item["body"] is None for item in versions)
     assert all(item["created_by_did_key"] == team.did_key for item in versions)
@@ -565,22 +565,22 @@ def test_document_endpoints_versions_raw_utf8_and_attribution(
 
     bad_body = tmp_path / "invalid-utf8.bin"
     bad_body.write_bytes(b"\xff")
-    bad = _aw_request(team, "POST", f"{atext.origin}/v1/documents/handoff/versions", body_file=bad_body)
+    bad = _aw_request(team, "POST", f"{folio.origin}/v1/documents/handoff/versions", body_file=bad_body)
     _assert_aw_status(bad, 400, context="append invalid UTF-8")
 
 
 def test_team_scoping_and_body_named_team_cannot_bypass_certificate_scope(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
 ) -> None:
     first = _provision_team(aw_workspace_factory("first"), alias="alice")
     second = _provision_team(aw_workspace_factory("second"), alias="bob")
-    _create_document(atext, first, slug="secret", title="Secret", body="first team only")
+    _create_document(folio, first, slug="secret", title="Secret", body="first team only")
 
-    assert _list_documents(atext, second) == []
-    second_read = _aw_request(second, "GET", f"{atext.origin}/v1/documents/secret")
+    assert _list_documents(folio, second) == []
+    second_read = _aw_request(second, "GET", f"{folio.origin}/v1/documents/secret")
     _assert_aw_status(second_read, 404, context="second team reads first team document")
-    second_append = _aw_request(second, "POST", f"{atext.origin}/v1/documents/secret/versions", body="oops")
+    second_append = _aw_request(second, "POST", f"{folio.origin}/v1/documents/secret/versions", body="oops")
     _assert_aw_status(second_append, 404, context="second team appends first team document")
 
     payload = json.dumps(
@@ -588,21 +588,21 @@ def test_team_scoping_and_body_named_team_cannot_bypass_certificate_scope(
         separators=(",", ":"),
     )
     created_by_second = _aw_json(
-        _aw_request(second, "POST", f"{atext.origin}/v1/documents", body=payload),
+        _aw_request(second, "POST", f"{folio.origin}/v1/documents", body=payload),
         context="body-named team create",
     )
     assert created_by_second["slug"] == "intruder"
-    assert _get_document(atext, second, "intruder")["body"] == "body-named team"
-    first_intruder = _aw_request(first, "GET", f"{atext.origin}/v1/documents/intruder")
+    assert _get_document(folio, second, "intruder")["body"] == "body-named team"
+    first_intruder = _aw_request(first, "GET", f"{folio.origin}/v1/documents/intruder")
     _assert_aw_status(first_intruder, 404, context="body-named team did not write first team")
 
 
 def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    assert _list_documents(atext, team) == []
+    assert _list_documents(folio, team) == []
 
     _run_aw(
         aw_workspace,
@@ -619,24 +619,24 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
         AWID_URL,
     )
     time.sleep(2.2)
-    revoked = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+    revoked = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     _assert_aw_status(revoked, 401, context="revoked certificate")
 
 
 def test_awid_unavailable_honors_cache_then_fails_closed(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    assert _list_documents(atext, team) == []
+    assert _list_documents(folio, team) == []
 
     _compose("stop", "awid")
     try:
-        cached = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+        cached = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
         assert _assert_aw_success(cached, context="cached request while awid stopped").strip() == "[]"
 
         time.sleep(2.2)
-        expired = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+        expired = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
         _assert_aw_status(expired, 503, context="cache expired while awid stopped")
     finally:
         _compose("start", "awid")
@@ -652,18 +652,18 @@ def _replay_headers(captured: CapturedRequest) -> dict[str, str]:
 
 
 def test_replay_negatives_reject_path_method_and_audience(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    original = _aw_request(team, "GET", f"{atext.origin}/v1/documents")
+    original = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     assert _assert_aw_success(original, context="original signed request").strip() == "[]"
-    captured = atext.last_request
+    captured = folio.last_request
     headers = _replay_headers(captured)
 
     path_replay = httpx.request(
         captured.method,
-        f"{atext.origin}/v1/documents/replayed",
+        f"{folio.origin}/v1/documents/replayed",
         headers=headers,
         content=captured.body,
         timeout=10.0,
@@ -672,23 +672,23 @@ def test_replay_negatives_reject_path_method_and_audience(
 
     method_replay = httpx.request(
         "POST",
-        f"{atext.origin}{captured.path}",
+        f"{folio.origin}{captured.path}",
         headers=headers,
         content=captured.body,
         timeout=10.0,
     )
     assert method_replay.status_code == 401, method_replay.text
 
-    wrong_aud = _aw_request(team, "GET", f"{atext.backend_origin}/v1/documents")
+    wrong_aud = _aw_request(team, "GET", f"{folio.backend_origin}/v1/documents")
     _assert_aw_status(wrong_aud, 401, context="signed audience for backend host")
 
 
-def test_real_aw_free_document_cap_and_billing(atext: RunningAText, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_free_document_cap_and_billing(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
 
     for index in range(3):
         created = _create_document(
-            atext,
+            folio,
             team,
             slug=f"note-{index}",
             title=f"Note {index}",
@@ -696,7 +696,7 @@ def test_real_aw_free_document_cap_and_billing(atext: RunningAText, aw_workspace
         )
         assert created["slug"] == f"note-{index}"
 
-    billing = _get_billing(atext, team)
+    billing = _get_billing(folio, team)
     assert billing["team_id"] == team.team_id
     assert billing["tier"] == "free"
     assert billing["caps"] == {"max_documents": 3, "max_versions_per_doc": 50}
@@ -705,7 +705,7 @@ def test_real_aw_free_document_cap_and_billing(atext: RunningAText, aw_workspace
     blocked = _aw_request(
         team,
         "POST",
-        f"{atext.origin}/v1/documents",
+        f"{folio.origin}/v1/documents",
         body=json.dumps({"slug": "note-3", "title": "Note 3", "body": "blocked"}),
     )
     assert blocked.returncode != 0

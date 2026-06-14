@@ -8,7 +8,7 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from nacl.signing import SigningKey
 
-from atext.auth import _verify_certificate_signature
+from folio.auth import _verify_certificate_signature
 
 
 def test_certificate_signature_matches_awid_canonical_json() -> None:

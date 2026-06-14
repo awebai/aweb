@@ -1,9 +1,9 @@
 ---
 name: set-theme
-description: Use when an agent needs to brand atext presentation pages for its team: read or update GET/PUT /v1/theme with colors, fonts, header/footer, and an optional base64 raster logo. This is for USING atext, not changing server code.
+description: Use when an agent needs to brand folio presentation pages for its team: read or update GET/PUT /v1/theme with colors, fonts, header/footer, and an optional base64 raster logo. This is for USING folio, not changing server code.
 ---
 
-# Set an atext team theme
+# Set an folio team theme
 
 Use this when a team wants its `/present/<token>` pages to carry brand colors,
 fonts, a logo, or header/footer text. Theme is team-scoped and applies when
@@ -16,7 +16,7 @@ Run from a workspace with an active AWID team certificate:
 ```bash
 aw workspace status
 aw id cert show
-export ATEXT_ORIGIN=https://api.atext.ai
+export FOLIO_ORIGIN=https://folio.aweb.ai
 ```
 
 For local development, use `http://127.0.0.1:8765` instead.
@@ -24,7 +24,7 @@ For local development, use `http://127.0.0.1:8765` instead.
 ## 1. Read the current theme
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/theme" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/theme" --team-auth --raw
 ```
 
 An empty theme returns default tokens plus null logo/header/footer fields.
@@ -76,7 +76,7 @@ PY
 ## 3. Set the theme
 
 ```bash
-aw id request PUT "$ATEXT_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
 ```
 
 The response includes sanitized `tokens`, optional `logo_asset_id` and

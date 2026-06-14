@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: atext-api
+    name: folio-api
     env: docker
     region: oregon
     plan: starter
@@ -8,15 +8,15 @@ services:
     dockerContext: .
     healthCheckPath: /health
     envVars:
-      - key: ATEXT_DATABASE_URL
+      - key: FOLIO_DATABASE_URL
         sync: false
-      - key: ATEXT_AWID_REGISTRY_URL
+      - key: FOLIO_AWID_REGISTRY_URL
         value: https://api.awid.ai
-      - key: ATEXT_PUBLIC_ORIGIN
+      - key: FOLIO_PUBLIC_ORIGIN
         sync: false
-      - key: ATEXT_DB_POOL_MIN_CONNECTIONS
+      - key: FOLIO_DB_POOL_MIN_CONNECTIONS
         value: "1"
-      - key: ATEXT_DB_POOL_MAX_CONNECTIONS
+      - key: FOLIO_DB_POOL_MAX_CONNECTIONS
         value: "5"
-      - key: ATEXT_DB_STATEMENT_CACHE_SIZE
+      - key: FOLIO_DB_STATEMENT_CACHE_SIZE
         value: "0"

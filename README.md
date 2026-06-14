@@ -1,226 +1,97 @@
-# atext
+# folio
 
-`atext` is agent-first shared text for AWID teams. Agents authenticate with team
-certificates, write append-only document versions, and mint safe no-login
-presentation links for humans.
+`folio` is a private, agent-first document and presentation service for AWID teams. Agents authenticate with their team certificate, write append-only Markdown documents, brand them with a team theme, and mint no-login presentation links for humans.
 
-There are no atext accounts, passwords, OAuth flows, API keys, or dashboards for
-writing. A valid AWID team certificate is the login.
+It is seeded from the `atext` spine. The inherited auth and team-isolation contract lives in `docs/spine-sot.md`; product direction lives in `docs/sot.md`.
 
-## What ships now
+## What ships in this skeleton
 
-- Team-scoped plain-text/Markdown documents.
-- Append-only versions; every version records the verified member identity and
-  certificate that created it.
-- Public presentation links: a team member mints a token for one document
-  version, and the audience opens a server-rendered themed HTML page with no
-  login.
-- Team themes: brand colors/fonts, optional raster logo, header, and footer for
-  presented pages.
-- Free-tier caps plus `GET /v1/billing` for tier/cap/usage status. Stripe
-  checkout/portal/webhooks are v2 scope.
+- AWID team-certificate authentication via `aw id request --team-auth`.
+- Team-scoped append-only documents and versions.
+- Document-bound, version-pinned presentation links.
+- Server-rendered public presentation pages with sanitized Markdown.
+- Team themes with validated color/font tokens and safe raster logos.
+- A single fresh-DB migration for the inherited spine schema.
 
-See [`docs/sot.md`](docs/sot.md) for the source of truth.
+Planned folio product work adds media, layout/presentation modes, video, first-class `aw folio` verbs, and declarative templates.
 
-## Use this repo as a model
-
-Building another agent-first BYOT app? Start with [`docs/agent-first.md`](docs/agent-first.md)
-for the pattern and repo map, then load the focused skills in [`skills/`](skills/)
-when implementing team-certificate verification, no-mocks BYOT e2e, document
-presentation, or team themes.
-
-## Client: `aw id request --team-auth`
-
-`atext` ships no client wrapper. Use the `aw` CLI from a workspace with an active
-AWID team certificate (`aw >= 1.26.17`) and point it at the running service:
-
-```bash
-export ATEXT_ORIGIN=https://api.atext.ai
-```
-
-For local development:
-
-```bash
-export ATEXT_ORIGIN=http://127.0.0.1:8765
-```
-
-### Create and edit documents
-
-Create a document. Document creation is JSON because it carries the slug and
-title:
-
-```bash
-cat > handoff-create.json <<'JSON'
-{"slug":"handoff","title":"Handoff","body":"Initial handoff text."}
-JSON
-aw id request POST "$ATEXT_ORIGIN/v1/documents" --team-auth --raw \
-  --body-file handoff-create.json
-```
-
-Append a version. Appends are raw UTF-8 request bodies, not JSON:
-
-```bash
-printf 'Second handoff version.\n' > handoff-v2.md
-aw id request POST "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
-  --body-file handoff-v2.md
-```
-
-Read and list:
-
-```bash
-aw id request GET "$ATEXT_ORIGIN/v1/documents/handoff" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents" --team-auth --raw
-```
-
-### Present a document to a human
-
-Mint a public capability link for a pinned document version:
-
-```bash
-cat > present.json <<'JSON'
-{"slug":"handoff","version":2,"ttl_seconds":86400}
-JSON
-aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
-  --body-file present.json \
-  | tee present-response.json
-```
-
-Response:
-
-```json
-{"token":"<opaque-token>","url":"https://api.atext.ai/present/<token>","expires_at":"<timestamp>"}
-```
-
-Open the returned URL for the human and print it as fallback:
-
-```bash
-PRESENT_URL=$(jq -r '.url' present-response.json)
-if command -v open >/dev/null 2>&1; then open "$PRESENT_URL" || true;
-elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$PRESENT_URL" || true;
-fi
-printf 'Presented view: %s\n' "$PRESENT_URL"
-```
-
-Revoke when the link should stop working:
-
-```bash
-TOKEN=$(jq -r '.token' present-response.json)
-aw id request POST "$ATEXT_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
-```
-
-Public `GET /present/{token}` is unauthenticated and returns server-rendered
-HTML for the pinned version. Unknown, expired, or revoked tokens return 404
-without revealing team/document/version metadata.
-
-### Set a team theme
-
-Read the current theme:
-
-```bash
-aw id request GET "$ATEXT_ORIGIN/v1/theme" --team-auth --raw
-```
-
-Set brand tokens, header/footer, and optionally a logo. Logo uploads are
-agent-friendly base64 and only allow `image/png`, `image/jpeg`, `image/gif`, or
-`image/webp` bytes that match the declared content type.
-
-```bash
-python3 - <<'PY'
-import base64, json
-from pathlib import Path
-payload = {
-  "tokens": {
-    "colors": {"background":"#fffaf0","surface":"#ffffff","text":"#17201a","accent":"#246b49"},
-    "fonts": {"body":"system","heading":"serif"}
-  },
-  "header": "Presented by the Example team",
-  "footer": "Confidential draft — shared by capability link"
-}
-logo = Path("logo.png")
-if logo.exists():
-    payload["logo"] = {"content_type":"image/png", "data_base64": base64.b64encode(logo.read_bytes()).decode("ascii")}
-Path("theme.json").write_text(json.dumps(payload), encoding="utf-8")
-PY
-aw id request PUT "$ATEXT_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
-```
-
-The next present link renders inside that theme. Existing links also render with
-the team's current theme.
-
-### Billing status
-
-```bash
-aw id request GET "$ATEXT_ORIGIN/v1/billing" --team-auth --raw
-```
-
-Response shape:
-
-```json
-{
-  "team_id": "default:example.com",
-  "tier": "free",
-  "caps": {"max_documents": 3, "max_versions_per_doc": 50},
-  "usage": {"documents": 1, "max_versions_per_doc": 2}
-}
-```
-
-Free-tier cap writes fail with structured 402. Reads, version history, and
-existing present links are not deleted by billing state. Stripe checkout, portal,
-and webhooks are v2 scope.
-
-## Development
+## Local development
 
 ```bash
 uv sync
-uv run pytest
-uv run uvicorn atext.api:create_app --factory --reload
+uv run uvicorn folio.api:create_app --factory --reload
 ```
 
-## Landing site
+The API defaults to `http://127.0.0.1:8765`.
 
-The static landing/tutorial site lives in `site/` and is built with Hugo
-v0.160.1 (pinned by the `HUGO_VERSION` variable in `Makefile`):
+## Configuration
+
+All runtime env vars use the `FOLIO_` prefix:
+
+- `FOLIO_DATABASE_URL` — PostgreSQL connection string.
+- `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
+- `FOLIO_PUBLIC_ORIGIN` — public origin clients sign in the v2 team-auth `aud`, default `http://127.0.0.1:8765`.
+- `FOLIO_DB_POOL_MIN_CONNECTIONS` — default `1`.
+- `FOLIO_DB_POOL_MAX_CONNECTIONS` — default `5`.
+- `FOLIO_DB_STATEMENT_CACHE_SIZE` — default `0` for PgBouncer compatibility.
+- `FOLIO_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default `600`.
+- `FOLIO_TIMESTAMP_SKEW_SECONDS` — signed request skew window, default `300`.
+- `FOLIO_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
+- `FOLIO_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
+- `FOLIO_FREE_MAX_DOCUMENTS` — inherited free-tier cap, default `3`.
+- `FOLIO_FREE_MAX_VERSIONS_PER_DOC` — inherited version cap, default `50`.
+
+Production public origin is expected to be `https://folio.aweb.ai`.
+
+## Using the skeleton with `aw`
+
+From a workspace with an active AWID team certificate:
 
 ```bash
-make site
+export FOLIO_ORIGIN=http://127.0.0.1:8765
+
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
+  --body '{"slug":"pitch","title":"Pitch","body":"# Pitch\n\nInitial draft."}'
+
+printf '# Pitch\n\nSecond draft.\n' > pitch-v2.md
+aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw \
+  --body-file pitch-v2.md
+
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw \
+  --body '{"tokens":{"colors":{"background":"#0b1020","surface":"#ffffff","accent":"#7c5cff"},"fonts":{"body":"serif"}},"header":"Team memo","footer":"Confidential"}'
+
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
+  --body '{"slug":"pitch","ttl_seconds":604800}'
 ```
 
-The build writes generated files to `site/public/`. In deployment, the static
-site can live on a friendly web origin while agents call the API origin
-configured as `ATEXT_PUBLIC_ORIGIN` (for production recipes above,
-`https://api.atext.ai`). Presented document URLs are minted from that public API
-origin.
-
-## End-to-end smoke test
-
-Prerequisites:
-
-- Docker with Compose support.
-- `aw` CLI >= 1.26.17 on `PATH` (`aw id request --team-auth` must emit the v2 envelope).
-- Local sibling checkouts/symlinks for the editable sources in `pyproject.toml`: `../aweb/awid` and `../pgdbm`.
-
-Run the docker-backed smoke test with:
+The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. Revoke it when access should end:
 
 ```bash
+aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
+```
+
+## Tests
+
+```bash
+make test-server
+make lint
 make e2e
 ```
 
-The target starts local Postgres, Redis, and awid-service with Docker Compose,
-runs pytest with `ATEXT_E2E=1`, and tears the services down. Compose enables
-`AWID_SKIP_DNS_VERIFY=1` so the fixture can register disposable `.test`
-namespaces locally. The e2e fixture provisions a fresh AWID
-namespace/team/member certificate with real `aw id` commands and sends the
-authenticated request with `aw id request --team-auth`; it does not use mocked
-certificates or signatures.
+`make e2e` starts local Postgres + AWID via Docker Compose, runs real `aw id request --team-auth` tests, and tears the stack down.
 
-Configuration is environment-driven:
+## Docker / Render
 
-- `ATEXT_DATABASE_URL` — PostgreSQL connection string.
-- `ATEXT_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
-- `ATEXT_PUBLIC_ORIGIN` — public origin clients sign in the team-auth `aud`, default `http://127.0.0.1:8765`.
-- `ATEXT_FREE_MAX_DOCUMENTS` — free-tier document cap, default `3`.
-- `ATEXT_FREE_MAX_VERSIONS_PER_DOC` — free-tier versions-per-document cap, default `50`.
-- `ATEXT_DEFAULT_PRESENT_TTL_SECONDS` — default present-link TTL, default `86400`.
-- `ATEXT_MAX_PRESENT_TTL_SECONDS` — max present-link TTL, default `604800`.
-- `ATEXT_AUTH_CACHE_TTL_SECONDS` — AWID auth cache TTL, default `600`.
+Build locally:
+
+```bash
+docker build -t folio-api:dev .
+```
+
+The container runs:
+
+```bash
+uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}
+```
+
+`render.yaml` declares the Docker web service and the `FOLIO_` env names for a fresh Neon-backed deployment.

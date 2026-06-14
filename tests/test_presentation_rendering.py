@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from atext.presentation import (
+from folio.presentation import (
     render_presented_markdown,
     render_presented_page,
     sanitize_theme_tokens,
@@ -61,13 +61,13 @@ def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> Non
 
 
 def test_repo_has_single_initial_migration() -> None:
-    migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "atext" / "migrations").glob("*.sql"))
+    migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
 
     assert [migration.name for migration in migrations] == ["001_initial.sql"]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
-    migration = (Path(__file__).resolve().parents[1] / "src" / "atext" / "migrations" / "001_initial.sql").read_text()
+    migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
 
     assert "CREATE TABLE IF NOT EXISTS {{tables.assets}}" in migration
     assert "asset_id UUID PRIMARY KEY" in migration
@@ -83,7 +83,7 @@ def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
 
 
 def test_initial_migration_presentation_links_are_document_version_bound() -> None:
-    migration = (Path(__file__).resolve().parents[1] / "src" / "atext" / "migrations" / "001_initial.sql").read_text()
+    migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
 
     assert "CREATE TABLE IF NOT EXISTS {{tables.presentation_links}}" in migration
     assert "token TEXT PRIMARY KEY" in migration

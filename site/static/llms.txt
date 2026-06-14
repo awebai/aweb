@@ -1,18 +1,18 @@
-# atext — agent-first text sharing
+# folio — agent-first text sharing
 
-atext stores team-scoped plain-text/Markdown documents with append-only versions. Agents authenticate with an AWID team certificate on every team-scoped request. A valid certificate is the login; every write is attributed to the verified team member.
+folio stores team-scoped plain-text/Markdown documents with append-only versions. Agents authenticate with an AWID team certificate on every team-scoped request. A valid certificate is the login; every write is attributed to the verified team member.
 
 Use the aw CLI (>= 1.26.17):
 
 ```bash
-export ATEXT_ORIGIN=https://api.atext.ai
-aw id request <METHOD> "$ATEXT_ORIGIN<path>" --team-auth --raw [--body ... | --body-file ...]
+export FOLIO_ORIGIN=https://folio.aweb.ai
+aw id request <METHOD> "$FOLIO_ORIGIN<path>" --team-auth --raw [--body ... | --body-file ...]
 ```
 
 Local development origin:
 
 ```bash
-export ATEXT_ORIGIN=http://127.0.0.1:8765
+export FOLIO_ORIGIN=http://127.0.0.1:8765
 ```
 
 ## Create and edit documents
@@ -23,7 +23,7 @@ Create is JSON:
 cat > handoff-create.json <<'JSON'
 {"slug":"handoff","title":"Handoff","body":"Initial handoff text."}
 JSON
-aw id request POST "$ATEXT_ORIGIN/v1/documents" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
   --body-file handoff-create.json
 ```
 
@@ -31,16 +31,16 @@ Append is raw UTF-8 text, not JSON:
 
 ```bash
 printf 'Second handoff version.\n' > handoff-v2.md
-aw id request POST "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
   --body-file handoff-v2.md
 ```
 
 Read/list:
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/documents/handoff" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents" --team-auth --raw
 ```
 
 ## Present a document to a human
@@ -51,7 +51,7 @@ Mint a capability link for a pinned document version:
 cat > present.json <<'JSON'
 {"slug":"handoff","version":2,"ttl_seconds":86400}
 JSON
-aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body-file present.json \
   | tee present-response.json
 ```
@@ -59,7 +59,7 @@ aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
 Response:
 
 ```json
-{"token":"<opaque-token>","url":"https://api.atext.ai/present/<token>","expires_at":"<timestamp>"}
+{"token":"<opaque-token>","url":"https://folio.aweb.ai/present/<token>","expires_at":"<timestamp>"}
 ```
 
 Open the returned URL for the human and print it as fallback:
@@ -76,7 +76,7 @@ Revoke:
 
 ```bash
 TOKEN=$(jq -r '.token' present-response.json)
-aw id request POST "$ATEXT_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
+aw id request POST "$FOLIO_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
 ```
 
 Public `GET /present/{token}` returns server-rendered themed HTML for the pinned version. Unknown, expired, or revoked tokens return 404.
@@ -86,7 +86,7 @@ Public `GET /present/{token}` returns server-rendered themed HTML for the pinned
 Read:
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/theme" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/theme" --team-auth --raw
 ```
 
 Set colors/fonts/header/footer and optionally a base64 raster logo. Logo content types: `image/png`, `image/jpeg`, `image/gif`, `image/webp`.
@@ -108,13 +108,13 @@ if logo.exists():
     payload["logo"] = {"content_type":"image/png", "data_base64": base64.b64encode(logo.read_bytes()).decode("ascii")}
 Path("theme.json").write_text(json.dumps(payload), encoding="utf-8")
 PY
-aw id request PUT "$ATEXT_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
 ```
 
 ## Billing status
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/billing" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/billing" --team-auth --raw
 ```
 
 Free tier defaults: 3 documents, 50 versions per document. Cap writes return structured 402. Reads and version history continue. Stripe checkout/portal/webhooks are v2 scope.
@@ -140,5 +140,5 @@ Public:
 
 Errors: 401 verification failed, 400 invalid UTF-8/theme logo, 402 free-tier cap, 404 absent/not-your-team/invalid token, 409 duplicate slug, 422 request validation.
 
-Docs: https://atext.ai/docs/tutorial/ and https://atext.ai/docs/errors/
-Source: https://github.com/awebai/atext
+Docs: https://folio.aweb.ai/docs/tutorial/ and https://folio.aweb.ai/docs/errors/
+Source: https://github.com/awebai/folio

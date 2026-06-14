@@ -1,13 +1,13 @@
 ---
 name: team-cert-verification
-description: Use when implementing or reviewing AWID team-certificate authentication — verifying the request-bound v2 team-auth envelope, porting atext auth.py, building a BYOT relying party, wiring aw id request --team-auth, or debugging X-AWEB-Signed-Payload and team certificate failures in a new service.
+description: Use when implementing or reviewing AWID team-certificate authentication — verifying the request-bound v2 team-auth envelope, porting folio auth.py, building a BYOT relying party, wiring aw id request --team-auth, or debugging X-AWEB-Signed-Payload and team certificate failures in a new service.
 ---
 
 # Team certificate verification
 
 Use this when your service is a BYOT relying party: agents present a DIDKey
 signature plus an AWID team certificate on every team-scoped request. The code
-ground truth is `src/atext/auth.py`; the test ground truth is
+ground truth is `src/folio/auth.py`; the test ground truth is
 `tests/test_auth_v2_envelope.py`. Port both and keep the tests green.
 
 ## Envelope contract
@@ -30,15 +30,15 @@ X-AWEB-Signed-Payload: <base64url-no-padding canonical-JSON of the signed payloa
 Rules:
 
 - The signed-payload header is base64url with no padding (`=` is rejected in
-  atext; see `src/atext/auth.py:137-146`).
+  folio; see `src/folio/auth.py:137-146`).
 - Parsed JSON must round-trip to the same canonical bytes:
-  `canonical_json(parsed) == decoded bytes` (`src/atext/auth.py:188-193`).
+  `canonical_json(parsed) == decoded bytes` (`src/folio/auth.py:188-193`).
 - The Ed25519 signature verifies over those decoded presented bytes, not over a
-  payload the server reconstructs (`src/atext/auth.py:217-220`).
+  payload the server reconstructs (`src/folio/auth.py:217-220`).
 
 ## Ten verification steps
 
-Follow this implementation order when porting `src/atext/auth.py`. The cert is
+Follow this implementation order when porting `src/folio/auth.py`. The cert is
 parsed early to obtain `team_id` for request binding and to compare
 `member_did_key`; it is still untrusted data until the AWID-resolved team key
 verifies its signature and revocation passes.
@@ -81,12 +81,12 @@ verifies its signature and revocation passes.
 
 - **Path is raw target, not router path.** Use ASGI `raw_path` plus raw
   `query_string`, preserving percent-encoding and query order; include
-  `root_path` for mounted apps. See `src/atext/auth.py:149-173` and
+  `root_path` for mounted apps. See `src/folio/auth.py:149-173` and
   `tests/test_auth_v2_envelope.py:258-272`.
 - **Audience canonicalization must match aweb.** Use the same origin rules as
   `aweb.team_auth_envelope` / `awid.log.canonical_server_origin`: scheme and
   host lowercased, default ports removed, no path/query/fragment. See
-  `src/atext/auth.py:209-215` and the interop check in
+  `src/folio/auth.py:209-215` and the interop check in
   `tests/test_auth_v2_envelope.py:312-343`.
 - **Signature verification uses presented bytes.** Decode
   `X-AWEB-Signed-Payload`, verify those bytes, then compare parsed claims to the
@@ -95,13 +95,13 @@ verifies its signature and revocation passes.
 ## AWID facts and caching
 
 - Cache only public AWID facts: team public key and revoked certificate ids
-  (`src/atext/auth.py:43-100`).
+  (`src/folio/auth.py:43-100`).
 - If the cache entry is unexpired, use it; if expired, refresh. On refresh
   failure, fail closed with 503 instead of trusting the presented cert
-  (`src/atext/auth.py:58-87`).
+  (`src/folio/auth.py:58-87`).
 - Unknown team is 401; AWID unavailable or missing/invalid team-key facts are
-  503 (`src/atext/auth.py:67-87`).
-- Revoked certificate id is 401 (`src/atext/auth.py:287-288`).
+  503 (`src/folio/auth.py:67-87`).
+- Revoked certificate id is 401 (`src/folio/auth.py:287-288`).
 - Misconfigured `public_origin` should make every v2 request fail closed. That
   is a feature: it prevents accepting signatures for the wrong host and exposes
   deploy misconfiguration immediately.
@@ -114,14 +114,14 @@ verifies its signature and revocation passes.
 | Accept absent version, v1, or compact payloads. | Drops method/path/audience binding and enables cross-endpoint replay. |
 | Skip `body_sha256` for GET or empty bodies. | Creates a second contract and lets body mutation bugs hide. Hash exact bytes always. |
 | Trust the presented cert when AWID is down. | Converts an availability incident into an auth bypass. Use unexpired cache or fail closed. |
-| Set clock skew very wide. | Expands replay window. Keep the default small (atext default: 300 seconds). |
+| Set clock skew very wide. | Expands replay window. Keep the default small (folio default: 300 seconds). |
 | Add API keys, trusted headers, sessions, or OAuth “just for testing.” | Creates a second auth path reviewers and users must reason about. Test the real verifier. |
 | Use router-normalized paths. | Breaks percent-encoding/query-order binding and disagrees with `aw id request --team-auth`. |
 | Verify a reconstructed payload. | Lets the verifier sign what it wishes it saw, not what the agent actually signed. |
 
 ## References
 
-- `src/atext/auth.py` — copyable FastAPI verifier implementation.
+- `src/folio/auth.py` — copyable FastAPI verifier implementation.
 - `tests/test_auth_v2_envelope.py` — spec by example; port it with the code and
   keep it green.
 - `docs/sot.md` Authentication envelope section — product/source-of-truth

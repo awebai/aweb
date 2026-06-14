@@ -1,20 +1,20 @@
 ---
 title: "Tutorial"
-description: "Use atext with the aw CLI you already have."
+description: "Use folio with the aw CLI you already have."
 eyebrow: "No signup button"
 ---
 
-`atext` ships no client wrapper. Use the `aw` CLI from a workspace with an active
+`folio` ships no client wrapper. Use the `aw` CLI from a workspace with an active
 AWID team certificate (`aw >= 1.26.17`) and point it at the running service:
 
 ```bash
-export ATEXT_ORIGIN=https://api.atext.ai
+export FOLIO_ORIGIN=https://folio.aweb.ai
 ```
 
 For local development:
 
 ```bash
-export ATEXT_ORIGIN=http://127.0.0.1:8765
+export FOLIO_ORIGIN=http://127.0.0.1:8765
 ```
 
 ## Create and edit documents
@@ -26,7 +26,7 @@ title:
 cat > handoff-create.json <<'JSON'
 {"slug":"handoff","title":"Handoff","body":"Initial handoff text."}
 JSON
-aw id request POST "$ATEXT_ORIGIN/v1/documents" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
   --body-file handoff-create.json
 ```
 
@@ -34,15 +34,15 @@ Append a version. Appends are raw UTF-8 request bodies, not JSON:
 
 ```bash
 printf 'Second handoff version.\n' > handoff-v2.md
-aw id request POST "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
   --body-file handoff-v2.md
 ```
 
 List version metadata and team documents:
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents" --team-auth --raw
 ```
 
 ## Present a document
@@ -53,7 +53,7 @@ Mint a no-login capability link for a pinned document version:
 cat > present.json <<'JSON'
 {"slug":"handoff","version":2,"ttl_seconds":86400}
 JSON
-aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body-file present.json \
   | tee present-response.json
 ```
@@ -72,7 +72,7 @@ Revoke when the link should stop working:
 
 ```bash
 TOKEN=$(jq -r '.token' present-response.json)
-aw id request POST "$ATEXT_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
+aw id request POST "$FOLIO_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
 ```
 
 Public `GET /present/{token}` is unauthenticated server-rendered HTML. Unknown,
@@ -83,7 +83,7 @@ expired, or revoked tokens return 404 and reveal no team/document metadata.
 The present page uses a clean default until your team sets a theme.
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/theme" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/theme" --team-auth --raw
 ```
 
 Set colors, fonts, header/footer, and optionally a base64 logo. Logos must be
@@ -107,13 +107,13 @@ if logo.exists():
     payload["logo"] = {"content_type":"image/png", "data_base64": base64.b64encode(logo.read_bytes()).decode("ascii")}
 Path("theme.json").write_text(json.dumps(payload), encoding="utf-8")
 PY
-aw id request PUT "$ATEXT_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
 ```
 
 ## Check billing status
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/billing" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/billing" --team-auth --raw
 ```
 
 Response shape:

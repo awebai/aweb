@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from atext.auth import Principal
-from atext.config import Settings
-from atext.repository import (
+from folio.auth import Principal
+from folio.config import Settings
+from folio.repository import (
     append_version,
     create_document,
     get_billing_status,
@@ -267,7 +267,7 @@ async def test_reads_are_not_blocked_when_team_is_over_cap(principal: Principal)
 
 
 def test_initial_migration_contains_subscription_projection_shape() -> None:
-    migration = (Path(__file__).resolve().parents[1] / "src" / "atext" / "migrations" / "001_initial.sql").read_text()
+    migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
 
     assert "CREATE TABLE IF NOT EXISTS {{tables.subscriptions}}" in migration
     assert "tier TEXT NOT NULL DEFAULT 'free'" in migration

@@ -11,9 +11,9 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
-from atext.auth import Principal
-from atext.config import Settings
-from atext.presentation import sanitize_theme_tokens
+from folio.auth import Principal
+from folio.config import Settings
+from folio.presentation import sanitize_theme_tokens
 
 ACTIVE_TIER = "active"
 

@@ -23,7 +23,7 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
-from atext.config import Settings
+from folio.config import Settings
 
 TEAM_AUTH_ENVELOPE_V2 = 2
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")

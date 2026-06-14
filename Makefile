@@ -16,16 +16,16 @@ lint:
 
 e2e:
 	set -e; \
-	trap 'docker compose -p atext-e2e -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
-	docker compose -p atext-e2e -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
-	docker compose -p atext-e2e -f docker-compose.e2e.yml up --build -d; \
-	ATEXT_E2E=1 uv run pytest -q -m e2e
+	trap 'docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+	docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
+	docker compose -p folio-e2e -f docker-compose.e2e.yml up --build -d; \
+	FOLIO_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:
-	docker compose -p atext-e2e -f docker-compose.e2e.yml up --build -d
+	docker compose -p folio-e2e -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
-	docker compose -p atext-e2e -f docker-compose.e2e.yml down -v --remove-orphans
+	docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans
 
 site:
 	@hugo version | grep -q "v$(HUGO_VERSION)" || { echo "Expected Hugo v$(HUGO_VERSION); install/pin that version or update HUGO_VERSION intentionally."; exit 1; }
@@ -35,7 +35,7 @@ compile:
 	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m compileall -q src tests
 
 run:
-	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn atext.api:app --host 127.0.0.1 --port $(API_PORT) --reload
+	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) --reload
 
 site-serve: site
 	@[ ! -f site/.serve.pid ] || { echo "site server already running (pid $$(cat site/.serve.pid)); make site-stop first"; exit 1; }
@@ -47,7 +47,7 @@ site-stop:
 
 api-serve:
 	@[ ! -f .api.pid ] || { echo "api server already running (pid $$(cat .api.pid)); make api-stop first"; exit 1; }
-	@nohup env PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn atext.api:app --host 127.0.0.1 --port $(API_PORT) > .api.log 2>&1 & echo $$! > .api.pid
+	@nohup env PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) > .api.log 2>&1 & echo $$! > .api.pid
 	@echo "api serving at http://127.0.0.1:$(API_PORT)/ (pid $$(cat .api.pid))"
 
 api-stop:

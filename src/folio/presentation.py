@@ -263,7 +263,7 @@ def render_presented_page(*, body: str, theme: dict[str, Any] | None = None) -> 
 <body>
   <main class="page">
     <article class="surface">
-{logo_html}      <p class="eyebrow">Presented with atext</p>
+{logo_html}      <p class="eyebrow">Presented with folio</p>
 {header_html}      <div class="document-body">
 {content}
       </div>

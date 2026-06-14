@@ -31,8 +31,8 @@ RUN python -m pip install --upgrade pip \
 COPY . /app/
 RUN python -m pip install --no-deps .
 
-RUN useradd --create-home --shell /usr/sbin/nologin atext
-USER atext
+RUN useradd --create-home --shell /usr/sbin/nologin folio
+USER folio
 
 EXPOSE 8765
-CMD ["sh", "-c", "uvicorn atext.api:app --host 0.0.0.0 --port ${PORT:-8765}"]
+CMD ["sh", "-c", "uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}"]
