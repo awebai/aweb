@@ -5,8 +5,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from atext.config import Settings
-from atext.db import ATextDatabase
+from folio.config import Settings
+from folio.db import FolioDatabase
 
 
 def test_default_db_pool_is_modest_for_neon_pooler() -> None:
@@ -18,9 +18,9 @@ def test_default_db_pool_is_modest_for_neon_pooler() -> None:
 
 
 def test_db_pool_is_configurable_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ATEXT_DB_POOL_MIN_CONNECTIONS", "2")
-    monkeypatch.setenv("ATEXT_DB_POOL_MAX_CONNECTIONS", "4")
-    monkeypatch.setenv("ATEXT_DB_STATEMENT_CACHE_SIZE", "0")
+    monkeypatch.setenv("FOLIO_DB_POOL_MIN_CONNECTIONS", "2")
+    monkeypatch.setenv("FOLIO_DB_POOL_MAX_CONNECTIONS", "4")
+    monkeypatch.setenv("FOLIO_DB_STATEMENT_CACHE_SIZE", "0")
 
     settings = Settings()
 
@@ -41,11 +41,11 @@ def test_database_manager_uses_configured_pool(monkeypatch: pytest.MonkeyPatch) 
         def __init__(self, config: object) -> None:
             captured["config"] = config
 
-    monkeypatch.setattr("atext.db.AsyncDatabaseManager", FakeDatabaseManager)
+    monkeypatch.setattr("folio.db.AsyncDatabaseManager", FakeDatabaseManager)
 
-    database = ATextDatabase(
+    database = FolioDatabase(
         Settings(
-            database_url="postgresql://example.invalid/atext",
+            database_url="postgresql://example.invalid/folio",
             db_pool_min_connections=2,
             db_pool_max_connections=3,
             db_statement_cache_size=0,

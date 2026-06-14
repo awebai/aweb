@@ -1,9 +1,9 @@
 ---
 name: present-to-human
-description: Use when an agent needs to show a human an atext document: mint a document-bound capability link with POST /v1/present, open the returned URL for the human, print it as fallback, and optionally revoke it later. This is for USING atext, not changing server code.
+description: Use when an agent needs to show a human an folio document: mint a document-bound capability link with POST /v1/present, open the returned URL for the human, print it as fallback, and optionally revoke it later. This is for USING folio, not changing server code.
 ---
 
-# Present an atext document to a human
+# Present an folio document to a human
 
 Use this when a team document is ready for a human to read. The agent mints a
 capability URL for one pinned document version. The human opens a server-rendered
@@ -16,7 +16,7 @@ Run from a workspace with an active AWID team certificate:
 ```bash
 aw workspace status
 aw id cert show
-export ATEXT_ORIGIN=https://api.atext.ai
+export FOLIO_ORIGIN=https://folio.aweb.ai
 ```
 
 For local development, use `http://127.0.0.1:8765` instead.
@@ -24,8 +24,8 @@ For local development, use `http://127.0.0.1:8765` instead.
 ## 1. Confirm the document/version
 
 ```bash
-aw id request GET "$ATEXT_ORIGIN/v1/documents/<slug>" --team-auth --raw
-aw id request GET "$ATEXT_ORIGIN/v1/documents/<slug>/versions" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents/<slug>" --team-auth --raw
+aw id request GET "$FOLIO_ORIGIN/v1/documents/<slug>/versions" --team-auth --raw
 ```
 
 ## 2. Mint the present link
@@ -37,7 +37,7 @@ Use the document slug. `version` is optional; omit it to pin the current latest.
 cat > present.json <<'JSON'
 {"slug":"<slug>","version":1,"ttl_seconds":86400}
 JSON
-aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body-file present.json \
   | tee present-response.json
 ```
@@ -45,7 +45,7 @@ aw id request POST "$ATEXT_ORIGIN/v1/present" --team-auth --raw \
 Expected response:
 
 ```json
-{"token":"<opaque-token>","url":"https://api.atext.ai/present/<token>","expires_at":"<timestamp>"}
+{"token":"<opaque-token>","url":"https://folio.aweb.ai/present/<token>","expires_at":"<timestamp>"}
 ```
 
 ## 3. Open it for the human
@@ -67,7 +67,7 @@ printf 'Presented view: %s\n' "$PRESENT_URL"
 
 ```bash
 TOKEN=$(jq -r '.token' present-response.json)
-aw id request POST "$ATEXT_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
+aw id request POST "$FOLIO_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
 ```
 
 Expected response:

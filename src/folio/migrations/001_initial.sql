@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     PRIMARY KEY (team_id, did_key, alias)
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_agents_team_alias
+CREATE INDEX IF NOT EXISTS idx_folio_agents_team_alias
     ON {{tables.agents}}(team_id, alias);
 
 CREATE TABLE IF NOT EXISTS {{tables.documents}} (
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS {{tables.documents}} (
     UNIQUE (team_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_documents_team_updated
+CREATE INDEX IF NOT EXISTS idx_folio_documents_team_updated
     ON {{tables.documents}}(team_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS {{tables.document_versions}} (
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS {{tables.document_versions}} (
     UNIQUE (document_id, version_number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_versions_document_number
+CREATE INDEX IF NOT EXISTS idx_folio_versions_document_number
     ON {{tables.document_versions}}(document_id, version_number DESC);
 
 CREATE TABLE IF NOT EXISTS {{tables.subscriptions}} (
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS {{tables.subscriptions}} (
     last_event_id TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_subscriptions_tier
+CREATE INDEX IF NOT EXISTS idx_folio_subscriptions_tier
     ON {{tables.subscriptions}}(tier);
 
 CREATE TABLE IF NOT EXISTS {{tables.presentation_links}} (
@@ -80,9 +80,9 @@ CREATE TABLE IF NOT EXISTS {{tables.presentation_links}} (
     FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}(document_id, version_number) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_presentation_links_document
+CREATE INDEX IF NOT EXISTS idx_folio_presentation_links_document
     ON {{tables.presentation_links}}(document_id, version_number);
-CREATE INDEX IF NOT EXISTS idx_atext_presentation_links_expires
+CREATE INDEX IF NOT EXISTS idx_folio_presentation_links_expires
     ON {{tables.presentation_links}}(expires_at);
 
 CREATE TABLE IF NOT EXISTS {{tables.assets}} (
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS {{tables.assets}} (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_atext_assets_team_created
+CREATE INDEX IF NOT EXISTS idx_folio_assets_team_created
     ON {{tables.assets}}(team_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS {{tables.themes}} (

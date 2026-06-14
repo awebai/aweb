@@ -1,7 +1,7 @@
 # Built and validated with Hugo v0.160.1 extended.
-baseURL = "https://atext.ai/"
+baseURL = "https://folio.aweb.ai/"
 languageCode = "en-us"
-title = "atext"
+title = "folio"
 disableKinds = ["taxonomy", "term"]
 
 [markup]

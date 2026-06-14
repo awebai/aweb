@@ -18,15 +18,15 @@ from fastapi import HTTPException
 from nacl.signing import SigningKey
 from starlette.requests import Request
 
-from atext.auth import CachedTeamFacts, authenticate_request, raw_request_target
-from atext.config import Settings
+from folio.auth import CachedTeamFacts, authenticate_request, raw_request_target
+from folio.config import Settings
 
 AWEB_SERVER_SRC = Path(__file__).resolve().parents[1].parent / "aweb" / "server" / "src"
 if AWEB_SERVER_SRC.exists():
     sys.path.insert(0, str(AWEB_SERVER_SRC))
 
 TEAM_ID = "backend:example.com"
-PUBLIC_ORIGIN = "https://atext.example.com"
+PUBLIC_ORIGIN = "https://folio.example.com"
 
 
 def _b64url(value: bytes) -> str:
@@ -160,7 +160,7 @@ async def _make_request(
             "type": "http",
             "method": method,
             "scheme": "https",
-            "server": ("atext.example.com", 443),
+            "server": ("folio.example.com", 443),
             "path": path,
             "raw_path": raw_path if raw_path is not None else path.encode("ascii"),
             "root_path": root_path,
@@ -252,7 +252,7 @@ async def test_authenticate_v2_rejects_request_signed_for_another_path_method_or
 async def test_authenticate_v2_rejects_misconfigured_public_origin() -> None:
     request, ctx = await _make_request()
 
-    await _assert_reject(request, team_did=ctx["team_did"], public_origin="https://atext.example.com/not-an-origin")
+    await _assert_reject(request, team_did=ctx["team_did"], public_origin="https://folio.example.com/not-an-origin")
 
 
 @pytest.mark.asyncio

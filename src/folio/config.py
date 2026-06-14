@@ -7,11 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime configuration for atext."""
+    """Runtime configuration for folio."""
 
-    model_config = SettingsConfigDict(env_prefix="ATEXT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="FOLIO_", env_file=".env", extra="ignore")
 
-    database_url: str = Field(default="postgresql://localhost/atext")
+    database_url: str = Field(default="postgresql://localhost/folio")
     awid_registry_url: str = Field(default="https://api.awid.ai")
     public_origin: str = Field(default="http://127.0.0.1:8765")
     free_max_documents: int = Field(default=3, ge=1)

@@ -7,10 +7,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
-from atext.auth import AWIDTeamCache, Principal, authenticate_request
-from atext.config import Settings, get_settings
-from atext.db import ATextDatabase
-from atext.models import (
+from folio.auth import AWIDTeamCache, Principal, authenticate_request
+from folio.config import Settings, get_settings
+from folio.db import FolioDatabase
+from folio.models import (
     BillingResponse,
     CreateDocumentRequest,
     CreatePresentationRequest,
@@ -21,8 +21,8 @@ from atext.models import (
     ThemeRequest,
     ThemeResponse,
 )
-from atext.presentation import render_presented_page
-from atext.repository import (
+from folio.presentation import render_presented_page
+from folio.repository import (
     append_version,
     create_document,
     get_billing_status,
@@ -44,7 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        database = ATextDatabase(resolved)
+        database = FolioDatabase(resolved)
         await database.connect()
         holder["db"] = database
         holder["team_cache"] = AWIDTeamCache(
@@ -56,18 +56,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             await database.disconnect()
 
-    app = FastAPI(title="atext", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
 
     def db() -> AsyncDatabaseManager:
         database = holder.get("db")
-        if not isinstance(database, ATextDatabase):
-            raise RuntimeError("atext database is not initialized")
+        if not isinstance(database, FolioDatabase):
+            raise RuntimeError("folio database is not initialized")
         return database.db
 
     def team_cache() -> AWIDTeamCache:
         cache = holder.get("team_cache")
         if not isinstance(cache, AWIDTeamCache):
-            raise RuntimeError("atext auth cache is not initialized")
+            raise RuntimeError("folio auth cache is not initialized")
         return cache
 
     async def principal(
@@ -81,7 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/live")
     @app.get("/ready")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "atext"}
+        return {"status": "ok", "service": "folio"}
 
     @app.post("/v1/documents", response_model=DocumentResponse)
     async def create_document_route(

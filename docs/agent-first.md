@@ -1,6 +1,6 @@
 # Agent-first app pattern
 
-`atext` is the reference BYOT relying-party app: a small service that agents
+`folio` is the reference BYOT relying-party app: a small service that agents
 can use because they already hold an AWID team certificate. Use this repo as a
 model when the user is an agent, the customer is a team, and the app should not
 invent accounts.
@@ -8,22 +8,22 @@ invent accounts.
 Ground truth lives in code and tests. This doc points at it; do not fork the
 contract prose unless the code and SOT move first.
 
-## The five properties atext proves
+## The five properties folio proves
 
 1. **Relying party, not identity provider.** The auth surface is one
-   fail-closed verifier of AWID team certificates: `src/atext/auth.py:50-100`
-   resolves team facts, `src/atext/auth.py:176-222` binds the signed request,
-   and `src/atext/auth.py:238-301` builds the principal. There are no accounts,
+   fail-closed verifier of AWID team certificates: `src/folio/auth.py:50-100`
+   resolves team facts, `src/folio/auth.py:176-222` binds the signed request,
+   and `src/folio/auth.py:238-301` builds the principal. There are no accounts,
    OAuth flows, API keys, passwords, or sessions.
 2. **The client is the `aw` CLI the agent already has.** The README recipes at
-   `README.md:25-173` are the client contract. atext ships a server and docs;
+   `README.md:25-173` are the client contract. folio ships a server and docs;
    it ships zero client wrapper.
 3. **Team-as-customer.** The roster is teams, not app-local users. Membership
-   and revocation belong to the customer's controller and AWID registry; atext
-   checks them per request (`src/atext/auth.py:58-100`, `src/atext/auth.py:283-289`).
+   and revocation belong to the customer's controller and AWID registry; folio
+   checks them per request (`src/folio/auth.py:58-100`, `src/folio/auth.py:283-289`).
    The human appears exactly once: to pay. In v1 that payment door is absent and
    the structured 402 says subscriptions are not yet available
-   (`src/atext/repository.py:23-34`, `docs/sot.md:128-145`).
+   (`src/folio/repository.py:23-34`, `docs/sot.md:128-145`).
 4. **Validation discipline.** Unit tests cover verifier reject paths and
    byte-for-byte interop (`tests/test_auth_v2_envelope.py:208-343`). E2E tests
    use local awid-service and real `aw id` certificates, not mocked crypto
@@ -32,7 +32,7 @@ contract prose unless the code and SOT move first.
 5. **Agent-first surface.** The browser site has a plain-text twin for agents
    (`site/static/llms.txt:1-64`), terminal-first recipes, structured 401/402
    errors (`README.md:148-173`), and append-only version attribution
-   (`src/atext/repository.py:167-182`, `src/atext/repository.py:271-287`).
+   (`src/folio/repository.py:167-182`, `src/folio/repository.py:271-287`).
 
 ## Architecture in one page
 
@@ -48,30 +48,30 @@ The shape is:
   `X-AWEB-Signed-Payload` (`docs/sot.md:70-84`).
 - The service verifies the signature over the presented payload bytes, then
   independently binds the signed claims to the actual request
-  (`src/atext/auth.py:176-222`). Request binding covers method, raw path + raw
+  (`src/folio/auth.py:176-222`). Request binding covers method, raw path + raw
   query, body hash, team id, timestamp, and canonical public origin.
 - AWID is authority for team public keys and certificate revocation
-  (`docs/sot.md:45-59`). atext caches those public facts for performance
-  (`src/atext/auth.py:50-100`), but cache is not product authority.
+  (`docs/sot.md:45-59`). folio caches those public facts for performance
+  (`src/folio/auth.py:50-100`), but cache is not product authority.
 - The principal's `team_id` comes from the verified certificate, not from a
   request body. Every repository query scopes by `principal.team_id`; a body
-  field named `team_id` cannot write into another team (`src/atext/repository.py:139-203`,
+  field named `team_id` cannot write into another team (`src/folio/repository.py:139-203`,
   `tests/test_e2e_smoke.py:569-594`).
 - Attribution is stored with the version: `did_key`, optional `did_aw`, address,
-  alias, and certificate id (`src/atext/repository.py:167-182`,
-  `src/atext/repository.py:271-287`).
+  alias, and certificate id (`src/folio/repository.py:167-182`,
+  `src/folio/repository.py:271-287`).
 
 ## Repo map
 
 | File | Verdict | Why |
 | --- | --- | --- |
-| `src/atext/auth.py` | **Copy verbatim** | This is the relying-party verifier. Keep the cache, raw target, canonical audience, signature-over-presented-payload, AWID-resolved team key, revocation, and principal construction together (`src/atext/auth.py:50-301`). |
+| `src/folio/auth.py` | **Copy verbatim** | This is the relying-party verifier. Keep the cache, raw target, canonical audience, signature-over-presented-payload, AWID-resolved team key, revocation, and principal construction together (`src/folio/auth.py:50-301`). |
 | `tests/test_auth_v2_envelope.py` | **Copy + keep green** | This is the verifier spec by example: reject paths, replay negatives, raw-path/root-path parity with `aweb.team_auth_envelope`, AWID-key enforcement, revocation, and interop vectors (`tests/test_auth_v2_envelope.py:208-343`). Port it with `auth.py`. |
-| `src/atext/api.py` | **Adapt** | Keep the FastAPI dependency pattern that authenticates once and passes `Principal` into routes (`src/atext/api.py:28-65`). Replace document routes with your domain routes. Preserve same-origin health/API assumptions; deploy serves static site at `/`, API under `/v1/*`. |
-| `src/atext/config.py` | **Adapt** | Keep `public_origin`, AWID registry URL, cache TTL, and timestamp skew knobs. Replace domain caps/settings with yours. Public origin must match what clients sign. |
-| `src/atext/repository.py` | **Replace with your domain** | The team-scoping and attribution pattern is useful, but documents/versions/caps are domain code. Keep the rule: every query scopes by `principal.team_id` and writes attribute the verified member. |
-| `src/atext/models.py` | **Replace with your domain** | Pydantic shapes are atext's text/billing API. Keep structured errors and response clarity; replace resource schemas. |
-| `src/atext/migrations/` | **Replace with your domain** | Keep pgdbm migration discipline and immutable forward migrations. Replace tables unless your domain is also documents. |
+| `src/folio/api.py` | **Adapt** | Keep the FastAPI dependency pattern that authenticates once and passes `Principal` into routes (`src/folio/api.py:28-65`). Replace document routes with your domain routes. Preserve same-origin health/API assumptions; deploy serves static site at `/`, API under `/v1/*`. |
+| `src/folio/config.py` | **Adapt** | Keep `public_origin`, AWID registry URL, cache TTL, and timestamp skew knobs. Replace domain caps/settings with yours. Public origin must match what clients sign. |
+| `src/folio/repository.py` | **Replace with your domain** | The team-scoping and attribution pattern is useful, but documents/versions/caps are domain code. Keep the rule: every query scopes by `principal.team_id` and writes attribute the verified member. |
+| `src/folio/models.py` | **Replace with your domain** | Pydantic shapes are folio's text/billing API. Keep structured errors and response clarity; replace resource schemas. |
+| `src/folio/migrations/` | **Replace with your domain** | Keep pgdbm migration discipline and immutable forward migrations. Replace tables unless your domain is also documents. |
 | `tests/test_e2e_smoke.py` | **Adapt the fixture pattern** | Reuse the Docker-backed local awid-service, real `aw id` provisioning, recording proxy, revocation, fail-closed, replay-negative, and cap/error style (`tests/test_e2e_smoke.py:266-451`, `tests/test_e2e_smoke.py:597-680`). Replace endpoint assertions. |
 | `docker-compose.e2e.yml` | **Copy the shape** | Local Postgres + Redis + awid-service with DNS verification disabled for `.test` namespaces is the no-mocks harness (`docker-compose.e2e.yml:1-52`). |
 | `Makefile` | **Copy the shape** | Keep `test`, `e2e`, and site build targets (`Makefile:7-25`). Adapt ports and service names. |
@@ -100,10 +100,10 @@ The shape is:
 
 | Pitfall | What to do instead |
 | --- | --- |
-| Verifying the certificate against its own `team_did_key` field. | Resolve the team key from AWID and verify against that (`src/atext/auth.py:283-289`). The cert field is data, not authority. |
-| Using the router-normalized path. | Use raw on-the-wire path + query from ASGI `raw_path` and `query_string` (`src/atext/auth.py:149-173`). Percent encoding and query order matter. |
-| Reconstructing a payload for signature verification. | Verify the DIDKey signature over decoded `X-AWEB-Signed-Payload` bytes (`src/atext/auth.py:186-220`). Then compare claims to the request. |
-| Trusting cache past expiry when AWID is down. | Use unexpired cache only; after expiry fail closed with 503 (`src/atext/auth.py:58-87`, `tests/test_e2e_smoke.py:623-640`). |
+| Verifying the certificate against its own `team_did_key` field. | Resolve the team key from AWID and verify against that (`src/folio/auth.py:283-289`). The cert field is data, not authority. |
+| Using the router-normalized path. | Use raw on-the-wire path + query from ASGI `raw_path` and `query_string` (`src/folio/auth.py:149-173`). Percent encoding and query order matter. |
+| Reconstructing a payload for signature verification. | Verify the DIDKey signature over decoded `X-AWEB-Signed-Payload` bytes (`src/folio/auth.py:186-220`). Then compare claims to the request. |
+| Trusting cache past expiry when AWID is down. | Use unexpired cache only; after expiry fail closed with 503 (`src/folio/auth.py:58-87`, `tests/test_e2e_smoke.py:623-640`). |
 | Documenting commands that were never run verbatim. | Run each line from a fresh workspace and record the response. If setup has stop points, do not promise copy-all. |
 | Mocked crypto in e2e. | Provision real namespaces, teams, and certificates with `aw id`; send real signed requests (`tests/test_e2e_smoke.py:376-451`). |
 | A hidden fallback auth path for testing. | Do not add API keys, sessions, dashboard write paths, or trusted headers. Test the same verifier production uses. |

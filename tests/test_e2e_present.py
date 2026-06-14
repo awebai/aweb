@@ -11,27 +11,27 @@ import pytest
 from test_e2e_smoke import (
     AWWorkspace,
     E2ETeam,
-    RunningAText,
+    RunningFolio,
     _append_version,
     _assert_aw_status,
     _aw_json,
     _aw_request,
     _create_document,
     _provision_team,
-    atext,
     aw_workspace_factory,
+    folio,
 )
 
-__all__ = ["atext", "aw_workspace_factory"]
+__all__ = ["folio", "aw_workspace_factory"]
 
 pytestmark = pytest.mark.e2e
 
 
-def _mint_present(atext: RunningAText, team: E2ETeam, **payload: Any) -> dict[str, Any]:
+def _mint_present(folio: RunningFolio, team: E2ETeam, **payload: Any) -> dict[str, Any]:
     result = _aw_request(
         team,
         "POST",
-        f"{atext.origin}/v1/present",
+        f"{folio.origin}/v1/present",
         body=json.dumps(payload, separators=(",", ":")),
     )
     data = _aw_json(result, context=f"mint present link {payload}")
@@ -40,7 +40,7 @@ def _mint_present(atext: RunningAText, team: E2ETeam, **payload: Any) -> dict[st
 
 
 def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitized(
-    atext: RunningAText,
+    folio: RunningFolio,
     aw_workspace_factory: Callable[[str], AWWorkspace],
     tmp_path: Path,
 ) -> None:
@@ -48,7 +48,7 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     team_b = _provision_team(aw_workspace_factory("present-b"), alias="bob")
 
     created = _create_document(
-        atext,
+        folio,
         team_a,
         slug="pitch",
         title="Pitch",
@@ -58,14 +58,14 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     cross_team_mint = _aw_request(
         team_b,
         "POST",
-        f"{atext.origin}/v1/present",
+        f"{folio.origin}/v1/present",
         body=json.dumps({"slug": "pitch"}, separators=(",", ":")),
     )
     _assert_aw_status(cross_team_mint, 404, context="team B mints team A present link")
 
-    minted = _mint_present(atext, team_a, slug="pitch")
+    minted = _mint_present(folio, team_a, slug="pitch")
     token = minted["token"]
-    assert minted["url"] == f"{atext.origin}/present/{token}"
+    assert minted["url"] == f"{folio.origin}/present/{token}"
 
     public = httpx.get(minted["url"], timeout=10.0)
     assert public.status_code == 200, public.text
@@ -83,13 +83,13 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     assert "version_number" not in public.text
     assert "created_by" not in public.text
 
-    _append_version(atext, team_a, slug="pitch", body="# Updated\n\nSecond version", tmp_path=tmp_path)
+    _append_version(folio, team_a, slug="pitch", body="# Updated\n\nSecond version", tmp_path=tmp_path)
     still_pinned = httpx.get(minted["url"], timeout=10.0)
     assert still_pinned.status_code == 200, still_pinned.text
     assert "Original" in still_pinned.text
     assert "Second version" not in still_pinned.text
 
-    explicit_second = _mint_present(atext, team_a, slug="pitch", version=2)
+    explicit_second = _mint_present(folio, team_a, slug="pitch", version=2)
     explicit_second_page = httpx.get(explicit_second["url"], timeout=10.0)
     assert explicit_second_page.status_code == 200, explicit_second_page.text
     assert "Second version" in explicit_second_page.text
@@ -98,26 +98,26 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     missing_version = _aw_request(
         team_a,
         "POST",
-        f"{atext.origin}/v1/present",
+        f"{folio.origin}/v1/present",
         body=json.dumps({"slug": "pitch", "version": 99}, separators=(",", ":")),
     )
     _assert_aw_status(missing_version, 404, context="mint missing document version")
 
-    cross_team_revoke = _aw_request(team_b, "POST", f"{atext.origin}/v1/present/{token}/revoke")
+    cross_team_revoke = _aw_request(team_b, "POST", f"{folio.origin}/v1/present/{token}/revoke")
     _assert_aw_status(cross_team_revoke, 404, context="team B revokes team A present link")
     assert httpx.get(minted["url"], timeout=10.0).status_code == 200
 
-    revoke = _aw_request(team_a, "POST", f"{atext.origin}/v1/present/{token}/revoke")
+    revoke = _aw_request(team_a, "POST", f"{folio.origin}/v1/present/{token}/revoke")
     assert _aw_json(revoke, context="revoke present link") == {"revoked": True}
     revoked = httpx.get(minted["url"], timeout=10.0)
     assert revoked.status_code == 404, revoked.text
     assert team_a.team_id not in revoked.text
     assert str(created["document_id"]) not in revoked.text
 
-    short_lived = _mint_present(atext, team_a, slug="pitch", ttl_seconds=1)
+    short_lived = _mint_present(folio, team_a, slug="pitch", ttl_seconds=1)
     time.sleep(1.2)
     expired = httpx.get(short_lived["url"], timeout=10.0)
     assert expired.status_code == 404, expired.text
 
-    bogus = httpx.get(f"{atext.origin}/present/not-a-real-token", timeout=10.0)
+    bogus = httpx.get(f"{folio.origin}/present/not-a-real-token", timeout=10.0)
     assert bogus.status_code == 404, bogus.text
