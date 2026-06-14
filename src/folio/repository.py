@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -408,7 +409,7 @@ async def revoke_presentation_link(
 async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
     row = await db.fetch_one(
         """
-        SELECT v.body, p.expires_at, t.tokens, t.logo_asset_id, t.header, t.footer
+        SELECT v.body, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer
         FROM {{tables.presentation_links}} p
         JOIN {{tables.document_versions}} v
           ON v.document_id = p.document_id AND v.version_number = p.version_number
@@ -420,10 +421,12 @@ async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dic
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
+    body = str(row["body"])
     return {
-        "body": row["body"],
+        "body": body,
         "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
+        "allowed_asset_ids": await _allowed_asset_ids_for_body(db, team_id=str(row["team_id"]), body=body),
     }
 
 
@@ -462,10 +465,11 @@ def _asset_response(row: Any) -> dict[str, Any]:
     return {"bytes": bytes(data["bytes"]), "content_type": data["content_type"]}
 
 
-_SAFE_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+_SAFE_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+_ASSET_REFERENCE_RE = re.compile(r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
 
 
-def _logo_magic_matches(payload: bytes, content_type: str) -> bool:
+def _image_magic_matches(payload: bytes, content_type: str) -> bool:
     if content_type == "image/png":
         return payload.startswith(b"\x89PNG\r\n\x1a\n")
     if content_type == "image/jpeg":
@@ -477,21 +481,73 @@ def _logo_magic_matches(payload: bytes, content_type: str) -> bool:
     return False
 
 
-def _decode_logo(logo: Any) -> tuple[bytes, str]:
-    content_type = str(logo.content_type).strip().lower()
-    if content_type not in _SAFE_LOGO_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail="Logo content_type must be image/png, image/jpeg, image/gif, or image/webp")
+def _decode_image_asset(image: Any, *, label: str = "Image") -> tuple[bytes, str]:
+    content_type = str(image.content_type).strip().lower()
+    if content_type not in _SAFE_IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"{label} content_type must be image/png, image/jpeg, image/gif, or image/webp")
     try:
-        payload = base64.b64decode(str(logo.data_base64), validate=True)
+        payload = base64.b64decode(str(image.data_base64), validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Logo data_base64 must be valid base64") from exc
+        raise HTTPException(status_code=400, detail=f"{label} data_base64 must be valid base64") from exc
     if not payload:
-        raise HTTPException(status_code=400, detail="Logo must not be empty")
+        raise HTTPException(status_code=400, detail=f"{label} must not be empty")
     if len(payload) > 256 * 1024:
-        raise HTTPException(status_code=400, detail="Logo must be <= 256 KiB")
-    if not _logo_magic_matches(payload, content_type):
-        raise HTTPException(status_code=400, detail="Logo bytes must match content_type")
+        raise HTTPException(status_code=400, detail=f"{label} must be <= 256 KiB")
+    if not _image_magic_matches(payload, content_type):
+        raise HTTPException(status_code=400, detail=f"{label} bytes must match content_type")
     return payload, content_type
+
+
+def _decode_logo(logo: Any) -> tuple[bytes, str]:
+    return _decode_image_asset(logo, label="Logo")
+
+
+def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
+    asset_ids: set[UUID] = set()
+    for match in _ASSET_REFERENCE_RE.finditer(body):
+        try:
+            asset_ids.add(UUID(match.group(1)))
+        except ValueError:
+            continue
+    return asset_ids
+
+
+async def _allowed_asset_ids_for_body(db: AsyncDatabaseManager, *, team_id: str, body: str) -> set[UUID]:
+    referenced = _asset_ids_referenced_by_body(body)
+    if not referenced:
+        return set()
+    rows = await db.fetch_all(
+        "SELECT asset_id FROM {{tables.assets}} WHERE team_id = $1 AND asset_id = ANY($2::uuid[])",
+        team_id,
+        list(referenced),
+    )
+    return {row["asset_id"] for row in rows}
+
+
+async def upload_image_asset(
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    settings: Settings,
+    image: Any,
+) -> dict[str, Any]:
+    payload, content_type = _decode_image_asset(image, label="Image")
+    asset_id = uuid4()
+    await db.execute(
+        """
+        INSERT INTO {{tables.assets}} (asset_id, team_id, bytes, content_type)
+        VALUES ($1, $2, $3, $4)
+        """,
+        asset_id,
+        principal.team_id,
+        payload,
+        content_type,
+    )
+    return {
+        "asset_id": asset_id,
+        "url": f"{settings.public_origin.rstrip('/')}/assets/{asset_id}",
+        "content_type": content_type,
+    }
 
 
 async def get_theme(

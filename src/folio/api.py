@@ -17,6 +17,8 @@ from folio.models import (
     DocumentResponse,
     DocumentSummary,
     DocumentVersion,
+    ImageAssetResponse,
+    ImageAssetUploadRequest,
     PresentationResponse,
     ThemeRequest,
     ThemeResponse,
@@ -34,6 +36,7 @@ from folio.repository import (
     list_versions,
     mint_presentation_link,
     revoke_presentation_link,
+    upload_image_asset,
     upsert_theme,
 )
 
@@ -167,6 +170,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await revoke_presentation_link(database, principal=actor, token=token)
         return {"revoked": True}
 
+    @app.post("/v1/assets", response_model=ImageAssetResponse)
+    async def upload_asset_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = ImageAssetUploadRequest.model_validate(await request.json())
+        return await upload_image_asset(database, principal=actor, settings=resolved, image=payload)
+
     @app.get("/v1/theme", response_model=ThemeResponse)
     async def get_theme_route(
         actor: Annotated[Principal, Depends(principal)],
@@ -213,7 +225,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         theme = presented.get("theme")
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
-        return HTMLResponse(render_presented_page(body=str(presented["body"]), theme=theme))
+        return HTMLResponse(
+            render_presented_page(
+                body=str(presented["body"]),
+                theme=theme,
+                public_origin=resolved.public_origin,
+                allowed_asset_ids=presented.get("allowed_asset_ids"),
+            )
+        )
 
     return app
 

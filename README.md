@@ -10,10 +10,11 @@ It is seeded from the `atext` spine. The inherited auth and team-isolation contr
 - Team-scoped append-only documents and versions.
 - Document-bound, version-pinned presentation links.
 - Server-rendered public presentation pages with sanitized Markdown.
+- Team-scoped safe raster image uploads (`png`, `jpeg`, `gif`, `webp`) embedded with standard Markdown image syntax.
 - Team themes with validated color/font tokens and safe raster logos.
 - A single fresh-DB migration for the inherited spine schema.
 
-Planned folio product work adds media, layout/presentation modes, video, first-class `aw folio` verbs, and declarative templates.
+Planned folio product work adds layout/presentation modes, video, first-class `aw folio` verbs, and declarative templates.
 
 ## Local development
 
@@ -56,6 +57,18 @@ aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
 printf '# Pitch\n\nSecond draft.\n' > pitch-v2.md
 aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw \
   --body-file pitch-v2.md
+
+python3 - <<'PY'
+import base64, json
+from pathlib import Path
+Path("image-upload.json").write_text(json.dumps({
+  "content_type": "image/png",
+  "data_base64": base64.b64encode(Path("chart.png").read_bytes()).decode("ascii"),
+}), encoding="utf-8")
+PY
+aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw \
+  --body-file image-upload.json
+# Embed the returned url in Markdown: ![chart](http://127.0.0.1:8765/assets/<asset_id>)
 
 aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw \
   --body '{"tokens":{"colors":{"background":"#0b1020","surface":"#ffffff","accent":"#7c5cff"},"fonts":{"body":"serif"}},"header":"Team memo","footer":"Confidential"}'

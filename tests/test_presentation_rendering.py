@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 from folio.presentation import (
     render_presented_markdown,
@@ -21,6 +22,48 @@ def test_render_presented_markdown_sanitizes_untrusted_html() -> None:
     assert "alert(" not in html
     assert "<img" not in html.lower()
     assert "onerror" not in html.lower()
+
+
+def test_render_presented_markdown_allows_only_our_origin_allowed_asset_images() -> None:
+    safe_id = UUID("11111111-1111-4111-8111-111111111111")
+    other_id = UUID("22222222-2222-4222-8222-222222222222")
+    html = render_presented_markdown(
+        "\n".join(
+            [
+                f"![safe alt](https://folio.aweb.ai/assets/{safe_id})",
+                f"![relative ok](/assets/{safe_id})",
+                f"![other team](https://folio.aweb.ai/assets/{other_id})",
+                "![external](https://example.com/image.png)",
+                "![data](data:image/png;base64,AAAA)",
+                "![javascript](javascript:alert(1))",
+                "![svg](https://folio.aweb.ai/assets/not-a-uuid.svg)",
+                '<img src="https://folio.aweb.ai/assets/11111111-1111-4111-8111-111111111111" onerror="alert(9)">',
+            ]
+        ),
+        public_origin="https://folio.aweb.ai",
+        allowed_asset_ids={safe_id},
+    )
+
+    assert html.count("<img") == 3
+    assert f'src="https://folio.aweb.ai/assets/{safe_id}"' in html
+    assert f'src="/assets/{safe_id}"' in html
+    assert "safe alt" in html
+    assert "relative ok" in html
+    assert "onerror" not in html.lower()
+    assert "alert(" not in html
+    assert str(other_id) not in html
+    assert "example.com" not in html
+    assert "data:image" not in html
+    assert "javascript:" not in html.lower()
+    assert ".svg" not in html.lower()
+
+
+def test_render_presented_markdown_without_asset_context_strips_images() -> None:
+    safe_id = UUID("11111111-1111-4111-8111-111111111111")
+    html = render_presented_markdown(f"![safe](https://folio.aweb.ai/assets/{safe_id})")
+
+    assert "<img" not in html.lower()
+    assert str(safe_id) not in html
 
 
 def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> None:
@@ -48,7 +91,7 @@ def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> Non
         "fonts": {"body": "serif"},
     }
 
-    html = render_presented_page(body="# Safe", theme=theme)
+    html = render_presented_page(body="# Safe", theme=theme, public_origin="https://folio.aweb.ai")
     style = html.split("</style>", 1)[0]
     assert "--bg: #001122;" in style
     assert "--accent: rgb(1, 2, 3);" in style

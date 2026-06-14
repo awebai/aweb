@@ -62,11 +62,21 @@ class PresentationResponse(BaseModel):
     expires_at: datetime
 
 
-class ThemeLogoInput(BaseModel):
+class ImageAssetUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     content_type: str = Field(..., min_length=1, max_length=100)
     data_base64: str = Field(..., min_length=1)
+
+
+class ImageAssetResponse(BaseModel):
+    asset_id: UUID
+    url: str
+    content_type: str
+
+
+class ThemeLogoInput(ImageAssetUploadRequest):
+    pass
 
 
 class ThemeRequest(BaseModel):
