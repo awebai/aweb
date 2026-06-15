@@ -102,6 +102,41 @@ service ships its endpoints and its verbs together, keeping the core CLI lean.)
   capability links — an investor pitch must never be googleable).
 - aweb.ai links to `folio.aweb.ai` as a hub; `folio` builds its own authority.
 
+### 6. Editable present links (human edit)
+
+An agent can mint an **editable** present link so its human can edit the document
+— a write-capable capability link, distinct from the read-only present link.
+
+- **Mint** (cert-auth): `POST /v1/present {slug, editable: true, ttl_seconds?}` →
+  an edit-capable token. Read links omit `editable`. The capability lives in the
+  token (server-authoritative); a read token cannot be escalated to edit via a URL
+  arg.
+- **Surface**: `GET /present/<token>` renders the **editor** if the token is
+  edit-capable (with a view/preview toggle), else the read-only rendered page.
+  Same URL, capability-driven.
+- **Editing is append-only.** A save appends a new document version (the spine is
+  append-only) — history is preserved; an edit can never destroy prior versions.
+- **Concurrency — optimistic, version-based (NOT real-time co-editing).** The
+  editor loads with the current `version_number`. On save
+  (`POST /present/<token>/edit {body, base_version}`) the server requires
+  `base_version == latest`; if stale → **409**, returning the latest body+version
+  for the human to reconcile; else it appends and returns the new version. No
+  silent overwrite.
+- **Seeing the latest** — the editor polls `GET /present/<token>/state` (latest
+  version_number) every few seconds; a newer version surfaces a "reload" prompt
+  (warned if there are unsaved edits). Several humans on several machines each edit
+  via their own link, save deliberately, and all converge on the latest version.
+- **Attribution** — the editor optionally captures a display name ("editing as
+  ___"); the appended version records it as a human-via-link edit. No login or
+  identity — just a label, consistent with the no-accounts stance.
+- **Editor UI** — a minimal first-party editor (markdown textarea + live preview +
+  Save + conflict/refresh), served as our own nonce-gated JS **only on
+  edit-capable pages**; read pages stay minimal. The edit API enforces the token
+  capability server-side; never trust the client.
+- **Trust + limits** — an edit token is scoped write to ONE document, agent-minted
+  (the agent explicitly allows its human to edit), TTL-bound, revocable. Rendered
+  content stays sanitized. Edit rate-limiting is a follow-up.
+
 ## Authority & privacy
 
 - Same as atext: AWID authoritative for identity; cert-auth; team isolation is
@@ -122,7 +157,10 @@ service ships its endpoints and its verbs together, keeping the core CLI lean.)
 ## Non-goals (v1)
 
 - No human accounts / passwords / OAuth — same agent-first stance as atext.
-- No real-time collaboration / OT / CRDT — append-only versions.
+- No real-time character-level co-editing (CRDT/OT/websockets). Editable links
+  (section 6) use append-only versions with optimistic, version-based concurrency
+  (409-on-stale) and latest-version polling — the wiki/Git model, not live
+  simultaneous typing.
 - No public document discovery / feed — capability-link only.
 - No arbitrary HTML/JS from teams on the public page — all inputs declarative +
   validated; the only JS is our fixed, nonce-gated fullscreen control.
@@ -154,3 +192,8 @@ service ships its endpoints and its verbs together, keeping the core CLI lean.)
 - **M6 — templates:** built-in declarative layouts.
 - **M7 — surfaces:** human + agent landing, llms.txt/skills, `noindex`,
   aweb.ai hub link.
+- **M8 — editable links:** edit-capable present tokens (`editable:true`), the
+  editor surface (first-party nonce-gated JS, edit pages only), append-only edit
+  API with optimistic version-based concurrency (409-on-stale) + `/state` polling,
+  optional editor-name attribution, TTL/revoke. Independent of M3/M4 — builds on
+  the present-link + document spine.
