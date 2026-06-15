@@ -1,19 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class DeclarativeTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=80)
+    slots: dict[str, Any] = Field(default_factory=dict)
+
+
 class CreateDocumentRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=160, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
     title: str = Field(..., min_length=1, max_length=240)
-    body: str = ""
+    body: str | None = None
+    template: DeclarativeTemplateRequest | None = None
 
 
 class AppendVersionRequest(BaseModel):
     body: str
+
+
+class AppendTemplateVersionRequest(DeclarativeTemplateRequest):
+    pass
 
 
 class DocumentSummary(BaseModel):

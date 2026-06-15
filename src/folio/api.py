@@ -13,6 +13,7 @@ from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
 from folio.db import FolioDatabase
 from folio.models import (
+    AppendTemplateVersionRequest,
     AssetMetadataResponse,
     BillingResponse,
     CreateDocumentRequest,
@@ -65,6 +66,7 @@ from folio.surfaces import (
     robots_txt,
     skills_index,
 )
+from folio.templates import render_declarative_template
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -158,13 +160,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = CreateDocumentRequest.model_validate(await request.json())
+        has_body = "body" in payload.model_fields_set
+        has_template = "template" in payload.model_fields_set
+        if has_body == has_template:
+            raise HTTPException(status_code=422, detail="Provide exactly one of body or template")
+        if has_template:
+            if payload.template is None:
+                raise HTTPException(status_code=422, detail="template must be an object")
+            body = render_declarative_template(payload.template.model_dump())
+        else:
+            if payload.body is None:
+                raise HTTPException(status_code=422, detail="body must be a string")
+            body = payload.body
         return await create_document(
             database,
             principal=actor,
             settings=resolved,
             slug=payload.slug,
             title=payload.title,
-            body=payload.body,
+            body=body,
         )
 
     @app.get("/v1/documents", response_model=list[DocumentSummary])
@@ -193,6 +207,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = (await request.body()).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
+        return await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+
+    @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
+    async def append_template_version_route(
+        slug: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = AppendTemplateVersionRequest.model_validate(await request.json())
+        body = render_declarative_template(payload.model_dump())
         return await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
 
     @app.get("/v1/billing", response_model=BillingResponse)
