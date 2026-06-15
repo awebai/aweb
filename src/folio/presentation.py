@@ -935,9 +935,7 @@ def render_editor_page(
       background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
       box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
       padding: clamp(24px, 4vw, 48px);
-      border-top: 2px solid transparent; transition: border-top-color 0.2s ease;
     }}
-    .pane-preview .surface.is-draft {{ border-top-color: var(--accent); }}
     .eyebrow {{ color: var(--muted); font-size: 0.8rem; margin: 0 0 20px; letter-spacing: 0.02em; }}
     .brand-logo {{ display: block; max-height: 64px; max-width: min(220px, 100%); object-fit: contain; margin: 0 0 20px; }}
     .theme-header, .theme-footer {{ color: var(--muted); white-space: pre-wrap; }}
@@ -996,7 +994,6 @@ def render_editor_page(
     const INITIAL = {initial_json};
     const bodyEl = document.getElementById('body');
     const previewEl = document.getElementById('preview');
-    const previewCard = document.getElementById('preview-card');
     const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
     const nameEl = document.getElementById('editor-name');
@@ -1009,25 +1006,23 @@ def render_editor_page(
     bodyEl.value = INITIAL.body;
     nameEl.value = window.localStorage.getItem('folio.editorName') || '';
 
-    function renderLivePreview() {{
-      previewEl.replaceChildren();
-      const blocks = bodyEl.value.split(/\\n{{2,}}/).filter((block) => block.trim().length > 0);
-      for (const block of blocks) {{
-        const trimmed = block.trimStart();
-        let el;
-        if (trimmed.startsWith('### ')) {{ el = document.createElement('h3'); el.textContent = trimmed.slice(4); }}
-        else if (trimmed.startsWith('## ')) {{ el = document.createElement('h2'); el.textContent = trimmed.slice(3); }}
-        else if (trimmed.startsWith('# ')) {{ el = document.createElement('h1'); el.textContent = trimmed.slice(2); }}
-        else if (/^[-*] /.test(trimmed)) {{
-          el = document.createElement('ul');
-          for (const line of block.split(/\\n/)) {{
-            const text = line.trim().replace(/^[-*] /, '');
-            if (line.trim()) {{ const li = document.createElement('li'); li.textContent = text; el.appendChild(li); }}
-          }}
-        }}
-        else {{ el = document.createElement('p'); el.textContent = block; }}
-        previewEl.appendChild(el);
-      }}
+    let previewTimer = null;
+    let previewSeq = 0;
+    async function refreshPreview() {{
+      const seq = ++previewSeq;
+      try {{
+        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/preview', {{
+          method: 'POST',
+          headers: {{'content-type': 'application/json'}},
+          body: JSON.stringify({{body: bodyEl.value}})
+        }});
+        if (!response.ok || seq !== previewSeq) return;
+        previewEl.innerHTML = await response.text();
+      }} catch (err) {{ /* keep the last good preview */ }}
+    }}
+    function schedulePreview() {{
+      if (previewTimer) clearTimeout(previewTimer);
+      previewTimer = setTimeout(refreshPreview, 350);
     }}
 
     function updateSaveButton() {{
@@ -1045,12 +1040,11 @@ def render_editor_page(
 
     function markDirty() {{
       if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
-      previewCard.classList.add('is-draft');
-      eyebrowEl.textContent = 'Unsaved draft — save to render fully';
+      eyebrowEl.textContent = 'Draft · unsaved';
       updateSaveButton();
     }}
 
-    bodyEl.addEventListener('input', () => {{ markDirty(); renderLivePreview(); }});
+    bodyEl.addEventListener('input', () => {{ markDirty(); schedulePreview(); }});
     nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
 
     async function save() {{
@@ -1080,10 +1074,10 @@ def render_editor_page(
       baseVersion = payload.version_number;
       dirty = false; conflict = false;
       document.title = baseTitle;
-      previewCard.classList.remove('is-draft');
-      eyebrowEl.textContent = 'Version ' + baseVersion + ' — saved';
+      eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
       setStatus('Saved version ' + baseVersion, null);
       updateSaveButton();
+      refreshPreview();
     }}
 
     saveBtn.addEventListener('click', save);
@@ -1103,7 +1097,7 @@ def render_editor_page(
       panePreview.classList.toggle('is-active', !editing);
       tabEdit.setAttribute('aria-selected', String(editing));
       tabPreview.setAttribute('aria-selected', String(!editing));
-      if (!editing) renderLivePreview();
+      if (!editing) refreshPreview();
     }}
     tabEdit.addEventListener('click', () => activate(true));
     tabPreview.addEventListener('click', () => activate(false));
