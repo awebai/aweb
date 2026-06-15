@@ -75,5 +75,4 @@ Source of truth:
 - docs/sot.md
 - README.md
 - docs/spine-sot.md
-- https://github.com/awebai/folio
 - aweb.ai hub: https://aweb.ai
