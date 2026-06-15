@@ -23,6 +23,7 @@ RUN python -m pip install --upgrade pip \
       "markdown>=3.8.2" \
       "nh3>=0.3.2" \
       "pgdbm==0.4.1" \
+      "pyjwt[crypto]>=2.10.1" \
       "pydantic>=2.11.7" \
       "pydantic-settings>=2.10.1" \
       "pynacl>=1.6.2" \

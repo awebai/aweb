@@ -1,3 +1,4 @@
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -21,20 +22,25 @@ from folio.models import (
     DocumentVersion,
     ImageAssetResponse,
     ImageAssetUploadRequest,
+    PresentationEditRequest,
+    PresentationEditResponse,
     PresentationResponse,
+    PresentationStateResponse,
     ThemeRequest,
     ThemeResponse,
     VideoDirectUploadRequest,
     VideoDirectUploadResponse,
 )
-from folio.presentation import render_presented_page
+from folio.presentation import render_editor_page, render_presented_page
 from folio.repository import (
     append_version,
     create_document,
     create_video_direct_upload,
+    edit_presented_document,
     get_asset_metadata,
     get_billing_status,
     get_document,
+    get_presentation_state,
     get_presented_document,
     get_public_asset,
     get_theme,
@@ -212,6 +218,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             slug=payload.slug,
             version=payload.version,
             ttl_seconds=payload.ttl_seconds,
+            editable=payload.editable,
         )
 
     @app.post("/v1/present/{token}/revoke")
@@ -314,6 +321,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/present/{token}/state", response_model=PresentationStateResponse)
+    async def presentation_state_route(
+        token: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_presentation_state(database, token=token)
+
+    @app.post("/present/{token}/edit", response_model=PresentationEditResponse)
+    async def presentation_edit_route(
+        token: str,
+        request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = PresentationEditRequest.model_validate(await request.json())
+        return await edit_presented_document(
+            database,
+            token=token,
+            settings=resolved,
+            body=payload.body,
+            base_version=payload.base_version,
+            editor_name=payload.editor_name,
+        )
+
     @app.get("/present/{token}", response_class=HTMLResponse)
     async def present_route(
         token: str,
@@ -323,6 +353,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         theme = presented.get("theme")
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
+        if bool(presented.get("editable")):
+            nonce = secrets.token_urlsafe(16)
+            return HTMLResponse(
+                render_editor_page(
+                    token=token,
+                    body=str(presented["body"]),
+                    version_number=int(presented["version_number"]),
+                    theme=theme,
+                    public_origin=resolved.public_origin,
+                    asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+                    nonce=nonce,
+                ),
+                headers={
+                    "Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'",
+                },
+            )
         return HTMLResponse(
             render_presented_page(
                 body=str(presented["body"]),
@@ -330,7 +376,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 public_origin=resolved.public_origin,
                 asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
             ),
-            headers={"X-Robots-Tag": USER_CONTENT_ROBOTS_HEADER},
         )
 
     return app

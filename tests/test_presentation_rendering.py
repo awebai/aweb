@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import folio.api as folio_api
 from folio.presentation import (
+    render_editor_page,
     render_presented_markdown,
     render_presented_page,
     sanitize_theme_tokens,
@@ -161,10 +162,29 @@ def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> Non
     assert "<img class=\"brand-logo\" src=\"/assets/logo-id\"" in html
 
 
-def test_repo_has_single_initial_migration() -> None:
+def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
+    html = render_editor_page(
+        token="tok</script><script>alert(1)</script>",
+        body="# Hi\n\n</script><script>alert(2)</script>",
+        version_number=7,
+        nonce="nonce-123",
+    )
+
+    assert '<meta name="robots" content="noindex,nofollow,noarchive">' in html
+    assert '<script nonce="nonce-123">' in html
+    assert "tok<\\/script><script>alert(1)<\\/script>" in html
+    assert "<script>alert(1)</script>" not in html
+    assert "<script>alert(2)</script>" not in html
+    assert '"version_number":7' in html
+
+
+def test_repo_migrations_are_ordered() -> None:
     migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
 
-    assert [migration.name for migration in migrations] == ["001_initial.sql"]
+    assert [migration.name for migration in migrations] == [
+        "001_initial.sql",
+        "002_editable_present_links.sql",
+    ]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
@@ -199,5 +219,22 @@ def test_initial_migration_presentation_links_are_document_version_bound() -> No
     assert "created_by_did_aw TEXT" in migration
     assert "created_by_alias TEXT NOT NULL" in migration
     assert "certificate_id TEXT NOT NULL" in migration
+    assert "editable BOOLEAN" not in migration
+    assert "created_by_editor_name TEXT" not in migration
     assert "FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}" in migration
     assert "arti" + "fact" not in migration.lower()
+
+
+def test_editable_present_links_forward_migration_adds_edit_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "folio"
+        / "migrations"
+        / "002_editable_present_links.sql"
+    ).read_text()
+
+    assert "ALTER TABLE {{tables.document_versions}}" in migration
+    assert "ADD COLUMN IF NOT EXISTS created_by_editor_name TEXT" in migration
+    assert "ALTER TABLE {{tables.presentation_links}}" in migration
+    assert "ADD COLUMN IF NOT EXISTS editable BOOLEAN NOT NULL DEFAULT FALSE" in migration

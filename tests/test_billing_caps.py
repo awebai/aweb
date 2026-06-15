@@ -100,6 +100,7 @@ class FakeDB:
                     "created_by_address": None,
                     "created_by_alias": "alice",
                     "certificate_id": "cert-1",
+                    "created_by_editor_name": None,
                     "created_at": datetime.now(UTC),
                 }
             ]
@@ -124,6 +125,7 @@ class FakeDB:
             "created_by_address": None,
             "created_by_alias": "alice",
             "certificate_id": "cert-1",
+            "created_by_editor_name": None,
             "version_created_at": now,
         }
 
