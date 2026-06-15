@@ -34,9 +34,6 @@ Homepage = "https://github.com/awebai/folio"
 Repository = "https://github.com/awebai/folio"
 Issues = "https://github.com/awebai/folio/issues"
 
-[project.scripts]
-folio = "folio.cli:main"
-aw-folio = "folio.cli:main"
 
 [build-system]
 requires = ["hatchling"]

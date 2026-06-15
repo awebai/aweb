@@ -77,21 +77,28 @@ earns its place here.
   future safety-gated maybe. This is where templates actually ship — not in
   the minimal reference.
 
-### 4. First-class `aw` CLI verbs
+### 4. Current agent usage — generic `aw id request --team-auth`
 
-So agents stop hand-rolling `aw id request … --raw --body`:
+Current folio usage is the generic AWID-authenticated request path documented in
+`README.md`, `/llms.txt`, and `/skills/`:
 
 ```
-aw folio create <slug> --title … --body-file …
-aw folio version <slug> --body-file …
-aw folio theme set … / aw folio theme logo <file>
-aw folio upload <file>            # image/video -> asset id
-aw folio show <slug> [--ttl 1d]   # mint + return (and optionally open) the link
-aw folio revoke <token>
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body-file create.json
+aw id request POST "$FOLIO_ORIGIN/v1/documents/<slug>/versions" --team-auth --raw --body-file body.md
+aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw --body-file image-upload.json
+aw id request POST "$FOLIO_ORIGIN/v1/assets/video/direct-upload" --team-auth --raw --body-file video-upload.json
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw --body-file present.json
+aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
 ```
 
-(Open: built-in subcommands vs a plugin/registry model — leaning plugin so a
-service ships its endpoints and its verbs together, keeping the core CLI lean.)
+`aw folio ...` verbs are **not** current product surface. They are deferred to a
+future aw plugin track because folio is a private repo and a Python console
+script is not distributable as an aw-native verb. The plan is
+[`docs/aw-plugin-brief.md`](aw-plugin-brief.md): add an `aw` external-binary
+plugin mechanism, then ship `aw-folio` separately as the reference anapp plugin.
+Until that lands, agents use `aw id request --team-auth` plus folio's skills and
+`/llms.txt`.
 
 ### 5. Surfaces (human + agent)
 
@@ -173,7 +180,7 @@ An agent can mint an **editable** present link so its human can edit the documen
    v1: fork, under the auth-spine-tracks-atext rule; revisit extraction.
 2. **Video infra** — confirmed direction Cloudflare Stream (+ R2/Images);
    settle transcoding presets, size/length limits, signed-URL TTLs, cost.
-3. **`aw` verbs** — built-in vs plugin/registry.
+3. **`aw` plugin verbs** — deferred; implement via the external-binary plugin plan in [`docs/aw-plugin-brief.md`](aw-plugin-brief.md), not via a private-repo Python console script.
 4. **Present-link controls** — view analytics, "who opened it", single-view or
    first-view expiry — product candidates, deferred.
 5. **Billing** — adopt atext's caps/Stripe pattern; when?
@@ -188,7 +195,7 @@ An agent can mint an **editable** present link so its human can edit the documen
   print + contrast.
 - **M4 — video:** Cloudflare Stream integration — upload/transcode/embed/render
   + signed playback.
-- **M5 — CLI:** `aw folio` verbs.
+- **M5 — current usage + deferred plugin plan:** generic `aw id request --team-auth` is the current documented path; `aw folio` verbs move to the future aw-plugin track in [`docs/aw-plugin-brief.md`](aw-plugin-brief.md).
 - **M6 — templates:** built-in declarative layouts.
 - **M7 — surfaces:** human + agent landing, llms.txt/skills, `noindex`,
   aweb.ai hub link.

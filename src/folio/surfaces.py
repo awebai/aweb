@@ -109,25 +109,18 @@ Origin:
 - Production: {origin}
 - Local development: http://127.0.0.1:8765
 
-Core commands:
+Core commands use the aw-native signed request path:
 ```bash
 export FOLIO_ORIGIN={origin}
-folio create pitch --title "Pitch" --body-file pitch.md
-folio version pitch --body-file pitch-v2.md
-folio upload chart.png
-folio upload demo.mp4 --max-duration 600
-folio theme set --background '#0b1020' --accent '#7c5cff' --body-font serif
-folio show pitch --ttl 1d --open
-folio revoke <token>
-```
-
-Raw aw equivalent:
-```bash
 aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body '{{"slug":"pitch","title":"Pitch","body":"# Pitch"}}'
 aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body '{{"slug":"deck","title":"Deck","template":{{"name":"pitch","slots":{{"cover":{{"title":"Deck"}},"sections":[]}}}}}}'
 aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw --body-file pitch-v2.md
 aw id request POST "$FOLIO_ORIGIN/v1/documents/deck/versions/template" --team-auth --raw --body '{{"name":"memo","slots":{{"cover":{{"title":"Deck v2"}},"sections":[]}}}}'
+aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw --body-file image-upload.json
+aw id request POST "$FOLIO_ORIGIN/v1/assets/video/direct-upload" --team-auth --raw --body '{{"content_type":"video/mp4","max_duration_seconds":600}}'
+aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
 aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw --body '{{"slug":"pitch","ttl_seconds":86400}}'
+aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
 ```
 
 Declarative templates:

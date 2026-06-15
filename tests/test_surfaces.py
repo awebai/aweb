@@ -52,6 +52,8 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "cover fields: title (required), subtitle, eyebrow" in response.text
     assert "metrics item fields: label (required), value (required), caption" in response.text
     assert "https://github.com/awebai/folio" not in response.text
+    assert "folio create" not in response.text
+    assert "aw-folio" not in response.text
 
 
 def test_skills_surface_serves_index_and_individual_skills() -> None:
@@ -81,6 +83,16 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
     missing = client.get("/skills/../../README.md")
     assert missing.status_code == 404
+
+
+def test_served_skills_do_not_reference_removed_python_cli() -> None:
+    client = _client()
+    forbidden = ("folio create", "folio version", "folio upload", "folio theme", "folio show", "folio revoke", "aw-folio")
+    for name in surfaces.skill_names():
+        response = client.get(f"/skills/{name}/SKILL.md")
+        assert response.status_code == 200
+        for needle in forbidden:
+            assert needle not in response.text
 
 
 def test_skill_index_falls_back_to_container_skills_for_installed_package_layout(monkeypatch, tmp_path) -> None:
