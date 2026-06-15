@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS {{tables.document_versions}} (
     created_by_address TEXT,
     created_by_alias TEXT NOT NULL,
     certificate_id TEXT NOT NULL,
+    created_by_editor_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (document_id, version_number)
 );
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS {{tables.presentation_links}} (
     created_by_did_aw TEXT,
     created_by_alias TEXT NOT NULL,
     certificate_id TEXT NOT NULL,
+    editable BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}(document_id, version_number) ON DELETE CASCADE
 );
 

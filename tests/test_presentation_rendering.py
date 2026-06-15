@@ -178,13 +178,10 @@ def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
     assert '"version_number":7' in html
 
 
-def test_repo_migrations_are_ordered() -> None:
+def test_repo_has_single_initial_migration() -> None:
     migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
 
-    assert [migration.name for migration in migrations] == [
-        "001_initial.sql",
-        "002_editable_present_links.sql",
-    ]
+    assert [migration.name for migration in migrations] == ["001_initial.sql"]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
@@ -219,22 +216,7 @@ def test_initial_migration_presentation_links_are_document_version_bound() -> No
     assert "created_by_did_aw TEXT" in migration
     assert "created_by_alias TEXT NOT NULL" in migration
     assert "certificate_id TEXT NOT NULL" in migration
-    assert "editable BOOLEAN" not in migration
-    assert "created_by_editor_name TEXT" not in migration
+    assert "editable BOOLEAN NOT NULL DEFAULT FALSE" in migration
+    assert "created_by_editor_name TEXT" in migration
     assert "FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}" in migration
     assert "arti" + "fact" not in migration.lower()
-
-
-def test_editable_present_links_forward_migration_adds_edit_columns() -> None:
-    migration = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "folio"
-        / "migrations"
-        / "002_editable_present_links.sql"
-    ).read_text()
-
-    assert "ALTER TABLE {{tables.document_versions}}" in migration
-    assert "ADD COLUMN IF NOT EXISTS created_by_editor_name TEXT" in migration
-    assert "ALTER TABLE {{tables.presentation_links}}" in migration
-    assert "ADD COLUMN IF NOT EXISTS editable BOOLEAN NOT NULL DEFAULT FALSE" in migration
