@@ -29,6 +29,7 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert "private document and presentation service" in response.text
     assert "AWID team certificate" in response.text
     assert "https://aweb.ai" in response.text
+    assert "https://github.com/awebai/folio" not in response.text
     assert 'href="/llms.txt"' in response.text
     assert 'href="/skills/"' in response.text
 
@@ -42,6 +43,7 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "GET /present/{token}" in response.text
     assert "GET /skills/present-to-human/SKILL.md" in response.text
     assert "Cloudflare Stream" in response.text
+    assert "https://github.com/awebai/folio" not in response.text
 
 
 def test_skills_surface_serves_index_and_individual_skills() -> None:
@@ -60,6 +62,26 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
     missing = client.get("/skills/../../README.md")
     assert missing.status_code == 404
+
+
+def test_skill_index_falls_back_to_container_skills_for_installed_package_layout(monkeypatch, tmp_path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fake_site_packages = tmp_path / "site-packages" / "folio"
+    fake_site_packages.mkdir(parents=True)
+    monkeypatch.delenv("FOLIO_SKILLS_DIR", raising=False)
+    monkeypatch.setattr(surfaces, "_SKILLS_DIR", fake_site_packages / "skills")
+    monkeypatch.setattr(surfaces, "_CONTAINER_SKILLS_DIR", repo_root / "skills")
+
+    assert surfaces.skill_names() == [
+        "agent-first-app",
+        "byot-e2e-validation",
+        "present-to-human",
+        "set-theme",
+        "team-cert-verification",
+    ]
+    index = surfaces.skills_index()
+    assert "GET /skills/agent-first-app/SKILL.md" in index
+    assert "GET /skills/team-cert-verification/SKILL.md" in index
 
 
 def test_skill_surface_rejects_symlink_escapes(monkeypatch, tmp_path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from html import escape
 from pathlib import Path
@@ -9,6 +10,18 @@ USER_CONTENT_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_DIR = _REPO_ROOT / "skills"
+_CONTAINER_SKILLS_DIR = Path("/app/skills")
+
+
+def _skills_dir() -> Path:
+    configured = os.environ.get("FOLIO_SKILLS_DIR")
+    if configured:
+        return Path(configured)
+    if _SKILLS_DIR.is_dir():
+        return _SKILLS_DIR
+    if _CONTAINER_SKILLS_DIR.is_dir():
+        return _CONTAINER_SKILLS_DIR
+    return _SKILLS_DIR
 
 
 def render_landing_page(*, public_origin: str) -> str:
@@ -49,7 +62,6 @@ def render_landing_page(*, public_origin: str) -> str:
         <a href="/llms.txt">llms.txt</a>
         <a href="/skills/">agent skills</a>
         <a href="https://aweb.ai">aweb.ai hub</a>
-        <a href="https://github.com/awebai/folio">source</a>
       </div>
     </nav>
   </header>
@@ -160,7 +172,6 @@ Source of truth:
 - docs/sot.md
 - README.md
 - docs/spine-sot.md
-- https://github.com/awebai/folio
 - aweb.ai hub: https://aweb.ai
 """
 
@@ -175,8 +186,9 @@ Disallow: /assets/
 def _skill_path_if_safe(name: str) -> Path | None:
     if _SKILL_NAME.fullmatch(name) is None:
         return None
-    root = _SKILLS_DIR.resolve()
-    candidate = _SKILLS_DIR / name / "SKILL.md"
+    skills_dir = _skills_dir()
+    root = skills_dir.resolve()
+    candidate = skills_dir / name / "SKILL.md"
     path = candidate.resolve()
     if (
         candidate.is_symlink()
@@ -190,7 +202,7 @@ def _skill_path_if_safe(name: str) -> Path | None:
 
 
 def skill_names() -> list[str]:
-    root = _SKILLS_DIR.resolve()
+    root = _skills_dir().resolve()
     if not root.is_dir():
         return []
     names = []
