@@ -82,9 +82,18 @@ export FOLIO_ORIGIN=http://127.0.0.1:8765
 aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
   --body '{"slug":"pitch","title":"Pitch","body":"# Pitch\n\nInitial draft."}'
 
+cat > pitch-template.json <<'JSON'
+{"slug":"pitch-deck","title":"Pitch deck","template":{"name":"pitch","slots":{"cover":{"title":"Pitch deck","subtitle":"Agent-authored"},"metrics":[{"label":"Teams","value":"12","caption":"pilot workspaces"}],"sections":[{"heading":"Problem","body":"Agents need durable handoffs."}],"ask":{"headline":"Ask","body":"Approve launch.","items":["Ship folio"]}}}}
+JSON
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
+  --body-file pitch-template.json
+
 printf '# Pitch\n\nSecond draft.\n' > pitch-v2.md
 aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw \
   --body-file pitch-v2.md
+
+aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch-deck/versions/template" --team-auth --raw \
+  --body '{"name":"memo","slots":{"cover":{"title":"Memo update"},"sections":[{"heading":"Status","body":"Template slots render to Markdown."}]}}'
 
 python3 - <<'PY'
 import base64, json
