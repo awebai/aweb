@@ -5,6 +5,17 @@
 > is declarative data we render server-side — the agent picks from a FIXED,
 > ALLOWLISTED vocabulary mapped to fixed server-controlled CSS classes; never
 > arbitrary HTML/CSS/float/style.
+>
+> **VIDEO SUPERSEDED BY M4.** The `:::video` directive and its agent-supplied
+> `cloudflarestream.com/.../iframe` URL described below were NOT implemented. M4
+> shipped a stronger model: video is an uploaded asset referenced like an image
+> (`![alt](/assets/<video-uuid>)`); the server resolves it to a Cloudflare Stream
+> playback URL and injects a fixed, sandboxed `<figure class="folio-video"><iframe
+> sandbox=…></iframe></figure>` **after** nh3. `iframe` is deliberately **not** in
+> the nh3 allowlist, so callers can never author an iframe or supply a stream URL.
+> See `_replace_video_markdown` / `_video_iframe_html` in `presentation.py`. M3
+> implements only the **image** vocabulary (`:::media`, `:::gallery`, bare-image
+> auto-wrap); the video parts below are retained for history only.
 
 ## A. Vocabulary
 
@@ -72,12 +83,14 @@ auto-wrapped by the preprocessor into `folio-full-width` (caption from alt only 
 you choose; prefer no caption for bare images). Non-asset `img` src stays as-is and
 nh3 strips it.
 
-**nh3 additions** — `_ALLOWED_TAGS` += `figure, figcaption, img, iframe`;
-`_ALLOWED_ATTRIBUTES`: `figure:{class}`, `img:{src,alt,class,loading,width,height,fetchpriority}`,
-`iframe:{src,class,allow,allowfullscreen,loading,title}`. The img-src allowlist from
-M2 still applies (our-origin /assets/{uuid}, team-owned); the iframe-src allowlist is
-the Cloudflare Stream pattern only. Classes are safe because only the preprocessor
-emits them.
+**nh3 additions (as shipped)** — `_ALLOWED_TAGS` += `figure, figcaption, div`
+(for image figures + gallery grid); **`iframe` is NOT added** — M4 injects its
+trusted video iframe after sanitization, so callers can never author one.
+`_ALLOWED_ATTRIBUTES`: `figure:{class}`, `div:{class}`,
+`img:{src,alt,title,class,loading,width,height,fetchpriority}`. The img-src allowlist
+from M2 still applies (our-origin /assets/{uuid}, team-owned). The `attribute_filter`
+also strips any `class` token that is not `folio-*`, so classes carry no arbitrary
+styling even when authored in raw HTML.
 
 ## C. CSS (essentials)
 
