@@ -1,144 +1,61 @@
-# folio — agent-first text sharing
+# folio — agent-first document and presentation service
 
-folio stores team-scoped plain-text/Markdown documents with append-only versions. Agents authenticate with an AWID team certificate on every team-scoped request. A valid certificate is the login; every write is attributed to the verified team member.
+folio is a private, agent-first document and presentation service for AWID teams.
+Agents authenticate with an AWID team certificate using aw id request --team-auth.
+There are no app-local accounts, passwords, OAuth sessions, public document listings, or user-content feeds.
 
-Use the aw CLI (>= 1.26.17):
+Origin:
+- Production: https://folio.aweb.ai
+- Local development: http://127.0.0.1:8765
 
+Core commands:
 ```bash
 export FOLIO_ORIGIN=https://folio.aweb.ai
-aw id request <METHOD> "$FOLIO_ORIGIN<path>" --team-auth --raw [--body ... | --body-file ...]
+aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body '{"slug":"pitch","title":"Pitch","body":"# Pitch"}'
+aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw --body-file pitch-v2.md
+aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw --body '{"slug":"pitch","ttl_seconds":86400}'
 ```
 
-Local development origin:
+Team-auth endpoints:
+- POST /v1/documents — JSON {slug,title,body}
+- GET /v1/documents — list team documents
+- GET /v1/documents/{slug} — current version
+- GET /v1/documents/{slug}/versions — version metadata
+- POST /v1/documents/{slug}/versions — raw UTF-8 Markdown body
+- POST /v1/assets — upload safe raster image bytes
+- POST /v1/assets/video/direct-upload — create Cloudflare Stream direct upload
+- GET /v1/assets/{asset_id} — poll team-scoped image/video asset metadata
+- GET /v1/theme, PUT /v1/theme — team presentation theme
+- POST /v1/present — mint read-only capability link
+- POST /v1/present/{token}/revoke — revoke a team-owned link
+- GET /v1/billing — current v1 caps and usage
 
-```bash
-export FOLIO_ORIGIN=http://127.0.0.1:8765
-```
+Public endpoints:
+- GET / — human landing page
+- GET /llms.txt — this agent-readable entrypoint
+- GET /skills/ — skill index
+- GET /skills/present-to-human/SKILL.md — mint/open/revoke present links
+- GET /skills/set-theme/SKILL.md — brand presentation pages
+- GET /skills/team-cert-verification/SKILL.md — verifier checklist
+- GET /present/{token} — server-rendered capability page for a pinned version
+- GET /assets/{asset_id} — public media bytes reachable only from capability pages
+- GET /robots.txt — crawler policy for user-content paths
 
-## Create and edit documents
+Privacy/noindex policy:
+- All user content is capability-link private and noindex: /present/* and /assets/* responses include X-Robots-Tag: noindex, nofollow, noarchive.
+- /present/* pages also include <meta name="robots" content="noindex,nofollow,noarchive">.
+- robots.txt disallows /present/ and /assets/.
 
-Create is JSON:
+Important invariants:
+- AWID is authority for team keys, certificates, and revocation.
+- Every document, asset, theme, and present-link mutation is scoped to the verified certificate team_id.
+- Versions are append-only; edits create new versions.
+- Team-supplied Markdown is sanitized. Raw iframes are stripped; Cloudflare Stream iframes are generated only by the server for ready video assets.
+- folio stores server-readable text and media metadata. Do not call it end-to-end encrypted.
 
-```bash
-cat > handoff-create.json <<'JSON'
-{"slug":"handoff","title":"Handoff","body":"Initial handoff text."}
-JSON
-aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
-  --body-file handoff-create.json
-```
-
-Append is raw UTF-8 text, not JSON:
-
-```bash
-printf 'Second handoff version.\n' > handoff-v2.md
-aw id request POST "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \
-  --body-file handoff-v2.md
-```
-
-Read/list:
-
-```bash
-aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff" --team-auth --raw
-aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw
-aw id request GET "$FOLIO_ORIGIN/v1/documents" --team-auth --raw
-```
-
-## Present a document to a human
-
-Mint a capability link for a pinned document version:
-
-```bash
-cat > present.json <<'JSON'
-{"slug":"handoff","version":2,"ttl_seconds":86400}
-JSON
-aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
-  --body-file present.json \
-  | tee present-response.json
-```
-
-Response:
-
-```json
-{"token":"<opaque-token>","url":"https://folio.aweb.ai/present/<token>","expires_at":"<timestamp>"}
-```
-
-Open the returned URL for the human and print it as fallback:
-
-```bash
-PRESENT_URL=$(jq -r '.url' present-response.json)
-if command -v open >/dev/null 2>&1; then open "$PRESENT_URL" || true;
-elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$PRESENT_URL" || true;
-fi
-printf 'Presented view: %s\n' "$PRESENT_URL"
-```
-
-Revoke:
-
-```bash
-TOKEN=$(jq -r '.token' present-response.json)
-aw id request POST "$FOLIO_ORIGIN/v1/present/$TOKEN/revoke" --team-auth --raw
-```
-
-Public `GET /present/{token}` returns server-rendered themed HTML for the pinned version. Unknown, expired, or revoked tokens return 404.
-
-## Set a team theme
-
-Read:
-
-```bash
-aw id request GET "$FOLIO_ORIGIN/v1/theme" --team-auth --raw
-```
-
-Set colors/fonts/header/footer and optionally a base64 raster logo. Logo content types: `image/png`, `image/jpeg`, `image/gif`, `image/webp`.
-
-```bash
-python3 - <<'PY'
-import base64, json
-from pathlib import Path
-payload = {
-  "tokens": {
-    "colors": {"background":"#fffaf0","surface":"#ffffff","text":"#17201a","accent":"#246b49"},
-    "fonts": {"body":"system","heading":"serif"}
-  },
-  "header": "Presented by the Example team",
-  "footer": "Shared by capability link"
-}
-logo = Path("logo.png")
-if logo.exists():
-    payload["logo"] = {"content_type":"image/png", "data_base64": base64.b64encode(logo.read_bytes()).decode("ascii")}
-Path("theme.json").write_text(json.dumps(payload), encoding="utf-8")
-PY
-aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
-```
-
-## Billing status
-
-```bash
-aw id request GET "$FOLIO_ORIGIN/v1/billing" --team-auth --raw
-```
-
-Free tier defaults: 3 documents, 50 versions per document. Cap writes return structured 402. Reads and version history continue. Stripe checkout/portal/webhooks are v2 scope.
-
-## Endpoints
-
-Team-scoped cert-auth:
-
-- `POST /v1/documents` — JSON `{slug,title,body}`.
-- `GET /v1/documents` — list team documents.
-- `GET /v1/documents/{slug}` — current version.
-- `GET /v1/documents/{slug}/versions` — version metadata.
-- `POST /v1/documents/{slug}/versions` — raw UTF-8 text body.
-- `POST /v1/present` — JSON `{slug, version?, ttl_seconds?}` -> `{token,url,expires_at}`.
-- `POST /v1/present/{token}/revoke` — revoke a team-owned link -> `{"revoked":true}`.
-- `GET /v1/theme`, `PUT /v1/theme` — team presentation theme.
-- `GET /v1/billing` — tier, caps, usage.
-
-Public:
-
-- `GET /present/{token}` — server-rendered themed HTML; invalid/expired/revoked -> 404.
-- `/live`, `/ready`, `/health` — ops.
-
-Errors: 401 verification failed, 400 invalid UTF-8/theme logo, 402 free-tier cap, 404 absent/not-your-team/invalid token, 409 duplicate slug, 422 request validation.
-
-Docs: https://folio.aweb.ai/docs/tutorial/ and https://folio.aweb.ai/docs/errors/
-Source: https://github.com/awebai/folio
+Source of truth:
+- docs/sot.md
+- README.md
+- docs/spine-sot.md
+- https://github.com/awebai/folio
+- aweb.ai hub: https://aweb.ai
