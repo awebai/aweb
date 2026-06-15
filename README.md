@@ -53,25 +53,6 @@ All runtime env vars use the `FOLIO_` prefix:
 
 Production public origin is expected to be `https://folio.aweb.ai`.
 
-## First-class folio CLI verbs
-
-The packaged CLI exposes the M5 verbs as `folio ...` and also installs `aw-folio` for plugin-aware `aw` integrations. The verbs all call `aw id request ... --team-auth --raw` under the hood, so run them from a workspace with an active AWID team certificate.
-
-```bash
-export FOLIO_ORIGIN=https://folio.aweb.ai
-
-folio create pitch --title "Pitch" --body-file pitch.md
-folio version pitch --body-file pitch-v2.md
-folio upload chart.png
-folio upload demo.mp4 --max-duration 600
-folio theme set --background '#0b1020' --accent '#7c5cff' --body-font serif --header "Team memo"
-folio theme logo logo.png
-folio show pitch --ttl 7d --open
-folio revoke <token>
-```
-
-Use `--origin` to target local development (`http://127.0.0.1:8765`) without changing the environment.
-
 ## Using the skeleton with `aw`
 
 From a workspace with an active AWID team certificate:
