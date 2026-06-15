@@ -294,18 +294,42 @@ def sanitize_theme_tokens(tokens: Any) -> dict[str, dict[str, str]]:
     return sanitized
 
 
+def _is_opaque_color(value: str) -> bool:
+    """True only for a fully opaque color whose contrast we can evaluate.
+
+    Transparent keywords and any alpha-bearing form (8-digit hex, rgba()/hsla())
+    are rejected so transparency can never slip an invisible color past the gate.
+    """
+    candidate = value.strip().lower()
+    if candidate == "transparent":
+        return False
+    if _HEX_COLOR_RE.fullmatch(candidate):
+        return len(candidate) != 9  # reject #RRGGBBAA
+    match = _RGB_COLOR_RE.fullmatch(candidate)
+    if match:
+        return len([part for part in match.group(1).split(",")]) == 3  # reject rgba()
+    return candidate in _NAMED_COLOR_RGB
+
+
 def theme_contrast_error(tokens: Any) -> str | None:
     """Reject a theme whose body text would fail WCAG AA against its surface.
 
     Colors fall back to the palette of the chosen scheme, so a default theme
-    always passes and only an explicit unreadable override is flagged.
+    always passes and only an explicit unreadable override is flagged. Text and
+    surface must be fully opaque: a transparent or alpha-bearing value fails the
+    gate closed rather than slipping invisible text through.
     """
     colors = sanitize_theme_tokens(tokens).get("colors", {})
     palette = _DARK_PALETTE if sanitize_layout_tokens(tokens)["color_scheme"] == "dark" else _LIGHT_PALETTE
     text = colors.get("text") or palette["--text"]
     surface = colors.get("surface") or palette["--surface"]
+    for label, value in (("text", text), ("surface", surface)):
+        if not _is_opaque_color(value):
+            return f"Theme {label} color must be a fully opaque color so contrast can be verified."
     ratio = contrast_ratio(text, surface)
-    if ratio is not None and ratio < _WCAG_AA_NORMAL:
+    if ratio is None:
+        return "Theme text/surface colors could not be evaluated for contrast."
+    if ratio < _WCAG_AA_NORMAL:
         return f"Theme text/surface contrast {ratio:.2f}:1 is below the WCAG AA minimum of {_WCAG_AA_NORMAL}:1."
     return None
 

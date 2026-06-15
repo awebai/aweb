@@ -343,6 +343,48 @@ def test_theme_contrast_error_flags_unreadable_text_on_surface() -> None:
     assert "contrast" in error.lower()
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["transparent", "rgba(0, 0, 0, 0)", "#00000000"],
+)
+def test_theme_contrast_error_fails_closed_on_transparent_text(value: str) -> None:
+    # Transparent / alpha-bearing text must NOT slip past the gate as readable.
+    error = theme_contrast_error({"colors": {"text": value, "surface": "#ffffff"}})
+    assert error is not None
+    assert "opaque" in error.lower()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["transparent", "rgba(255, 255, 255, 0)", "#ffffff00"],
+)
+def test_theme_contrast_error_fails_closed_on_transparent_surface(value: str) -> None:
+    error = theme_contrast_error({"colors": {"text": "#111827", "surface": value}})
+    assert error is not None
+    assert "opaque" in error.lower()
+
+
+def test_theme_contrast_error_allows_opaque_eight_digit_free_colors() -> None:
+    assert theme_contrast_error({"colors": {"text": "rgb(17, 24, 39)", "surface": "white"}}) is None
+
+
+def test_put_theme_rejects_transparent_or_alpha_contrast_bypass() -> None:
+    app = folio_api.create_app()
+    theme_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/theme" and "PUT" in getattr(route, "methods", set())
+    )
+    for dependency in theme_route.dependant.dependencies:
+        if getattr(dependency.call, "__name__", "") in {"db", "principal"}:
+            app.dependency_overrides[dependency.call] = lambda: object()
+    client = TestClient(app)
+
+    for value in ("transparent", "rgba(0, 0, 0, 0)", "#00000000"):
+        response = client.put("/v1/theme", json={"tokens": {"colors": {"text": value, "surface": "#ffffff"}}})
+        assert response.status_code == 422, (value, response.text)
+
+
 _MEDIA_A = UUID("11111111-1111-4111-8111-111111111111")
 _MEDIA_B = UUID("22222222-2222-4222-8222-222222222222")
 _ORIGIN = "https://folio.aweb.ai"
