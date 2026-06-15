@@ -31,7 +31,13 @@ from folio.models import (
     VideoDirectUploadRequest,
     VideoDirectUploadResponse,
 )
-from folio.presentation import render_editor_page, render_presented_page
+from folio.presentation import (
+    content_security_policy,
+    render_editor_page,
+    render_presented_page,
+    sanitize_layout_tokens,
+    theme_contrast_error,
+)
 from folio.repository import (
     append_version,
     create_document,
@@ -295,6 +301,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = ThemeRequest.model_validate(await request.json())
+        contrast_error = theme_contrast_error(payload.tokens)
+        if contrast_error is not None:
+            raise HTTPException(status_code=422, detail=contrast_error)
         return await upsert_theme(
             database,
             principal=actor,
@@ -369,13 +378,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'",
                 },
             )
+        nonce = secrets.token_urlsafe(16)
+        mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)["mode"]
         return HTMLResponse(
             render_presented_page(
                 body=str(presented["body"]),
                 theme=theme,
                 public_origin=resolved.public_origin,
                 asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+                nonce=nonce,
             ),
+            headers={
+                "Content-Security-Policy": content_security_policy(
+                    mode=mode, nonce=nonce, stream_host=resolved.cloudflare_stream_playback_host
+                ),
+            },
         )
 
     return app

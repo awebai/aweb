@@ -3,14 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
 from folio.presentation import (
+    content_security_policy,
+    contrast_ratio,
     render_editor_page,
     render_presented_markdown,
     render_presented_page,
+    sanitize_layout_tokens,
     sanitize_theme_tokens,
+    theme_contrast_error,
 )
 
 
@@ -176,6 +181,268 @@ def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
     assert "<script>alert(1)</script>" not in html
     assert "<script>alert(2)</script>" not in html
     assert '"version_number":7' in html
+
+
+def test_sanitize_layout_tokens_defaults_when_absent() -> None:
+    default = {"mode": "document", "measure": "default", "color_scheme": "light"}
+    assert sanitize_layout_tokens({}) == default
+    assert sanitize_layout_tokens(None) == default
+    assert sanitize_layout_tokens({"layout": "not-a-dict"}) == default
+
+
+def test_sanitize_layout_tokens_accepts_valid_enums() -> None:
+    assert sanitize_layout_tokens(
+        {"layout": {"mode": "presentation", "measure": "wide", "color_scheme": "dark"}}
+    ) == {"mode": "presentation", "measure": "wide", "color_scheme": "dark"}
+
+
+def test_sanitize_layout_tokens_normalizes_case_and_whitespace() -> None:
+    assert sanitize_layout_tokens(
+        {"layout": {"mode": "  Presentation ", "measure": "WIDE", "color_scheme": "Auto"}}
+    ) == {"mode": "presentation", "measure": "wide", "color_scheme": "auto"}
+
+
+def test_sanitize_layout_tokens_rejects_unknown_values() -> None:
+    assert sanitize_layout_tokens(
+        {"layout": {"mode": "presentation; } body { display: none } .x {", "measure": "enormous", "color_scheme": 42}}
+    ) == {"mode": "document", "measure": "default", "color_scheme": "light"}
+
+
+def test_sanitize_theme_tokens_preserves_valid_layout_subset() -> None:
+    sanitized = sanitize_theme_tokens(
+        {"layout": {"mode": "presentation", "measure": "bogus", "color_scheme": "dark"}}
+    )
+    assert sanitized == {"layout": {"mode": "presentation", "color_scheme": "dark"}}
+
+
+def test_sanitize_theme_tokens_omits_layout_when_no_valid_values() -> None:
+    assert sanitize_theme_tokens({"layout": {"mode": "bogus"}}) == {}
+
+
+def test_render_presented_page_defaults_to_document_layout_light() -> None:
+    html = render_presented_page(body="# Hi")
+    assert 'class="folio-layout-document folio-measure-default"' in html
+    assert '<meta name="color-scheme" content="light">' in html
+    style = html.split("</style>", 1)[0]
+    assert "color-scheme: light;" in style
+    assert "--bg: #f8fafc;" in style
+    assert "--measure: 68ch;" in style
+    assert "max-width: var(--measure)" in style
+
+
+def test_render_presented_page_presentation_wide_dark() -> None:
+    theme = {"tokens": {"layout": {"mode": "presentation", "measure": "wide", "color_scheme": "dark"}}}
+    html = render_presented_page(body="# Hi", theme=theme)
+    assert 'class="folio-layout-presentation folio-measure-wide"' in html
+    assert '<meta name="color-scheme" content="dark">' in html
+    style = html.split("</style>", 1)[0]
+    assert "color-scheme: dark;" in style
+    assert "--bg: #0b1220;" in style
+    assert ".folio-layout-presentation {" in style
+    assert "--measure: 1400px;" in style
+
+
+def test_render_presented_page_auto_color_scheme_emits_dark_media_query() -> None:
+    theme = {"tokens": {"layout": {"color_scheme": "auto"}}}
+    html = render_presented_page(body="# Hi", theme=theme)
+    assert '<meta name="color-scheme" content="light dark">' in html
+    style = html.split("</style>", 1)[0]
+    assert "color-scheme: light dark;" in style
+    assert "@media (prefers-color-scheme: dark)" in style
+    assert "--bg: #0b1220;" in style
+
+
+def test_render_presented_page_layout_tokens_cannot_escape() -> None:
+    theme = {
+        "tokens": {
+            "layout": {"mode": "presentation; } body { display: none } .x {", "measure": "enormous", "color_scheme": "neon"}
+        }
+    }
+    html = render_presented_page(body="# Hi", theme=theme)
+    assert 'class="folio-layout-document folio-measure-default"' in html
+    assert "presentation; } body { display: none } .x {" not in html
+    assert "enormous" not in html
+
+
+def test_presentation_mode_emits_nonce_gated_fullscreen_script() -> None:
+    theme = {"tokens": {"layout": {"mode": "presentation"}}}
+    html = render_presented_page(body="# Hi", theme=theme, nonce="testnonce123")
+    assert '<script nonce="testnonce123">' in html
+    assert "requestFullscreen" in html
+    assert 'class="folio-fullscreen"' in html
+
+
+def test_document_mode_is_script_free() -> None:
+    html = render_presented_page(body="# Hi", nonce="testnonce123")
+    assert "<script" not in html.lower()
+    assert "requestfullscreen" not in html.lower()
+    assert 'id="folio-fullscreen"' not in html
+
+
+def test_presentation_without_nonce_stays_script_free() -> None:
+    theme = {"tokens": {"layout": {"mode": "presentation"}}}
+    assert "<script" not in render_presented_page(body="# Hi", theme=theme).lower()
+
+
+def test_content_security_policy_document_mode_forbids_script() -> None:
+    csp = content_security_policy(mode="document", nonce="abc", stream_host="customer-example.cloudflarestream.com")
+    assert "script-src 'none'" in csp
+    assert "nonce-abc" not in csp
+    assert "frame-src https://customer-example.cloudflarestream.com" in csp
+
+
+def test_content_security_policy_presentation_mode_uses_nonce() -> None:
+    csp = content_security_policy(mode="presentation", nonce="abc", stream_host="customer-example.cloudflarestream.com")
+    assert "script-src 'nonce-abc'" in csp
+    assert "default-src 'none'" in csp
+
+
+def test_present_route_sets_content_security_policy(monkeypatch) -> None:
+    app = folio_api.create_app()
+    present_route = next(route for route in app.routes if getattr(route, "path", None) == "/present/{token}")
+    db_dependency = present_route.dependant.dependencies[0].call
+    app.dependency_overrides[db_dependency] = lambda: object()
+
+    async def fake_get_presented_document(_database, *, token: str) -> dict:
+        return {"body": "# Private", "theme": None, "allowed_assets": {}}
+
+    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    response = TestClient(app).get("/present/secret-token")
+
+    assert response.status_code == 200
+    csp = response.headers["content-security-policy"]
+    assert "script-src 'none'" in csp
+    assert "default-src 'none'" in csp
+
+
+def test_render_presented_page_has_print_stylesheet() -> None:
+    style = render_presented_page(body="# Hi").split("</style>", 1)[0]
+    assert "@media print" in style
+
+
+def test_contrast_ratio_black_on_white_is_maximal() -> None:
+    assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0, abs=0.1)
+
+
+def test_contrast_ratio_returns_none_for_unparseable() -> None:
+    assert contrast_ratio("transparent", "#ffffff") is None
+    assert contrast_ratio("not-a-color", "#ffffff") is None
+
+
+def test_theme_contrast_error_passes_readable_pair() -> None:
+    assert theme_contrast_error({"colors": {"text": "#111827", "surface": "#ffffff"}}) is None
+
+
+def test_theme_contrast_error_passes_when_only_background_set() -> None:
+    assert theme_contrast_error({"colors": {"background": "#001122", "surface": "#ffffff"}}) is None
+
+
+def test_theme_contrast_error_flags_unreadable_text_on_surface() -> None:
+    error = theme_contrast_error({"colors": {"surface": "#111827"}})
+    assert error is not None
+    assert "contrast" in error.lower()
+
+
+_MEDIA_A = UUID("11111111-1111-4111-8111-111111111111")
+_MEDIA_B = UUID("22222222-2222-4222-8222-222222222222")
+_ORIGIN = "https://folio.aweb.ai"
+
+
+def _render_media(body: str) -> str:
+    return render_presented_markdown(body, public_origin=_ORIGIN, allowed_asset_ids={_MEDIA_A, _MEDIA_B})
+
+
+def test_media_directive_emits_allowlisted_figure() -> None:
+    html = _render_media(
+        "\n".join(
+            [
+                ":::media",
+                f"src: /assets/{_MEDIA_A}",
+                "alt: A line graph of weekly active users",
+                "placement: wrap-right",
+                "size: w-third",
+                "caption: WAU growth, Q1 2026",
+                ":::",
+            ]
+        )
+    )
+    assert '<figure class="folio-media folio-wrap-right folio-w-third">' in html
+    assert f'src="/assets/{_MEDIA_A}"' in html
+    assert 'alt="A line graph of weekly active users"' in html
+    assert "<figcaption>WAU growth, Q1 2026</figcaption>" in html
+
+
+def test_media_directive_with_invalid_src_is_dropped() -> None:
+    html = _render_media("\n".join([":::media", "src: https://evil.example.com/x.png", "alt: x", ":::"]))
+    assert "<figure" not in html
+    assert "evil.example.com" not in html
+
+
+def test_media_directive_invalid_placement_and_size_fall_back() -> None:
+    html = _render_media(
+        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "placement: diagonal", "size: enormous", ":::"])
+    )
+    assert '<figure class="folio-media folio-block">' in html
+
+
+def test_media_full_width_ignores_size() -> None:
+    html = _render_media(
+        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "placement: full-width", "size: w-half", ":::"])
+    )
+    assert '<figure class="folio-media folio-full-width">' in html
+    assert "folio-w-half" not in html
+
+
+def test_gallery_directive_drops_bad_items_per_item() -> None:
+    html = _render_media(
+        "\n".join(
+            [
+                ":::gallery",
+                "placement: gallery-2",
+                f'- /assets/{_MEDIA_A} "First"',
+                '- /assets/not-a-uuid "Bad"',
+                f'- /assets/{_MEDIA_B} "Second"',
+                ":::",
+            ]
+        )
+    )
+    assert '<figure class="folio-media folio-gallery-2">' in html
+    assert '<div class="folio-gallery-grid">' in html
+    assert html.count('class="folio-gallery-item"') == 2
+    assert 'alt="First"' in html
+    assert 'alt="Second"' in html
+
+
+def test_bare_asset_image_auto_wraps_to_full_width() -> None:
+    html = _render_media(f"![a chart of revenue](/assets/{_MEDIA_A})")
+    assert '<figure class="folio-media folio-full-width">' in html
+    assert 'alt="a chart of revenue"' in html
+
+
+def test_first_media_block_gets_fetchpriority_rest_lazy() -> None:
+    html = _render_media(f"![first](/assets/{_MEDIA_A})\n\n![second](/assets/{_MEDIA_B})")
+    assert html.count('fetchpriority="high"') == 1
+    assert 'loading="lazy"' in html
+    assert html.index('fetchpriority="high"') < html.index('loading="lazy"')
+
+
+def test_media_caption_with_tags_is_escaped() -> None:
+    html = _render_media(
+        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "caption: <script>alert(1)</script>", ":::"])
+    )
+    assert "<script" not in html.lower()
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_media_figures_never_admit_an_iframe() -> None:
+    html = _render_media('<figure class="folio-full-bleed"><iframe src="https://evil.example/frame"></iframe></figure>')
+    assert "<iframe" not in html
+    assert "evil.example" not in html
+
+
+def test_raw_figure_cannot_inject_non_folio_class() -> None:
+    html = _render_media('<figure class="evil-class folio-full-bleed">text</figure>')
+    assert "evil-class" not in html
 
 
 def test_repo_has_single_initial_migration() -> None:
