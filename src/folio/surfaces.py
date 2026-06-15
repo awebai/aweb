@@ -62,6 +62,7 @@ def render_landing_page(*, public_origin: str) -> str:
         <a href="/llms.txt">llms.txt</a>
         <a href="/skills/">agent skills</a>
         <a href="https://aweb.ai">aweb.ai hub</a>
+        <a href="https://awid.ai">AWID</a>
       </div>
     </nav>
   </header>
@@ -69,7 +70,7 @@ def render_landing_page(*, public_origin: str) -> str:
     <section class="hero">
       <p class="eyebrow">Private capability links for human browser moments</p>
       <h1>folio is a private document and presentation service for AWID teams.</h1>
-      <p class="lede">Agents authenticate with an AWID team certificate, write append-only Markdown documents, brand them with a team theme, embed safe media, and mint no-login presentation links for humans.</p>
+      <p class="lede">Agents authenticate with an <a href="https://awid.ai">AWID team certificate</a>, write append-only Markdown documents, brand them with a team theme, embed safe media, and mint no-login presentation links for humans.</p>
     </section>
     <section class="grid" aria-label="What folio does">
       <article class="card"><h2>Agent-first API</h2><p>No app accounts, passwords, or OAuth. Use <code>aw id request --team-auth</code>; the certificate is the login.</p></article>
@@ -87,7 +88,7 @@ aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
     </section>
   </main>
   <footer>
-    <p>folio is part of the <a href="https://aweb.ai">aweb.ai</a> agent-first app hub. Public docs are indexable; team documents, media assets, and present pages are not.</p>
+    <p>folio is an aweb anapp on the <a href="https://aweb.ai">aweb.ai</a> hub. <a href="https://awid.ai">AWID</a> is the identity authority. Public docs are indexable; team documents, media assets, and present pages are not.</p>
   </footer>
 </body>
 </html>"""
@@ -98,7 +99,10 @@ def llms_txt(*, public_origin: str) -> str:
     return f"""# folio — agent-first document and presentation service
 
 folio is a private, agent-first document and presentation service for AWID teams.
+This is an aweb anapp: an agent-native app published by convention for the aweb.ai hub index.
 Agents authenticate with an AWID team certificate using aw id request --team-auth.
+AWID is the identity authority: https://awid.ai
+Aweb anapp hub: https://aweb.ai
 There are no app-local accounts, passwords, OAuth sessions, public document listings, or user-content feeds.
 
 Origin:
@@ -127,8 +131,16 @@ aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw --body '{{"slug"
 ```
 
 Declarative templates:
-- Built-ins: `pitch` (cover, metrics, sections, ask), `memo` (cover, sections), `metrics` (cover, metrics).
 - Template slots are schema-validated and rendered to ordinary Markdown before storage; presentation falls back to the same themed Markdown renderer.
+- pitch slots: cover, metrics, sections, ask
+- memo slots: cover, sections
+- metrics slots: cover, metrics
+- cover fields: title (required), subtitle, eyebrow
+- metrics item fields: label (required), value (required), caption
+- sections item fields: heading (required), body
+- ask fields: headline, body, items (array of strings)
+- Create docs with JSON: {{"slug":"deck","title":"Deck","template":{{"name":"pitch","slots":{{"cover":{{"title":"Deck"}},"metrics":[{{"label":"Metric","value":"Value","caption":"Note"}}],"sections":[{{"heading":"Problem","body":"Markdown body"}}],"ask":{{"headline":"Ask","body":"Approve launch","items":["Ship"]}}}}}}}}
+- Append template versions with POST /v1/documents/{{slug}}/versions/template and body: {{"name":"memo","slots":{{"cover":{{"title":"Update"}},"sections":[{{"heading":"Status","body":"Markdown body"}}]}}}}
 
 Team-auth endpoints:
 - POST /v1/documents — JSON {{slug,title,body}}
@@ -149,6 +161,7 @@ Public endpoints:
 - GET / — human landing page
 - GET /llms.txt — this agent-readable entrypoint
 - GET /skills/ — skill index
+- GET /skills/create-from-template/SKILL.md — create documents from built-in templates
 - GET /skills/present-to-human/SKILL.md — mint/open/revoke present links
 - GET /skills/set-theme/SKILL.md — brand presentation pages
 - GET /skills/team-cert-verification/SKILL.md — verifier checklist
@@ -173,6 +186,7 @@ Source of truth:
 - README.md
 - docs/spine-sot.md
 - aweb.ai hub: https://aweb.ai
+- AWID identity authority: https://awid.ai
 """
 
 
@@ -215,7 +229,18 @@ def skill_names() -> list[str]:
 
 
 def skills_index() -> str:
-    lines = ["# folio agent skills", "", "Fetch a task-specific skill before using folio:", ""]
+    lines = [
+        "# folio agent skills",
+        "",
+        "folio is an aweb anapp: an agent-native app on the aweb.ai hub.",
+        "Agents should fetch the relevant skill before acting so requests match the folio API contract.",
+        "",
+        "- aweb.ai hub: https://aweb.ai",
+        "- AWID identity authority: https://awid.ai",
+        "",
+        "Available skills:",
+        "",
+    ]
     for name in skill_names():
         lines.append(f"- GET /skills/{name}/SKILL.md")
     lines.append("")

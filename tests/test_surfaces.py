@@ -29,6 +29,7 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert "private document and presentation service" in response.text
     assert "AWID team certificate" in response.text
     assert "https://aweb.ai" in response.text
+    assert "https://awid.ai" in response.text
     assert "https://github.com/awebai/folio" not in response.text
     assert 'href="/llms.txt"' in response.text
     assert 'href="/skills/"' in response.text
@@ -42,7 +43,14 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "folio — agent-first document and presentation service" in response.text
     assert "GET /present/{token}" in response.text
     assert "GET /skills/present-to-human/SKILL.md" in response.text
+    assert "GET /skills/create-from-template/SKILL.md" in response.text
+    assert "This is an aweb anapp" in response.text
+    assert "https://aweb.ai" in response.text
+    assert "https://awid.ai" in response.text
     assert "Cloudflare Stream" in response.text
+    assert "pitch slots: cover, metrics, sections, ask" in response.text
+    assert "cover fields: title (required), subtitle, eyebrow" in response.text
+    assert "metrics item fields: label (required), value (required), caption" in response.text
     assert "https://github.com/awebai/folio" not in response.text
 
 
@@ -51,14 +59,25 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
     index = client.get("/skills/")
     assert index.status_code == 200
+    assert "folio is an aweb anapp" in index.text
+    assert "https://aweb.ai" in index.text
+    assert "https://awid.ai" in index.text
+    assert "fetch the relevant skill before acting" in index.text
     assert "present-to-human" in index.text
     assert "set-theme" in index.text
+    assert "create-from-template" in index.text
 
     skill = client.get("/skills/present-to-human/SKILL.md")
     assert skill.status_code == 200
     assert skill.headers["content-type"].startswith("text/plain")
     assert "# Present" in skill.text
     assert "POST /v1/present" in skill.text
+
+    template_skill = client.get("/skills/create-from-template/SKILL.md")
+    assert template_skill.status_code == 200
+    assert "# Create a folio document from a built-in template" in template_skill.text
+    assert '"name":"pitch"' in template_skill.text
+    assert "cover/metrics/sections/ask" in template_skill.text
 
     missing = client.get("/skills/../../README.md")
     assert missing.status_code == 404
@@ -75,6 +94,7 @@ def test_skill_index_falls_back_to_container_skills_for_installed_package_layout
     assert surfaces.skill_names() == [
         "agent-first-app",
         "byot-e2e-validation",
+        "create-from-template",
         "present-to-human",
         "set-theme",
         "team-cert-verification",
