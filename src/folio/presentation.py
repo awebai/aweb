@@ -877,6 +877,7 @@ def render_editor_page(
       --border: #e5e7eb;
       --accent: #2563eb;
       --warn: #b45309;
+      --danger: #b91c1c;
       --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --font-heading: var(--font-body);
       --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -919,6 +920,13 @@ def render_editor_page(
     .save:hover {{ opacity: 0.92; }}
     .save:disabled {{ opacity: 0.45; cursor: default; }}
     .save.is-conflict {{ background: var(--warn); border-color: var(--warn); }}
+    .ghost-button {{
+      border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+      border-radius: 6px; padding: 8px 14px; font: inherit; font-size: 0.84rem; font-weight: 500;
+      cursor: pointer; white-space: nowrap; transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }}
+    .ghost-button:hover {{ color: var(--text); border-color: var(--muted); }}
+    .ghost-button:disabled {{ opacity: 0.4; cursor: default; }}
     .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
     .pane {{ height: 100%; overflow-y: auto; }}
     .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
@@ -931,11 +939,18 @@ def render_editor_page(
     .editor::placeholder {{ color: var(--muted); }}
     .pane-preview {{ background: var(--bg); }}
     .pane-preview .surface {{
-      max-width: 72ch; margin: 32px auto;
+      max-width: 72ch; margin: 40px auto;
       background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
       box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
       padding: clamp(24px, 4vw, 48px);
+      transition: opacity 0.18s ease;
     }}
+    .pane-preview .surface.is-updating {{ opacity: 0.6; }}
+    @keyframes folio-changed-flash {{
+      from {{ background: rgba(37, 99, 235, 0.12); }}
+      to {{ background: transparent; }}
+    }}
+    .document-body .folio-changed {{ animation: folio-changed-flash 1.6s ease-out; border-radius: 4px; }}
     .eyebrow {{ color: var(--muted); font-size: 0.8rem; margin: 0 0 20px; letter-spacing: 0.02em; }}
     .brand-logo {{ display: block; max-height: 64px; max-width: min(220px, 100%); object-fit: contain; margin: 0 0 20px; }}
     .theme-header, .theme-footer {{ color: var(--muted); white-space: pre-wrap; }}
@@ -964,6 +979,21 @@ def render_editor_page(
       .pane.is-active {{ display: block; }}
       .pane-edit {{ border-bottom: 0; }}
     }}
+    .modal {{
+      border: 0; border-radius: 14px; padding: 0; max-width: 440px; width: calc(100% - 32px);
+      background: var(--surface); color: var(--text);
+      box-shadow: 0 30px 60px rgba(15, 23, 42, 0.25);
+    }}
+    .modal::backdrop {{ background: rgba(15, 23, 42, 0.45); }}
+    .modal-card {{ padding: 24px; margin: 0; }}
+    .modal-title {{ margin: 0 0 8px; font-size: 1.1rem; font-family: var(--font-heading); }}
+    .modal-text {{ margin: 0 0 20px; color: var(--muted); font-size: 0.92rem; }}
+    .modal-actions {{ display: flex; justify-content: flex-end; gap: 10px; }}
+    .btn-danger {{
+      border: 1px solid var(--danger); background: var(--danger); color: #fff;
+      border-radius: 6px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+    }}
+    .btn-danger:hover {{ opacity: 0.92; }}
   </style>
 </head>
 <body>
@@ -974,8 +1004,9 @@ def render_editor_page(
       <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
     </div>
     <div class="actions">
-      <span id="status" class="status" role="status" aria-live="polite">Version {version_number}</span>
-      <input id="editor-name" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Your name (optional)">
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+      <input id="editor-name" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
+      <button id="discard" class="ghost-button" type="button">Discard changes</button>
       <button id="save" class="save" type="button">Save new version</button>
     </div>
   </header>
@@ -990,16 +1021,30 @@ def render_editor_page(
 {footer_html}      </article>
     </section>
   </main>
+  <dialog id="discard-dialog" class="modal" aria-labelledby="discard-title">
+    <div class="modal-card">
+      <h2 id="discard-title" class="modal-title">Discard unsaved changes?</h2>
+      <p class="modal-text">This reverts the editor to the last saved version. Your unsaved edits will be lost.</p>
+      <div class="modal-actions">
+        <button id="discard-cancel" class="ghost-button" type="button">Keep editing</button>
+        <button id="discard-confirm" class="btn-danger" type="button">Discard changes</button>
+      </div>
+    </div>
+  </dialog>
   <script nonce="{escape(nonce, quote=True)}">
     const INITIAL = {initial_json};
     const bodyEl = document.getElementById('body');
     const previewEl = document.getElementById('preview');
+    const previewCard = document.getElementById('preview-card');
     const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
     const nameEl = document.getElementById('editor-name');
     const saveBtn = document.getElementById('save');
+    const discardBtn = document.getElementById('discard');
+    const discardDialog = document.getElementById('discard-dialog');
     const baseTitle = 'Edit · folio';
     let baseVersion = INITIAL.version_number;
+    let savedBody = INITIAL.body;
     let dirty = false;
     let saving = false;
     let conflict = false;
@@ -1008,29 +1053,48 @@ def render_editor_page(
 
     let previewTimer = null;
     let previewSeq = 0;
+    function applyPreview(html) {{
+      // Compare against the current blocks (ignoring any prior highlight) and
+      // briefly flash the blocks that changed.
+      for (const el of previewEl.children) el.classList.remove('folio-changed');
+      const prev = new Set([...previewEl.children].map((el) => el.outerHTML));
+      previewEl.innerHTML = html;
+      for (const el of previewEl.children) {{
+        if (!prev.has(el.outerHTML)) {{
+          el.classList.add('folio-changed');
+          setTimeout(() => el.classList.remove('folio-changed'), 1700);
+        }}
+      }}
+    }}
     async function refreshPreview() {{
       const seq = ++previewSeq;
+      let html = null;
       try {{
         const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/preview', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
           body: JSON.stringify({{body: bodyEl.value}})
         }});
-        if (!response.ok || seq !== previewSeq) return;
-        previewEl.innerHTML = await response.text();
+        if (seq !== previewSeq) return;
+        if (response.ok) html = await response.text();
       }} catch (err) {{ /* keep the last good preview */ }}
+      if (seq !== previewSeq) return;
+      previewCard.classList.remove('is-updating');
+      if (html !== null) applyPreview(html);
     }}
     function schedulePreview() {{
+      previewCard.classList.add('is-updating');
       if (previewTimer) clearTimeout(previewTimer);
       previewTimer = setTimeout(refreshPreview, 350);
     }}
 
-    function updateSaveButton() {{
+    function updateButtons() {{
       saveBtn.classList.toggle('is-conflict', conflict);
       if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
       else if (conflict) {{ saveBtn.disabled = false; saveBtn.textContent = 'Overwrite?'; }}
       else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
       else {{ saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }}
+      discardBtn.disabled = saving || !(dirty || conflict);
     }}
 
     function setStatus(message, kind) {{
@@ -1041,7 +1105,7 @@ def render_editor_page(
     function markDirty() {{
       if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
       eyebrowEl.textContent = 'Draft · unsaved';
-      updateSaveButton();
+      updateButtons();
     }}
 
     bodyEl.addEventListener('input', () => {{ markDirty(); schedulePreview(); }});
@@ -1049,7 +1113,8 @@ def render_editor_page(
 
     async function save() {{
       if (saving || (!dirty && !conflict)) return;
-      saving = true; setStatus('Saving…', 'saving'); updateSaveButton();
+      saving = true; setStatus('Saving…', 'saving'); updateButtons();
+      const sent = bodyEl.value;
       let response;
       try {{
         response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
@@ -1058,7 +1123,7 @@ def render_editor_page(
           body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
         }});
       }} catch (err) {{
-        saving = false; setStatus('Network error — your text is not saved.', 'conflict'); updateSaveButton(); return;
+        saving = false; setStatus('Network error — your text is not saved.', 'conflict'); updateButtons(); return;
       }}
       const payload = await response.json().catch(() => ({{}}));
       saving = false;
@@ -1067,16 +1132,17 @@ def render_editor_page(
         conflict = true;
         baseVersion = latest.version_number || baseVersion;
         setStatus('Someone saved version ' + baseVersion + '. Overwrite to keep your text.', 'conflict');
-        updateSaveButton();
+        updateButtons();
         return;
       }}
-      if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateSaveButton(); return; }}
+      if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateButtons(); return; }}
       baseVersion = payload.version_number;
+      savedBody = sent;
       dirty = false; conflict = false;
       document.title = baseTitle;
       eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
       setStatus('Saved version ' + baseVersion, null);
-      updateSaveButton();
+      updateButtons();
       refreshPreview();
     }}
 
@@ -1086,6 +1152,22 @@ def render_editor_page(
         event.preventDefault();
         save();
       }}
+    }});
+
+    function discardChanges() {{
+      bodyEl.value = savedBody;
+      dirty = false; conflict = false;
+      document.title = baseTitle;
+      eyebrowEl.textContent = 'Version ' + baseVersion;
+      setStatus('Reverted to the last saved version', null);
+      updateButtons();
+      refreshPreview();
+    }}
+    discardBtn.addEventListener('click', () => {{ if (dirty || conflict) discardDialog.showModal(); }});
+    document.getElementById('discard-cancel').addEventListener('click', () => discardDialog.close());
+    document.getElementById('discard-confirm').addEventListener('click', () => {{
+      discardDialog.close();
+      discardChanges();
     }});
 
     const tabEdit = document.getElementById('tab-edit');
@@ -1117,7 +1199,7 @@ def render_editor_page(
     }}
     window.setInterval(pollState, 4000);
 
-    updateSaveButton();
+    updateButtons();
   </script>
 </body>
 </html>"""

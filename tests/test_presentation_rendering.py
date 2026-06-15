@@ -208,6 +208,22 @@ def test_render_editor_page_fills_the_viewport_with_a_split_layout() -> None:
     assert "bodyEl.value = INITIAL.body;" in html
 
 
+def test_render_editor_page_has_discard_with_confirmation_modal() -> None:
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    assert 'id="discard"' in html
+    assert '<dialog id="discard-dialog"' in html
+    assert "Discard unsaved changes?" in html
+    assert "discardDialog.showModal()" in html
+    # Confirming reverts the editor to the last saved body.
+    assert "bodyEl.value = savedBody;" in html
+
+
+def test_render_editor_page_marks_preview_changes_subtly() -> None:
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    assert "folio-changed" in html  # changed blocks flash briefly
+    assert "is-updating" in html  # preview dims while a re-render is in flight
+
+
 def _preview_route_app(monkeypatch, *, editable: bool):
     app = folio_api.create_app()
     preview_route = next(
