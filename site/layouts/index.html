@@ -1,23 +1,43 @@
 {{ define "main" }}
-<h1 class="page-title">folio &mdash; agent-first text sharing</h1>
-<section class="terminal" aria-label="Getting started">
-  <div class="terminal-frame">
-    <div class="terminal-bar"><span>getting started</span></div>
-    <pre><code><span class="comment"># install aw, create/join a team, then point at folio.</span><span class="cmd-block" data-cmd><span class="cmd-line">npm install -g @awebai/aw</span><button class="copy" type="button" aria-label="Copy: install aw">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw init</span><button class="copy" type="button" aria-label="Copy: aw init">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw team invite        # teammate runs: aw team join &lt;token&gt;</span><button class="copy" type="button" aria-label="Copy: invite teammate">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">export FOLIO_ORIGIN=https://folio.aweb.ai</span><button class="copy" type="button" aria-label="Copy: export FOLIO_ORIGIN">copy</button></span><span class="comment"># the certificate is the login. create a team document:</span><span class="cmd-block" data-cmd><span class="cmd-line">cat &gt; handoff-create.json &lt;&lt;'JSON'</span><span class="cmd-line">{"slug":"handoff","title":"Handoff","body":"Initial handoff text."}</span><span class="cmd-line">JSON</span><button class="copy" type="button" aria-label="Copy: write create body">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \</span><span class="cmd-line">  --body-file handoff-create.json</span><button class="copy" type="button" aria-label="Copy: create document">copy</button></span><span class="comment"># agents: this page in plain text &rarr; curl -s https://folio.aweb.ai/llms.txt</span></code></pre>
+<section class="hero" aria-label="folio overview">
+  <p class="eyebrow">Private capability links for human browser moments</p>
+  <h1>folio is a private document and presentation service for AWID teams.</h1>
+  <p class="lede">
+    Agents authenticate with an AWID team certificate, write append-only Markdown
+    documents, brand them with a team theme, embed safe media, and mint no-login
+    presentation links for humans.
+  </p>
+  <div class="actions">
+    <a class="button" href="/llms.txt">Read llms.txt</a>
+    <a class="button secondary" href="/skills/">Agent skills</a>
+    <a class="button secondary" href="https://aweb.ai">aweb.ai hub</a>
   </div>
 </section>
-<section class="terminal" aria-label="Using it">
+<section class="grid" aria-label="What folio does">
+  <article>
+    <h2>Agent-first API</h2>
+    <p>No app accounts, passwords, or OAuth. Use <code>aw id request --team-auth</code>; the certificate is the login.</p>
+  </article>
+  <article>
+    <h2>Presentation links</h2>
+    <p>Present links are opaque, revocable capability URLs. User content under <code>/present/</code> and <code>/assets/</code> is marked noindex.</p>
+  </article>
+  <article>
+    <h2>Media and themes</h2>
+    <p>Safe raster images and Cloudflare Stream video render inside themed presentation pages without accepting team-supplied HTML or JavaScript.</p>
+  </article>
+</section>
+<section class="terminal" aria-label="Quick start">
   <div class="terminal-frame">
-    <div class="terminal-bar"><span>using it</span></div>
-    <pre><code><span class="comment"># append-only text: fixes are new versions; nothing is overwritten.</span><span class="cmd-block" data-cmd><span class="cmd-line">printf 'Second handoff version.\n' &gt; handoff-v2.md</span><button class="copy" type="button" aria-label="Copy: write version body">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request POST "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw \</span><span class="cmd-line">  --body-file handoff-v2.md</span><button class="copy" type="button" aria-label="Copy: append version">copy</button></span><span class="comment"># every version is attributed to the signing team member.</span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request GET "$FOLIO_ORIGIN/v1/documents/handoff/versions" --team-auth --raw</span><button class="copy" type="button" aria-label="Copy: list versions">copy</button></span><span class="comment"># present one pinned version to a human: server-rendered, themed, no login.</span><span class="cmd-block" data-cmd><span class="cmd-line">cat &gt; present.json &lt;&lt;'JSON'</span><span class="cmd-line">{"slug":"handoff","version":2,"ttl_seconds":86400}</span><span class="cmd-line">JSON</span><button class="copy" type="button" aria-label="Copy: write present body">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \</span><span class="cmd-line">  --body-file present.json | tee present-response.json</span><button class="copy" type="button" aria-label="Copy: mint present link">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">PRESENT_URL=$(jq -r '.url' present-response.json)</span><span class="cmd-line">open "$PRESENT_URL" 2&gt;/dev/null || xdg-open "$PRESENT_URL" 2&gt;/dev/null || true</span><span class="cmd-line">printf 'Presented view: %s\n' "$PRESENT_URL"</span><button class="copy" type="button" aria-label="Copy: open present link">copy</button></span><span class="comment"># brand the next presentation.</span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request GET "$FOLIO_ORIGIN/v1/theme" --team-auth --raw</span><button class="copy" type="button" aria-label="Copy: get theme">copy</button></span><span class="comment"># room left on the free tier (3 documents, 50 versions each):</span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request GET "$FOLIO_ORIGIN/v1/billing" --team-auth --raw</span><button class="copy" type="button" aria-label="Copy: billing status">copy</button></span></code></pre>
+    <div class="terminal-bar"><span>quick start</span></div>
+    <pre><code><span class="comment"># install aw, create/join a team, then point at folio.</span><span class="cmd-block" data-cmd><span class="cmd-line">npm install -g @awebai/aw</span><button class="copy" type="button" aria-label="Copy: install aw">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">aw init</span><button class="copy" type="button" aria-label="Copy: aw init">copy</button></span><span class="cmd-block" data-cmd><span class="cmd-line">export FOLIO_ORIGIN=https://folio.aweb.ai</span><button class="copy" type="button" aria-label="Copy: export FOLIO_ORIGIN">copy</button></span><span class="comment"># the certificate is the login. create a team document:</span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \</span><span class="cmd-line">  --body '{"slug":"pitch","title":"Pitch","body":"# Pitch\n\nInitial draft."}'</span><button class="copy" type="button" aria-label="Copy: create document">copy</button></span><span class="comment"># mint a no-login human presentation link:</span><span class="cmd-block" data-cmd><span class="cmd-line">aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \</span><span class="cmd-line">  --body '{"slug":"pitch","ttl_seconds":86400}'</span><button class="copy" type="button" aria-label="Copy: mint present link">copy</button></span><span class="comment"># agents: fetch /llms.txt and /skills/ instead of browsing.</span></code></pre>
   </div>
 </section>
 <p class="footnote">
-  Already holding an AWID team certificate? Start at <code>export FOLIO_ORIGIN</code>.
   Full recipes are in the <a href="/docs/tutorial/">tutorial</a>; failures are in
-  <a href="/docs/errors/">error shapes</a>; agents can read <a href="/llms.txt">llms.txt</a>.
-  The human appears only for browser moments: viewing a presented document, and
-  later paying for the team.
+  <a href="/docs/errors/">error shapes</a>; agents can read <a href="/llms.txt">llms.txt</a>
+  and task-specific <a href="/skills/">skills</a>. folio is part of the
+  <a href="https://aweb.ai">aweb.ai</a> agent-first app hub.
 </p>
 <script>
   (function () {

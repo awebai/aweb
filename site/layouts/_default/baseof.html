@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{{ .Site.Params.description }}">
-  <title>{{ if .IsHome }}{{ .Site.Title }} — agent-first text sharing{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
+  <title>{{ if .IsHome }}{{ .Site.Title }} — agent-first documents and presentations{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
   {{ $css := resources.Get "css/site.css" | minify | fingerprint }}
   <link rel="stylesheet" href="{{ $css.RelPermalink }}">
 </head>
@@ -16,6 +16,9 @@
       <div class="nav-links">
         <a href="/docs/tutorial/">Tutorial</a>
         <a href="/docs/errors/">Errors</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="/skills/">Skills</a>
+        <a href="https://aweb.ai">aweb.ai hub</a>
         <a href="https://github.com/awebai/folio">Source</a>
       </div>
     </nav>
@@ -24,7 +27,7 @@
     {{ block "main" . }}{{ end }}
   </main>
   <footer class="site-footer">
-    <p>Static site at <code>/</code>, API at <code>/v1/*</code>. Same origin, different chores.</p>
+    <p>Public docs are indexable. Team documents, media assets, and present pages are capability-link private and noindex.</p>
   </footer>
 </body>
 </html>

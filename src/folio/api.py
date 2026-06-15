@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
 
 from folio.auth import AWIDTeamCache, Principal, authenticate_request
@@ -45,6 +45,14 @@ from folio.repository import (
     upload_image_asset,
     upsert_theme,
 )
+from folio.surfaces import (
+    USER_CONTENT_ROBOTS_HEADER,
+    llms_txt,
+    read_skill,
+    render_landing_page,
+    robots_txt,
+    skills_index,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -67,6 +75,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="folio", version="0.1.0", lifespan=lifespan)
 
+    @app.middleware("http")
+    async def user_content_noindex(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(("/present/", "/assets/")):
+            response.headers["X-Robots-Tag"] = USER_CONTENT_ROBOTS_HEADER
+        return response
+
     def db() -> AsyncDatabaseManager:
         database = holder.get("db")
         if not isinstance(database, FolioDatabase):
@@ -85,6 +100,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cache: Annotated[AWIDTeamCache, Depends(team_cache)],
     ) -> Principal:
         return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def landing_route() -> HTMLResponse:
+        return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
+
+    @app.get("/llms.txt", response_class=PlainTextResponse)
+    async def llms_route() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(public_origin=resolved.public_origin),
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/robots.txt", response_class=PlainTextResponse)
+    async def robots_route() -> PlainTextResponse:
+        return PlainTextResponse(
+            robots_txt(),
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/skills/", response_class=PlainTextResponse)
+    async def skills_index_route() -> PlainTextResponse:
+        return PlainTextResponse(
+            skills_index(),
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/skills/{skill_name}/SKILL.md", response_class=PlainTextResponse)
+    async def skill_route(skill_name: str) -> PlainTextResponse:
+        skill = read_skill(skill_name)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return PlainTextResponse(skill, headers={"X-Content-Type-Options": "nosniff"})
 
     @app.get("/health")
     @app.get("/live")
@@ -261,7 +308,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             content=asset["bytes"],
             media_type=str(asset["content_type"]),
-            headers={"X-Content-Type-Options": "nosniff"},
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "X-Robots-Tag": USER_CONTENT_ROBOTS_HEADER,
+            },
         )
 
     @app.get("/present/{token}", response_class=HTMLResponse)
@@ -280,7 +330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 public_origin=resolved.public_origin,
                 asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
             ),
-            headers={"X-Robots-Tag": "noindex, nofollow, noarchive"},
+            headers={"X-Robots-Tag": USER_CONTENT_ROBOTS_HEADER},
         )
 
     return app

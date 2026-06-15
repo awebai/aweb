@@ -11,10 +11,12 @@ It is seeded from the `atext` spine. The inherited auth and team-isolation contr
 - Document-bound, version-pinned presentation links.
 - Server-rendered public presentation pages with sanitized Markdown.
 - Team-scoped safe raster image uploads (`png`, `jpeg`, `gif`, `webp`) embedded with standard Markdown image syntax.
+- Cloudflare Stream-backed video direct uploads and signed playback embeds.
 - Team themes with validated color/font tokens and safe raster logos.
+- Human and agent surfaces: `/`, `/llms.txt`, `/skills/`, `/robots.txt`.
 - A single fresh-DB migration for the inherited spine schema.
 
-Planned folio product work adds layout/presentation modes, video, first-class `aw folio` verbs, and declarative templates.
+Planned folio product work adds layout/presentation modes, first-class `aw folio` verbs, and declarative templates.
 
 ## Local development
 
@@ -90,11 +92,13 @@ aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body '{"slug":"pitch","ttl_seconds":604800}'
 ```
 
-The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. Revoke it when access should end:
+The present response includes a public capability URL under `/present/<token>`; the URL is the human-facing permission. User content under `/present/*` and `/assets/*` is marked `noindex, nofollow, noarchive` and disallowed in `robots.txt`. Revoke it when access should end:
 
 ```bash
 aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
 ```
+
+Agent-readable docs are served from the same app: `GET /llms.txt` for the compact contract and `GET /skills/` for task-specific skill files.
 
 ## Tests
 
