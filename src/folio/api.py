@@ -8,9 +8,11 @@ from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
 
 from folio.auth import AWIDTeamCache, Principal, authenticate_request
+from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
 from folio.db import FolioDatabase
 from folio.models import (
+    AssetMetadataResponse,
     BillingResponse,
     CreateDocumentRequest,
     CreatePresentationRequest,
@@ -22,11 +24,15 @@ from folio.models import (
     PresentationResponse,
     ThemeRequest,
     ThemeResponse,
+    VideoDirectUploadRequest,
+    VideoDirectUploadResponse,
 )
 from folio.presentation import render_presented_page
 from folio.repository import (
     append_version,
     create_document,
+    create_video_direct_upload,
+    get_asset_metadata,
     get_billing_status,
     get_document,
     get_presented_document,
@@ -170,6 +176,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await revoke_presentation_link(database, principal=actor, token=token)
         return {"revoked": True}
 
+    def presentation_asset_embeds(allowed_assets: object) -> dict[UUID, dict[str, str]]:
+        if not isinstance(allowed_assets, dict):
+            return {}
+        embeds: dict[UUID, dict[str, str]] = {}
+        for asset_id, raw in allowed_assets.items():
+            if not isinstance(asset_id, UUID) or not isinstance(raw, dict):
+                continue
+            kind = str(raw.get("kind") or "")
+            if kind == "image":
+                embeds[asset_id] = {
+                    "kind": "image",
+                    "url": f"{resolved.public_origin.rstrip('/')}/assets/{asset_id}",
+                }
+            elif kind == "video":
+                status = str(raw.get("stream_status") or "pending_upload")
+                embed = {"kind": "video", "status": status}
+                stream_uid = str(raw.get("stream_uid") or "").strip()
+                if status == "ready" and stream_uid:
+                    try:
+                        embed["iframe_url"] = stream_iframe_url(settings=resolved, stream_uid=stream_uid)
+                    except HTTPException:
+                        embed["status"] = "unavailable"
+                embeds[asset_id] = embed
+        return embeds
+
     @app.post("/v1/assets", response_model=ImageAssetResponse)
     async def upload_asset_route(
         request: Request,
@@ -178,6 +209,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         payload = ImageAssetUploadRequest.model_validate(await request.json())
         return await upload_image_asset(database, principal=actor, settings=resolved, image=payload)
+
+    @app.post("/v1/assets/video/direct-upload", response_model=VideoDirectUploadResponse)
+    async def create_video_direct_upload_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = VideoDirectUploadRequest.model_validate(await request.json())
+        return await create_video_direct_upload(database, principal=actor, settings=resolved, video=payload)
+
+    @app.get("/v1/assets/{asset_id}", response_model=AssetMetadataResponse)
+    async def get_asset_route(
+        asset_id: UUID,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_asset_metadata(database, principal=actor, settings=resolved, asset_id=asset_id)
 
     @app.get("/v1/theme", response_model=ThemeResponse)
     async def get_theme_route(
@@ -230,8 +278,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 body=str(presented["body"]),
                 theme=theme,
                 public_origin=resolved.public_origin,
-                allowed_asset_ids=presented.get("allowed_asset_ids"),
-            )
+                asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+            ),
+            headers={"X-Robots-Tag": "noindex, nofollow, noarchive"},
         )
 
     return app

@@ -88,13 +88,21 @@ CREATE INDEX IF NOT EXISTS idx_folio_presentation_links_expires
 CREATE TABLE IF NOT EXISTS {{tables.assets}} (
     asset_id UUID PRIMARY KEY,
     team_id TEXT NOT NULL REFERENCES {{tables.teams}}(team_id) ON DELETE CASCADE,
-    bytes BYTEA NOT NULL,
-    content_type TEXT NOT NULL CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    kind TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image', 'video')),
+    bytes BYTEA,
+    content_type TEXT CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm')),
+    stream_uid TEXT UNIQUE,
+    stream_status TEXT CHECK (stream_status IN ('pending_upload', 'queued', 'processing', 'ready', 'error')),
+    upload_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK ((kind = 'image' AND bytes IS NOT NULL AND stream_uid IS NULL) OR (kind = 'video' AND bytes IS NULL AND stream_uid IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_folio_assets_team_created
     ON {{tables.assets}}(team_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_folio_assets_stream_uid
+    ON {{tables.assets}}(stream_uid) WHERE stream_uid IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS {{tables.themes}} (
     team_id TEXT PRIMARY KEY REFERENCES {{tables.teams}}(team_id) ON DELETE CASCADE,

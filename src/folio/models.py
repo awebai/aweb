@@ -71,8 +71,39 @@ class ImageAssetUploadRequest(BaseModel):
 
 class ImageAssetResponse(BaseModel):
     asset_id: UUID
+    kind: str = "image"
     url: str
     content_type: str
+
+
+class VideoDirectUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content_type: str = Field(..., min_length=1, max_length=100)
+    filename: str | None = Field(default=None, max_length=240)
+    max_duration_seconds: int | None = Field(default=None, ge=1)
+
+
+class VideoDirectUploadResponse(BaseModel):
+    asset_id: UUID
+    kind: str
+    stream_uid: str
+    upload_url: str
+    upload_expires_at: datetime
+    status: str
+    content_type: str
+
+
+class AssetMetadataResponse(BaseModel):
+    asset_id: UUID
+    kind: str
+    content_type: str | None = None
+    url: str | None = None
+    stream_uid: str | None = None
+    stream_status: str | None = None
+    upload_expires_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
 
 
 class ThemeLogoInput(ImageAssetUploadRequest):

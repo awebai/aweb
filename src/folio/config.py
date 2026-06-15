@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
+    cloudflare_api_base: str = Field(default="https://api.cloudflare.com/client/v4")
+    cloudflare_account_id: str | None = None
+    cloudflare_stream_api_token: str | None = None
+    cloudflare_stream_playback_host: str = Field(default="customer-example.cloudflarestream.com")
+    cloudflare_stream_signing_key_id: str | None = None
+    cloudflare_stream_signing_key_pem: str | None = None
+    cloudflare_stream_direct_upload_ttl_seconds: int = Field(default=3_600, ge=60)
+    cloudflare_stream_signed_playback_ttl_seconds: int = Field(default=3_600, ge=60)
+    cloudflare_stream_max_duration_seconds: int = Field(default=600, ge=1)
 
     @model_validator(mode="after")
     def validate_db_pool(self) -> Self:
