@@ -3,873 +3,417 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ .Site.Title }}</title>
+  <title>{{ .Site.Title }} — global identity for agents</title>
   <meta name="description" content="{{ .Site.Params.description }}">
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/jetbrains-mono.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/familjen-grotesk.woff2" crossorigin>
   <style>
-    :root {
-      --bg: #f6f7f9;
-      --surface: #ffffff;
-      --ink: #1a1d21;
-      --ink-soft: #5c6370;
-      --border: #e1e4e8;
-      --accent: #0f766e;
-      --accent-subtle: rgba(15, 118, 110, 0.07);
-      --code-bg: #1e2127;
-      --code-fg: #ced4da;
-      --code-accent: #7ec8c0;
-      --code-dim: #636d7e;
-      --state-ok: #0f766e;
-      --state-warn: #b45309;
-      --state-error: #be123c;
-      --radius: 10px;
-      --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    @font-face{font-family:"Familjen Grotesk";font-style:normal;font-weight:400 700;font-display:swap;src:url("/fonts/familjen-grotesk.woff2") format("woff2");}
+    @font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:400 700;font-display:swap;src:url("/fonts/jetbrains-mono.woff2") format("woff2");}
+
+    :root{
+      --bg:#070a0c;
+      --bg-2:#0c1114;
+      --panel:#0f1518;
+      --panel-2:#121a1d;
+      --ink:#d6e2dc;
+      --ink-bright:#f2faf6;
+      --muted:#67786f;
+      --line:#1a2520;
+      --line-2:#223029;
+      --accent:#4ee6a8;
+      --accent-2:#46d3e0;
+      --warn:#e8c97a;
+      --err:#f3868a;
+      --grot:"Familjen Grotesk",system-ui,-apple-system,sans-serif;
+      --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      --radius:12px;
     }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{
+      background:var(--bg);
+      color:var(--ink);
+      font-family:var(--mono);
+      line-height:1.6;
+      -webkit-font-smoothing:antialiased;
+      background-image:
+        radial-gradient(900px 520px at 82% -8%, rgba(78,230,168,.10), transparent 60%),
+        radial-gradient(760px 520px at 8% 6%, rgba(70,211,224,.06), transparent 60%),
+        linear-gradient(transparent 95%, rgba(78,230,168,.045) 95%),
+        linear-gradient(90deg, transparent 95%, rgba(78,230,168,.045) 95%);
+      background-size:auto,auto,34px 34px,34px 34px;
+      background-attachment:fixed;
     }
+    .frame{max-width:1120px;margin:0 auto;padding:0 40px}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
 
-    .frame {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
+    /* ── nav ── */
+    nav{display:flex;align-items:center;justify-content:space-between;padding:24px 0;position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg),rgba(7,10,12,.7) 70%,transparent);backdrop-filter:blur(6px)}
+    .brand{font-weight:700;font-size:1.02rem;letter-spacing:-.01em;color:var(--ink-bright)}
+    .brand b{color:var(--accent)}
+    .nav-links{display:flex;gap:26px;font-size:.82rem;align-items:center}
+    .nav-links a{color:var(--muted)}
+    .nav-links a:hover{color:var(--ink-bright);text-decoration:none}
+    .status{display:inline-flex;align-items:center;gap:8px}
+    .status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(78,230,168,.16),0 0 12px var(--accent)}
 
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    /* ── section scaffolding ── */
+    section{padding:84px 0}
+    .eyebrow{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin-bottom:18px}
+    h1{font-family:var(--grot);font-weight:700;font-size:clamp(2.8rem,5.6vw,4.6rem);line-height:1.0;letter-spacing:-.03em;color:var(--ink-bright)}
+    h1 span{color:var(--accent)}
+    h2{font-family:var(--grot);font-weight:700;font-size:clamp(1.7rem,3vw,2.3rem);line-height:1.08;letter-spacing:-.025em;color:var(--ink-bright)}
+    h3{font-family:var(--grot);font-weight:600;font-size:1.12rem;color:var(--ink-bright);letter-spacing:-.01em}
+    .section-head{max-width:54ch;margin-bottom:40px}
+    .section-head h2{margin-bottom:14px}
+    .section-head p{font-family:var(--grot);color:var(--muted);font-size:1.06rem}
+    .lead{font-family:var(--grot);font-weight:400;color:var(--muted);font-size:1.12rem;max-width:42ch;line-height:1.6}
+    p code,li code{font-family:var(--mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);padding:.05rem .35rem;border-radius:5px;color:var(--accent-2)}
 
-    /* ── Nav ───────────────────────────────────── */
+    /* ── hero ── */
+    .hero{padding:46px 0 70px;display:grid;grid-template-columns:1fr 1.05fr;gap:50px;align-items:center;border-bottom:1px solid var(--line)}
+    .cta{margin-top:30px;display:flex;gap:13px;align-items:center;flex-wrap:wrap}
+    .btn{font-size:.85rem;font-weight:500;padding:.7rem 1.1rem;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#04130c}
+    .btn:hover{text-decoration:none;background:#6cf0bb}
+    .btn.ghost{background:transparent;color:var(--accent);border-color:var(--line-2)}
+    .btn.ghost:hover{border-color:var(--accent);background:rgba(78,230,168,.06)}
 
-    nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 20px 0;
-    }
+    /* ── chain (hero) ── */
+    .chain{display:flex;flex-direction:column;margin-bottom:20px}
+    .node{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 16px}
+    .node .label{font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+    .node code{font-size:.92rem;font-weight:500;color:var(--ink-bright);display:block;margin-top:4px;word-break:break-all}
+    .node.live{border-color:rgba(78,230,168,.5);box-shadow:0 0 26px -6px rgba(78,230,168,.28)}
+    .node.live code{color:var(--accent)}
+    .node .pill{position:absolute;right:14px;top:13px;font-size:.62rem;color:var(--accent);display:inline-flex;align-items:center;gap:6px}
+    .node .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+    .conn{height:22px;width:1.5px;background:linear-gradient(var(--accent),transparent);margin-left:24px;position:relative;opacity:.55}
+    .conn::after{content:"↓ signs";position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:.62rem;color:var(--muted)}
 
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--ink);
-      text-decoration: none;
-      font-weight: 700;
-      font-size: 1.05rem;
-      letter-spacing: -0.01em;
-    }
+    /* ── terminal ── */
+    .term{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:0 30px 70px -34px rgba(0,0,0,.85)}
+    .term-bar{display:flex;align-items:center;gap:7px;padding:11px 15px;border-bottom:1px solid var(--line)}
+    .term-bar i{width:10px;height:10px;border-radius:50%;background:#22312b}
+    .term-bar span{margin-left:8px;font-size:.7rem;color:var(--muted)}
+    .term pre{padding:17px 19px;font-size:.81rem;line-height:1.75;overflow-x:auto;white-space:pre}
+    .term .p{color:var(--accent)}
+    .term .c{color:var(--muted)}
+    .term .k{color:var(--accent-2)}
+    .term .s{color:var(--warn)}
+    .term .ok{color:var(--accent)}
 
-    .brand-mark {
-      width: 34px;
-      height: 34px;
-      border-radius: 9px;
-      border: 2px solid var(--ink);
-      background: var(--surface);
-      position: relative;
-      opacity: 0.85;
-    }
+    /* ── trust / chain-of-trust ── */
+    .trust{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(78,230,168,.02),transparent 30%)}
+    .trust-grid{display:grid;grid-template-columns:330px 1fr;gap:64px;align-items:start}
+    .diagram{position:sticky;top:90px}
+    .diagram svg{width:100%;height:auto;max-width:330px;display:block}
+    .diagram figcaption{margin-top:18px;color:var(--muted);font-size:.82rem;line-height:1.55;font-family:var(--grot)}
+    .diagram figcaption strong{color:var(--accent)}
 
-    .brand-mark::after {
-      content: "";
-      position: absolute;
-      inset: 6px;
-      border-radius: 999px;
-      border: 2.5px solid var(--ink);
-    }
+    .beat{padding:22px 0}
+    .beat+.beat{border-top:1px solid var(--line)}
+    .beat h3{margin-bottom:10px}
+    .beat p{font-family:var(--grot);color:var(--ink);font-size:1.04rem}
+    .beat p em{color:var(--ink-bright);font-style:normal;font-weight:600}
+    .reveal{margin-top:14px}
+    .reveal>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:8px;color:var(--accent);font-size:.78rem;font-weight:500}
+    .reveal>summary::-webkit-details-marker{display:none}
+    .reveal>summary::before{content:"▸"}
+    .reveal[open]>summary::before{content:"▾"}
+    .reveal .term{margin-top:12px}
 
-    .nav-links {
-      display: flex;
-      gap: 24px;
-    }
+    /* ── states ── */
+    .states{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+    .state{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+    .state .name{font-size:.82rem;font-weight:700;display:flex;align-items:center;gap:9px;margin-bottom:10px}
+    .state .name::before{content:"";width:8px;height:8px;border-radius:50%}
+    .state.ok .name{color:var(--accent)} .state.ok .name::before{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+    .state.warn .name{color:var(--warn)} .state.warn .name::before{background:var(--warn)}
+    .state.err .name{color:var(--err)} .state.err .name::before{background:var(--err)}
+    .state p{font-family:var(--grot);font-size:.9rem;color:var(--muted)}
 
-    .nav-links a {
-      color: var(--ink-soft);
-      font-size: 0.9rem;
-      font-weight: 500;
-    }
+    /* ── api ── */
+    .api-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .api-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px 24px}
+    .api-group h3{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:16px;font-weight:700}
+    .endpoint+.endpoint{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+    .endpoint .m{font-size:.7rem;font-weight:700;color:var(--accent-2)}
+    .endpoint .path{display:block;font-size:.82rem;color:var(--ink-bright);margin-top:2px;word-break:break-all}
+    .endpoint .d{font-family:var(--grot);font-size:.86rem;color:var(--muted);margin-top:3px}
+    .auth{margin-top:20px;background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:var(--radius);padding:18px 22px;font-family:var(--grot);font-size:.92rem;color:var(--ink)}
 
-    .nav-links a:hover { color: var(--ink); }
+    /* ── components ── */
+    .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px}
+    .card .tag{font-size:.92rem;font-weight:700;color:var(--accent);margin-bottom:8px}
+    .card p{font-family:var(--grot);font-size:.92rem;color:var(--muted)}
 
-    /* ── Sections ──────────────────────────────── */
+    /* ── footer ── */
+    footer{border-top:1px solid var(--line);padding:34px 0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;color:var(--muted);font-size:.8rem}
+    .footer-links{display:flex;gap:20px}
+    .footer-links a{color:var(--muted)}
+    .footer-links a:hover{color:var(--ink-bright)}
 
-    section { padding: 56px 0; }
-    section + section { border-top: 1px solid var(--border); }
-
-    h1 {
-      font-size: clamp(2rem, 4.5vw, 2.8rem);
-      line-height: 1.15;
-      letter-spacing: -0.03em;
-      font-weight: 750;
-    }
-
-    h2 {
-      font-size: 1.35rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin-bottom: 12px;
-    }
-
-    h3 {
-      font-size: 1rem;
-      font-weight: 650;
-      margin-bottom: 8px;
-    }
-
-    .lead {
-      margin-top: 16px;
-      font-size: 1.1rem;
-      color: var(--ink-soft);
-      max-width: 56ch;
-      line-height: 1.6;
-    }
-
-    p + p { margin-top: 12px; }
-
-    .section-text {
-      color: var(--ink-soft);
-      max-width: 60ch;
-      line-height: 1.65;
-    }
-
-    .section-text + .section-text { margin-top: 12px; }
-    pre + .section-text { margin-top: 16px; }
-
-    /* ── Resolution chain ──────────────────────── */
-
-    .chain {
-      display: flex;
-      align-items: stretch;
-      margin-top: 32px;
-    }
-
-    .chain-step {
-      flex: 1;
-      padding: 20px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      text-align: center;
-    }
-
-    .chain-step:first-child {
-      border-radius: var(--radius) 0 0 var(--radius);
-    }
-
-    .chain-step:last-child {
-      border-radius: 0 var(--radius) var(--radius) 0;
-    }
-
-    .chain-step code {
-      display: block;
-      font-family: var(--mono);
-      font-size: 0.92rem;
-      font-weight: 600;
-      color: var(--ink);
-      margin-bottom: 6px;
-      word-break: break-all;
-    }
-
-    .chain-step .label {
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--ink-soft);
-      font-weight: 600;
-    }
-
-    .chain-arrow {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 40px;
-      flex-shrink: 0;
-      background: var(--accent-subtle);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      color: var(--accent);
-      font-size: 1.1rem;
-      font-weight: 700;
-    }
-
-    /* ── Code blocks ───────────────────────────── */
-
-    pre {
-      background: var(--code-bg);
-      color: var(--code-fg);
-      border-radius: var(--radius);
-      padding: 20px 24px;
-      overflow-x: auto;
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      line-height: 1.6;
-      margin-top: 20px;
-    }
-
-    pre .prompt { color: var(--code-dim); user-select: none; }
-    pre .comment { color: var(--code-dim); }
-    pre .key { color: var(--code-accent); }
-
-    code {
-      font-family: var(--mono);
-      font-size: 0.88em;
-    }
-
-    p code, li code {
-      background: var(--accent-subtle);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.85em;
-    }
-
-    /* ── Verification states ───────────────────── */
-
-    .states {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-top: 24px;
-      margin-bottom: 24px;
-    }
-
-    .state {
-      padding: 20px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-    }
-
-    .state-name {
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      font-weight: 700;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .state-name::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .state-ok .state-name::before { background: var(--state-ok); }
-    .state-warn .state-name::before { background: var(--state-warn); }
-    .state-error .state-name::before { background: var(--state-error); }
-
-    .state p {
-      font-size: 0.88rem;
-      color: var(--ink-soft);
-      line-height: 1.5;
-    }
-
-    /* ── API endpoints ─────────────────────────── */
-
-    .api-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      margin-top: 24px;
-    }
-
-    .api-group {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 24px;
-    }
-
-    .api-group h3 {
-      font-size: 0.82rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--accent);
-      font-weight: 700;
-      margin-bottom: 16px;
-    }
-
-    .endpoint + .endpoint {
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px solid var(--border);
-    }
-
-    .endpoint-method {
-      font-family: var(--mono);
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: var(--accent);
-    }
-
-    .endpoint-path {
-      display: block;
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      margin-top: 2px;
-    }
-
-    .endpoint-desc {
-      font-size: 0.85rem;
-      color: var(--ink-soft);
-      margin-top: 4px;
-    }
-
-    .auth-note {
-      margin-top: 20px;
-      padding: 16px 20px;
-      background: var(--accent-subtle);
-      border-radius: var(--radius);
-      font-size: 0.9rem;
-      color: var(--ink);
-      line-height: 1.55;
-    }
-
-    /* ── Footer ────────────────────────────────── */
-
-    footer {
-      padding: 32px 0;
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
-      color: var(--ink-soft);
-      font-size: 0.88rem;
-    }
-
-    .footer-links {
-      display: flex;
-      gap: 20px;
-    }
-
-    .footer-links a { color: var(--ink-soft); }
-    .footer-links a:hover { color: var(--ink); }
-
-    /* ── Responsive ────────────────────────────── */
-
-    @media (max-width: 768px) {
-      section { padding: 40px 0; }
-
-      .chain {
-        flex-direction: column;
-      }
-
-      .chain-step {
-        border-radius: 0;
-      }
-
-      .chain-step:first-child {
-        border-radius: var(--radius) var(--radius) 0 0;
-      }
-
-      .chain-step:last-child {
-        border-radius: 0 0 var(--radius) var(--radius);
-      }
-
-      .chain-arrow {
-        width: auto;
-        height: 32px;
-        border-top: none;
-        border-bottom: none;
-        border-left: 1px solid var(--border);
-        border-right: 1px solid var(--border);
-      }
-
-      .states {
-        grid-template-columns: 1fr;
-      }
-
-      .api-grid {
-        grid-template-columns: 1fr;
-      }
-
-      pre {
-        padding: 16px;
-        font-size: 0.8rem;
-      }
-    }
-
-    @media (max-width: 480px) {
-      .nav-links { gap: 16px; }
-      .frame { padding: 0 16px; }
-      footer { flex-direction: column; align-items: flex-start; }
+    @media (max-width:860px){
+      .hero,.trust-grid{grid-template-columns:1fr;gap:36px}
+      .diagram{position:static}
+      .states,.api-grid,.cols{grid-template-columns:1fr}
+      section{padding:56px 0}
+      .term pre{white-space:pre-wrap;overflow-wrap:break-word}
+      .frame{padding:0 22px}
+      nav{padding:18px 0}
+      .nav-links{gap:16px}
     }
   </style>
 </head>
 <body>
-  <div class="frame">
-    <nav>
-      <a class="brand" href="/">
-        <span class="brand-mark" aria-hidden="true"></span>
-        awid.ai
-      </a>
-      <div class="nav-links">
-        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Docs</a>
-        <a href="#api">API</a>
-        <a href="https://github.com/awebai/aweb">GitHub</a>
+<div class="frame">
+
+  <nav>
+    <a class="brand" href="/">awid<b>.ai</b></a>
+    <div class="nav-links">
+      <a class="status">registry live</a>
+      <a href="#trust">trust</a>
+      <a href="#api">api</a>
+      <a href="#start">start</a>
+      <a href="https://github.com/awebai/aweb">github</a>
+    </div>
+  </nav>
+
+  <!-- ── hero ── -->
+  <section class="hero">
+    <div>
+      <p class="eyebrow">// dns-rooted identity registry</p>
+      <h1>Global identity<br>for <span>agents</span></h1>
+      <p class="lead">Cryptographic identities under your own domain. Addresses and audit trails survive key rotation and server moves — verifiable by anyone, rooted in DNS.</p>
+      <div class="cta">
+        <a class="btn" href="#start">$ aw id create</a>
+        <a class="btn ghost" href="#trust">how trust works →</a>
       </div>
-    </nav>
-
-    <!-- ── Hero ────────────────────────────────── -->
-
-    <section class="hero">
-      <h1>Global identity for agents</h1>
-      <p class="lead">
-        Give agents cryptographic identities under your domain. Identities
-        and their audit trails survive key rotation and server moves.
-      </p>
-      <p class="lead">
-        Open protocol for namespaces, identities, addresses, and teams,
-        rooted in DNS.
-      </p>
-
+    </div>
+    <div>
       <div class="chain">
-        <div class="chain-step">
-          <code>acme.com/support</code>
-          <span class="label">address</span>
-        </div>
-        <div class="chain-arrow">&rarr;</div>
-        <div class="chain-step">
-          <code>did:aw:2CiZ88h...</code>
-          <span class="label">stable identity</span>
-        </div>
-        <div class="chain-arrow">&rarr;</div>
-        <div class="chain-step">
-          <code>did:key:z6MkehRg...</code>
-          <span class="label">current signing key</span>
-        </div>
+        <div class="node"><span class="label">address</span><code>acme.com/support</code></div>
+        <div class="conn"></div>
+        <div class="node"><span class="label">stable identity</span><code>did:aw:2CiZ88h…</code></div>
+        <div class="conn"></div>
+        <div class="node live"><span class="label">current signing key</span><code>did:key:z6MkehRg…</code><span class="pill">OK_VERIFIED</span></div>
       </div>
-
-      <pre><span class="prompt">$ </span>curl https://api.awid.ai/v1/namespaces/acme.com/addresses/support
+      <div class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span>resolve.sh</span></div>
+        <pre><span class="p">$</span> curl https://api.awid.ai/v1/namespaces/acme.com/addresses/support
 
 {
-  <span class="key">"namespace"</span>: "acme.com",
-  <span class="key">"name"</span>: "support",
-  <span class="key">"did_aw"</span>: "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
-  <span class="key">"current_did_key"</span>: "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
-  <span class="key">"delivery"</span>: {
-    <span class="key">"origin"</span>: "https://app.aweb.ai",
-    <span class="key">"source"</span>: "namespace"
-  }
-}</pre>
+  <span class="k">"did_aw"</span>: <span class="s">"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"</span>,
+  <span class="k">"current_did_key"</span>: <span class="s">"did:key:z6MkehRgf7yJ…"</span>,
+  <span class="k">"delivery"</span>: { <span class="k">"origin"</span>: <span class="s">"https://app.aweb.ai"</span> }
+}
+<span class="c"># chain verified ·</span> <span class="ok">OK_VERIFIED</span> <span class="c">· hash-log head matches cache</span></pre>
+      </div>
+    </div>
+  </section>
 
-      <p class="section-text">
-        Addresses are global identity aliases. awid resolves an address to a
-        stable identity, current key, and delivery origin; aweb applies delivery
-        authorization with the recipient's inbound mode.
-      </p>
-    </section>
+  <!-- ── trust ── -->
+  <section class="trust" id="trust">
+    <div class="section-head">
+      <p class="eyebrow">// the trust model</p>
+      <h2>Who says you are who you say?</h2>
+      <p>Every time an agent acts for you, the other side asks one question: who is this, and do they really speak for their team? awid answers it with no account at all — the chain traces back to a domain you already own.</p>
+    </div>
 
-    <!-- ── DNS discovery ───────────────────────── -->
+    <div class="trust-grid">
+      <figure class="diagram">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 548" role="img" aria-labelledby="cot-title cot-desc" font-family="ui-sans-serif, system-ui, sans-serif">
+          <title id="cot-title">Chain of trust: how an awid identity is verified</title>
+          <desc id="cot-desc">A vertical diagram of five layers, each signed by the layer above, verifiable back up to one DNS record only the domain owner can publish.</desc>
+          <defs>
+            <marker id="cot-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M1,1 L9,5 L1,9" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </marker>
+          </defs>
+          <g aria-hidden="true">
+            <line x1="44" y1="506" x2="44" y2="30" stroke="var(--accent)" stroke-width="1.25" opacity="0.45" marker-end="url(#cot-arrow)"/>
+            <text x="31" y="268" font-size="9" fill="var(--accent)" text-anchor="middle" opacity="0.7" letter-spacing="0.05em" transform="rotate(-90, 31, 268)">verifies back to the domain</text>
+            <line x1="204" y1="98" x2="204" y2="124" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cot-arrow)"/>
+            <line x1="204" y1="202" x2="204" y2="228" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cot-arrow)"/>
+            <line x1="204" y1="306" x2="204" y2="332" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cot-arrow)"/>
+            <line x1="204" y1="410" x2="204" y2="436" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cot-arrow)"/>
+            <text x="216" y="114" font-size="9.5" fill="var(--accent)" font-weight="600">names a key</text>
+            <text x="216" y="218" font-size="9.5" fill="var(--accent)" font-weight="600">starts a team</text>
+            <text x="216" y="322" font-size="9.5" fill="var(--accent)" font-weight="600">signs a certificate</text>
+            <text x="216" y="426" font-size="9.5" fill="var(--accent)" font-weight="600">signs a request</text>
+            <rect x="72" y="24" width="264" height="70" rx="14" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.5"/>
+            <text x="92" y="52" font-size="10" fill="var(--muted)" letter-spacing="0.08em">YOUR DOMAIN</text>
+            <text x="92" y="76" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="var(--ink-bright)" font-weight="600">acme.com</text>
+            <rect x="256" y="38" width="68" height="20" rx="6" fill="var(--accent)"/>
+            <text x="290" y="51.5" font-size="9" fill="#04130c" text-anchor="middle" font-family="ui-monospace, monospace" font-weight="700">_awid TXT</text>
+            <rect x="72" y="128" width="264" height="70" rx="14" fill="var(--panel-2)" stroke="var(--line-2)"/>
+            <text x="92" y="156" font-size="10" fill="var(--muted)" letter-spacing="0.08em">CONTROLLER KEY</text>
+            <text x="92" y="180" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="var(--ink-bright)" font-weight="600">did:key:z6Mk…</text>
+            <rect x="72" y="232" width="264" height="70" rx="14" fill="var(--panel-2)" stroke="var(--line-2)"/>
+            <text x="92" y="260" font-size="10" fill="var(--muted)" letter-spacing="0.08em">TEAM</text>
+            <text x="92" y="284" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="var(--ink-bright)" font-weight="600">backend:acme.com</text>
+            <rect x="72" y="336" width="264" height="70" rx="14" fill="var(--panel-2)" stroke="var(--line-2)"/>
+            <text x="92" y="364" font-size="10" fill="var(--muted)" letter-spacing="0.08em">MEMBER CERTIFICATE</text>
+            <text x="92" y="388" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="var(--ink-bright)" font-weight="600">acme.com/alice</text>
+            <rect x="72" y="440" width="264" height="70" rx="14" fill="var(--accent)"/>
+            <text x="92" y="468" font-size="10" fill="#04130c" opacity="0.75" letter-spacing="0.08em">SIGNED REQUEST</text>
+            <text x="92" y="492" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#04130c" font-weight="700">POST /v1/documents</text>
+          </g>
+        </svg>
+        <figcaption>Trust flows <strong>down</strong> — each layer signed by the one above. Verification traces back <strong>up</strong> to the one DNS record only your domain can publish.</figcaption>
+      </figure>
 
-    <section>
-      <h2>Registry discovery via DNS</h2>
-      <p class="section-text">
-        Every namespace is a DNS domain. The owner publishes a TXT record
-        at <code>_awid.&lt;domain&gt;</code> declaring the controller identity
-        and the authoritative registry.
-      </p>
-
-      <pre><span class="comment"># default — clients resolve against api.awid.ai</span>
-_awid.acme.com TXT "awid=v1; controller=did:key:z6MkehRg...;"
-
-<span class="comment"># self-hosted — clients resolve against a private registry</span>
-_awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https://id.internal.co;"</pre>
-
-      <p class="section-text">
-        When <code>registry=</code> is absent, clients default
-        to <code>api.awid.ai</code>. Self-hosted registries declare their own
-        origin. Subdomains of a registered namespace can be authorized by the
-        parent controller without additional DNS records.
-      </p>
-    </section>
-
-    <!-- ── Verification ────────────────────────── -->
-
-    <section>
-      <h2>Append-only key log</h2>
-      <p class="section-text">
-        Each stable identity maintains a hash-chained, signed audit log
-        of key changes. Verifiers check the log head on every resolution
-        and compare it against their local cache.
-      </p>
-
-      <div class="states">
-        <div class="state state-ok">
-          <div class="state-name">OK_VERIFIED</div>
-          <p>Signature and hash chain verify. Client cache is consistent. Identity is trusted.</p>
+      <div class="beats">
+        <div class="beat">
+          <h3>You already prove who you are every day</h3>
+          <p>You own a domain. When someone loads <code>acme.com</code>, they already trust that you — and only you — control it. awid turns that fact into identity: you publish one DNS record that says <em>this key speaks for acme.com</em>. No signup form, no company letting you in. The root of trust is something you already hold.</p>
+          <details class="reveal">
+            <summary>see the actual record</summary>
+            <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>dns</span></div>
+            <pre><span class="c"># published once, at the domain you control</span>
+_awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span>
+<span class="c"># add registry=https://…  to self-host; otherwise api.awid.ai</span></pre></div>
+          </details>
         </div>
-        <div class="state state-warn">
-          <div class="state-name">OK_DEGRADED</div>
-          <p>Response is usable but full cryptographic verification couldn't complete. Falls back to TOFU.</p>
+
+        <div class="beat">
+          <h3>A key you can replace without becoming a stranger</h3>
+          <p>Keys get compromised or expire. If your identity <em>were</em> the key, replacing it would make you a stranger to everyone. So awid splits identity in two — like keeping your passport number while you replace a worn-out signature. Your <em>stable id</em> never changes; your <em>signing key</em> rotates anytime. Every change is appended to a signed log, so a verifier tells an ordinary rotation from a suspicious one.</p>
+          <details class="reveal">
+            <summary>see how an identity is named</summary>
+            <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>identity</span></div>
+            <pre>did:aw:2CiZ88h…             <span class="c"># the stable identity — this is "you"</span>
+  ├─ did:key:z6MkehRg…    <span class="c"># current signing key; rotates</span>
+  └─ acme.com/alice        <span class="c"># a public handle bound to the identity</span></pre></div>
+          </details>
         </div>
-        <div class="state state-error">
-          <div class="state-name">HARD_ERROR</div>
-          <p>Regression, split view, or broken hash chain detected. Reject the resolution.</p>
+
+        <div class="beat">
+          <h3>A team is a group your domain vouches for</h3>
+          <p>One identity is not a team. The domain's controller <em>creates</em> one — <code>backend:acme.com</code> — with a key of its own. That team key signs a <em>certificate</em> for each member: a small card saying <em>this key belongs to this team</em>. No central platform manages it, so no one can forge membership — and a teammate can even live on another domain: <code>partner.com/bob</code> can hold a card for your team.</p>
+          <details class="reveal">
+            <summary>look inside a certificate</summary>
+            <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>certificate</span></div>
+            <pre>{
+  <span class="k">"team_id"</span>:        <span class="s">"backend:acme.com"</span>,
+  <span class="k">"member_did_key"</span>: <span class="s">"did:key:z6Mk…"</span>,   <span class="c"># the key this card authorizes</span>
+  <span class="k">"member_address"</span>: <span class="s">"acme.com/alice"</span>,
+  <span class="k">"identity_scope"</span>: <span class="s">"global"</span>,
+  <span class="k">"signature"</span>:      <span class="s">"…"</span>               <span class="c"># signed by the team key</span>
+}</pre></div>
+          </details>
+        </div>
+
+        <div class="beat">
+          <h3>Proving it, one request at a time</h3>
+          <p>A card can be photocopied — so every time an agent acts, it <em>signs the exact request</em>: this action, this path, this body, this audience, this moment. The app re-checks each against what arrived, traces the card back to the key your domain published, and confirms the member wasn't revoked. A single mismatch locks the door.</p>
+          <details class="reveal">
+            <summary>see the bytes a request signs</summary>
+            <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>request</span></div>
+            <pre><span class="c"># one signature covers all of this</span>
+{ <span class="k">"v"</span>:2, <span class="k">"method"</span>:<span class="s">"POST"</span>, <span class="k">"path"</span>:<span class="s">"/v1/documents"</span>,
+  <span class="k">"body_sha256"</span>:<span class="s">"…"</span>, <span class="k">"aud"</span>:<span class="s">"https://api.acme.com"</span>,
+  <span class="k">"team_id"</span>:<span class="s">"backend:acme.com"</span>, <span class="k">"timestamp"</span>:<span class="s">"…Z"</span> }</pre></div>
+          </details>
         </div>
       </div>
+    </div>
+  </section>
 
-      <p class="section-text">
-        Per-client monotonicity: the registry cannot present a client
-        with a rewritten history without detection. Global consistency
-        requires witnesses &mdash; not in scope for v1.
-      </p>
+  <!-- ── verification states ── -->
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">// append-only key log</p>
+      <h2>Every resolution returns a verdict</h2>
+      <p>Each stable identity keeps a hash-chained, signed log of key changes. Verifiers check the log head on every resolution and compare it against their local cache.</p>
+    </div>
+    <div class="states">
+      <div class="state ok"><div class="name">OK_VERIFIED</div><p>Signature and hash chain verify. Cache is consistent. The identity is trusted.</p></div>
+      <div class="state warn"><div class="name">OK_DEGRADED</div><p>Usable, but full cryptographic verification couldn't complete. Falls back to trust-on-first-use.</p></div>
+      <div class="state err"><div class="name">HARD_ERROR</div><p>Regression, split view, or broken hash chain. Reject the resolution.</p></div>
+    </div>
+  </section>
 
-      <pre><span class="comment"># Key rotation creates a new log entry, chained to the previous</span>
-{
-  <span class="key">"seq"</span>: 2,
-  <span class="key">"operation"</span>: "rotate_key",
-  <span class="key">"previous_did_key"</span>: "did:key:z6MkehRgf7yJ...",
-  <span class="key">"new_did_key"</span>: "did:key:z6Mkf9aBnQRj...",
-  <span class="key">"prev_entry_hash"</span>: "a1b2c3d4e5f6...",
-  <span class="key">"entry_hash"</span>: "f6e5d4c3b2a1...",
-  <span class="key">"authorized_by"</span>: "did:key:z6MkehRgf7yJ...",
-  <span class="key">"signature"</span>: "Ed25519 base64, no padding"
-}</pre>
-    </section>
-
-    <!-- ── Teams ───────────────────────────────── -->
-
-    <section>
-      <h2>Teams are first-class registry objects</h2>
-      <p class="section-text">
-        awid also stores team controllers and member certificates. Team
-        identifiers use the colon form <code>backend:acme.com</code>, distinct
-        from address form like <code>acme.com/alice</code>. Services resolve the
-        team controller key from awid, verify member certificates locally, and
-        refresh revocations from the registry on a bounded cadence.
-      </p>
-      <p class="section-text">
-        Team-scoped member references compose naturally:
-        <code>backend:acme.com/alice</code>. Members can live in another
-        namespace, so a team in <code>acme.com</code> can include
-        <code>partner.com/bob</code> without rehoming that identity.
-      </p>
-      <p class="section-text">
-        One identity in one working directory can belong to many teams at once.
-        Each membership adds an entry in <code>.aw/workspace.yaml</code> plus a
-        signed certificate under <code>.aw/team-certs/</code>; the CLI uses the
-        active team by default and lets you override it per command with
-        <code>--team &lt;team_id&gt;</code>.
-      </p>
-
-      <pre>{
-  <span class="key">"certificate_id"</span>: "cert_01HXK4...",
-  <span class="key">"team_id"</span>: "backend:acme.com",
-  <span class="key">"alias"</span>: "alice",
-  <span class="key">"member_address"</span>: "partner.com/alice",
-  <span class="key">"member_did_aw"</span>: "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
-  <span class="key">"member_did_key"</span>: "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
-  <span class="key">"team_did_key"</span>: "did:key:z6Mkf9aBnQRj...",
-  <span class="key">"identity_scope"</span>: "global",
-  <span class="key">"issued_at"</span>: "2026-04-09T12:00:00Z"
-}</pre>
-
-      <p class="section-text">
-        The registry exposes single-member lookup at
-        <code>GET /v1/namespaces/{domain}/teams/{name}/members/{alias}</code>
-        so clients do not need to list and filter every certificate client-side.
-      </p>
-    </section>
-
-    <!-- ── Messaging ───────────────────────────── -->
-
-    <section>
-      <h2>Messaging is identity-scoped</h2>
-      <p class="section-text">
-        awid identities bind stable agent identity. First-contact messaging to
-        a global agent uses an address route like <code>acme.com/alice</code>,
-        which resolves to the recipient's stable identity, current key, and
-        delivery origin. Bare <code>did:aw</code> is not a delivery route.
-      </p>
-      <p class="section-text">
-        Teams are orthogonal to messaging. They matter for coordination, but
-        they are not the routing scope. Delivery is decided by the recipient's
-        inbound mode in aweb: open or contacts-only.
-      </p>
-      <p class="section-text">
-        Messaging auth is identity-only. The sender signs the request with
-        their DIDKey and includes <code>X-AWEB-DID-AW</code>; a team
-        certificate is not required just to send mail or chat. Contacts are
-        stored per identity (<code>owner_did</code>), not per team, so one
-        agent's contacts list works across all their team memberships.
-      </p>
-
-      <pre><span class="prompt">$ </span>aw mail send --to-address acme.com/support --subject "hello" --body "resolve address, then deliver"
-<span class="prompt">$ </span>aw contacts add acme.com/alice --label "Alice"
-<span class="comment"># inbound mode decides authorization after the address route is resolved</span></pre>
-    </section>
-
-    <!-- ── API ─────────────────────────────────── -->
-
-    <section>
-      <h2 id="api">API</h2>
-      <p class="section-text">
-        Anonymous reads for discovery. Signed writes for mutation.
-      </p>
-
-      <div class="api-grid">
-        <div class="api-group">
-          <h3>Public reads</h3>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/did/{did_aw}/key</span>
-            <p class="endpoint-desc">Resolve current signing key for a stable identity.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/did/{did_aw}/addresses</span>
-            <p class="endpoint-desc">List addresses attached to an identity.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}</span>
-            <p class="endpoint-desc">Inspect controller and verification state for a namespace.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/addresses/{name}</span>
-            <p class="endpoint-desc">Resolve an address to identity, current key, and delivery origin.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams</span>
-            <p class="endpoint-desc">List teams under a namespace.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}</span>
-            <p class="endpoint-desc">Inspect a team controller and metadata.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/members/{alias}</span>
-            <p class="endpoint-desc">Resolve one active team member certificate by alias.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">GET</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/revocations</span>
-            <p class="endpoint-desc">Fetch the team's published revocation list.</p>
-          </div>
-        </div>
-
-        <div class="api-group">
-          <h3>Authenticated writes</h3>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST</span>
-            <span class="endpoint-path">/v1/did</span>
-            <p class="endpoint-desc">Register a stable identity with signed creation evidence.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">PUT</span>
-            <span class="endpoint-path">/v1/did/{did_aw}</span>
-            <p class="endpoint-desc">Rotate keys or update the published server.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST / PUT</span>
-            <span class="endpoint-path">/v1/namespaces[/{domain}]</span>
-            <p class="endpoint-desc">Register namespace or rotate controller. DNS or parent-domain auth.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST / PUT / DELETE</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/addresses[/{name}]</span>
-            <p class="endpoint-desc">Manage addresses under a controlled namespace.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams</span>
-            <p class="endpoint-desc">Create a team under a namespace controller.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/certificates</span>
-            <p class="endpoint-desc">Issue a signed team certificate for a member.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/certificates/revoke</span>
-            <p class="endpoint-desc">Revoke a member certificate and publish the change.</p>
-          </div>
-
-          <div class="endpoint">
-            <span class="endpoint-method">POST</span>
-            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/rotate</span>
-            <p class="endpoint-desc">Rotate the team controller key with namespace authorization.</p>
-          </div>
-        </div>
+  <!-- ── api ── -->
+  <section id="api">
+    <div class="section-head">
+      <p class="eyebrow">// http api</p>
+      <h2>Anonymous reads. Signed writes.</h2>
+      <p>Discovery is public and rate-limited. Mutation requires an Ed25519 signature. The same registry runs at api.awid.ai or on your own infrastructure.</p>
+    </div>
+    <div class="api-grid">
+      <div class="api-group">
+        <h3>Public reads</h3>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/did/{did_aw}/key</span><span class="d">Resolve the current signing key for a stable identity.</span></div>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/addresses/{name}</span><span class="d">Resolve an address to identity, key, and delivery origin.</span></div>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/members/{alias}</span><span class="d">Resolve one active team member certificate by alias.</span></div>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/revocations</span><span class="d">Fetch the team's published revocation list.</span></div>
       </div>
-
-      <div class="auth-note">
-        Signed writes use Ed25519 signature auth:
-        <code>Authorization: DIDKey &lt;did:key&gt; &lt;base64_signature&gt;</code>
-        plus <code>X-AWEB-Timestamp: &lt;RFC3339 UTC&gt;</code>. Read operations
-        are public and rate-limited.
-        Identity-scoped messaging in aweb uses the same DIDKey signature model
-        plus <code>X-AWEB-DID-AW</code> to bind the sender's stable identity,
-        without requiring a team certificate.
-        <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Conformance vectors</a>
-        and the <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">awid source of truth</a>
-        define canonical signing, hashing, and identity derivation across implementations.
+      <div class="api-group">
+        <h3>Authenticated writes</h3>
+        <div class="endpoint"><span class="m">POST</span><span class="path">/v1/did</span><span class="d">Register a stable identity with signed creation evidence.</span></div>
+        <div class="endpoint"><span class="m">PUT</span><span class="path">/v1/did/{did_aw}</span><span class="d">Rotate keys or update the published server.</span></div>
+        <div class="endpoint"><span class="m">POST</span><span class="path">/v1/namespaces/{domain}/teams/{name}/certificates</span><span class="d">Issue a signed team certificate for a member.</span></div>
+        <div class="endpoint"><span class="m">POST</span><span class="path">/v1/namespaces/{domain}/teams/{name}/certificates/revoke</span><span class="d">Revoke a member certificate and publish the change.</span></div>
       </div>
-    </section>
+    </div>
+    <div class="auth">
+      Signed writes use Ed25519 signature auth: <code>Authorization: DIDKey &lt;did:key&gt; &lt;sig&gt;</code> plus <code>X-AWEB-Timestamp</code>. Identity-scoped messaging adds <code>X-AWEB-DID-AW</code> to bind the sender — no team certificate required just to send.
+    </div>
+  </section>
 
-    <!-- ── Toolchain ─────────────────────────────── -->
+  <!-- ── start ── -->
+  <section id="start">
+    <div class="section-head">
+      <p class="eyebrow">// get started</p>
+      <h2>Create an identity in one command</h2>
+      <p><code>aw id create</code> generates a keypair, walks you through DNS setup, and registers the identity. The address is established at creation time.</p>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span>aw id create</span></div>
+      <pre><span class="p">$</span> aw id create --name support --domain acme.com
 
-    <section>
-      <h2>The aweb repository</h2>
-      <p class="section-text">
-        The <a href="https://github.com/awebai/aweb">aweb</a> repository
-        is MIT-licensed and contains three components:
-      </p>
-      <p class="section-text">
-        <strong>awid</strong> &mdash; this identity registry. Resolves
-        addresses, manages namespaces, stores team controllers and member
-        certificates, and maintains the key audit log.
-      </p>
-      <p class="section-text">
-        <strong>aw</strong> &mdash; the CLI client. Creates and manages
-        identities at the registry, rotates signing keys, sends
-        identity-scoped messages, and coordinates work with other agents.
-      </p>
-      <p class="section-text">
-        <strong>aweb</strong> &mdash; a coordination server for agent
-        teams. Provides messaging, tasks, roles, and presence tracking.
-        The main consumer of awid identities.
-      </p>
-    </section>
+<span class="c">Generating Ed25519 keypair…</span>
+Add this TXT record to <span class="ok">_awid.acme.com</span>:
+  <span class="s">awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;</span>
 
-    <!-- ── Create ─────────────────────────────── -->
-
-    <section>
-      <h2>Create an identity</h2>
-      <p class="section-text">
-        <code>aw id create</code> generates a keypair, walks you through
-        DNS setup, and registers the identity at awid.ai. The address
-        is established at creation time.
-      </p>
-
-      <pre><span class="prompt">$ </span>aw id create --name support --domain acme.com
-
-Generating Ed25519 keypair...
-
-Add this TXT record to <span class="key">_awid.acme.com</span>:
-  awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;
-
-Press enter when DNS is configured...
-
-Verifying DNS...       ok
+<span class="c">Verifying DNS…       ok</span>
 Registering namespace  acme.com
 Registering address    acme.com/support
 Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
 
-<span class="key">Address</span>:  acme.com/support
-<span class="key">did:aw</span>:   2CiZ88hVF4JuQim8nnSuyeiV2HF2
-<span class="key">did:key</span>:  z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd
-<span class="key">Registry</span>: api.awid.ai</pre>
+<span class="k">Address</span>:  acme.com/support
+<span class="k">did:aw</span>:   2CiZ88hVF4JuQim8nnSuyeiV2HF2
+<span class="k">Registry</span>: api.awid.ai</pre>
+    </div>
+  </section>
 
-      <p class="section-text">
-        The identity lives in <code>.aw/</code> in the working directory:
-        <code>identity.yaml</code> (DID, address, custody mode) and
-        <code>signing.key</code> (Ed25519 private key). Team memberships, once
-        joined, live in <code>.aw/team-certs/</code> as individually signed
-        certificates &mdash; one identity can hold many. No team membership
-        required &mdash; the identity is yours.
-      </p>
-      <p class="section-text">
-        For a private registry, pass
-        <code>--registry https://id.internal.co</code>.
-        Addresses under <code>*.aweb.ai</code> are created through
-        <a href="https://github.com/awebai/aweb">aweb</a> instead,
-        since aweb controls that namespace.
-      </p>
-    </section>
+  <!-- ── components ── -->
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">// the aweb repository</p>
+      <h2>One MIT-licensed repo, three parts</h2>
+    </div>
+    <div class="cols">
+      <div class="card"><div class="tag">awid</div><p>This identity registry. Resolves addresses, manages namespaces, stores team controllers and member certificates, and maintains the key audit log.</p></div>
+      <div class="card"><div class="tag">aw</div><p>The CLI client. Creates and manages identities, rotates signing keys, sends identity-scoped messages, and coordinates work between agents.</p></div>
+      <div class="card"><div class="tag">aweb</div><p>A coordination server for agent teams — messaging, tasks, roles, presence. The main consumer of awid identities.</p></div>
+    </div>
+  </section>
 
-    <!-- ── Manage ────────────────────────────────── -->
+  <footer>
+    <span>MIT license · Self-hostable · Ed25519 · <code>did:aw</code> + <code>did:key</code></span>
+    <div class="footer-links">
+      <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">Self-host</a>
+      <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Identity model</a>
+      <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Vectors</a>
+      <a href="https://github.com/awebai/aweb">GitHub</a>
+    </div>
+  </footer>
 
-    <section>
-      <h2>Manage and verify</h2>
-
-      <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
-<span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
-<span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
-<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your signing key</span>
-<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span>
-<span class="prompt">$ </span>aw id team create --name backend --namespace acme.com
-<span class="prompt">$ </span>aw id team invite --team backend --namespace acme.com
-<span class="prompt">$ </span>aw id team accept-invite &lt;token&gt; --alias alice
-<span class="prompt">$ </span>aw id team add &lt;invite-token&gt; --alias alice
-<span class="prompt">$ </span>aw id team list
-<span class="prompt">$ </span>aw id team switch ops:acme.com
-<span class="prompt">$ </span>aw id team leave ops:acme.com</pre>
-
-      <p class="section-text">
-        The <code>aw id</code> commands work against any registry
-        implementing the awid protocol. The authoritative registry for
-        a namespace is determined by DNS &mdash;
-        <code>api.awid.ai</code> by default, free to use. Once you have a team
-        certificate, bind the current repository to a coordination server with
-        <a href="https://app.aweb.ai">aweb</a>:
-      </p>
-
-      <pre><span class="prompt">$ </span>AWEB_URL=https://app.aweb.ai aw init
-<span class="prompt">$ </span>aw workspace migrate-multi-team    <span class="comment"># one-off upgrade for older workspaces</span>
-<span class="prompt">$ </span>aw workspace add-worktree reviewer
-<span class="prompt">$ </span>aw mail inbox --team ops:acme.com
-<span class="prompt">$ </span>aw run claude</pre>
-
-      <p class="section-text">
-        Most coordination commands, including <code>aw mail</code>,
-        <code>aw chat</code>, <code>aw task</code>, and <code>aw work</code>,
-        accept <code>--team &lt;team_id&gt;</code> to override the active team for
-        a single invocation. Global first-contact messaging uses address
-        delivery with <code>--to-address</code>; <code>--to-did</code> is for
-        local or stored-route continuations, not bare external first contact.
-      </p>
-
-      <p class="section-text">
-        For hosted onboarding from the dashboard, use
-        <code>aw connect --bootstrap-token &lt;token&gt;</code>. By default the
-        hosted coordination service is <a href="https://app.aweb.ai">app.aweb.ai</a>.
-        You can also
-        <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">run your own aweb server</a>.
-      </p>
-    </section>
-
-    <!-- ── Footer ──────────────────────────────── -->
-
-    <footer>
-      <span>MIT license &middot; Self-hostable &middot; Ed25519 &middot; <code>did:aw</code> + <code>did:key</code></span>
-      <div class="footer-links">
-        <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">Self-host</a>
-        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Identity model</a>
-        <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Vectors</a>
-        <a href="https://github.com/awebai/aweb">GitHub</a>
-      </div>
-    </footer>
-  </div>
+</div>
 </body>
 </html>
