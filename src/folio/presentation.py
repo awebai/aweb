@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import secrets
 from html import escape
@@ -409,5 +410,161 @@ def render_presented_page(
       </div>
 {footer_html}    </article>
   </main>
+</body>
+</html>"""
+
+
+def _script_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
+
+def render_editor_page(
+    *,
+    token: str,
+    body: str,
+    version_number: int,
+    theme: dict[str, Any] | None = None,
+    public_origin: str | None = None,
+    allowed_asset_ids: set[UUID] | None = None,
+    asset_embeds: dict[UUID, dict[str, str]] | None = None,
+    nonce: str,
+) -> str:
+    preview = render_presented_markdown(
+        body,
+        public_origin=public_origin,
+        allowed_asset_ids=allowed_asset_ids,
+        asset_embeds=asset_embeds,
+    )
+    safe_tokens = sanitize_theme_tokens((theme or {}).get("tokens"))
+    theme_css = _theme_css(safe_tokens)
+    logo_url = str((theme or {}).get("logo_url") or "")
+    header = str((theme or {}).get("header") or "")
+    footer = str((theme or {}).get("footer") or "")
+    logo_html = (
+        f'      <img class="brand-logo" src="{escape(logo_url, quote=True)}" alt="Team logo">\n'
+        if logo_url
+        else ""
+    )
+    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Edit presented document</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --border: #e5e7eb;
+      --accent: #2563eb;
+      --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-heading: var(--font-body);{theme_css}    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-body); line-height: 1.6; }}
+    .page {{ max-width: 1100px; margin: 0 auto; padding: 32px 20px; }}
+    .surface {{ background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08); padding: clamp(20px, 4vw, 40px); }}
+    .eyebrow, .meta, .status, .theme-header, .theme-footer {{ color: var(--muted); }}
+    .toolbar {{ display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 16px; }}
+    .toolbar button {{ border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
+    .toolbar button.primary {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
+    .toolbar input {{ border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; }}
+    .editor {{ width: 100%; min-height: 55vh; border: 1px solid var(--border); border-radius: 12px; padding: 16px; font: 1rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }}
+    .preview {{ border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-height: 55vh; }}
+    .hidden {{ display: none; }}
+    .brand-logo {{ display: block; max-height: 72px; max-width: min(240px, 100%); object-fit: contain; margin: 0 0 24px; }}
+    .theme-header {{ margin: 0 0 20px; white-space: pre-wrap; }}
+    .theme-footer {{ margin: 24px 0 0; white-space: pre-wrap; }}
+    .preview img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <article class="surface">
+{logo_html}      <p class="eyebrow">Editable folio link</p>
+{header_html}      <div class="toolbar" aria-label="Editor controls">
+        <button id="edit-tab" type="button" class="primary">Edit</button>
+        <button id="preview-tab" type="button">Preview</button>
+        <input id="editor-name" type="text" maxlength="120" autocomplete="name" placeholder="Editing as (optional)">
+        <button id="save" type="button" class="primary">Save new version</button>
+        <span id="meta" class="meta">Version {version_number}</span>
+      </div>
+      <p id="status" class="status" role="status"></p>
+      <textarea id="body" class="editor" spellcheck="true"></textarea>
+      <div id="preview" class="preview hidden">{preview}</div>
+{footer_html}    </article>
+  </main>
+  <script nonce="{escape(nonce, quote=True)}">
+    const INITIAL = {initial_json};
+    const bodyEl = document.getElementById('body');
+    const previewEl = document.getElementById('preview');
+    const statusEl = document.getElementById('status');
+    const metaEl = document.getElementById('meta');
+    const nameEl = document.getElementById('editor-name');
+    let baseVersion = INITIAL.version_number;
+    let dirty = false;
+    bodyEl.value = INITIAL.body;
+    nameEl.value = window.localStorage.getItem('folio.editorName') || '';
+    function renderLivePreview() {{
+      previewEl.replaceChildren();
+      const blocks = bodyEl.value.split(/\n{{2,}}/).filter((block) => block.length > 0);
+      if (blocks.length === 0) {{ previewEl.appendChild(document.createElement('p')); return; }}
+      for (const block of blocks) {{
+        const trimmed = block.trimStart();
+        let el;
+        if (trimmed.startsWith('## ')) {{ el = document.createElement('h2'); el.textContent = trimmed.slice(3); }}
+        else if (trimmed.startsWith('# ')) {{ el = document.createElement('h1'); el.textContent = trimmed.slice(2); }}
+        else {{ el = document.createElement('p'); el.textContent = block; }}
+        previewEl.appendChild(el);
+      }}
+    }}
+    bodyEl.addEventListener('input', () => {{ dirty = true; renderLivePreview(); }});
+    nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
+    function setStatus(message) {{ statusEl.textContent = message || ''; }}
+    function showEdit() {{ bodyEl.classList.remove('hidden'); previewEl.classList.add('hidden'); }}
+    function showPreview() {{ previewEl.classList.remove('hidden'); bodyEl.classList.add('hidden'); }}
+    document.getElementById('edit-tab').addEventListener('click', showEdit);
+    document.getElementById('preview-tab').addEventListener('click', showPreview);
+    document.getElementById('save').addEventListener('click', async () => {{
+      setStatus('Saving…');
+      const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
+        method: 'POST',
+        headers: {{'content-type': 'application/json'}},
+        body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
+      }});
+      const payload = await response.json().catch(() => ({{}}));
+      if (response.status === 409) {{
+        const latest = payload.detail || payload;
+        setStatus('A newer version is available. Review the latest text below and reconcile your edits before saving.');
+        bodyEl.value = latest.body || '';
+        renderLivePreview();
+        baseVersion = latest.version_number || baseVersion;
+        metaEl.textContent = 'Version ' + baseVersion;
+        dirty = false;
+        showEdit();
+        return;
+      }}
+      if (!response.ok) {{ setStatus('Save failed. The link may be expired or revoked.'); return; }}
+      baseVersion = payload.version_number;
+      metaEl.textContent = 'Version ' + baseVersion;
+      dirty = false;
+      setStatus('Saved version ' + baseVersion + '. Refresh to see the rendered preview.');
+    }});
+    async function pollState() {{
+      const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
+      if (!response.ok) {{ setStatus('This edit link is no longer available.'); return; }}
+      const state = await response.json();
+      if (state.version_number > baseVersion) {{
+        setStatus(dirty ? 'A newer version is available; save will ask you to reconcile.' : 'A newer version is available. Refresh to load it.');
+      }}
+    }}
+    window.setInterval(pollState, 4000);
+  </script>
 </body>
 </html>"""

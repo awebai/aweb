@@ -218,7 +218,7 @@ async def get_document(db: AsyncDatabaseManager, *, principal: Principal, slug: 
         SELECT d.document_id, d.slug, d.title, d.created_at, d.updated_at,
                v.version_id, v.version_number, v.body, v.created_by_did_key,
                v.created_by_did_aw, v.created_by_address, v.created_by_alias,
-               v.certificate_id, v.created_at AS version_created_at
+               v.certificate_id, v.created_by_editor_name, v.created_at AS version_created_at
         FROM {{tables.documents}} d
         JOIN {{tables.document_versions}} v ON v.document_id = d.document_id
         WHERE d.team_id = $1 AND d.slug = $2
@@ -248,6 +248,7 @@ async def get_document(db: AsyncDatabaseManager, *, principal: Principal, slug: 
             "created_by_address": data["created_by_address"],
             "created_by_alias": data["created_by_alias"],
             "certificate_id": data["certificate_id"],
+            "created_by_editor_name": data["created_by_editor_name"],
             "created_at": data["version_created_at"],
         },
     }
@@ -313,7 +314,7 @@ async def list_versions(db: AsyncDatabaseManager, *, principal: Principal, slug:
         """
         SELECT version_id, version_number, NULL::TEXT AS body, created_by_did_key,
                created_by_did_aw, created_by_address, created_by_alias,
-               certificate_id, created_at
+               certificate_id, created_by_editor_name, created_at
         FROM {{tables.document_versions}}
         WHERE document_id = $1
         ORDER BY version_number DESC
@@ -331,6 +332,7 @@ async def mint_presentation_link(
     slug: str,
     version: int | None,
     ttl_seconds: int | None,
+    editable: bool = False,
 ) -> dict[str, Any]:
     selected = await db.fetch_one(
         """
@@ -364,8 +366,8 @@ async def mint_presentation_link(
         """
         INSERT INTO {{tables.presentation_links}}
           (token, document_id, version_number, expires_at, created_by_did_key,
-           created_by_did_aw, created_by_alias, certificate_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           created_by_did_aw, created_by_alias, certificate_id, editable)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
         token,
         document_id,
@@ -375,6 +377,7 @@ async def mint_presentation_link(
         principal.did_aw,
         principal.alias,
         principal.certificate_id,
+        editable,
     )
     return {
         "token": token,
@@ -410,11 +413,20 @@ async def revoke_presentation_link(
 async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
     row = await db.fetch_one(
         """
-        SELECT v.body, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer
+        SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
+               pinned.body AS pinned_body, pinned.version_number AS pinned_version_number,
+               latest.body AS latest_body, latest.version_number AS latest_version_number
         FROM {{tables.presentation_links}} p
-        JOIN {{tables.document_versions}} v
-          ON v.document_id = p.document_id AND v.version_number = p.version_number
+        JOIN {{tables.document_versions}} pinned
+          ON pinned.document_id = p.document_id AND pinned.version_number = p.version_number
         JOIN {{tables.documents}} d ON d.document_id = p.document_id
+        JOIN LATERAL (
+            SELECT body, version_number
+            FROM {{tables.document_versions}}
+            WHERE document_id = p.document_id
+            ORDER BY version_number DESC
+            LIMIT 1
+        ) latest ON TRUE
         LEFT JOIN {{tables.themes}} t ON t.team_id = d.team_id
         WHERE p.token = $1 AND p.revoked_at IS NULL AND p.expires_at > NOW()
         """,
@@ -422,13 +434,147 @@ async def get_presented_document(db: AsyncDatabaseManager, *, token: str) -> dic
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
-    body = str(row["body"])
+    editable = bool(row["editable"])
+    body = str(row["latest_body"] if editable else row["pinned_body"])
+    version_number = int(row["latest_version_number"] if editable else row["pinned_version_number"])
     return {
         "body": body,
+        "version_number": version_number,
+        "editable": editable,
         "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
         "allowed_assets": await _allowed_assets_for_body(db, team_id=str(row["team_id"]), body=body),
     }
+
+
+def _clean_editor_name(editor_name: str | None) -> str | None:
+    if editor_name is None:
+        return None
+    cleaned = " ".join(editor_name.split())
+    return cleaned[:120] or None
+
+
+async def get_presentation_state(db: AsyncDatabaseManager, *, token: str) -> dict[str, Any]:
+    row = await db.fetch_one(
+        """
+        SELECT latest.version_number
+        FROM {{tables.presentation_links}} p
+        JOIN LATERAL (
+            SELECT version_number
+            FROM {{tables.document_versions}}
+            WHERE document_id = p.document_id
+            ORDER BY version_number DESC
+            LIMIT 1
+        ) latest ON TRUE
+        WHERE p.token = $1
+          AND p.editable IS TRUE
+          AND p.revoked_at IS NULL
+          AND p.expires_at > NOW()
+        """,
+        token,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Presentation not found")
+    return {"version_number": int(row["version_number"])}
+
+
+async def edit_presented_document(
+    db: AsyncDatabaseManager,
+    *,
+    token: str,
+    settings: Settings,
+    body: str,
+    base_version: int,
+    editor_name: str | None,
+) -> dict[str, Any]:
+    clean_editor_name = _clean_editor_name(editor_name)
+    async with db.transaction() as tx:
+        link = await tx.fetch_one(
+            """
+            SELECT p.document_id, d.team_id, p.created_by_did_key, p.created_by_did_aw,
+                   p.created_by_alias, p.certificate_id
+            FROM {{tables.presentation_links}} p
+            JOIN {{tables.documents}} d ON d.document_id = p.document_id
+            WHERE p.token = $1
+              AND p.editable IS TRUE
+              AND p.revoked_at IS NULL
+              AND p.expires_at > NOW()
+            FOR UPDATE OF d
+            """,
+            token,
+        )
+        if link is None:
+            raise HTTPException(status_code=404, detail="Presentation not found")
+        document_id: UUID = link["document_id"]
+        latest = await tx.fetch_one(
+            """
+            SELECT version_number, body
+            FROM {{tables.document_versions}}
+            WHERE document_id = $1
+            ORDER BY version_number DESC
+            LIMIT 1
+            """,
+            document_id,
+        )
+        if latest is None:
+            raise HTTPException(status_code=404, detail="Presentation not found")
+        latest_version = int(latest["version_number"])
+        if base_version != latest_version:
+            raise HTTPException(
+                status_code=409,
+                detail={"version_number": latest_version, "body": latest["body"]},
+            )
+
+        await tx.execute(
+            """
+            INSERT INTO {{tables.subscriptions}} (team_id, tier)
+            VALUES ($1, 'free')
+            ON CONFLICT (team_id) DO NOTHING
+            """,
+            str(link["team_id"]),
+        )
+        tier_row = await tx.fetch_one(
+            "SELECT tier FROM {{tables.subscriptions}} WHERE team_id = $1",
+            str(link["team_id"]),
+        )
+        tier = str(tier_row["tier"] if tier_row is not None else "free")
+        if tier != ACTIVE_TIER:
+            count = await tx.fetch_one(
+                "SELECT COUNT(*) AS n FROM {{tables.document_versions}} WHERE document_id = $1",
+                document_id,
+            )
+            current = int(count["n"] if count is not None else 0)
+            if current >= settings.free_max_versions_per_doc:
+                raise _limit_exceeded(
+                    limit="versions_per_doc",
+                    current=current,
+                    maximum=settings.free_max_versions_per_doc,
+                )
+
+        new_version = latest_version + 1
+        version_id = uuid4()
+        await tx.execute(
+            """
+            INSERT INTO {{tables.document_versions}}
+              (version_id, document_id, version_number, body, created_by_did_key,
+               created_by_did_aw, created_by_address, created_by_alias, certificate_id, created_by_editor_name)
+            VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)
+            """,
+            version_id,
+            document_id,
+            new_version,
+            body,
+            link["created_by_did_key"],
+            link["created_by_did_aw"],
+            link["created_by_alias"],
+            link["certificate_id"],
+            clean_editor_name,
+        )
+        await tx.execute(
+            "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
+            document_id,
+        )
+    return {"version_number": new_version}
 
 
 def _json_value(value: Any) -> Any:

@@ -34,6 +34,7 @@ class DocumentVersion(BaseModel):
     created_by_address: str | None = None
     created_by_alias: str
     certificate_id: str
+    created_by_editor_name: str | None = None
     created_at: datetime
 
 
@@ -54,12 +55,29 @@ class CreatePresentationRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=160, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
     version: int | None = Field(default=None, ge=1)
     ttl_seconds: int | None = Field(default=None, ge=1)
+    editable: bool = False
 
 
 class PresentationResponse(BaseModel):
     token: str
     url: str
     expires_at: datetime
+
+
+class PresentationEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str
+    base_version: int = Field(..., ge=1)
+    editor_name: str | None = Field(default=None, max_length=120)
+
+
+class PresentationEditResponse(BaseModel):
+    version_number: int
+
+
+class PresentationStateResponse(BaseModel):
+    version_number: int
 
 
 class ImageAssetUploadRequest(BaseModel):
