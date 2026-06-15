@@ -183,6 +183,29 @@ def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
     assert '"version_number":7' in html
 
 
+def test_render_editor_page_live_preview_regex_is_valid_js() -> None:
+    # The block-split regex must emit an escaped \n, not a literal newline that
+    # breaks the regex literal across a line and throws SyntaxError (which left
+    # the whole editor script dead and the textarea empty).
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    assert r"split(/\n{2,}/)" in html
+    assert "split(/\n{2,}/)" not in html  # the broken, newline-bearing form
+
+
+def test_render_editor_page_fills_the_viewport_with_a_split_layout() -> None:
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    # Full-viewport app shell: editor pane + present-card preview pane, not a
+    # single narrow card.
+    assert 'class="workspace"' in html
+    assert 'id="pane-edit"' in html
+    assert 'id="pane-preview"' in html
+    assert "calc(100vh - var(--bar-h))" in html
+    assert "grid-template-columns: 1fr 1fr" in html
+    # The body loads into the textarea via JS (textarea is empty in source).
+    assert '<textarea id="body"' in html
+    assert "bodyEl.value = INITIAL.body;" in html
+
+
 def test_sanitize_layout_tokens_defaults_when_absent() -> None:
     default = {"mode": "document", "measure": "default", "color_scheme": "light"}
     assert sanitize_layout_tokens({}) == default
