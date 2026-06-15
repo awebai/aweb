@@ -866,7 +866,7 @@ def render_editor_page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>Edit presented document</title>
+  <title>Edit · folio</title>
   <style>
     :root {{
       color-scheme: light;
@@ -876,107 +876,248 @@ def render_editor_page(
       --muted: #4b5563;
       --border: #e5e7eb;
       --accent: #2563eb;
+      --warn: #b45309;
       --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --font-heading: var(--font-body);{theme_css}    }}
+      --font-heading: var(--font-body);
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --bar-h: 52px;{theme_css}    }}
     * {{ box-sizing: border-box; }}
+    html, body {{ height: 100%; }}
     body {{ margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-body); line-height: 1.6; }}
-    .page {{ max-width: 1100px; margin: 0 auto; padding: 32px 20px; }}
-    .surface {{ background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08); padding: clamp(20px, 4vw, 40px); }}
-    .eyebrow, .meta, .status, .theme-header, .theme-footer {{ color: var(--muted); }}
-    .toolbar {{ display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 16px; }}
-    .toolbar button {{ border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
-    .toolbar button.primary {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
-    .toolbar input {{ border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; }}
-    .editor {{ width: 100%; min-height: 55vh; border: 1px solid var(--border); border-radius: 12px; padding: 16px; font: 1rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }}
-    .preview {{ border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-height: 55vh; }}
-    .hidden {{ display: none; }}
-    .brand-logo {{ display: block; max-height: 72px; max-width: min(240px, 100%); object-fit: contain; margin: 0 0 24px; }}
-    .theme-header {{ margin: 0 0 20px; white-space: pre-wrap; }}
-    .theme-footer {{ margin: 24px 0 0; white-space: pre-wrap; }}
-    .preview img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
+    .bar {{
+      position: sticky; top: 0; z-index: 5;
+      height: var(--bar-h);
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }}
+    .brand {{ display: flex; align-items: baseline; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }}
+    .brand .dot {{ color: var(--accent); }}
+    .brand .sub {{ color: var(--muted); font-weight: 400; font-size: 0.82rem; letter-spacing: 0; }}
+    .tabs {{ display: none; gap: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }}
+    .tabs button {{ border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.82rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; }}
+    .tabs button[aria-selected="true"] {{ background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }}
+    .actions {{ margin-left: auto; display: flex; align-items: center; gap: 12px; min-width: 0; }}
+    .status {{ color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }}
+    .status.is-saving {{ color: var(--accent); }}
+    .status.is-conflict {{ color: var(--warn); }}
+    .ghost-input {{
+      width: 12rem; max-width: 24vw;
+      border: 1px solid transparent; background: transparent; color: var(--text);
+      border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 0.84rem;
+    }}
+    .ghost-input::placeholder {{ color: var(--muted); }}
+    .ghost-input:hover {{ border-color: var(--border); }}
+    .ghost-input:focus {{ outline: none; border-color: var(--accent); background: var(--bg); }}
+    .save {{
+      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+      border-radius: 6px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600;
+      cursor: pointer; min-width: 132px; white-space: nowrap;
+      transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    }}
+    .save:hover {{ opacity: 0.92; }}
+    .save:disabled {{ opacity: 0.45; cursor: default; }}
+    .save.is-conflict {{ background: var(--warn); border-color: var(--warn); }}
+    .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
+    .pane {{ height: 100%; overflow-y: auto; }}
+    .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
+    .editor {{
+      display: block; width: 100%; height: 100%;
+      border: 0; outline: none; resize: none; background: transparent; color: var(--text);
+      padding: 24px clamp(16px, 3vw, 44px);
+      font-family: var(--font-mono); font-size: 0.92rem; line-height: 1.7; tab-size: 2;
+    }}
+    .editor::placeholder {{ color: var(--muted); }}
+    .pane-preview {{ background: var(--bg); }}
+    .pane-preview .surface {{
+      max-width: 72ch; margin: 32px auto;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+      padding: clamp(24px, 4vw, 48px);
+    }}
+    .eyebrow {{ color: var(--muted); font-size: 0.8rem; margin: 0 0 20px; letter-spacing: 0.02em; }}
+    .brand-logo {{ display: block; max-height: 64px; max-width: min(220px, 100%); object-fit: contain; margin: 0 0 20px; }}
+    .theme-header, .theme-footer {{ color: var(--muted); white-space: pre-wrap; }}
+    .theme-header {{ margin: 0 0 24px; }}
+    .theme-footer {{ margin: 28px 0 0; }}
+    .document-body :first-child {{ margin-top: 0; }}
+    .document-body :last-child {{ margin-bottom: 0; }}
+    .document-body h1, .document-body h2, .document-body h3 {{ font-family: var(--font-heading); line-height: 1.2; }}
+    .document-body a {{ color: var(--accent); }}
+    .document-body pre, .document-body code {{ background: #f3f4f6; border-radius: 8px; }}
+    .document-body code {{ padding: 0.1rem 0.25rem; }}
+    .document-body pre {{ overflow: auto; padding: 1rem; }}
+    .document-body blockquote {{ border-left: 4px solid var(--border); color: var(--muted); margin-left: 0; padding-left: 1rem; }}
+    .document-body img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
+    .document-body table {{ border-collapse: collapse; width: 100%; }}
+    .document-body th, .document-body td {{ border: 1px solid var(--border); padding: 0.5rem; }}
+    @media (max-width: 900px) {{
+      .workspace {{ grid-template-columns: 1fr; grid-template-rows: 50vh 1fr; }}
+      .pane-edit {{ border-right: 0; border-bottom: 1px solid var(--border); }}
+    }}
+    @media (max-width: 600px) {{
+      .tabs {{ display: inline-flex; }}
+      .ghost-input {{ display: none; }}
+      .workspace {{ grid-template-columns: 1fr; grid-template-rows: 1fr; }}
+      .pane {{ display: none; }}
+      .pane.is-active {{ display: block; }}
+      .pane-edit {{ border-bottom: 0; }}
+    }}
   </style>
 </head>
 <body>
-  <main class="page">
-    <article class="surface">
-{logo_html}      <p class="eyebrow">Editable folio link</p>
-{header_html}      <div class="toolbar" aria-label="Editor controls">
-        <button id="edit-tab" type="button" class="primary">Edit</button>
-        <button id="preview-tab" type="button">Preview</button>
-        <input id="editor-name" type="text" maxlength="120" autocomplete="name" placeholder="Editing as (optional)">
-        <button id="save" type="button" class="primary">Save new version</button>
-        <span id="meta" class="meta">Version {version_number}</span>
-      </div>
-      <p id="status" class="status" role="status"></p>
-      <textarea id="body" class="editor" spellcheck="true"></textarea>
-      <div id="preview" class="preview hidden">{preview}</div>
-{footer_html}    </article>
+  <header class="bar">
+    <span class="brand">folio<span class="dot">.</span><span class="sub">editing</span></span>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
+      <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
+    </div>
+    <div class="actions">
+      <span id="status" class="status" role="status" aria-live="polite">Version {version_number}</span>
+      <input id="editor-name" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Your name (optional)">
+      <button id="save" class="save" type="button">Save new version</button>
+    </div>
+  </header>
+  <main class="workspace">
+    <section id="pane-edit" class="pane pane-edit is-active">
+      <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
+    </section>
+    <section id="pane-preview" class="pane pane-preview">
+      <article class="surface" id="preview-card">
+{logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
+{header_html}        <div class="document-body" id="preview">{preview}</div>
+{footer_html}      </article>
+    </section>
   </main>
   <script nonce="{escape(nonce, quote=True)}">
     const INITIAL = {initial_json};
     const bodyEl = document.getElementById('body');
     const previewEl = document.getElementById('preview');
+    const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
-    const metaEl = document.getElementById('meta');
     const nameEl = document.getElementById('editor-name');
+    const saveBtn = document.getElementById('save');
+    const baseTitle = 'Edit · folio';
     let baseVersion = INITIAL.version_number;
     let dirty = false;
+    let saving = false;
+    let conflict = false;
     bodyEl.value = INITIAL.body;
     nameEl.value = window.localStorage.getItem('folio.editorName') || '';
-    function renderLivePreview() {{
-      previewEl.replaceChildren();
-      const blocks = bodyEl.value.split(/\n{{2,}}/).filter((block) => block.length > 0);
-      if (blocks.length === 0) {{ previewEl.appendChild(document.createElement('p')); return; }}
-      for (const block of blocks) {{
-        const trimmed = block.trimStart();
-        let el;
-        if (trimmed.startsWith('## ')) {{ el = document.createElement('h2'); el.textContent = trimmed.slice(3); }}
-        else if (trimmed.startsWith('# ')) {{ el = document.createElement('h1'); el.textContent = trimmed.slice(2); }}
-        else {{ el = document.createElement('p'); el.textContent = block; }}
-        previewEl.appendChild(el);
-      }}
+
+    let previewTimer = null;
+    let previewSeq = 0;
+    async function refreshPreview() {{
+      const seq = ++previewSeq;
+      try {{
+        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/preview', {{
+          method: 'POST',
+          headers: {{'content-type': 'application/json'}},
+          body: JSON.stringify({{body: bodyEl.value}})
+        }});
+        if (!response.ok || seq !== previewSeq) return;
+        previewEl.innerHTML = await response.text();
+      }} catch (err) {{ /* keep the last good preview */ }}
     }}
-    bodyEl.addEventListener('input', () => {{ dirty = true; renderLivePreview(); }});
+    function schedulePreview() {{
+      if (previewTimer) clearTimeout(previewTimer);
+      previewTimer = setTimeout(refreshPreview, 350);
+    }}
+
+    function updateSaveButton() {{
+      saveBtn.classList.toggle('is-conflict', conflict);
+      if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
+      else if (conflict) {{ saveBtn.disabled = false; saveBtn.textContent = 'Overwrite?'; }}
+      else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
+      else {{ saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }}
+    }}
+
+    function setStatus(message, kind) {{
+      statusEl.textContent = message;
+      statusEl.className = 'status' + (kind ? ' is-' + kind : '');
+    }}
+
+    function markDirty() {{
+      if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
+      eyebrowEl.textContent = 'Draft · unsaved';
+      updateSaveButton();
+    }}
+
+    bodyEl.addEventListener('input', () => {{ markDirty(); schedulePreview(); }});
     nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
-    function setStatus(message) {{ statusEl.textContent = message || ''; }}
-    function showEdit() {{ bodyEl.classList.remove('hidden'); previewEl.classList.add('hidden'); }}
-    function showPreview() {{ previewEl.classList.remove('hidden'); bodyEl.classList.add('hidden'); }}
-    document.getElementById('edit-tab').addEventListener('click', showEdit);
-    document.getElementById('preview-tab').addEventListener('click', showPreview);
-    document.getElementById('save').addEventListener('click', async () => {{
-      setStatus('Saving…');
-      const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
-        method: 'POST',
-        headers: {{'content-type': 'application/json'}},
-        body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
-      }});
+
+    async function save() {{
+      if (saving || (!dirty && !conflict)) return;
+      saving = true; setStatus('Saving…', 'saving'); updateSaveButton();
+      let response;
+      try {{
+        response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
+          method: 'POST',
+          headers: {{'content-type': 'application/json'}},
+          body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
+        }});
+      }} catch (err) {{
+        saving = false; setStatus('Network error — your text is not saved.', 'conflict'); updateSaveButton(); return;
+      }}
       const payload = await response.json().catch(() => ({{}}));
+      saving = false;
       if (response.status === 409) {{
         const latest = payload.detail || payload;
-        setStatus('A newer version is available. Review the latest text below and reconcile your edits before saving.');
-        bodyEl.value = latest.body || '';
-        renderLivePreview();
+        conflict = true;
         baseVersion = latest.version_number || baseVersion;
-        metaEl.textContent = 'Version ' + baseVersion;
-        dirty = false;
-        showEdit();
+        setStatus('Someone saved version ' + baseVersion + '. Overwrite to keep your text.', 'conflict');
+        updateSaveButton();
         return;
       }}
-      if (!response.ok) {{ setStatus('Save failed. The link may be expired or revoked.'); return; }}
+      if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateSaveButton(); return; }}
       baseVersion = payload.version_number;
-      metaEl.textContent = 'Version ' + baseVersion;
-      dirty = false;
-      setStatus('Saved version ' + baseVersion + '. Refresh to see the rendered preview.');
-    }});
-    async function pollState() {{
-      const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
-      if (!response.ok) {{ setStatus('This edit link is no longer available.'); return; }}
-      const state = await response.json();
-      if (state.version_number > baseVersion) {{
-        setStatus(dirty ? 'A newer version is available; save will ask you to reconcile.' : 'A newer version is available. Refresh to load it.');
+      dirty = false; conflict = false;
+      document.title = baseTitle;
+      eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
+      setStatus('Saved version ' + baseVersion, null);
+      updateSaveButton();
+      refreshPreview();
+    }}
+
+    saveBtn.addEventListener('click', save);
+    document.addEventListener('keydown', (event) => {{
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {{
+        event.preventDefault();
+        save();
       }}
+    }});
+
+    const tabEdit = document.getElementById('tab-edit');
+    const tabPreview = document.getElementById('tab-preview');
+    const paneEdit = document.getElementById('pane-edit');
+    const panePreview = document.getElementById('pane-preview');
+    function activate(editing) {{
+      paneEdit.classList.toggle('is-active', editing);
+      panePreview.classList.toggle('is-active', !editing);
+      tabEdit.setAttribute('aria-selected', String(editing));
+      tabPreview.setAttribute('aria-selected', String(!editing));
+      if (!editing) refreshPreview();
+    }}
+    tabEdit.addEventListener('click', () => activate(true));
+    tabPreview.addEventListener('click', () => activate(false));
+
+    async function pollState() {{
+      try {{
+        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
+        if (!response.ok) return;
+        const state = await response.json();
+        if (state.version_number > baseVersion && !conflict && !saving) {{
+          setStatus(
+            dirty ? 'A newer version exists; saving will ask to overwrite.' : 'A newer version exists. Reload to load it.',
+            'conflict'
+          );
+        }}
+      }} catch (err) {{ /* transient; keep polling */ }}
     }}
     window.setInterval(pollState, 4000);
+
+    updateSaveButton();
   </script>
 </body>
 </html>"""

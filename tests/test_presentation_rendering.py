@@ -183,6 +183,64 @@ def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
     assert '"version_number":7' in html
 
 
+def test_render_editor_page_uses_server_rendered_preview() -> None:
+    # The preview is rendered by the server pipeline (full markdown/theme/template
+    # fidelity), not a crude client-side approximation.
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    assert "/preview'" in html  # the editor fetches the server preview endpoint
+    assert "renderLivePreview" not in html
+    # No raw, unescaped newline inside a JS regex literal (the SyntaxError that
+    # killed the editor script and left the textarea empty).
+    assert "split(/\n" not in html
+
+
+def test_render_editor_page_fills_the_viewport_with_a_split_layout() -> None:
+    html = render_editor_page(token="t", body="# Hi", version_number=1, nonce="n")
+    # Full-viewport app shell: editor pane + present-card preview pane, not a
+    # single narrow card.
+    assert 'class="workspace"' in html
+    assert 'id="pane-edit"' in html
+    assert 'id="pane-preview"' in html
+    assert "calc(100vh - var(--bar-h))" in html
+    assert "grid-template-columns: 1fr 1fr" in html
+    # The body loads into the textarea via JS (textarea is empty in source).
+    assert '<textarea id="body"' in html
+    assert "bodyEl.value = INITIAL.body;" in html
+
+
+def _preview_route_app(monkeypatch, *, editable: bool):
+    app = folio_api.create_app()
+    preview_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/present/{token}/preview"
+    )
+    db_dependency = preview_route.dependant.dependencies[0].call
+    app.dependency_overrides[db_dependency] = lambda: object()
+
+    async def fake_get_presented_document(_database, *, token: str) -> dict:
+        return {"editable": editable, "allowed_assets": {}}
+
+    monkeypatch.setattr(folio_api, "get_presented_document", fake_get_presented_document)
+    return app
+
+
+def test_present_preview_endpoint_renders_full_markdown_for_editable_token(monkeypatch) -> None:
+    app = _preview_route_app(monkeypatch, editable=True)
+    response = TestClient(app).post(
+        "/present/tok/preview",
+        json={"body": "# Heading\n\n**bold** and a [link](https://example.com)."},
+    )
+    assert response.status_code == 200
+    assert "<h1>Heading</h1>" in response.text
+    assert "<strong>bold</strong>" in response.text
+    assert 'href="https://example.com"' in response.text
+
+
+def test_present_preview_endpoint_rejects_read_only_token(monkeypatch) -> None:
+    app = _preview_route_app(monkeypatch, editable=False)
+    response = TestClient(app).post("/present/tok/preview", json={"body": "# hi"})
+    assert response.status_code == 404
+
+
 def test_sanitize_layout_tokens_defaults_when_absent() -> None:
     default = {"mode": "document", "measure": "default", "color_scheme": "light"}
     assert sanitize_layout_tokens({}) == default

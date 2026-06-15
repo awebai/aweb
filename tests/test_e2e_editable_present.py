@@ -51,11 +51,24 @@ def test_editable_present_link_appends_versions_and_rejects_stale_saves(
     editable = _mint_present(folio, team, slug="pitch", editable=True)
     editor_page = httpx.get(editable["url"], timeout=10.0)
     assert editor_page.status_code == 200, editor_page.text
-    assert "Editable folio link" in editor_page.text
+    assert "Save new version" in editor_page.text
     assert "<textarea" in editor_page.text.lower()
     assert "Version 1" in editor_page.text
     assert 'script-src \'nonce-' in editor_page.headers["content-security-policy"]
     assert "Original" in editor_page.text
+
+    # The editor's live preview is rendered by the server (full markdown fidelity).
+    preview = httpx.post(
+        f"{editable['url']}/preview",
+        json={"body": "# Live\n\n**bold** and a [link](https://example.com)."},
+        timeout=10.0,
+    )
+    assert preview.status_code == 200, preview.text
+    assert "<h1>Live</h1>" in preview.text
+    assert "<strong>bold</strong>" in preview.text
+    assert 'href="https://example.com"' in preview.text
+    # A read-only token cannot drive the editor preview.
+    assert httpx.post(f"{read_link['url']}/preview", json={"body": "# x"}, timeout=10.0).status_code == 404
 
     first_save = _edit(editable["url"], body="# Draft\n\nAlice edit", base_version=1, editor_name="Alice")
     assert first_save.status_code == 200, first_save.text

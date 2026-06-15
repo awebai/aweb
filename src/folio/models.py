@@ -85,6 +85,12 @@ class PresentationEditRequest(BaseModel):
     editor_name: str | None = Field(default=None, max_length=120)
 
 
+class PresentationPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(..., max_length=200_000)
+
+
 class PresentationEditResponse(BaseModel):
     version_number: int
 

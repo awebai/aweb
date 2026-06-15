@@ -25,6 +25,7 @@ from folio.models import (
     ImageAssetUploadRequest,
     PresentationEditRequest,
     PresentationEditResponse,
+    PresentationPreviewRequest,
     PresentationResponse,
     PresentationStateResponse,
     ThemeRequest,
@@ -35,6 +36,7 @@ from folio.models import (
 from folio.presentation import (
     content_security_policy,
     render_editor_page,
+    render_presented_markdown,
     render_presented_page,
     sanitize_layout_tokens,
     theme_contrast_error,
@@ -376,6 +378,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body=payload.body,
             base_version=payload.base_version,
             editor_name=payload.editor_name,
+        )
+
+    @app.post("/present/{token}/preview", response_class=HTMLResponse)
+    async def presentation_preview_route(
+        token: str,
+        request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        payload = PresentationPreviewRequest.model_validate(await request.json())
+        presented = await get_presented_document(database, token=token)
+        if not bool(presented.get("editable")):
+            raise HTTPException(status_code=404, detail="Presentation link not found")
+        html = render_presented_markdown(
+            payload.body,
+            public_origin=resolved.public_origin,
+            asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+        )
+        return HTMLResponse(
+            html,
+            headers={"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"},
         )
 
     @app.get("/present/{token}", response_class=HTMLResponse)
