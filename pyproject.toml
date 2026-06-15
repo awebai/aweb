@@ -36,6 +36,7 @@ Issues = "https://github.com/awebai/folio/issues"
 
 [project.scripts]
 folio = "folio.cli:main"
+aw-folio = "folio.cli:main"
 
 [build-system]
 requires = ["hatchling"]
