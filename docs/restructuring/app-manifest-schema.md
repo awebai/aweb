@@ -42,6 +42,19 @@ interprets** (distinct from `app.version`, the app's own release). A consumer
 MUST reject a manifest whose `manifest_version` it does not support rather than
 best-effort parse it. v1 consumers support `manifest_version: 1`.
 
+## Manifest discovery
+
+An app serves its manifest at a **well-known path on its origin**:
+`<app.origin>/.well-known/aweb-app.json` (parallels A2A's
+`/.well-known/agent-card.json`). The dispatcher and the gateway fetch it from
+there. The core **app registry** (SoT §3) later records this URL **plus a
+digest** for trust/discovery — mirroring the AWID A2A publication contract
+(the authoritative fact is URL + digest, not the cached body; body caching never
+overrides digest verification). For v1 and the folio proof, the dispatcher
+fetches the well-known path directly; registry-recorded discovery is part of the
+core app-registry work (SoT §12 m3). *(Freeze-completeness addition flagged by
+the folio team — the original freeze omitted the manifest's own location.)*
+
 ## Tool object
 
 ```jsonc
