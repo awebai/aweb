@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 func TestPluginExternalDispatchUsesTrustedDirOnlyAndEnvContract(t *testing.T) {
@@ -265,6 +268,78 @@ func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
 
 func serverOriginForTest(r *http.Request) string {
 	return "http://" + r.Host
+}
+
+func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+
+	var sawSignedPayload bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/aweb-app.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"folio","version":"1.0.0","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"present","method":"POST","path":"/v1/present","input_schema":{"type":"object","properties":{"slug":{"type":"string"},"ttl_seconds":{"type":"integer"},"editable":{"type":"boolean"}}},"params":[{"name":"slug","in":"body"},{"name":"ttl_seconds","in":"body"},{"name":"editable","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`))
+		case "/v1/present":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s", r.Method)
+			}
+			if got := r.Header.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type=%q", got)
+			}
+			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWEB-Signed-Payload") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
+				t.Fatalf("missing team-auth headers: %#v", r.Header)
+			}
+			sawSignedPayload = true
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["ttl_seconds"] != float64(3600) || body["editable"] != true || body["slug"] != "pitch" {
+				t.Fatalf("unexpected body: %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
+
+	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+	install.Dir = tmp
+	install.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("plugin install failed: %v\n%s", err, string(out))
+	}
+
+	run := exec.CommandContext(ctx, bin, "folio", "present", "--slug", "pitch", "--ttl_seconds", "3600", "--editable", "true")
+	run.Dir = tmp
+	run.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("manifest dispatch failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != `{"ok":true}` {
+		t.Fatalf("unexpected dispatch output: %s", string(out))
+	}
+	if !sawSignedPayload {
+		t.Fatal("app endpoint was not called with signed payload")
+	}
 }
 
 func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {

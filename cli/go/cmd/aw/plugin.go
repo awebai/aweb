@@ -677,6 +677,9 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 	if err := validatePluginName(commandName); err != nil {
 		return 0, false
 	}
+	if code, dispatched := dispatchInstalledManifestPlugin(commandName, args[commandIndex+1:]); dispatched {
+		return code, true
+	}
 	path, ok, err := resolveTrustedExternalPlugin(commandName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -716,6 +719,139 @@ func firstNonFlagArg(args []string) (string, int) {
 		return arg, i
 	}
 	return "", -1
+}
+
+func dispatchInstalledManifestPlugin(name string, args []string) (int, bool) {
+	dir, err := pluginDir()
+	if err != nil {
+		debugLog("resolve plugin dir: %v", err)
+		return 0, false
+	}
+	manifestPath := manifestPluginManifestPath(dir, name)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, false
+		}
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	var manifest appmanifest.Manifest
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "decode manifest %s: %v\n", manifestPath, err)
+		return 1, true
+	}
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		fmt.Fprintf(os.Stderr, "missing verb for app %q\n", name)
+		return 1, true
+	}
+	verb := strings.TrimSpace(args[0])
+	parsedArgs, rawBody, err := parseManifestDispatchArgs(args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	spec, err := appmanifest.Interpret(appmanifest.InterpretRequest{
+		Manifest:      manifest,
+		Verb:          verb,
+		Args:          parsedArgs,
+		RawBody:       rawBody,
+		ReservedNames: reservedRootCommandNames(),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	identity, err := resolveLocalSigningIdentity()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	parsedURL, err := url.Parse(spec.URL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	headers := make(http.Header)
+	for key, value := range spec.Headers {
+		headers.Set(key, value)
+	}
+	result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	if _, err := os.Stdout.Write(result.Body); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	if result.Status >= 400 {
+		return 1, true
+	}
+	return 0, true
+}
+
+func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {
+	out := map[string]any{}
+	var rawBody []byte
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if arg == "" {
+			continue
+		}
+		if !strings.HasPrefix(arg, "--") {
+			return nil, nil, usageError("unexpected positional argument %q", arg)
+		}
+		nameValue := strings.TrimPrefix(arg, "--")
+		name, value, hasValue := strings.Cut(nameValue, "=")
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, nil, usageError("empty flag name")
+		}
+		if !hasValue {
+			if i+1 >= len(args) {
+				return nil, nil, usageError("missing value for --%s", name)
+			}
+			i++
+			value = args[i]
+		}
+		if name == "body-file" {
+			data, err := readManifestBodyFile(value)
+			if err != nil {
+				return nil, nil, err
+			}
+			rawBody = data
+			continue
+		}
+		addManifestArgValue(out, name, value)
+	}
+	return out, rawBody, nil
+}
+
+func readManifestBodyFile(path string) ([]byte, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, usageError("--body-file requires a path or -")
+	}
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
+}
+
+func addManifestArgValue(out map[string]any, name, value string) {
+	if existing, ok := out[name]; ok {
+		switch v := existing.(type) {
+		case []any:
+			out[name] = append(v, value)
+		default:
+			out[name] = []any{v, value}
+		}
+		return
+	}
+	out[name] = value
 }
 
 func resolveTrustedExternalPlugin(name string) (string, bool, error) {

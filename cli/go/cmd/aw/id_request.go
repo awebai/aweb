@@ -138,19 +138,33 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	result, err := executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+	if err != nil {
+		return err
+	}
+	return printIDRequestExecutionResult(result, idRequestRaw)
+}
+
+type idRequestExecutionResult struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSigningIdentity, bodyBytes []byte, headers http.Header, signPayload map[string]any, teamAuth bool) (*idRequestExecutionResult, error) {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	if idRequestTeamAuth {
+	if teamAuth {
 		teamPayload, cert, err := teamSignedRequestPayload(identity, parsedURL, method, bodyBytes, signPayload)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		didKey, signature, canonical, err := awid.SignArbitraryPayload(identity.SigningKey, teamPayload, timestamp)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		certHeader, err := awid.EncodeTeamCertificateHeader(cert)
 		if err != nil {
-			return fmt.Errorf("encode team certificate header: %w", err)
+			return nil, fmt.Errorf("encode team certificate header: %w", err)
 		}
 		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 		headers.Set("X-AWEB-Timestamp", timestamp)
@@ -159,7 +173,7 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	} else {
 		didKey, signature, _, err := awid.SignArbitraryPayload(identity.SigningKey, signPayload, timestamp)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 		headers.Set("X-AWEB-Timestamp", timestamp)
@@ -176,7 +190,7 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 
 	req, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header = headers.Clone()
 
@@ -189,33 +203,38 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &idRequestExecutionResult{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: responseBody}, nil
+}
 
-	if idRequestRaw {
-		if _, err := os.Stdout.Write(responseBody); err != nil {
+func printIDRequestExecutionResult(result *idRequestExecutionResult, raw bool) error {
+	if result == nil {
+		return fmt.Errorf("missing response")
+	}
+	if raw {
+		if _, err := os.Stdout.Write(result.Body); err != nil {
 			return err
 		}
-		if len(responseBody) > 0 && responseBody[len(responseBody)-1] != '\n' {
+		if len(result.Body) > 0 && result.Body[len(result.Body)-1] != '\n' {
 			fmt.Fprintln(os.Stdout)
 		}
-		fmt.Fprintf(os.Stderr, "HTTP %d\n", resp.StatusCode)
+		fmt.Fprintf(os.Stderr, "HTTP %d\n", result.Status)
 	} else {
 		printOutput(idRequestOutput{
-			Status:  resp.StatusCode,
-			Headers: flattenResponseHeaders(resp.Header),
-			Body:    decodeResponseBody(responseBody),
+			Status:  result.Status,
+			Headers: flattenResponseHeaders(result.Header),
+			Body:    decodeResponseBody(result.Body),
 		}, formatIDRequest)
 	}
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("request failed with status %d", resp.StatusCode)
+	if result.Status >= 400 {
+		return fmt.Errorf("request failed with status %d", result.Status)
 	}
 	return nil
 }
