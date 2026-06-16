@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/gowebpki/jcs"
 )
 
@@ -192,6 +193,131 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 				t.Fatalf("body_sha256 got %s want %s", got, hex.EncodeToString(sum[:]))
 			}
 		})
+	}
+}
+
+// --- app-manifest-interpretation-v1 ---
+
+type appManifestInterpretationVectors struct {
+	Schema        string                            `json:"schema"`
+	Description   string                            `json:"description"`
+	ReservedNames []string                          `json:"reserved_names"`
+	Cases         []appManifestInterpretationVector `json:"cases"`
+	NegativeCases []appManifestNegativeVector       `json:"negative_cases"`
+}
+
+type appManifestInterpretationVector struct {
+	Name     string                  `json:"name"`
+	Manifest appmanifest.Manifest    `json:"manifest"`
+	Verb     string                  `json:"verb"`
+	Args     map[string]any          `json:"args"`
+	RawBody  string                  `json:"raw_body"`
+	Expected appManifestExpectedSpec `json:"expected"`
+}
+
+type appManifestExpectedSpec struct {
+	Method     string            `json:"method"`
+	URL        string            `json:"url"`
+	PathQuery  string            `json:"path_query"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	BodySHA256 string            `json:"body_sha256"`
+	Mutation   bool              `json:"mutation"`
+}
+
+type appManifestNegativeVector struct {
+	Name                  string               `json:"name"`
+	Description           string               `json:"description"`
+	Manifest              appmanifest.Manifest `json:"manifest"`
+	Verb                  string               `json:"verb"`
+	Args                  map[string]any       `json:"args"`
+	ExpectedErrorContains string               `json:"expected_error_contains"`
+	PluginName            string               `json:"plugin_name"`
+	PathContains          string               `json:"path_contains"`
+	TrustedDirContains    bool                 `json:"trusted_dir_contains"`
+}
+
+func TestAppManifestInterpretationVectors(t *testing.T) {
+	data, err := vectorsFS.ReadFile("vectors/app-manifest-interpretation-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors appManifestInterpretationVectors
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors.Schema != "aweb.app-manifest.interpretation.v1" {
+		t.Fatalf("schema=%q", vectors.Schema)
+	}
+	reserved := map[string]bool{}
+	for _, name := range vectors.ReservedNames {
+		reserved[name] = true
+	}
+
+	for _, v := range vectors.Cases {
+		t.Run(v.Name, func(t *testing.T) {
+			got, err := appmanifest.Interpret(appmanifest.InterpretRequest{
+				Manifest:      v.Manifest,
+				Verb:          v.Verb,
+				Args:          v.Args,
+				RawBody:       []byte(v.RawBody),
+				ReservedNames: reserved,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Method != v.Expected.Method {
+				t.Fatalf("method got %q want %q", got.Method, v.Expected.Method)
+			}
+			if got.URL != v.Expected.URL {
+				t.Fatalf("url got %q want %q", got.URL, v.Expected.URL)
+			}
+			if got.PathQuery != v.Expected.PathQuery {
+				t.Fatalf("path_query got %q want %q", got.PathQuery, v.Expected.PathQuery)
+			}
+			if appmanifest.SortedHeaderString(got.Headers) != appmanifest.SortedHeaderString(v.Expected.Headers) {
+				t.Fatalf("headers got %#v want %#v", got.Headers, v.Expected.Headers)
+			}
+			if string(got.Body) != v.Expected.Body {
+				t.Fatalf("body got %q want %q", string(got.Body), v.Expected.Body)
+			}
+			if got.BodySHA256 != v.Expected.BodySHA256 {
+				t.Fatalf("body_sha256 got %s want %s", got.BodySHA256, v.Expected.BodySHA256)
+			}
+			if got.Mutation != v.Expected.Mutation {
+				t.Fatalf("mutation got %v want %v", got.Mutation, v.Expected.Mutation)
+			}
+		})
+	}
+
+	seenExternalPluginPathRejection := false
+	for _, v := range vectors.NegativeCases {
+		t.Run(v.Name, func(t *testing.T) {
+			if v.Name == "external_plugin_path_rejection" {
+				seenExternalPluginPathRejection = true
+				if v.TrustedDirContains || strings.TrimSpace(v.PathContains) == "" || strings.TrimSpace(v.ExpectedErrorContains) == "" {
+					t.Fatalf("bad external plugin path rejection vector: %#v", v)
+				}
+				return
+			}
+			_, err := appmanifest.Interpret(appmanifest.InterpretRequest{
+				Manifest:      v.Manifest,
+				Verb:          v.Verb,
+				Args:          v.Args,
+				ReservedNames: reserved,
+			})
+			if err == nil {
+				t.Fatalf("expected error containing %q", v.ExpectedErrorContains)
+			}
+			if !strings.Contains(err.Error(), v.ExpectedErrorContains) {
+				t.Fatalf("error %q does not contain %q", err.Error(), v.ExpectedErrorContains)
+			}
+		})
+	}
+	if !seenExternalPluginPathRejection {
+		t.Fatalf("missing external plugin path rejection vector")
 	}
 }
 

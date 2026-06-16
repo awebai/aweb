@@ -1,0 +1,428 @@
+package appmanifest
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/awebai/aw/awid"
+)
+
+const SupportedManifestVersion = 1
+
+type Manifest struct {
+	ManifestVersion int    `json:"manifest_version"`
+	App             App    `json:"app"`
+	Tools           []Tool `json:"tools"`
+}
+
+type App struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	Origin  string `json:"origin"`
+	LLMSTxt string `json:"llms_txt,omitempty"`
+	Skills  string `json:"skills,omitempty"`
+}
+
+type Tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Method      string         `json:"method"`
+	Path        string         `json:"path"`
+	InputSchema map[string]any `json:"input_schema,omitempty"`
+	Params      []Param        `json:"params"`
+	Body        Body           `json:"body,omitempty"`
+	Scopes      []string       `json:"scopes,omitempty"`
+	Mutation    bool           `json:"mutation"`
+}
+
+type Param struct {
+	Name string `json:"name"`
+	In   string `json:"in"`
+}
+
+type Body struct {
+	Mode        string `json:"mode,omitempty"`
+	RawParam    string `json:"raw_param,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
+type InterpretRequest struct {
+	Manifest      Manifest
+	Verb          string
+	Args          map[string]any
+	RawBody       []byte
+	ReservedNames map[string]bool
+}
+
+type InterpretedRequest struct {
+	Method     string            `json:"method"`
+	URL        string            `json:"url"`
+	PathQuery  string            `json:"path_query"`
+	Headers    map[string]string `json:"headers"`
+	Body       []byte            `json:"-"`
+	BodyString string            `json:"body"`
+	BodySHA256 string            `json:"body_sha256"`
+	Mutation   bool              `json:"mutation"`
+}
+
+func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
+	manifest := req.Manifest
+	if manifest.ManifestVersion != SupportedManifestVersion {
+		return nil, fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion)
+	}
+	appID := strings.TrimSpace(manifest.App.ID)
+	if appID == "" {
+		return nil, fmt.Errorf("app.id is required")
+	}
+	if req.ReservedNames != nil && req.ReservedNames[appID] {
+		return nil, fmt.Errorf("app id %q is reserved built-in command or alias", appID)
+	}
+	origin, err := parseOrigin(manifest.App.Origin)
+	if err != nil {
+		return nil, err
+	}
+	tool, err := findTool(manifest.Tools, req.Verb)
+	if err != nil {
+		return nil, err
+	}
+	if req.ReservedNames != nil && req.ReservedNames[strings.TrimSpace(tool.Name)] {
+		return nil, fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
+	}
+	method := strings.ToUpper(strings.TrimSpace(tool.Method))
+	if !validMethod(method) {
+		return nil, fmt.Errorf("unsupported method %q", tool.Method)
+	}
+	path, err := validateRelativePath(tool.Path)
+	if err != nil {
+		return nil, err
+	}
+	properties := schemaProperties(tool.InputSchema)
+	args := req.Args
+	if args == nil {
+		args = map[string]any{}
+	}
+	pathWithParams, err := substitutePath(path, tool.Params, args)
+	if err != nil {
+		return nil, err
+	}
+	query, err := canonicalQuery(tool.Params, args)
+	if err != nil {
+		return nil, err
+	}
+	targetPath := joinOriginPath(origin.EscapedPath(), pathWithParams)
+	pathQuery := targetPath
+	if query != "" {
+		pathQuery += "?" + query
+	}
+	absoluteURL := origin.Scheme + "://" + origin.Host + pathQuery
+
+	body, contentType, err := buildBody(tool, args, properties, req.RawBody)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(body)
+	return &InterpretedRequest{
+		Method:     method,
+		URL:        absoluteURL,
+		PathQuery:  pathQuery,
+		Headers:    map[string]string{"Content-Type": contentType},
+		Body:       body,
+		BodyString: string(body),
+		BodySHA256: hex.EncodeToString(sum[:]),
+		Mutation:   tool.Mutation,
+	}, nil
+}
+
+func parseOrigin(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("app.origin is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("invalid app.origin %q", raw)
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u, nil
+}
+
+func findTool(tools []Tool, verb string) (*Tool, error) {
+	verb = strings.TrimSpace(verb)
+	for i := range tools {
+		if strings.TrimSpace(tools[i].Name) == verb {
+			return &tools[i], nil
+		}
+	}
+	return nil, fmt.Errorf("tool %q not found", verb)
+}
+
+func validMethod(method string) bool {
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateRelativePath(raw string) (string, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return "", fmt.Errorf("tool.path is required")
+	}
+	if strings.Contains(path, "://") || strings.HasPrefix(path, "//") {
+		return "", fmt.Errorf("tool.path must be relative and cannot include scheme or host")
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		return "", err
+	}
+	if u.IsAbs() || u.Host != "" || u.Scheme != "" {
+		return "", fmt.Errorf("tool.path must be relative and cannot include scheme or host")
+	}
+	parts := strings.Split(u.Path, "/")
+	for _, part := range parts {
+		if part == ".." {
+			return "", fmt.Errorf("tool.path must not contain path traversal")
+		}
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path, nil
+}
+
+func substitutePath(path string, params []Param, args map[string]any) (string, error) {
+	out := path
+	pathParams := map[string]bool{}
+	for _, p := range params {
+		if strings.TrimSpace(p.In) == "path" {
+			pathParams[strings.TrimSpace(p.Name)] = true
+		}
+	}
+	for name := range pathParams {
+		placeholder := "{" + name + "}"
+		if !strings.Contains(out, placeholder) {
+			return "", fmt.Errorf("path param %q has no matching placeholder", name)
+		}
+		value, ok := args[name]
+		if !ok || isEmpty(value) {
+			return "", fmt.Errorf("missing path param %q", name)
+		}
+		out = strings.ReplaceAll(out, placeholder, escapePathSegment(fmt.Sprint(value)))
+	}
+	if strings.Contains(out, "{") || strings.Contains(out, "}") {
+		return "", fmt.Errorf("tool.path contains placeholder without matching path param")
+	}
+	return out, nil
+}
+
+func canonicalQuery(params []Param, args map[string]any) (string, error) {
+	parts := []string{}
+	for _, p := range params {
+		if strings.TrimSpace(p.In) != "query" {
+			continue
+		}
+		name := strings.TrimSpace(p.Name)
+		value, ok := args[name]
+		if !ok || isEmpty(value) {
+			continue
+		}
+		values, err := queryValues(value)
+		if err != nil {
+			return "", fmt.Errorf("query param %s: %w", name, err)
+		}
+		for _, v := range values {
+			parts = append(parts, rfc3986Escape(name)+"="+rfc3986Escape(v))
+		}
+	}
+	return strings.Join(parts, "&"), nil
+}
+
+func queryValues(value any) ([]string, error) {
+	switch v := value.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			out = append(out, fmt.Sprint(item))
+		}
+		return out, nil
+	case []string:
+		return v, nil
+	default:
+		return []string{fmt.Sprint(value)}, nil
+	}
+}
+
+func buildBody(tool *Tool, args map[string]any, properties map[string]map[string]any, rawBody []byte) ([]byte, string, error) {
+	mode := strings.TrimSpace(tool.Body.Mode)
+	if mode == "" {
+		mode = "json"
+	}
+	switch mode {
+	case "json":
+		body := map[string]any{}
+		for _, p := range tool.Params {
+			if strings.TrimSpace(p.In) != "body" {
+				continue
+			}
+			name := strings.TrimSpace(p.Name)
+			value, ok := args[name]
+			if !ok || isEmpty(value) {
+				continue
+			}
+			coerced, err := coerceValue(value, schemaType(properties[name]))
+			if err != nil {
+				return nil, "", fmt.Errorf("body param %s: %w", name, err)
+			}
+			body[name] = coerced
+		}
+		if len(body) == 0 {
+			return []byte{}, "application/json", nil
+		}
+		canonical, err := awid.CanonicalJSONValue(body)
+		if err != nil {
+			return nil, "", err
+		}
+		return []byte(canonical), "application/json", nil
+	case "raw":
+		if strings.TrimSpace(tool.Body.RawParam) == "" {
+			return nil, "", fmt.Errorf("raw body mode requires body.raw_param")
+		}
+		contentType := strings.TrimSpace(tool.Body.ContentType)
+		if contentType == "" {
+			return nil, "", fmt.Errorf("raw body mode requires body.content_type")
+		}
+		if rawBody != nil {
+			return rawBody, contentType, nil
+		}
+		value, ok := args[strings.TrimSpace(tool.Body.RawParam)]
+		if !ok {
+			return nil, "", fmt.Errorf("missing raw body param %q", tool.Body.RawParam)
+		}
+		return []byte(fmt.Sprint(value)), contentType, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported body mode %q", mode)
+	}
+}
+
+func schemaProperties(schema map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	raw, _ := schema["properties"].(map[string]any)
+	for name, value := range raw {
+		if m, ok := value.(map[string]any); ok {
+			out[name] = m
+		}
+	}
+	return out
+}
+
+func schemaType(prop map[string]any) string {
+	if prop == nil {
+		return ""
+	}
+	if raw, ok := prop["type"].(string); ok {
+		return strings.TrimSpace(raw)
+	}
+	return ""
+}
+
+func coerceValue(value any, typ string) (any, error) {
+	switch typ {
+	case "", "string":
+		if typ == "string" {
+			return fmt.Sprint(value), nil
+		}
+		return value, nil
+	case "integer":
+		switch v := value.(type) {
+		case float64:
+			if v != float64(int64(v)) {
+				return nil, fmt.Errorf("expected integer")
+			}
+			return int64(v), nil
+		case json.Number:
+			return v.Int64()
+		case int, int8, int16, int32, int64:
+			return v, nil
+		case string:
+			return strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		default:
+			return nil, fmt.Errorf("expected integer")
+		}
+	case "boolean":
+		switch v := value.(type) {
+		case bool:
+			return v, nil
+		case string:
+			return strconv.ParseBool(strings.TrimSpace(v))
+		default:
+			return nil, fmt.Errorf("expected boolean")
+		}
+	case "number":
+		return nil, fmt.Errorf("number/float body fields are not supported in manifest v1")
+	case "array":
+		switch v := value.(type) {
+		case []any:
+			return v, nil
+		default:
+			return nil, fmt.Errorf("expected array")
+		}
+	case "object":
+		if m, ok := value.(map[string]any); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("expected object")
+	default:
+		return nil, fmt.Errorf("unsupported schema type %q", typ)
+	}
+}
+
+func joinOriginPath(originPath, toolPath string) string {
+	originPath = strings.TrimRight(originPath, "/")
+	if originPath == "" {
+		return toolPath
+	}
+	return originPath + toolPath
+}
+
+func isEmpty(value any) bool {
+	if value == nil {
+		return true
+	}
+	if s, ok := value.(string); ok {
+		return s == ""
+	}
+	return false
+}
+
+func escapePathSegment(value string) string {
+	return rfc3986Escape(value)
+}
+
+func rfc3986Escape(value string) string {
+	escaped := url.QueryEscape(value)
+	escaped = strings.ReplaceAll(escaped, "+", "%20")
+	escaped = strings.ReplaceAll(escaped, "%7E", "~")
+	return escaped
+}
+
+func SortedHeaderString(headers map[string]string) string {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+":"+headers[key])
+	}
+	return strings.Join(parts, "\n")
+}
