@@ -48,6 +48,65 @@ func TestValidateRawModeRequiresRawParam(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsParamWithoutSchemaProperty(t *testing.T) {
+	cases := []struct {
+		name        string
+		inputSchema map[string]any
+	}{
+		{name: "missing input_schema", inputSchema: nil},
+		{name: "empty properties", inputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := Manifest{
+				ManifestVersion: 1,
+				App:             App{ID: "safe", Version: "1.0.0", Origin: "https://app.example"},
+				Tools: []Tool{{
+					Name:        "present",
+					Method:      "POST",
+					Path:        "/v1/present",
+					InputSchema: tc.inputSchema,
+					Params:      []Param{{Name: "slug", In: "body"}},
+					Body:        Body{Mode: "json"},
+				}},
+			}
+			if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), "not declared in input_schema") {
+				t.Fatalf("Validate() error = %v, want undeclared input_schema param", err)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsPathQueryAndFragment(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "query", path: "/v1/x?fixed=1", want: "query"},
+		{name: "fragment", path: "/v1/x#frag", want: "fragment"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := Manifest{
+				ManifestVersion: 1,
+				App:             App{ID: "safe", Version: "1.0.0", Origin: "https://app.example"},
+				Tools: []Tool{{
+					Name:        "x",
+					Method:      "GET",
+					Path:        tc.path,
+					InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+					Params:      []Param{},
+					Body:        Body{Mode: "json"},
+				}},
+			}
+			if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsUndeclaredSchemaPlacement(t *testing.T) {
 	manifest := Manifest{
 		ManifestVersion: 1,

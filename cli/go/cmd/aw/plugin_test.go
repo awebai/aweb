@@ -531,6 +531,57 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 	}
 }
 
+func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cases := []struct {
+		name     string
+		manifest string
+		want     string
+	}{
+		{
+			name:     "param without input_schema property",
+			manifest: `{"manifest_version":1,"app":{"id":"bad","version":"1.0.0","origin":"$ORIGIN"},"tools":[{"name":"x","method":"POST","path":"/v1/x","params":[{"name":"slug","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`,
+			want:     "not declared in input_schema",
+		},
+		{
+			name:     "path query",
+			manifest: `{"manifest_version":1,"app":{"id":"bad","version":"1.0.0","origin":"$ORIGIN"},"tools":[{"name":"x","method":"GET","path":"/v1/x?fixed=1","input_schema":{"type":"object","properties":{}},"params":[],"body":{"mode":"json"},"mutation":false}]}`,
+			want:     "query",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := filepath.Join(tmp, "home-"+strings.NewReplacer(" ", "-", "/", "-").Replace(tc.name))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/aweb-app.json" {
+					t.Fatalf("unexpected request path %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(strings.ReplaceAll(tc.manifest, "$ORIGIN", serverOriginForTest(r))))
+			}))
+			defer server.Close()
+
+			install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+			install.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+			out, err := install.CombinedOutput()
+			if err == nil {
+				t.Fatalf("plugin install unexpectedly accepted malformed manifest:\n%s", string(out))
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Fatalf("install error %q does not contain %q", string(out), tc.want)
+			}
+		})
+	}
+}
+
 func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script plugin fixture is unix-only")

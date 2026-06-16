@@ -125,10 +125,8 @@ func validateTool(tool Tool, reservedNames map[string]bool) error {
 			return fmt.Errorf("duplicate param %q", name)
 		}
 		paramByName[name] = Param{Name: name, In: placement}
-		if len(properties) > 0 {
-			if _, ok := properties[name]; !ok {
-				return fmt.Errorf("param %q is not declared in input_schema", name)
-			}
+		if _, ok := properties[name]; !ok {
+			return fmt.Errorf("param %q is not declared in input_schema", name)
 		}
 	}
 	for name := range properties {
@@ -292,6 +290,12 @@ func validateRelativePath(raw string) (string, error) {
 	}
 	if u.IsAbs() || u.Host != "" || u.Scheme != "" {
 		return "", fmt.Errorf("tool.path must be relative and cannot include scheme or host")
+	}
+	if u.RawQuery != "" {
+		return "", fmt.Errorf("tool.path must not include query; use params with in:query")
+	}
+	if u.Fragment != "" {
+		return "", fmt.Errorf("tool.path must not include fragment")
 	}
 	parts := strings.Split(u.Path, "/")
 	for _, part := range parts {

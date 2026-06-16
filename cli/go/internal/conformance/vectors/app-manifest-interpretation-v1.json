@@ -602,6 +602,136 @@
         "body": "hello"
       },
       "expected_error_contains": "raw_param"
+    },
+    {
+      "name": "reject_param_without_input_schema_properties",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "params": [
+              {
+                "name": "slug",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {
+        "slug": "pitch"
+      },
+      "expected_error_contains": "not declared in input_schema"
+    },
+    {
+      "name": "reject_param_with_empty_input_schema_properties",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {
+        "slug": "pitch"
+      },
+      "expected_error_contains": "not declared in input_schema"
+    },
+    {
+      "name": "reject_query_in_tool_path",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "/v1/x?fixed=1",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {},
+      "expected_error_contains": "query"
+    },
+    {
+      "name": "reject_fragment_in_tool_path",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "/v1/x#frag",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {},
+      "expected_error_contains": "fragment"
     }
   ]
 }
