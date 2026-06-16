@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,6 +193,78 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 			t.Fatalf("reserved plugin error missing reason for %s:\n%s", name, string(out))
 		}
 	}
+}
+
+func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	home := filepath.Join(tmp, "home")
+
+	version := "1.0.0"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/.well-known/aweb-app.json" {
+			t.Fatalf("unexpected manifest request %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"folio","version":"` + version + `","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"show","method":"GET","path":"/v1/documents/{slug}","input_schema":{"type":"object","properties":{"slug":{"type":"string"}}},"params":[{"name":"slug","in":"path"}],"body":{"mode":"json"},"mutation":false}]}`))
+	}))
+	defer server.Close()
+
+	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+	install.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("manifest install failed: %v\n%s", err, string(out))
+	}
+	manifestPath := filepath.Join(home, ".aw", "plugins", "folio", "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("manifest not stored: %v", err)
+	}
+	provenancePath := filepath.Join(home, ".aw", "plugins", "folio", "provenance.json")
+	data, err := os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	var provenance struct {
+		AppID           string `json:"app_id"`
+		ManifestVersion string `json:"manifest_version"`
+		AppVersion      string `json:"app_version"`
+		Origin          string `json:"origin"`
+		ManifestURL     string `json:"manifest_url"`
+		Digest          string `json:"digest"`
+	}
+	if err := json.Unmarshal(data, &provenance); err != nil {
+		t.Fatalf("decode provenance: %v\n%s", err, string(data))
+	}
+	if provenance.AppID != "folio" || provenance.ManifestVersion != "1" || provenance.AppVersion != "1.0.0" || provenance.Origin != server.URL || provenance.ManifestURL != server.URL+"/.well-known/aweb-app.json" || !strings.HasPrefix(provenance.Digest, "sha256:") {
+		t.Fatalf("unexpected provenance: %#v", provenance)
+	}
+
+	version = "1.0.1"
+	update := exec.CommandContext(ctx, bin, "plugin", "update", "folio")
+	update.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	if out, err := update.CombinedOutput(); err != nil {
+		t.Fatalf("manifest update failed: %v\n%s", err, string(out))
+	}
+	data, err = os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &provenance); err != nil {
+		t.Fatal(err)
+	}
+	if provenance.AppVersion != "1.0.1" {
+		t.Fatalf("update did not refresh app version: %#v", provenance)
+	}
+}
+
+func serverOriginForTest(r *http.Request) string {
+	return "http://" + r.Host
 }
 
 func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {

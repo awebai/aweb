@@ -16,9 +16,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/spf13/cobra"
 )
 
@@ -56,14 +58,23 @@ var pluginRemoveCmd = &cobra.Command{
 	RunE:  runPluginRemove,
 }
 
+var pluginUpdateCmd = &cobra.Command{
+	Use:   "update <name>",
+	Short: "Update an installed manifest plugin",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runPluginUpdate,
+}
+
 type pluginListOutput struct {
 	Plugins []pluginListItem `json:"plugins"`
 }
 
 type pluginListItem struct {
-	Name       string            `json:"name"`
-	Path       string            `json:"path"`
-	Provenance *pluginProvenance `json:"provenance,omitempty"`
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind"`
+	Path         string            `json:"path"`
+	ManifestPath string            `json:"manifest_path,omitempty"`
+	Provenance   *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginProvenance struct {
@@ -73,8 +84,10 @@ type pluginProvenance struct {
 	AppVersion      string `json:"app_version,omitempty"`
 	Origin          string `json:"origin,omitempty"`
 	Source          string `json:"source,omitempty"`
+	ManifestURL     string `json:"manifest_url,omitempty"`
 	Digest          string `json:"digest,omitempty"`
 	InstalledAt     string `json:"installed_at,omitempty"`
+	UpdatedAt       string `json:"updated_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
@@ -95,7 +108,7 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
 
 	pluginCmd.GroupID = groupUtility
-	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd)
+	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd)
 	rootCmd.AddCommand(pluginCmd)
 }
 
@@ -110,6 +123,21 @@ func runPluginList(cmd *cobra.Command, args []string) error {
 
 func runPluginInstall(cmd *cobra.Command, args []string) error {
 	source := strings.TrimSpace(args[0])
+	dir, err := pluginDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if isManifestInstallSource(source) {
+		out, err := installManifestPlugin(source, dir)
+		if err != nil {
+			return err
+		}
+		printOutput(out, formatPluginInstall)
+		return nil
+	}
 	name, err := pluginNameFromSource(source)
 	if err != nil {
 		return err
@@ -120,12 +148,8 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	if err := validatePluginName(name); err != nil {
 		return err
 	}
-	dir, err := pluginDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	if manifestPluginExists(dir, name) {
+		return fmt.Errorf("plugin %q is already installed as a manifest app", name)
 	}
 	dest := filepath.Join(dir, pluginExecutableName(name))
 	provenancePath := pluginProvenancePath(dir, name)
@@ -170,6 +194,14 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if manifestPluginExists(dir, name) {
+		path := manifestPluginDir(dir, name)
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		printOutput(pluginRemoveOutput{Name: name, Path: path}, formatPluginRemove)
+		return nil
+	}
 	path := filepath.Join(dir, pluginExecutableName(name))
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -181,6 +213,33 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	printOutput(pluginRemoveOutput{Name: name, Path: path}, formatPluginRemove)
+	return nil
+}
+
+func runPluginUpdate(cmd *cobra.Command, args []string) error {
+	name, err := normalizePluginName(args[0])
+	if err != nil {
+		return err
+	}
+	dir, err := pluginDir()
+	if err != nil {
+		return err
+	}
+	if !manifestPluginExists(dir, name) {
+		return fmt.Errorf("plugin %q is not an installed manifest app", name)
+	}
+	provenance, err := loadPluginProvenance(manifestPluginProvenancePath(dir, name))
+	if err != nil {
+		return err
+	}
+	if provenance == nil || strings.TrimSpace(provenance.ManifestURL) == "" {
+		return fmt.Errorf("plugin %q is missing manifest provenance", name)
+	}
+	out, err := installOrUpdateManifestPlugin(provenance.ManifestURL, dir, true)
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatPluginInstall)
 	return nil
 }
 
@@ -199,6 +258,16 @@ func installedPlugins() ([]pluginListItem, error) {
 	plugins := make([]pluginListItem, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
+			name := strings.TrimSpace(entry.Name())
+			manifestPath := manifestPluginManifestPath(dir, name)
+			if _, err := os.Stat(manifestPath); err != nil {
+				continue
+			}
+			provenance, err := loadPluginProvenance(manifestPluginProvenancePath(dir, name))
+			if err != nil {
+				return nil, err
+			}
+			plugins = append(plugins, pluginListItem{Name: name, Kind: "manifest", Path: filepath.Join(dir, name), ManifestPath: manifestPath, Provenance: provenance})
 			continue
 		}
 		name, ok := pluginNameFromExecutable(entry.Name())
@@ -217,7 +286,7 @@ func installedPlugins() ([]pluginListItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		plugins = append(plugins, pluginListItem{Name: name, Path: path, Provenance: provenance})
+		plugins = append(plugins, pluginListItem{Name: name, Kind: "external", Path: path, Provenance: provenance})
 	}
 	sort.Slice(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
 	return plugins, nil
@@ -241,7 +310,12 @@ func formatPluginList(v any) string {
 }
 
 func formatPluginInstall(v any) string {
-	out := v.(pluginInstallOutput)
+	out, ok := v.(pluginInstallOutput)
+	if !ok {
+		if ptr, ok := v.(*pluginInstallOutput); ok && ptr != nil {
+			out = *ptr
+		}
+	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
 
@@ -320,6 +394,151 @@ func pluginNameFromExecutable(base string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+func isManifestInstallSource(source string) bool {
+	u, err := url.Parse(strings.TrimSpace(source))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
+func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
+	return installOrUpdateManifestPlugin(source, dir, false)
+}
+
+func installOrUpdateManifestPlugin(source, dir string, update bool) (*pluginInstallOutput, error) {
+	manifestURL, err := manifestURLForSource(source)
+	if err != nil {
+		return nil, err
+	}
+	manifestBytes, digest, err := fetchManifest(manifestURL)
+	if err != nil {
+		return nil, err
+	}
+	var manifest appmanifest.Manifest
+	decoder := json.NewDecoder(strings.NewReader(string(manifestBytes)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+	reserved := reservedRootCommandNames()
+	if err := appmanifest.Validate(manifest, reserved); err != nil {
+		return nil, err
+	}
+	name, err := normalizePluginName(manifest.App.ID)
+	if err != nil {
+		return nil, err
+	}
+	if isReservedRootCommandName(name) {
+		return nil, usageError("plugin name %q is reserved built-in command or alias", name)
+	}
+	if externalPluginExists(dir, name) {
+		return nil, fmt.Errorf("plugin %q is already installed as an external plugin", name)
+	}
+	appDir := manifestPluginDir(dir, name)
+	if !update {
+		if _, err := os.Stat(appDir); err == nil {
+			return nil, fmt.Errorf("plugin %q is already installed at %s", name, appDir)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
+		return nil, err
+	}
+	manifestPath := manifestPluginManifestPath(dir, name)
+	provenancePath := manifestPluginProvenancePath(dir, name)
+	if err := os.WriteFile(manifestPath+".tmp", manifestBytes, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(manifestPath+".tmp", manifestPath); err != nil {
+		_ = os.Remove(manifestPath + ".tmp")
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	installedAt := now
+	if update {
+		if existing, err := loadPluginProvenance(provenancePath); err == nil && existing != nil && strings.TrimSpace(existing.InstalledAt) != "" {
+			installedAt = existing.InstalledAt
+		}
+	}
+	provenance := pluginProvenance{
+		AppName:         name,
+		AppID:           strings.TrimSpace(manifest.App.ID),
+		ManifestVersion: strconv.Itoa(manifest.ManifestVersion),
+		AppVersion:      strings.TrimSpace(manifest.App.Version),
+		Origin:          strings.TrimSpace(manifest.App.Origin),
+		Source:          source,
+		ManifestURL:     manifestURL,
+		Digest:          digest,
+		InstalledAt:     installedAt,
+		UpdatedAt:       now,
+	}
+	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
+		return nil, err
+	}
+	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance}, nil
+}
+
+func manifestURLForSource(source string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(source))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid manifest source %q", source)
+	}
+	if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/.well-known/aweb-app.json") {
+		u.RawQuery = ""
+		u.Fragment = ""
+		return u.String(), nil
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/.well-known/aweb-app.json"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func fetchManifest(manifestURL string) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("fetch manifest: HTTP %d", resp.StatusCode)
+	}
+	h := sha256.New()
+	var b strings.Builder
+	if _, err := io.Copy(io.MultiWriter(&b, h), io.LimitReader(resp.Body, 10<<20)); err != nil {
+		return nil, "", err
+	}
+	return []byte(b.String()), "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func manifestPluginDir(dir, name string) string {
+	return filepath.Join(dir, name)
+}
+
+func manifestPluginManifestPath(dir, name string) string {
+	return filepath.Join(manifestPluginDir(dir, name), "manifest.json")
+}
+
+func manifestPluginProvenancePath(dir, name string) string {
+	return filepath.Join(manifestPluginDir(dir, name), "provenance.json")
+}
+
+func manifestPluginExists(dir, name string) bool {
+	info, err := os.Stat(manifestPluginManifestPath(dir, name))
+	return err == nil && !info.IsDir()
+}
+
+func externalPluginExists(dir, name string) bool {
+	info, err := os.Stat(filepath.Join(dir, pluginExecutableName(name)))
+	return err == nil && !info.IsDir()
 }
 
 func installPluginSource(source, dest string) (string, error) {
@@ -578,26 +797,25 @@ func setEnvValue(env []string, key, value string) []string {
 }
 
 func isReservedRootCommandName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	reserved := map[string]struct{}{
-		"help": {},
+	return reservedRootCommandNames()[strings.TrimSpace(name)]
+}
+
+func reservedRootCommandNames() map[string]bool {
+	reserved := map[string]bool{
+		"help": true,
 	}
 	for _, cmd := range rootCmd.Commands() {
 		if cmd == nil {
 			continue
 		}
 		if n := strings.TrimSpace(cmd.Name()); n != "" {
-			reserved[n] = struct{}{}
+			reserved[n] = true
 		}
 		for _, alias := range cmd.Aliases {
 			if alias = strings.TrimSpace(alias); alias != "" {
-				reserved[alias] = struct{}{}
+				reserved[alias] = true
 			}
 		}
 	}
-	_, ok := reserved[name]
-	return ok
+	return reserved
 }

@@ -71,17 +71,42 @@ type InterpretedRequest struct {
 	Mutation   bool              `json:"mutation"`
 }
 
-func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
-	manifest := req.Manifest
+func Validate(manifest Manifest, reservedNames map[string]bool) error {
 	if manifest.ManifestVersion != SupportedManifestVersion {
-		return nil, fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion)
+		return fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion)
 	}
 	appID := strings.TrimSpace(manifest.App.ID)
 	if appID == "" {
-		return nil, fmt.Errorf("app.id is required")
+		return fmt.Errorf("app.id is required")
 	}
-	if req.ReservedNames != nil && req.ReservedNames[appID] {
-		return nil, fmt.Errorf("app id %q is reserved built-in command or alias", appID)
+	if reservedNames != nil && reservedNames[appID] {
+		return fmt.Errorf("app id %q is reserved built-in command or alias", appID)
+	}
+	if _, err := parseOrigin(manifest.App.Origin); err != nil {
+		return err
+	}
+	for _, tool := range manifest.Tools {
+		if strings.TrimSpace(tool.Name) == "" {
+			return fmt.Errorf("tool.name is required")
+		}
+		if reservedNames != nil && reservedNames[strings.TrimSpace(tool.Name)] {
+			return fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
+		}
+		method := strings.ToUpper(strings.TrimSpace(tool.Method))
+		if !validMethod(method) {
+			return fmt.Errorf("unsupported method %q", tool.Method)
+		}
+		if _, err := validateRelativePath(tool.Path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
+	manifest := req.Manifest
+	if err := Validate(manifest, req.ReservedNames); err != nil {
+		return nil, err
 	}
 	origin, err := parseOrigin(manifest.App.Origin)
 	if err != nil {
