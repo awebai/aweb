@@ -586,14 +586,21 @@ default comms app** during the whole transition (code stays in core a while).
 10. **LAST / deepest cut:** split `messages`/`chat` **semantics** from the
     transport → first-party messaging apps. Done early this destabilizes
     federation/events/E2EE, which are currently fused — so it goes last. It is
-    **not** "move tables + add manifest"; it carries a **fusion sub-checklist**:
-    (i) **converge messaging auth** off the bespoke identity-messaging path
-    (`/v1/messages*`,`/v1/chat*` use DIDKey + `X-AWEB-DID-AW`, distinct from the
-    v2 team-auth envelope) onto the single app-auth primitive; (ii) optionally
-    **purify the envelope format** (§3.1); (iii) **generalize E2EE decrypt** —
-    today local-decrypt shells `aw mail show`/`aw chat history`, with no generic
-    "decrypt an encrypted app payload" primitive; (iv) move the **8b overlay
-    messaging columns** with it.
+    **not** "move tables + add manifest". It carries a **fusion sub-checklist**
+    (grounded read with file refs in
+    [`restructuring/messaging-as-app-seam.md`](restructuring/messaging-as-app-seam.md)):
+    (i) **converge only the REQUEST auth** off the bespoke identity-messaging path
+    (`/v1/messages*`,`/v1/chat*`, DIDKey + `X-AWEB-DID-AW`) onto v2 app-auth, and
+    **require** app-auth (don't keep identity auth as an equal route, and don't
+    reuse `channel-core`'s compact-legacy team headers) — the **inner
+    message/E2EE envelope signature stays payload semantics**, not replaced;
+    (ii) optionally **purify the envelope format** (§3.1); (iii) **generalize E2EE
+    decrypt** into a messages/chat app hydrator (today shells `aw mail show`/`aw
+    chat history`); the **events stream stays core** (it just gains app
+    id/type/resource refs — same work as m3); (iv) move the **8b overlay
+    messaging columns**; (v) **decide global-identity ↔ team-scoped app
+    mutations** — app mutations likely require an active team/app grant while core
+    addressability still resolves recipients (the one real design call here).
 
 `secrets`/`kpi` follow as focused apps. This coordinator/developer/reviewer team
 keeps running throughout; we migrate our own usage last.
