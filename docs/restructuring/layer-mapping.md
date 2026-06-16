@@ -141,7 +141,7 @@ movement":
 | `mail` / `chat` | **messages/chat app** (split last, §12.10); core keeps the signed-envelope transport |
 | `contacts` | **core** addressability (§3, §4.2); trust/registry depends on it — §13.7 open thin-app decision |
 | `events` | **core** Event/SSE channel consumer (`events.go:18`); current comms-specific event payloads are the seam to make app-generic (§3/m3) |
-| `a2a` / `aweb-a2a-gw` | gateway-adjacent; A2A writes = hosted mutations (§9, pending Juan's A2A-billing decision §13.1) |
+| `aw a2a` / `aweb-a2a-gw` | **A2A interoperability** (§3.2), split three ways: core/AWID owns publication assertions + signer verification; gateway owns the `aweb-a2a-gw` bridge (separate from MCP); CLI owns `aw a2a` (verify/publish + outbound). **Guardrail: A2A is a separate contract — do NOT conflate with app manifests / MCP tool publication (§7).** Billing decided: hosted mutations, no separate bit (§9) |
 
 ## 5. Proposed milestone 1–2 slice (pending Juan's approval)
 
@@ -165,7 +165,7 @@ SOT §6 (still draft) — they need only `aw id request --team-auth`, which exis
 ## 6. Open items feeding the cut
 
 - Confirm atext + folio teams can produce the m1.2 conformance vectors.
-- SOT + inventories land on main (pending Juan's go) before tasks reference them.
-- Juan's §13 decisions that touch this slice: §13.1 A2A billing; §13.3 the
-  "anapp" rename / network-vs-web vocabulary (does not block — `team_id` stays the
-  protocol subject).
+- SOT + inventories are on main (`51a4f8f1`); tasks may reference them.
+- No §13 open decision gates m1/m2: they're independent of §6, billing, and
+  dev-shape. (A2A billing is now decided — §9. The §13.3 "anapp" rename is
+  cosmetic and non-blocking — `team_id` stays the protocol subject.)
