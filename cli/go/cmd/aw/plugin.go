@@ -935,6 +935,9 @@ func pluginEnv() []string {
 		helper = abs
 	}
 	values := map[string]string{
+		"AW_DID":    "",
+		"AW_TEAM":   "",
+		"AW_SERVER": "",
 		"AW_HOME":   awHome,
 		"AW_HELPER": helper,
 	}
@@ -942,14 +945,24 @@ func pluginEnv() []string {
 		values["AW_DID"] = strings.TrimSpace(sel.DID)
 		values["AW_TEAM"] = strings.TrimSpace(sel.TeamID)
 		values["AW_SERVER"] = strings.TrimSpace(sel.BaseURL)
-	} else {
-		values["AW_DID"] = ""
-		values["AW_TEAM"] = ""
-		values["AW_SERVER"] = ""
 	}
-	env := os.Environ()
+	env := allowlistedPluginBaseEnv()
 	for key, value := range values {
 		env = setEnvValue(env, key, value)
+	}
+	return env
+}
+
+func allowlistedPluginBaseEnv() []string {
+	keys := []string{"PATH", "HOME", "TMPDIR"}
+	if runtime.GOOS == "windows" {
+		keys = append(keys, "SystemRoot")
+	}
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
 	}
 	return env
 }

@@ -201,7 +201,7 @@ printf 'AW_DID=%s\n' "$AW_DID"
 	}
 }
 
-func TestExternalPluginEnvDoesNotLoadDotenv(t *testing.T) {
+func TestExternalPluginEnvAllowlistExcludesDotenvSecrets(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script plugin fixture is unix-only")
 	}
@@ -220,23 +220,50 @@ func TestExternalPluginEnvDoesNotLoadDotenv(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugin := filepath.Join(pluginsDir, "aw-dotenv")
-	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nprintf 'secret=%s\\n' \"$AWEB_PLUGIN_DOTENV_SECRET\"\n"), 0o755); err != nil {
+	script := `#!/bin/sh
+env | sort
+`
+	if err := os.WriteFile(plugin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".env"), []byte("AWEB_PLUGIN_DOTENV_SECRET=leaked-from-dotenv\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, ".env"), []byte("SECRET_CANARY=leaked-from-dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".env.aweb"), []byte("SECRET_CANARY_AWEB=leaked-from-dotenv-aweb\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "dotenv")
 	run.Dir = tmp
-	run.Env = envWithout(os.Environ(), "AWEB_PLUGIN_DOTENV_SECRET", "HOME", "AW_NO_UPDATE_CHECK")
-	run.Env = append(run.Env, "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	run.Env = envWithout(os.Environ(), "SECRET_CANARY", "SECRET_CANARY_AWEB", "HOME", "AW_NO_UPDATE_CHECK")
+	run.Env = append(run.Env,
+		"HOME="+home,
+		"AW_NO_UPDATE_CHECK=1",
+		"SECRET_CANARY=parent-env-secret",
+		"SECRET_CANARY_AWEB=parent-env-aweb-secret",
+		"UNRELATED_PARENT_SECRET=parent-secret",
+	)
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("plugin dispatch failed: %v\n%s", err, string(out))
 	}
-	if strings.TrimSpace(string(out)) != "secret=" {
-		t.Fatalf("pluginEnv loaded .env into external plugin environment:\n%s", string(out))
+	text := string(out)
+	for _, forbidden := range []string{"SECRET_CANARY=", "SECRET_CANARY_AWEB=", "UNRELATED_PARENT_SECRET="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("pluginEnv leaked non-allowlisted secret %q:\n%s", forbidden, text)
+		}
+	}
+	for _, want := range []string{
+		"AW_DID=",
+		"AW_TEAM=",
+		"AW_SERVER=",
+		"AW_HOME=" + filepath.Join(home, ".aw"),
+		"AW_HELPER=" + bin,
+		"HOME=" + home,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("plugin env missing allowlisted value %q:\n%s", want, text)
+		}
 	}
 }
 
