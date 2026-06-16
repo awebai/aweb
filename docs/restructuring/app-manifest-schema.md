@@ -45,9 +45,22 @@ best-effort parse it. v1 consumers support `manifest_version: 1`.
 ## Manifest discovery
 
 An app serves its manifest at a **well-known path on its origin**:
-`<app.origin>/.well-known/aweb-app.json` (parallels A2A's
-`/.well-known/agent-card.json`). The dispatcher and the gateway fetch it from
-there. The core **app registry** (SoT §3) later records this URL **plus a
+`<app.origin>/.well-known/aweb-app.json` (RFC 8615; parallels A2A's
+`/.well-known/agent-card.json` — kept **distinct** on purpose, reinforcing the
+§3.2 guardrail that a manifest is *not* an Agent Card). The dispatcher and the
+gateway fetch it from there.
+
+Discovery is an **unauthenticated public GET** — the manifest is public metadata
+describing the app's verb surface (like `llms.txt`, an OpenAPI document, or an
+A2A agent-card; folio already serves `llms.txt`/`skills` no-auth). **Team-auth
+applies only to the verb *calls* the manifest describes, never to fetching it.**
+
+Consumers fetch at **install/update time** and store the manifest **locally with
+provenance** (origin, `manifest_version`, app version, byte digest); dispatch
+reads the local copy — it is **not** a per-call fetch. `aw plugin update`
+re-fetches.
+
+The core **app registry** (SoT §3) later records this URL **plus a
 digest** for trust/discovery — mirroring the AWID A2A publication contract
 (the authoritative fact is URL + digest, not the cached body; body caching never
 overrides digest verification). For v1 and the folio proof, the dispatcher
