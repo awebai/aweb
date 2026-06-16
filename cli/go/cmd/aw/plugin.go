@@ -424,6 +424,13 @@ func installOrUpdateManifestPlugin(source, dir string, update bool) (*pluginInst
 	if err := appmanifest.Validate(manifest, reserved); err != nil {
 		return nil, err
 	}
+	claimedManifestURL, err := manifestURLForSource(manifest.App.Origin)
+	if err != nil {
+		return nil, err
+	}
+	if claimedManifestURL != manifestURL {
+		return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected manifest URL %s)", manifestURL, manifest.App.Origin, claimedManifestURL)
+	}
 	name, err := normalizePluginName(manifest.App.ID)
 	if err != nil {
 		return nil, err

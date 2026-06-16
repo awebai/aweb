@@ -556,6 +556,11 @@ func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) 
 			manifest: `{"manifest_version":1,"app":{"id":"bad","version":"1.0.0","origin":"$ORIGIN"},"tools":[{"name":"x","method":"GET","path":"/v1/x?fixed=1","input_schema":{"type":"object","properties":{}},"params":[],"body":{"mode":"json"},"mutation":false}]}`,
 			want:     "query",
 		},
+		{
+			name:     "claimed origin mismatch",
+			manifest: `{"manifest_version":1,"app":{"id":"bad","version":"1.0.0","origin":"https://other.example"},"tools":[{"name":"x","method":"GET","path":"/v1/x","input_schema":{"type":"object","properties":{}},"params":[],"body":{"mode":"json"},"mutation":false}]}`,
+			want:     "claims origin",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
