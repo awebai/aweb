@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,6 +23,13 @@ import (
 )
 
 const pluginNamePrefix = "aw-"
+
+var (
+	pluginInstallAppID           string
+	pluginInstallManifestVersion string
+	pluginInstallAppVersion      string
+	pluginInstallOrigin          string
+)
 
 var pluginCmd = &cobra.Command{
 	Use:   "plugin",
@@ -50,13 +61,26 @@ type pluginListOutput struct {
 }
 
 type pluginListItem struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name       string            `json:"name"`
+	Path       string            `json:"path"`
+	Provenance *pluginProvenance `json:"provenance,omitempty"`
+}
+
+type pluginProvenance struct {
+	AppName         string `json:"app_name"`
+	AppID           string `json:"app_id,omitempty"`
+	ManifestVersion string `json:"manifest_version,omitempty"`
+	AppVersion      string `json:"app_version,omitempty"`
+	Origin          string `json:"origin,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Digest          string `json:"digest,omitempty"`
+	InstalledAt     string `json:"installed_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name       string            `json:"name"`
+	Path       string            `json:"path"`
+	Provenance *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginRemoveOutput struct {
@@ -65,6 +89,11 @@ type pluginRemoveOutput struct {
 }
 
 func init() {
+	pluginInstallCmd.Flags().StringVar(&pluginInstallAppID, "app-id", "", "App id to record in plugin provenance")
+	pluginInstallCmd.Flags().StringVar(&pluginInstallManifestVersion, "manifest-version", "", "Manifest version to record in plugin provenance")
+	pluginInstallCmd.Flags().StringVar(&pluginInstallAppVersion, "app-version", "", "App version to record in plugin provenance")
+	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
+
 	pluginCmd.GroupID = groupUtility
 	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd)
 	rootCmd.AddCommand(pluginCmd)
@@ -99,15 +128,36 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	dest := filepath.Join(dir, pluginExecutableName(name))
+	provenancePath := pluginProvenancePath(dir, name)
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("plugin %q is already installed at %s", name, dest)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := installPluginSource(source, dest); err != nil {
+	if _, err := os.Stat(provenancePath); err == nil {
+		return fmt.Errorf("plugin %q provenance already exists at %s", name, provenancePath)
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	printOutput(pluginInstallOutput{Name: name, Path: dest}, formatPluginInstall)
+	digest, err := installPluginSource(source, dest)
+	if err != nil {
+		return err
+	}
+	provenance := pluginProvenance{
+		AppName:         name,
+		AppID:           strings.TrimSpace(pluginInstallAppID),
+		ManifestVersion: strings.TrimSpace(pluginInstallManifestVersion),
+		AppVersion:      strings.TrimSpace(pluginInstallAppVersion),
+		Origin:          strings.TrimSpace(pluginInstallOrigin),
+		Source:          source,
+		Digest:          digest,
+		InstalledAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
+		_ = os.Remove(dest)
+		return err
+	}
+	printOutput(pluginInstallOutput{Name: name, Path: dest, Provenance: &provenance}, formatPluginInstall)
 	return nil
 }
 
@@ -125,6 +175,9 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("plugin %q is not installed", name)
 		}
+		return err
+	}
+	if err := os.Remove(pluginProvenancePath(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	printOutput(pluginRemoveOutput{Name: name, Path: path}, formatPluginRemove)
@@ -160,7 +213,11 @@ func installedPlugins() ([]pluginListItem, error) {
 		if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 			continue
 		}
-		plugins = append(plugins, pluginListItem{Name: name, Path: path})
+		provenance, err := loadPluginProvenance(pluginProvenancePath(dir, name))
+		if err != nil {
+			return nil, err
+		}
+		plugins = append(plugins, pluginListItem{Name: name, Path: path, Provenance: provenance})
 	}
 	sort.Slice(plugins, func(i, j int) bool { return plugins[i].Name < plugins[j].Name })
 	return plugins, nil
@@ -174,7 +231,11 @@ func formatPluginList(v any) string {
 	var sb strings.Builder
 	sb.WriteString("Installed plugins:\n")
 	for _, plugin := range out.Plugins {
-		sb.WriteString(fmt.Sprintf("  %s\t%s\n", plugin.Name, plugin.Path))
+		extra := ""
+		if plugin.Provenance != nil && strings.TrimSpace(plugin.Provenance.Origin) != "" {
+			extra = "\t" + strings.TrimSpace(plugin.Provenance.Origin)
+		}
+		sb.WriteString(fmt.Sprintf("  %s\t%s%s\n", plugin.Name, plugin.Path, extra))
 	}
 	return sb.String()
 }
@@ -261,7 +322,7 @@ func pluginNameFromExecutable(base string) (string, bool) {
 	return name, true
 }
 
-func installPluginSource(source, dest string) error {
+func installPluginSource(source, dest string) (string, error) {
 	var reader io.ReadCloser
 	var mode os.FileMode = 0o755
 	if u, err := url.Parse(source); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
@@ -269,26 +330,26 @@ func installPluginSource(source, dest string) error {
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 		if err != nil {
-			return err
+			return "", err
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			_ = resp.Body.Close()
-			return fmt.Errorf("download plugin: HTTP %d", resp.StatusCode)
+			return "", fmt.Errorf("download plugin: HTTP %d", resp.StatusCode)
 		}
 		reader = resp.Body
 	} else {
 		f, err := os.Open(source)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if info, err := f.Stat(); err == nil {
 			if info.IsDir() {
 				_ = f.Close()
-				return fmt.Errorf("plugin source %s is a directory", source)
+				return "", fmt.Errorf("plugin source %s is a directory", source)
 			}
 			if info.Mode()&0o111 != 0 {
 				mode = info.Mode().Perm()
@@ -301,27 +362,70 @@ func installPluginSource(source, dest string) error {
 	tmp := dest + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode|0o111)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, copyErr := io.Copy(out, io.LimitReader(reader, 100<<20))
+	h := sha256.New()
+	_, copyErr := copyWithDigest(out, io.LimitReader(reader, 100<<20), h)
 	closeErr := out.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp)
-		return copyErr
+		return "", copyErr
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp)
-		return closeErr
+		return "", closeErr
 	}
 	if err := os.Chmod(tmp, mode|0o111); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return "", err
 	}
 	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func copyWithDigest(dst io.Writer, src io.Reader, h hash.Hash) (int64, error) {
+	return io.Copy(io.MultiWriter(dst, h), src)
+}
+
+func pluginProvenancePath(dir, name string) string {
+	return filepath.Join(dir, pluginExecutableName(name)+".provenance.json")
+}
+
+func savePluginProvenance(path string, provenance *pluginProvenance) error {
+	if provenance == nil {
+		return fmt.Errorf("plugin provenance is required")
+	}
+	data, err := json.MarshalIndent(provenance, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	return nil
+}
+
+func loadPluginProvenance(path string) (*pluginProvenance, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var provenance pluginProvenance
+	if err := json.Unmarshal(data, &provenance); err != nil {
+		return nil, fmt.Errorf("load plugin provenance %s: %w", path, err)
+	}
+	return &provenance, nil
 }
 
 func pluginDir() (string, error) {

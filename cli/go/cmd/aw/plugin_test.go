@@ -107,7 +107,8 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	install := exec.CommandContext(ctx, bin, "plugin", "install", source)
+	install := exec.CommandContext(ctx, bin, "plugin", "install", source,
+		"--app-id", "app.folio", "--manifest-version", "2026-06-16", "--app-version", "1.2.3", "--origin", "https://folio.example")
 	install.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
 	if out, err := install.CombinedOutput(); err != nil {
 		t.Fatalf("plugin install failed: %v\n%s", err, string(out))
@@ -115,6 +116,26 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 	installed := filepath.Join(home, ".aw", "plugins", "aw-foo")
 	if info, err := os.Stat(installed); err != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("installed plugin missing or not executable: info=%v err=%v", info, err)
+	}
+	provenancePath := filepath.Join(home, ".aw", "plugins", "aw-foo.provenance.json")
+	provenanceData, err := os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	var provenance struct {
+		AppName         string `json:"app_name"`
+		AppID           string `json:"app_id"`
+		ManifestVersion string `json:"manifest_version"`
+		AppVersion      string `json:"app_version"`
+		Origin          string `json:"origin"`
+		Source          string `json:"source"`
+		Digest          string `json:"digest"`
+	}
+	if err := json.Unmarshal(provenanceData, &provenance); err != nil {
+		t.Fatalf("decode provenance: %v\n%s", err, string(provenanceData))
+	}
+	if provenance.AppName != "foo" || provenance.AppID != "app.folio" || provenance.ManifestVersion != "2026-06-16" || provenance.AppVersion != "1.2.3" || provenance.Origin != "https://folio.example" || provenance.Source != source || !strings.HasPrefix(provenance.Digest, "sha256:") {
+		t.Fatalf("unexpected provenance: %#v", provenance)
 	}
 
 	installAgain := exec.CommandContext(ctx, bin, "plugin", "install", source)
@@ -131,14 +152,18 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 	}
 	var listed struct {
 		Plugins []struct {
-			Name string `json:"name"`
-			Path string `json:"path"`
+			Name       string `json:"name"`
+			Path       string `json:"path"`
+			Provenance struct {
+				AppID  string `json:"app_id"`
+				Origin string `json:"origin"`
+			} `json:"provenance"`
 		} `json:"plugins"`
 	}
 	if err := json.Unmarshal(extractJSON(t, listOut), &listed); err != nil {
 		t.Fatalf("decode plugin list: %v\n%s", err, string(listOut))
 	}
-	if len(listed.Plugins) != 1 || listed.Plugins[0].Name != "foo" || listed.Plugins[0].Path != installed {
+	if len(listed.Plugins) != 1 || listed.Plugins[0].Name != "foo" || listed.Plugins[0].Path != installed || listed.Plugins[0].Provenance.AppID != "app.folio" || listed.Plugins[0].Provenance.Origin != "https://folio.example" {
 		t.Fatalf("unexpected plugin list: %#v", listed.Plugins)
 	}
 
