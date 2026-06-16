@@ -1,0 +1,72 @@
+{
+  "schema": "aweb.app-manifest.fixtures.v1",
+  "description": "Digest-pinned vendored app manifest byte fixtures. Manifests are canonical raw bytes; tests assert bytes sha before parsing and interpreting.",
+  "fixtures": [
+    {
+      "name": "synthetic-simple",
+      "manifest_path": "synthetic-simple/aweb-app.json",
+      "sha256": "c83c3db0c20fc9b1404be3a07b906f279e4c5f4ec0e72e3696ca4e95d3cc4e21",
+      "reserved_names": [
+        "id",
+        "whoami",
+        "introspect",
+        "plugin"
+      ],
+      "interpretation_cases": [
+        {
+          "name": "show_path_query_from_vendored_fixture",
+          "verb": "show",
+          "args": {
+            "id": "pitch deck",
+            "expand": [
+              "comments",
+              "history"
+            ]
+          },
+          "expected": {
+            "method": "GET",
+            "url": "https://simple.example/v1/items/pitch%20deck?expand=comments&expand=history",
+            "path_query": "/v1/items/pitch%20deck?expand=comments&expand=history",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": "",
+            "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "mutation": false,
+            "signed_payload": {
+              "team_id": "default:example.aweb.ai",
+              "timestamp": "2026-06-16T00:00:00Z",
+              "canonical_payload": "{\"aud\":\"https://simple.example\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/v1/items/pitch%20deck?expand=comments&expand=history\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+              "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL3NpbXBsZS5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwibWV0aG9kIjoiR0VUIiwicGF0aCI6Ii92MS9pdGVtcy9waXRjaCUyMGRlY2s_ZXhwYW5kPWNvbW1lbnRzJmV4cGFuZD1oaXN0b3J5IiwidGVhbV9pZCI6ImRlZmF1bHQ6ZXhhbXBsZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xNlQwMDowMDowMFoiLCJ2IjoyfQ"
+            }
+          }
+        },
+        {
+          "name": "create_json_body_from_vendored_fixture",
+          "verb": "create",
+          "args": {
+            "title": "Launch",
+            "published": "true"
+          },
+          "expected": {
+            "method": "POST",
+            "url": "https://simple.example/v1/items",
+            "path_query": "/v1/items",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": "{\"published\":true,\"title\":\"Launch\"}",
+            "body_sha256": "5b99bf5962900e68ef8ed24858e27ec0f4a153e0ac4657e21376b0312cfd5241",
+            "mutation": true,
+            "signed_payload": {
+              "team_id": "default:example.aweb.ai",
+              "timestamp": "2026-06-16T00:00:00Z",
+              "canonical_payload": "{\"aud\":\"https://simple.example\",\"body_sha256\":\"5b99bf5962900e68ef8ed24858e27ec0f4a153e0ac4657e21376b0312cfd5241\",\"method\":\"POST\",\"path\":\"/v1/items\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+              "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL3NpbXBsZS5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiI1Yjk5YmY1OTYyOTAwZTY4ZWY4ZWQyNDg1OGUyN2VjMGY0YTE1M2UwYWM0NjU3ZTIxMzc2YjAzMTJjZmQ1MjQxIiwibWV0aG9kIjoiUE9TVCIsInBhdGgiOiIvdjEvaXRlbXMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

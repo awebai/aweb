@@ -36,3 +36,12 @@ External-plugin PATH rejection is a CLI dispatch invariant and lives in
 
 Future consumers, including the hosted gateway, should run the same vector file
 and compare byte-identical interpreted specs.
+
+## Repository-level app manifest fixtures
+
+Digest-pinned raw manifest snapshots live under
+`test-vectors/app-manifests/` at the monorepo root. The Go conformance suite
+loads `app-manifest-fixtures-v1.json`, verifies each raw
+`/.well-known/aweb-app.json` byte snapshot against its pinned SHA-256 before
+parsing, then runs offline interpretation cases against the parsed manifest.
+These fixtures are self-contained and must not reach into another repository.

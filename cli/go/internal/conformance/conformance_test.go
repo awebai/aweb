@@ -347,6 +347,147 @@ func mustURLOrigin(t *testing.T, raw string) string {
 	return u.Scheme + "://" + u.Host
 }
 
+// --- digest-pinned vendored app manifest fixtures ---
+
+type appManifestFixtureIndex struct {
+	Schema      string               `json:"schema"`
+	Description string               `json:"description"`
+	Fixtures    []appManifestFixture `json:"fixtures"`
+}
+
+type appManifestFixture struct {
+	Name                string                            `json:"name"`
+	ManifestPath        string                            `json:"manifest_path"`
+	SHA256              string                            `json:"sha256"`
+	ReservedNames       []string                          `json:"reserved_names"`
+	InterpretationCases []appManifestInterpretationVector `json:"interpretation_cases"`
+}
+
+func TestVendoredAppManifestFixtures(t *testing.T) {
+	root := monorepoRootForTest(t)
+	base := filepath.Join(root, "test-vectors", "app-manifests")
+	data, err := os.ReadFile(filepath.Join(base, "app-manifest-fixtures-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index appManifestFixtureIndex
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&index); err != nil {
+		t.Fatal(err)
+	}
+	if index.Schema != "aweb.app-manifest.fixtures.v1" {
+		t.Fatalf("schema=%q", index.Schema)
+	}
+	if len(index.Fixtures) == 0 {
+		t.Fatal("expected at least one vendored manifest fixture")
+	}
+
+	for _, fixture := range index.Fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			manifestPath := filepath.Clean(fixture.ManifestPath)
+			if filepath.IsAbs(manifestPath) || strings.HasPrefix(manifestPath, ".."+string(filepath.Separator)) || manifestPath == ".." {
+				t.Fatalf("manifest_path must stay within fixture dir: %q", fixture.ManifestPath)
+			}
+			raw, err := os.ReadFile(filepath.Join(base, manifestPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(raw)
+			if got := hex.EncodeToString(sum[:]); got != fixture.SHA256 {
+				t.Fatalf("vendored fixture sha256 got %s want %s", got, fixture.SHA256)
+			}
+			if len(raw) == 0 || raw[len(raw)-1] != '\n' || strings.Contains(string(raw), "\r") {
+				t.Fatalf("vendored fixture must be UTF-8/LF canonical raw bytes")
+			}
+			var manifest appmanifest.Manifest
+			manifestDecoder := json.NewDecoder(strings.NewReader(string(raw)))
+			manifestDecoder.UseNumber()
+			if err := manifestDecoder.Decode(&manifest); err != nil {
+				t.Fatal(err)
+			}
+			reserved := map[string]bool{}
+			for _, name := range fixture.ReservedNames {
+				reserved[name] = true
+			}
+			if err := appmanifest.Validate(manifest, reserved); err != nil {
+				t.Fatalf("vendored manifest validation failed: %v", err)
+			}
+			for _, c := range fixture.InterpretationCases {
+				t.Run(c.Name, func(t *testing.T) {
+					got, err := appmanifest.Interpret(appmanifest.InterpretRequest{
+						Manifest:      manifest,
+						Verb:          c.Verb,
+						Args:          c.Args,
+						RawBody:       []byte(c.RawBody),
+						ReservedNames: reserved,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertAppManifestExpectedSpec(t, got, c.Expected)
+				})
+			}
+		})
+	}
+}
+
+func monorepoRootForTest(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
+}
+
+func assertAppManifestExpectedSpec(t *testing.T, got *appmanifest.InterpretedRequest, expected appManifestExpectedSpec) {
+	t.Helper()
+	if got.Method != expected.Method {
+		t.Fatalf("method got %q want %q", got.Method, expected.Method)
+	}
+	if got.URL != expected.URL {
+		t.Fatalf("url got %q want %q", got.URL, expected.URL)
+	}
+	if got.PathQuery != expected.PathQuery {
+		t.Fatalf("path_query got %q want %q", got.PathQuery, expected.PathQuery)
+	}
+	if appmanifest.SortedHeaderString(got.Headers) != appmanifest.SortedHeaderString(expected.Headers) {
+		t.Fatalf("headers got %#v want %#v", got.Headers, expected.Headers)
+	}
+	if string(got.Body) != expected.Body {
+		t.Fatalf("body got %q want %q", string(got.Body), expected.Body)
+	}
+	if got.BodySHA256 != expected.BodySHA256 {
+		t.Fatalf("body_sha256 got %s want %s", got.BodySHA256, expected.BodySHA256)
+	}
+	if got.Mutation != expected.Mutation {
+		t.Fatalf("mutation got %v want %v", got.Mutation, expected.Mutation)
+	}
+	if expected.SignedPayload.CanonicalPayload != "" {
+		payload := map[string]any{
+			"aud":         mustURLOrigin(t, got.URL),
+			"method":      got.Method,
+			"path":        got.PathQuery,
+			"team_id":     expected.SignedPayload.TeamID,
+			"body_sha256": got.BodySHA256,
+			"timestamp":   expected.SignedPayload.Timestamp,
+			"v":           2,
+		}
+		canonical, err := awid.CanonicalJSONValue(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if canonical != expected.SignedPayload.CanonicalPayload {
+			t.Fatalf("signed canonical payload got %s want %s", canonical, expected.SignedPayload.CanonicalPayload)
+		}
+		b64 := base64.RawURLEncoding.EncodeToString([]byte(canonical))
+		if b64 != expected.SignedPayload.SignedPayloadB64URL {
+			t.Fatalf("signed payload b64 got %s want %s", b64, expected.SignedPayload.SignedPayloadB64URL)
+		}
+	}
+}
+
 // --- stable-id-v1 ---
 
 type stableIDVector struct {
