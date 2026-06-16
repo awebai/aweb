@@ -510,7 +510,19 @@ func fetchManifest(manifestURL string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 {
+				return nil
+			}
+			origin := via[0].URL
+			if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+				return fmt.Errorf("manifest fetch cross-origin redirect from %s://%s to %s://%s", origin.Scheme, origin.Host, req.URL.Scheme, req.URL.Host)
+			}
+			return nil
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

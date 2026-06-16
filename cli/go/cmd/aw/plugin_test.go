@@ -587,6 +587,45 @@ func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) 
 	}
 }
 
+func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	home := filepath.Join(tmp, "home")
+
+	var source *httptest.Server
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/aweb-app.json" {
+			t.Fatalf("unexpected target path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"bad","version":"1.0.0","origin":"` + source.URL + `"},"tools":[{"name":"x","method":"GET","path":"/v1/x","input_schema":{"type":"object","properties":{}},"params":[],"body":{"mode":"json"},"mutation":false}]}`))
+	}))
+	defer target.Close()
+	source = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/aweb-app.json" {
+			t.Fatalf("unexpected source path %s", r.URL.Path)
+		}
+		http.Redirect(w, r, target.URL+"/.well-known/aweb-app.json", http.StatusFound)
+	}))
+	defer source.Close()
+
+	install := exec.CommandContext(ctx, bin, "plugin", "install", source.URL)
+	install.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	out, err := install.CombinedOutput()
+	if err == nil {
+		t.Fatalf("plugin install unexpectedly followed cross-origin manifest redirect:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "cross-origin redirect") {
+		t.Fatalf("install error %q does not mention cross-origin redirect", string(out))
+	}
+}
+
 func TestPluginBuiltInCommandWinsOverTrustedPlugin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script plugin fixture is unix-only")
