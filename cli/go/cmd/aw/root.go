@@ -135,6 +135,9 @@ func bindTeamSelector(cmd *cobra.Command) {
 }
 
 func Execute() {
+	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
+		os.Exit(code)
+	}
 	err := rootCmd.Execute()
 	checkVersionFromHeader()
 	if err != nil {
