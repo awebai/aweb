@@ -677,18 +677,19 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 	if err := validatePluginName(commandName); err != nil {
 		return 0, false
 	}
-	if code, dispatched := dispatchInstalledManifestPlugin(commandName, args[commandIndex+1:]); dispatched {
-		return code, true
-	}
-	path, ok, err := resolveTrustedExternalPlugin(commandName)
+	resolution, err := resolveTrustedPluginCommand(commandName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
 	}
-	if !ok {
+	switch resolution.Kind {
+	case pluginResolutionManifest:
+		return dispatchInstalledManifestPlugin(commandName, args[commandIndex+1:])
+	case pluginResolutionExternal:
+		return runExternalPlugin(resolution.Path, args[commandIndex+1:]), true
+	default:
 		return 0, false
 	}
-	return runExternalPlugin(path, args[commandIndex+1:]), true
 }
 
 func firstNonFlagArg(args []string) (string, int) {
@@ -854,12 +855,45 @@ func addManifestArgValue(out map[string]any, name, value string) {
 	out[name] = value
 }
 
+type pluginResolutionKind string
+
+const (
+	pluginResolutionNone     pluginResolutionKind = ""
+	pluginResolutionManifest pluginResolutionKind = "manifest"
+	pluginResolutionExternal pluginResolutionKind = "external"
+)
+
+type pluginResolution struct {
+	Kind pluginResolutionKind
+	Path string
+}
+
+func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
+	dir, err := pluginDir()
+	if err != nil {
+		debugLog("resolve plugin dir: %v", err)
+		return pluginResolution{}, nil
+	}
+	if manifestPluginExists(dir, name) {
+		return pluginResolution{Kind: pluginResolutionManifest, Path: manifestPluginManifestPath(dir, name)}, nil
+	}
+	path, ok, err := resolveTrustedExternalPluginInDir(dir, name)
+	if err != nil || !ok {
+		return pluginResolution{}, err
+	}
+	return pluginResolution{Kind: pluginResolutionExternal, Path: path}, nil
+}
+
 func resolveTrustedExternalPlugin(name string) (string, bool, error) {
 	dir, err := pluginDir()
 	if err != nil {
 		debugLog("resolve plugin dir: %v", err)
 		return "", false, nil
 	}
+	return resolveTrustedExternalPluginInDir(dir, name)
+}
+
+func resolveTrustedExternalPluginInDir(dir, name string) (string, bool, error) {
 	path := filepath.Join(dir, pluginExecutableName(name))
 	info, err := os.Stat(path)
 	if err != nil {
@@ -895,7 +929,6 @@ func runExternalPlugin(path string, args []string) int {
 }
 
 func pluginEnv() []string {
-	loadDotenvBestEffort()
 	awHome, _ := awHomeDir()
 	helper := os.Args[0]
 	if abs, err := filepath.Abs(helper); err == nil {

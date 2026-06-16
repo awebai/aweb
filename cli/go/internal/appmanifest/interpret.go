@@ -86,18 +86,99 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 		return err
 	}
 	for _, tool := range manifest.Tools {
-		if strings.TrimSpace(tool.Name) == "" {
-			return fmt.Errorf("tool.name is required")
-		}
-		if reservedNames != nil && reservedNames[strings.TrimSpace(tool.Name)] {
-			return fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
-		}
-		method := strings.ToUpper(strings.TrimSpace(tool.Method))
-		if !validMethod(method) {
-			return fmt.Errorf("unsupported method %q", tool.Method)
-		}
-		if _, err := validateRelativePath(tool.Path); err != nil {
+		if err := validateTool(tool, reservedNames); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateTool(tool Tool, reservedNames map[string]bool) error {
+	if strings.TrimSpace(tool.Name) == "" {
+		return fmt.Errorf("tool.name is required")
+	}
+	if reservedNames != nil && reservedNames[strings.TrimSpace(tool.Name)] {
+		return fmt.Errorf("tool name %q is reserved built-in command or alias", tool.Name)
+	}
+	method := strings.ToUpper(strings.TrimSpace(tool.Method))
+	if !validMethod(method) {
+		return fmt.Errorf("unsupported method %q", tool.Method)
+	}
+	path, err := validateRelativePath(tool.Path)
+	if err != nil {
+		return err
+	}
+	properties := schemaProperties(tool.InputSchema)
+	paramByName := map[string]Param{}
+	for _, param := range tool.Params {
+		name := strings.TrimSpace(param.Name)
+		if name == "" {
+			return fmt.Errorf("tool %q has a param with empty name", tool.Name)
+		}
+		placement := strings.TrimSpace(param.In)
+		switch placement {
+		case "path", "query", "body":
+		default:
+			return fmt.Errorf("param %q has invalid placement %q", name, param.In)
+		}
+		if _, exists := paramByName[name]; exists {
+			return fmt.Errorf("duplicate param %q", name)
+		}
+		paramByName[name] = Param{Name: name, In: placement}
+		if len(properties) > 0 {
+			if _, ok := properties[name]; !ok {
+				return fmt.Errorf("param %q is not declared in input_schema", name)
+			}
+		}
+	}
+	for name := range properties {
+		if _, ok := paramByName[name]; !ok {
+			return fmt.Errorf("input_schema field %q is missing params placement", name)
+		}
+	}
+	placeholders := pathPlaceholders(path)
+	for placeholder := range placeholders {
+		param, ok := paramByName[placeholder]
+		if !ok || param.In != "path" {
+			return fmt.Errorf("path placeholder %q has no matching in:path param", placeholder)
+		}
+	}
+	for name, param := range paramByName {
+		if param.In == "path" && !placeholders[name] {
+			return fmt.Errorf("path param %q has no matching placeholder", name)
+		}
+	}
+	mode := strings.TrimSpace(tool.Body.Mode)
+	if mode == "" {
+		mode = "json"
+	}
+	if mode != "json" && mode != "raw" {
+		return fmt.Errorf("unsupported body mode %q", tool.Body.Mode)
+	}
+	if mode == "raw" {
+		rawParam := strings.TrimSpace(tool.Body.RawParam)
+		if rawParam == "" {
+			return fmt.Errorf("raw body mode requires body.raw_param")
+		}
+		if strings.TrimSpace(tool.Body.ContentType) == "" {
+			return fmt.Errorf("raw body mode requires body.content_type")
+		}
+		param, ok := paramByName[rawParam]
+		if !ok || param.In != "body" {
+			return fmt.Errorf("raw body param %q must be declared as in:body", rawParam)
+		}
+		for name, param := range paramByName {
+			if param.In == "body" && name != rawParam {
+				return fmt.Errorf("raw body mode allows only raw_param %q in body", rawParam)
+			}
+		}
+	}
+	if mode == "json" && strings.TrimSpace(tool.Body.RawParam) != "" {
+		return fmt.Errorf("body.raw_param is only valid for raw body mode")
+	}
+	for name, param := range paramByName {
+		if param.In == "body" && schemaType(properties[name]) == "number" {
+			return fmt.Errorf("body param %q uses unsupported type number: number/float body fields are not supported in manifest v1", name)
 		}
 	}
 	return nil
@@ -222,6 +303,25 @@ func validateRelativePath(raw string) (string, error) {
 		path = "/" + path
 	}
 	return path, nil
+}
+
+func pathPlaceholders(path string) map[string]bool {
+	out := map[string]bool{}
+	for {
+		start := strings.Index(path, "{")
+		if start < 0 {
+			return out
+		}
+		end := strings.Index(path[start+1:], "}")
+		if end < 0 {
+			return out
+		}
+		name := strings.TrimSpace(path[start+1 : start+1+end])
+		if name != "" {
+			out[name] = true
+		}
+		path = path[start+1+end+1:]
+	}
 }
 
 func substitutePath(path string, params []Param, args map[string]any) (string, error) {

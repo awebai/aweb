@@ -8,12 +8,13 @@ and team-auth envelopes.
 ## `app-manifest-interpretation-v1.json`
 
 Manifest interpretation vectors are the anti-drift contract for app manifests.
-They assert the interpreted request spec **before signing**:
+They assert the interpreted request spec and deterministic signed-payload input
+**before dynamic signing**:
 
-`manifest + verb + args -> method, absolute URL, raw path+query, headers, body bytes, body_sha256, mutation`
+`manifest + verb + args -> method, absolute URL, raw path+query, headers, body bytes, body_sha256, mutation, canonical team-auth payload bytes`
 
-They intentionally do **not** assert dynamic `Authorization`, timestamp, or
-signature bytes; those stay in the team-auth crypto vectors.
+They intentionally do **not** assert dynamic `Authorization` or signature bytes;
+those stay in the team-auth crypto vectors.
 
 Coverage includes:
 
@@ -26,9 +27,12 @@ Coverage includes:
 - explicit `Content-Type` for JSON and raw bodies
 - raw body bytes via body-file/stdin-equivalent input
 - mutation classification
-- security rejection cases: scheme/host paths, `..` traversal, unsupported
-  methods, reserved names/aliases, float body fields for v1, and external
-  plugin PATH rejection as a shared invariant
+- security rejection cases kept beside positives in this file: scheme/host
+  paths, `..` traversal, unsupported methods, reserved names/aliases, malformed
+  raw body declarations, and float body fields for v1
+
+External-plugin PATH rejection is a CLI dispatch invariant and lives in
+`cmd/aw/plugin_test.go`, not in the shared app-manifest interpretation vectors.
 
 Future consumers, including the hosted gateway, should run the same vector file
 and compare byte-identical interpreted specs.

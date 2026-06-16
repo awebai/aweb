@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +20,110 @@ import (
 
 	"github.com/awebai/aw/awid"
 )
+
+func TestTrustedPluginResolutionPrecedenceNetworkFree(t *testing.T) {
+	tmp := t.TempDir()
+	awHome := filepath.Join(tmp, "aw-home")
+	t.Setenv("AW_HOME", awHome)
+	pluginsDir := filepath.Join(awHome, "plugins")
+	if err := os.MkdirAll(filepath.Join(pluginsDir, "folio"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(pluginsDir, "folio", "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"manifest_version":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	externalPath := filepath.Join(pluginsDir, "aw-folio")
+	if err := os.WriteFile(externalPath, []byte("#!/bin/sh\necho external\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	resolution, err := resolveTrustedPluginCommand("folio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Kind != pluginResolutionManifest || resolution.Path != manifestPath {
+		t.Fatalf("resolution got %#v, want manifest %s", resolution, manifestPath)
+	}
+
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	resolution, err = resolveTrustedPluginCommand("folio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Kind != pluginResolutionExternal || resolution.Path != externalPath {
+		t.Fatalf("resolution got %#v, want external %s", resolution, externalPath)
+	}
+
+	pathOnlyDir := filepath.Join(tmp, "pathbin")
+	if err := os.MkdirAll(pathOnlyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pathOnlyDir, "aw-pathonly"), []byte("#!/bin/sh\necho path\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathOnlyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	resolution, err = resolveTrustedPluginCommand("pathonly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Kind != pluginResolutionNone {
+		t.Fatalf("PATH-only plugin resolved from untrusted PATH: %#v", resolution)
+	}
+}
+
+func TestTeamAuthSignerHeadersNetworkFree(t *testing.T) {
+	tmp := t.TempDir()
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, "https://workspace.example", "default:acme.com", "alice", did, priv)
+	identity := &localSigningIdentity{
+		DIDKey:     did,
+		SigningKey: priv,
+		WorkingDir: tmp,
+		TeamID:     "default:acme.com",
+	}
+	parsed, err := url.Parse("https://app.example/v1/present?tag=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"slug":"pitch"}`)
+	headers := make(http.Header)
+	if err := signIDRequestHeaders(headers, http.MethodPost, parsed, identity, body, map[string]any{}, true, "2026-06-16T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if headers.Get("Authorization") == "" || headers.Get("X-AWID-Team-Certificate") == "" {
+		t.Fatalf("missing signer headers: %#v", headers)
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(headers.Get("X-AWEB-Signed-Payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	want := map[string]any{
+		"aud":         "https://app.example",
+		"method":      "POST",
+		"path":        "/v1/present?tag=a",
+		"team_id":     "default:acme.com",
+		"body_sha256": fmt.Sprintf("%x", sum),
+		"timestamp":   "2026-06-16T00:00:00Z",
+		"v":           float64(2),
+	}
+	for key, wantValue := range want {
+		if got := payload[key]; got != wantValue {
+			t.Fatalf("payload[%s]=%#v want %#v in %s", key, got, wantValue, string(payloadBytes))
+		}
+	}
+}
 
 func TestPluginExternalDispatchUsesTrustedDirOnlyAndEnvContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -91,6 +199,60 @@ printf 'AW_DID=%s\n' "$AW_DID"
 	if !strings.Contains(string(pathOut), `unknown command "pathonly" for "aw"`) {
 		t.Fatalf("PATH-only plugin should fall through to Cobra unknown command:\n%s", string(pathOut))
 	}
+}
+
+func TestExternalPluginEnvDoesNotLoadDotenv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script plugin fixture is unix-only")
+	}
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	home := filepath.Join(tmp, "home")
+	pluginsDir := filepath.Join(home, ".aw", "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plugin := filepath.Join(pluginsDir, "aw-dotenv")
+	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nprintf 'secret=%s\\n' \"$AWEB_PLUGIN_DOTENV_SECRET\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".env"), []byte("AWEB_PLUGIN_DOTENV_SECRET=leaked-from-dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "dotenv")
+	run.Dir = tmp
+	run.Env = envWithout(os.Environ(), "AWEB_PLUGIN_DOTENV_SECRET", "HOME", "AW_NO_UPDATE_CHECK")
+	run.Env = append(run.Env, "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("plugin dispatch failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != "secret=" {
+		t.Fatalf("pluginEnv loaded .env into external plugin environment:\n%s", string(out))
+	}
+}
+
+func envWithout(env []string, keys ...string) []string {
+	blocked := map[string]bool{}
+	for _, key := range keys {
+		blocked[key] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if !blocked[key] {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {

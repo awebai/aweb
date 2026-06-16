@@ -1,13 +1,22 @@
 {
   "schema": "aweb.app-manifest.interpretation.v1",
   "description": "Shared manifest interpretation vectors: manifest + verb + args -> exact request spec before signing.",
-  "reserved_names": ["id", "whoami", "introspect", "plugin"],
+  "reserved_names": [
+    "id",
+    "whoami",
+    "introspect",
+    "plugin"
+  ],
   "cases": [
     {
       "name": "folio_present_json_type_coercion",
       "manifest": {
         "manifest_version": 1,
-        "app": {"id": "folio", "version": "1.0.0", "origin": "https://folio.aweb.ai"},
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
         "tools": [
           {
             "name": "present",
@@ -16,39 +25,74 @@
             "input_schema": {
               "type": "object",
               "properties": {
-                "slug": {"type": "string"},
-                "ttl_seconds": {"type": "integer"},
-                "editable": {"type": "boolean"}
+                "slug": {
+                  "type": "string"
+                },
+                "ttl_seconds": {
+                  "type": "integer"
+                },
+                "editable": {
+                  "type": "boolean"
+                }
               }
             },
             "params": [
-              {"name": "slug", "in": "body"},
-              {"name": "ttl_seconds", "in": "body"},
-              {"name": "editable", "in": "body"}
+              {
+                "name": "slug",
+                "in": "body"
+              },
+              {
+                "name": "ttl_seconds",
+                "in": "body"
+              },
+              {
+                "name": "editable",
+                "in": "body"
+              }
             ],
-            "body": {"mode": "json"},
-            "scopes": ["folio:write"],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:write"
+            ],
             "mutation": true
           }
         ]
       },
       "verb": "present",
-      "args": {"slug": "pitch", "ttl_seconds": "3600", "editable": "true"},
+      "args": {
+        "slug": "pitch",
+        "ttl_seconds": "3600",
+        "editable": "true"
+      },
       "expected": {
         "method": "POST",
         "url": "https://folio.aweb.ai/v1/present",
         "path_query": "/v1/present",
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+          "Content-Type": "application/json"
+        },
         "body": "{\"editable\":true,\"slug\":\"pitch\",\"ttl_seconds\":3600}",
         "body_sha256": "d5f1d27b69f010a3b569fd4bbed7c28304c50de324cf03cd9f23c163d7403659",
-        "mutation": true
+        "mutation": true,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"d5f1d27b69f010a3b569fd4bbed7c28304c50de324cf03cd9f23c163d7403659\",\"method\":\"POST\",\"path\":\"/v1/present\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6ImQ1ZjFkMjdiNjlmMDEwYTNiNTY5ZmQ0YmJlZDdjMjgzMDRjNTBkZTMyNGNmMDNjZDlmMjNjMTYzZDc0MDM2NTkiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9wcmVzZW50IiwidGVhbV9pZCI6ImRlZmF1bHQ6ZXhhbXBsZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xNlQwMDowMDowMFoiLCJ2IjoyfQ"
+        }
       }
     },
     {
       "name": "canonical_query_repeated_arrays_declaration_order",
       "manifest": {
         "manifest_version": 1,
-        "app": {"id": "notes", "version": "1.0.0", "origin": "https://notes.example/api"},
+        "app": {
+          "id": "notes",
+          "version": "1.0.0",
+          "origin": "https://notes.example/api"
+        },
         "tools": [
           {
             "name": "list",
@@ -57,67 +101,132 @@
             "input_schema": {
               "type": "object",
               "properties": {
-                "tag": {"type": "array", "items": {"type": "string"}},
-                "limit": {"type": "integer"}
+                "tag": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limit": {
+                  "type": "integer"
+                }
               }
             },
             "params": [
-              {"name": "tag", "in": "query"},
-              {"name": "limit", "in": "query"}
+              {
+                "name": "tag",
+                "in": "query"
+              },
+              {
+                "name": "limit",
+                "in": "query"
+              }
             ],
-            "body": {"mode": "json"},
-            "scopes": ["notes:read"],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "notes:read"
+            ],
             "mutation": false
           }
         ]
       },
       "verb": "list",
-      "args": {"tag": ["a b", "c/d"], "limit": "10"},
+      "args": {
+        "tag": [
+          "a b",
+          "c/d"
+        ],
+        "limit": "10"
+      },
       "expected": {
         "method": "GET",
         "url": "https://notes.example/api/v1/documents?tag=a%20b&tag=c%2Fd&limit=10",
         "path_query": "/api/v1/documents?tag=a%20b&tag=c%2Fd&limit=10",
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+          "Content-Type": "application/json"
+        },
         "body": "",
         "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "mutation": false
+        "mutation": false,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://notes.example\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/api/v1/documents?tag=a%20b&tag=c%2Fd&limit=10\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL25vdGVzLmV4YW1wbGUiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL2FwaS92MS9kb2N1bWVudHM_dGFnPWElMjBiJnRhZz1jJTJGZCZsaW1pdD0xMCIsInRlYW1faWQiOiJkZWZhdWx0OmV4YW1wbGUuYXdlYi5haSIsInRpbWVzdGFtcCI6IjIwMjYtMDYtMTZUMDA6MDA6MDBaIiwidiI6Mn0"
+        }
       }
     },
     {
       "name": "path_param_percent_encoding",
       "manifest": {
         "manifest_version": 1,
-        "app": {"id": "folio", "version": "1.0.0", "origin": "https://folio.aweb.ai"},
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
         "tools": [
           {
             "name": "show",
             "method": "GET",
             "path": "/v1/documents/{slug}",
-            "input_schema": {"type": "object", "properties": {"slug": {"type": "string"}}},
-            "params": [{"name": "slug", "in": "path"}],
-            "body": {"mode": "json"},
-            "scopes": ["folio:read"],
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
             "mutation": false
           }
         ]
       },
       "verb": "show",
-      "args": {"slug": "pitch deck/ü"},
+      "args": {
+        "slug": "pitch deck/ü"
+      },
       "expected": {
         "method": "GET",
         "url": "https://folio.aweb.ai/v1/documents/pitch%20deck%2F%C3%BC",
         "path_query": "/v1/documents/pitch%20deck%2F%C3%BC",
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+          "Content-Type": "application/json"
+        },
         "body": "",
         "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "mutation": false
+        "mutation": false,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/v1/documents/pitch%20deck%2F%C3%BC\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL2RvY3VtZW50cy9waXRjaCUyMGRlY2slMkYlQzMlQkMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+        }
       }
     },
     {
       "name": "omitted_optional_body_fields_absent",
       "manifest": {
         "manifest_version": 1,
-        "app": {"id": "folio", "version": "1.0.0", "origin": "https://folio.aweb.ai"},
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
         "tools": [
           {
             "name": "present",
@@ -126,126 +235,373 @@
             "input_schema": {
               "type": "object",
               "properties": {
-                "slug": {"type": "string"},
-                "ttl_seconds": {"type": "integer"},
-                "editable": {"type": "boolean"}
+                "slug": {
+                  "type": "string"
+                },
+                "ttl_seconds": {
+                  "type": "integer"
+                },
+                "editable": {
+                  "type": "boolean"
+                }
               }
             },
             "params": [
-              {"name": "slug", "in": "body"},
-              {"name": "ttl_seconds", "in": "body"},
-              {"name": "editable", "in": "body"}
+              {
+                "name": "slug",
+                "in": "body"
+              },
+              {
+                "name": "ttl_seconds",
+                "in": "body"
+              },
+              {
+                "name": "editable",
+                "in": "body"
+              }
             ],
-            "body": {"mode": "json"},
-            "scopes": ["folio:write"],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:write"
+            ],
             "mutation": true
           }
         ]
       },
       "verb": "present",
-      "args": {"slug": "pitch"},
+      "args": {
+        "slug": "pitch"
+      },
       "expected": {
         "method": "POST",
         "url": "https://folio.aweb.ai/v1/present",
         "path_query": "/v1/present",
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+          "Content-Type": "application/json"
+        },
         "body": "{\"slug\":\"pitch\"}",
         "body_sha256": "7cd719d715d926c8197c8d54962bfb3997c2817861695f9b7e583b63e7dbcc7d",
-        "mutation": true
+        "mutation": true,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"7cd719d715d926c8197c8d54962bfb3997c2817861695f9b7e583b63e7dbcc7d\",\"method\":\"POST\",\"path\":\"/v1/present\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6IjdjZDcxOWQ3MTVkOTI2YzgxOTdjOGQ1NDk2MmJmYjM5OTdjMjgxNzg2MTY5NWY5YjdlNTgzYjYzZTdkYmNjN2QiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9wcmVzZW50IiwidGVhbV9pZCI6ImRlZmF1bHQ6ZXhhbXBsZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xNlQwMDowMDowMFoiLCJ2IjoyfQ"
+        }
       }
     },
     {
       "name": "raw_body_file_content_type",
       "manifest": {
         "manifest_version": 1,
-        "app": {"id": "folio", "version": "1.0.0", "origin": "https://folio.aweb.ai"},
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
         "tools": [
           {
             "name": "append",
             "method": "POST",
             "path": "/v1/documents/{slug}/versions",
-            "input_schema": {"type": "object", "properties": {"slug": {"type": "string"}, "body": {"type": "string"}}},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                }
+              }
+            },
             "params": [
-              {"name": "slug", "in": "path"},
-              {"name": "body", "in": "body"}
+              {
+                "name": "slug",
+                "in": "path"
+              },
+              {
+                "name": "body",
+                "in": "body"
+              }
             ],
-            "body": {"mode": "raw", "raw_param": "body", "content_type": "text/markdown; charset=utf-8"},
-            "scopes": ["folio:write"],
+            "body": {
+              "mode": "raw",
+              "raw_param": "body",
+              "content_type": "text/markdown; charset=utf-8"
+            },
+            "scopes": [
+              "folio:write"
+            ],
             "mutation": true
           }
         ]
       },
       "verb": "append",
-      "args": {"slug": "pitch"},
+      "args": {
+        "slug": "pitch"
+      },
       "raw_body": "Hello markdown\n",
       "expected": {
         "method": "POST",
         "url": "https://folio.aweb.ai/v1/documents/pitch/versions",
         "path_query": "/v1/documents/pitch/versions",
-        "headers": {"Content-Type": "text/markdown; charset=utf-8"},
+        "headers": {
+          "Content-Type": "text/markdown; charset=utf-8"
+        },
         "body": "Hello markdown\n",
         "body_sha256": "2a4b0bb8a8dd566e0e323c6946d9f3e1dcbe110b16a83233305e8983e846d6d4",
-        "mutation": true
+        "mutation": true,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"2a4b0bb8a8dd566e0e323c6946d9f3e1dcbe110b16a83233305e8983e846d6d4\",\"method\":\"POST\",\"path\":\"/v1/documents/pitch/versions\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6IjJhNGIwYmI4YThkZDU2NmUwZTMyM2M2OTQ2ZDlmM2UxZGNiZTExMGIxNmE4MzIzMzMwNWU4OTgzZTg0NmQ2ZDQiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9kb2N1bWVudHMvcGl0Y2gvdmVyc2lvbnMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+        }
       }
     }
   ],
   "negative_cases": [
     {
       "name": "reject_scheme_host_path",
-      "manifest": {"manifest_version": 1, "app": {"id": "evil", "version": "1", "origin": "https://evil.example"}, "tools": [{"name": "x", "method": "GET", "path": "https://attacker.example/v1", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "evil",
+          "version": "1",
+          "origin": "https://evil.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "https://attacker.example/v1",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "x",
       "args": {},
       "expected_error_contains": "scheme or host"
     },
     {
       "name": "reject_double_slash_host_path",
-      "manifest": {"manifest_version": 1, "app": {"id": "evil", "version": "1", "origin": "https://evil.example"}, "tools": [{"name": "x", "method": "GET", "path": "//attacker.example/v1", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "evil",
+          "version": "1",
+          "origin": "https://evil.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "//attacker.example/v1",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "x",
       "args": {},
       "expected_error_contains": "scheme or host"
     },
     {
       "name": "reject_path_traversal",
-      "manifest": {"manifest_version": 1, "app": {"id": "evil", "version": "1", "origin": "https://evil.example"}, "tools": [{"name": "x", "method": "GET", "path": "/v1/../admin", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "evil",
+          "version": "1",
+          "origin": "https://evil.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "/v1/../admin",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "x",
       "args": {},
       "expected_error_contains": "path traversal"
     },
     {
       "name": "reject_reserved_app_id",
-      "manifest": {"manifest_version": 1, "app": {"id": "id", "version": "1", "origin": "https://app.example"}, "tools": [{"name": "x", "method": "GET", "path": "/v1/x", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "id",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "GET",
+            "path": "/v1/x",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "x",
       "args": {},
       "expected_error_contains": "reserved built-in command or alias"
     },
     {
       "name": "reject_reserved_tool_alias",
-      "manifest": {"manifest_version": 1, "app": {"id": "safe", "version": "1", "origin": "https://app.example"}, "tools": [{"name": "introspect", "method": "GET", "path": "/v1/x", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "introspect",
+            "method": "GET",
+            "path": "/v1/x",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "introspect",
       "args": {},
       "expected_error_contains": "reserved built-in command or alias"
     },
     {
       "name": "reject_unsupported_method",
-      "manifest": {"manifest_version": 1, "app": {"id": "safe", "version": "1", "origin": "https://app.example"}, "tools": [{"name": "head", "method": "HEAD", "path": "/v1/x", "params": [], "body": {"mode": "json"}, "mutation": false}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "head",
+            "method": "HEAD",
+            "path": "/v1/x",
+            "params": [],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": false
+          }
+        ]
+      },
       "verb": "head",
       "args": {},
       "expected_error_contains": "unsupported method"
     },
     {
       "name": "reject_float_body_v1",
-      "manifest": {"manifest_version": 1, "app": {"id": "safe", "version": "1", "origin": "https://app.example"}, "tools": [{"name": "x", "method": "POST", "path": "/v1/x", "input_schema": {"type": "object", "properties": {"score": {"type": "number"}}}, "params": [{"name": "score", "in": "body"}], "body": {"mode": "json"}, "mutation": true}]},
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "number"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "score",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
       "verb": "x",
-      "args": {"score": "1.2"},
+      "args": {
+        "score": "1.2"
+      },
       "expected_error_contains": "number/float body fields are not supported"
     },
     {
-      "name": "external_plugin_path_rejection",
-      "description": "External aw-<name> escape hatch must resolve only from the trusted plugin dir, never PATH.",
-      "plugin_name": "folio",
-      "path_contains": "aw-folio",
-      "trusted_dir_contains": false,
-      "expected_error_contains": "unknown command"
+      "name": "reject_raw_mode_without_raw_param",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "append",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "body": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "body",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "content_type": "text/plain"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "append",
+      "args": {
+        "body": "hello"
+      },
+      "expected_error_contains": "raw_param"
     }
   ]
 }

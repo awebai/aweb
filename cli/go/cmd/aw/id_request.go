@@ -152,37 +152,8 @@ type idRequestExecutionResult struct {
 }
 
 func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSigningIdentity, bodyBytes []byte, headers http.Header, signPayload map[string]any, teamAuth bool) (*idRequestExecutionResult, error) {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	if teamAuth {
-		teamPayload, cert, err := teamSignedRequestPayload(identity, parsedURL, method, bodyBytes, signPayload)
-		if err != nil {
-			return nil, err
-		}
-		didKey, signature, canonical, err := awid.SignArbitraryPayload(identity.SigningKey, teamPayload, timestamp)
-		if err != nil {
-			return nil, err
-		}
-		certHeader, err := awid.EncodeTeamCertificateHeader(cert)
-		if err != nil {
-			return nil, fmt.Errorf("encode team certificate header: %w", err)
-		}
-		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-		headers.Set("X-AWEB-Timestamp", timestamp)
-		headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
-		headers.Set("X-AWID-Team-Certificate", certHeader)
-	} else {
-		didKey, signature, _, err := awid.SignArbitraryPayload(identity.SigningKey, signPayload, timestamp)
-		if err != nil {
-			return nil, err
-		}
-		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-		headers.Set("X-AWEB-Timestamp", timestamp)
-	}
-	if strings.TrimSpace(identity.StableID) != "" {
-		headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
-	}
-	if len(bodyBytes) > 0 && strings.TrimSpace(headers.Get("Content-Type")) == "" {
-		headers.Set("Content-Type", "application/json")
+	if err := signIDRequestHeaders(headers, method, parsedURL, identity, bodyBytes, signPayload, teamAuth, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -212,6 +183,44 @@ func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSi
 		return nil, err
 	}
 	return &idRequestExecutionResult{Status: resp.StatusCode, Header: resp.Header.Clone(), Body: responseBody}, nil
+}
+
+func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL, identity *localSigningIdentity, bodyBytes []byte, signPayload map[string]any, teamAuth bool, timestamp string) error {
+	if headers == nil {
+		return fmt.Errorf("headers are required")
+	}
+	if teamAuth {
+		teamPayload, cert, err := teamSignedRequestPayload(identity, parsedURL, method, bodyBytes, signPayload)
+		if err != nil {
+			return err
+		}
+		didKey, signature, canonical, err := awid.SignArbitraryPayload(identity.SigningKey, teamPayload, timestamp)
+		if err != nil {
+			return err
+		}
+		certHeader, err := awid.EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			return fmt.Errorf("encode team certificate header: %w", err)
+		}
+		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
+		headers.Set("X-AWEB-Timestamp", timestamp)
+		headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
+		headers.Set("X-AWID-Team-Certificate", certHeader)
+	} else {
+		didKey, signature, _, err := awid.SignArbitraryPayload(identity.SigningKey, signPayload, timestamp)
+		if err != nil {
+			return err
+		}
+		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
+		headers.Set("X-AWEB-Timestamp", timestamp)
+	}
+	if strings.TrimSpace(identity.StableID) != "" {
+		headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
+	}
+	if len(bodyBytes) > 0 && strings.TrimSpace(headers.Get("Content-Type")) == "" {
+		headers.Set("Content-Type", "application/json")
+	}
+	return nil
 }
 
 func printIDRequestExecutionResult(result *idRequestExecutionResult, raw bool) error {

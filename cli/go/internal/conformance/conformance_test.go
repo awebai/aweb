@@ -216,13 +216,21 @@ type appManifestInterpretationVector struct {
 }
 
 type appManifestExpectedSpec struct {
-	Method     string            `json:"method"`
-	URL        string            `json:"url"`
-	PathQuery  string            `json:"path_query"`
-	Headers    map[string]string `json:"headers"`
-	Body       string            `json:"body"`
-	BodySHA256 string            `json:"body_sha256"`
-	Mutation   bool              `json:"mutation"`
+	Method        string                           `json:"method"`
+	URL           string                           `json:"url"`
+	PathQuery     string                           `json:"path_query"`
+	Headers       map[string]string                `json:"headers"`
+	Body          string                           `json:"body"`
+	BodySHA256    string                           `json:"body_sha256"`
+	Mutation      bool                             `json:"mutation"`
+	SignedPayload appManifestExpectedSignedPayload `json:"signed_payload"`
+}
+
+type appManifestExpectedSignedPayload struct {
+	TeamID              string `json:"team_id"`
+	Timestamp           string `json:"timestamp"`
+	CanonicalPayload    string `json:"canonical_payload"`
+	SignedPayloadB64URL string `json:"signed_payload_b64url"`
 }
 
 type appManifestNegativeVector struct {
@@ -232,9 +240,6 @@ type appManifestNegativeVector struct {
 	Verb                  string               `json:"verb"`
 	Args                  map[string]any       `json:"args"`
 	ExpectedErrorContains string               `json:"expected_error_contains"`
-	PluginName            string               `json:"plugin_name"`
-	PathContains          string               `json:"path_contains"`
-	TrustedDirContains    bool                 `json:"trusted_dir_contains"`
 }
 
 func TestAppManifestInterpretationVectors(t *testing.T) {
@@ -289,19 +294,34 @@ func TestAppManifestInterpretationVectors(t *testing.T) {
 			if got.Mutation != v.Expected.Mutation {
 				t.Fatalf("mutation got %v want %v", got.Mutation, v.Expected.Mutation)
 			}
+			if v.Expected.SignedPayload.CanonicalPayload != "" {
+				payload := map[string]any{
+					"aud":         mustURLOrigin(t, got.URL),
+					"method":      got.Method,
+					"path":        got.PathQuery,
+					"team_id":     v.Expected.SignedPayload.TeamID,
+					"body_sha256": got.BodySHA256,
+					"timestamp":   v.Expected.SignedPayload.Timestamp,
+					"v":           2,
+				}
+				canonical, err := awid.CanonicalJSONValue(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonicalBytes := []byte(canonical)
+				if canonical != v.Expected.SignedPayload.CanonicalPayload {
+					t.Fatalf("signed canonical payload got %s want %s", canonical, v.Expected.SignedPayload.CanonicalPayload)
+				}
+				b64 := base64.RawURLEncoding.EncodeToString(canonicalBytes)
+				if b64 != v.Expected.SignedPayload.SignedPayloadB64URL {
+					t.Fatalf("signed payload b64 got %s want %s", b64, v.Expected.SignedPayload.SignedPayloadB64URL)
+				}
+			}
 		})
 	}
 
-	seenExternalPluginPathRejection := false
 	for _, v := range vectors.NegativeCases {
 		t.Run(v.Name, func(t *testing.T) {
-			if v.Name == "external_plugin_path_rejection" {
-				seenExternalPluginPathRejection = true
-				if v.TrustedDirContains || strings.TrimSpace(v.PathContains) == "" || strings.TrimSpace(v.ExpectedErrorContains) == "" {
-					t.Fatalf("bad external plugin path rejection vector: %#v", v)
-				}
-				return
-			}
 			_, err := appmanifest.Interpret(appmanifest.InterpretRequest{
 				Manifest:      v.Manifest,
 				Verb:          v.Verb,
@@ -316,9 +336,15 @@ func TestAppManifestInterpretationVectors(t *testing.T) {
 			}
 		})
 	}
-	if !seenExternalPluginPathRejection {
-		t.Fatalf("missing external plugin path rejection vector")
+}
+
+func mustURLOrigin(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return u.Scheme + "://" + u.Host
 }
 
 // --- stable-id-v1 ---
