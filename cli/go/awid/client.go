@@ -992,7 +992,7 @@ func traceHTTPClientResponse(resp *http.Response) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "AW TRACE response: HTTP %d\n", resp.StatusCode)
-	traceHeaders("AW TRACE response header", resp.Header, false)
+	traceHeaders("AW TRACE response header", resp.Header, true)
 	if resp.Body == nil {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
 		return nil

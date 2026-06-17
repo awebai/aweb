@@ -1724,6 +1724,9 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 		w.Header().Set("Retry-After", "7")
 		w.Header().Set("X-Render-Origin-Server", "iad")
 		w.Header().Set("Cf-Ray", "cf-ray-1")
+		w.Header().Set("Authorization", "response-secret-auth")
+		w.Header().Set("X-AWEB-Signed-Payload", "response-secret-payload")
+		w.Header().Set("X-AWID-Team-Certificate", "response-secret-cert")
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = w.Write([]byte(`{"detail":"short and stout"}`))
 	}))
@@ -1758,6 +1761,9 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 		"X-Awid-Team-Certificate: <redacted>",
 		"X-Unredacted-Diagnostic-Header: visible",
 		"AW TRACE response: HTTP 418",
+		"AW TRACE response header: Authorization: <redacted>",
+		"AW TRACE response header: X-Aweb-Signed-Payload: <redacted>",
+		"AW TRACE response header: X-Awid-Team-Certificate: <redacted>",
 		"X-Request-Id: req-123",
 		"Retry-After: 7",
 		"X-Render-Origin-Server: iad",
@@ -1768,7 +1774,7 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 			t.Fatalf("trace missing %q:\n%s", want, trace)
 		}
 	}
-	for _, secret := range []string{"secret-auth", "secret-payload", "secret-cert"} {
+	for _, secret := range []string{"secret-auth", "secret-payload", "secret-cert", "response-secret-auth", "response-secret-payload", "response-secret-cert"} {
 		if strings.Contains(trace, secret) {
 			t.Fatalf("trace leaked %q:\n%s", secret, trace)
 		}
