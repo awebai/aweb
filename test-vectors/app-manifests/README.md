@@ -7,7 +7,7 @@ Fixture rules:
 
 - manifests are committed as the exact raw bytes an app serves from
   `/.well-known/aweb-app.json`;
-- bytes are canonical JSON: sorted keys, no insignificant whitespace, UTF-8, LF;
+- bytes are canonical JSON: sorted keys, no insignificant whitespace, UTF-8, and no CR; preserve the handed-off raw bytes exactly (including whether they end with LF);
 - `app-manifest-fixtures-v1.json` pins each fixture by SHA-256 and lists offline
   interpretation cases;
 - tests assert raw bytes -> SHA-256 before JSON parsing, so consumers do not

@@ -7,9 +7,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -1709,6 +1711,96 @@ func TestHTTPStatusHelpers(t *testing.T) {
 	if ok || body != "" {
 		t.Fatalf("non-api body=(%q,%v)", body, ok)
 	}
+}
+
+func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
+	t.Setenv("AW_TRACE", "1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "secret-auth" {
+			t.Fatalf("Authorization header not sent")
+		}
+		w.Header().Set("X-Request-ID", "req-123")
+		w.Header().Set("Retry-After", "7")
+		w.Header().Set("X-Render-Origin-Server", "iad")
+		w.Header().Set("Cf-Ray", "cf-ray-1")
+		w.Header().Set("Authorization", "response-secret-auth")
+		w.Header().Set("X-AWEB-Signed-Payload", "response-secret-payload")
+		w.Header().Set("X-AWID-Team-Certificate", "response-secret-cert")
+		w.Header().Set("Set-Cookie", "session=response-secret-cookie")
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte(`{"detail":"short and stout"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace := captureStderrForTest(t, func() {
+		err = client.DoWithHeaders(context.Background(), http.MethodPost, "/v1/trace", map[string]any{"hello": "world"}, nil, map[string]string{
+			"Authorization":                  "secret-auth",
+			"X-AWEB-Signed-Payload":          "secret-payload",
+			"X-AWID-Team-Certificate":        "secret-cert",
+			"Cookie":                         "session=request-secret-cookie",
+			"X-Unredacted-Diagnostic-Header": "visible",
+		})
+	})
+	if err == nil {
+		t.Fatal("expected APIError")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T %v", err, err)
+	}
+	if apiErr.RequestID != "req-123" || !strings.Contains(err.Error(), "req-123") {
+		t.Fatalf("request id missing from APIError: %#v %v", apiErr, err)
+	}
+	for _, want := range []string{
+		"AW TRACE request: POST " + server.URL + "/v1/trace",
+		"Authorization: <redacted>",
+		"X-Aweb-Signed-Payload: <redacted>",
+		"X-Awid-Team-Certificate: <redacted>",
+		"Cookie: <redacted>",
+		"X-Unredacted-Diagnostic-Header: visible",
+		"AW TRACE response: HTTP 418",
+		"AW TRACE response header: Authorization: <redacted>",
+		"AW TRACE response header: X-Aweb-Signed-Payload: <redacted>",
+		"AW TRACE response header: X-Awid-Team-Certificate: <redacted>",
+		"AW TRACE response header: Set-Cookie: <redacted>",
+		"X-Request-Id: req-123",
+		"Retry-After: 7",
+		"X-Render-Origin-Server: iad",
+		"Cf-Ray: cf-ray-1",
+		`{"detail":"short and stout"}`,
+	} {
+		if !strings.Contains(trace, want) {
+			t.Fatalf("trace missing %q:\n%s", want, trace)
+		}
+	}
+	for _, secret := range []string{"secret-auth", "secret-payload", "secret-cert", "request-secret-cookie", "response-secret-auth", "response-secret-payload", "response-secret-cert", "response-secret-cookie"} {
+		if strings.Contains(trace, secret) {
+			t.Fatalf("trace leaked %q:\n%s", secret, trace)
+		}
+	}
+}
+
+func captureStderrForTest(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {

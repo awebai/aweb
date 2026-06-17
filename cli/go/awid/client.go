@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -794,13 +796,19 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 type APIError struct {
 	StatusCode int
 	Body       string
+	RequestID  string
 }
 
 func (e *APIError) Error() string {
-	if e.Body == "" {
-		return fmt.Sprintf("aweb: http %d", e.StatusCode)
+	requestID := strings.TrimSpace(e.RequestID)
+	suffix := ""
+	if requestID != "" {
+		suffix = fmt.Sprintf(" (x-request-id: %s)", requestID)
 	}
-	return fmt.Sprintf("aweb: http %d: %s", e.StatusCode, e.Body)
+	if e.Body == "" {
+		return fmt.Sprintf("aweb: http %d%s", e.StatusCode, suffix)
+	}
+	return fmt.Sprintf("aweb: http %d%s: %s", e.StatusCode, suffix, e.Body)
 }
 
 // HTTPStatusCode returns the HTTP status code for API errors.
@@ -879,7 +887,7 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any,
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: string(data)}
+		return &APIError{StatusCode: resp.StatusCode, Body: string(data), RequestID: resp.Header.Get("X-Request-ID")}
 	}
 	if out == nil {
 		return nil
@@ -947,14 +955,81 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 		}
 	}
 
+	traceHTTPClientRequest(req, bodyBytes)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, decorateTimeoutError(method, err)
+	}
+	if err := traceHTTPClientResponse(resp); err != nil {
+		return nil, err
 	}
 	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
 		c.latestClientVersion.Store(v)
 	}
 	return resp, nil
+}
+
+func traceEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AW_TRACE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func traceHTTPClientRequest(req *http.Request, body []byte) {
+	if !traceEnabled() || req == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "AW TRACE request: %s %s\n", req.Method, req.URL.String())
+	traceHeaders("AW TRACE request header", req.Header, true)
+	fmt.Fprintf(os.Stderr, "AW TRACE request body: %s\n", string(body))
+}
+
+func traceHTTPClientResponse(resp *http.Response) error {
+	if !traceEnabled() || resp == nil {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "AW TRACE response: HTTP %d\n", resp.StatusCode)
+	traceHeaders("AW TRACE response header", resp.Header, true)
+	if resp.Body == nil {
+		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
+		return nil
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	fmt.Fprintf(os.Stderr, "AW TRACE response body: %s\n", string(data))
+	return nil
+}
+
+func traceHeaders(prefix string, headers http.Header, redact bool) {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		values := headers.Values(key)
+		if redact && shouldRedactTraceHeader(key) {
+			values = []string{"<redacted>"}
+		}
+		for _, value := range values {
+			fmt.Fprintf(os.Stderr, "%s: %s: %s\n", prefix, key, value)
+		}
+	}
+}
+
+func shouldRedactTraceHeader(key string) bool {
+	switch http.CanonicalHeaderKey(strings.TrimSpace(key)) {
+	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate":
+		return true
+	default:
+		return false
+	}
 }
 
 // decorateTimeoutError marks timed-out mutating requests as ambiguous: the

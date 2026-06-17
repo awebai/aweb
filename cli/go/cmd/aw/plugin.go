@@ -727,7 +727,7 @@ func firstNonFlagArg(args []string) (string, int) {
 			continue
 		}
 		switch arg {
-		case "--json", "--debug":
+		case "--json", "--debug", "--trace":
 			continue
 		case "--server-name":
 			i++

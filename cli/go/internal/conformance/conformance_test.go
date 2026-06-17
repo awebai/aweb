@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
@@ -397,8 +398,8 @@ func TestVendoredAppManifestFixtures(t *testing.T) {
 			if got := hex.EncodeToString(sum[:]); got != fixture.SHA256 {
 				t.Fatalf("vendored fixture sha256 got %s want %s", got, fixture.SHA256)
 			}
-			if len(raw) == 0 || raw[len(raw)-1] != '\n' || strings.Contains(string(raw), "\r") {
-				t.Fatalf("vendored fixture must be UTF-8/LF canonical raw bytes")
+			if len(raw) == 0 || !utf8.Valid(raw) || strings.Contains(string(raw), "\r") {
+				t.Fatalf("vendored fixture must be non-empty UTF-8 canonical raw bytes without CR")
 			}
 			var manifest appmanifest.Manifest
 			manifestDecoder := json.NewDecoder(strings.NewReader(string(raw)))
