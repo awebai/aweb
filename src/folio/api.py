@@ -337,7 +337,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = ThemeRequest.model_validate(await request.json())
-        contrast_error = theme_contrast_error(payload.tokens)
+        if "preset" in payload.tokens:
+            raise HTTPException(
+                status_code=422,
+                detail="tokens may not contain a reserved 'preset' key; use the top-level preset field",
+            )
+        contrast_error = theme_contrast_error(payload.tokens, preset=payload.preset)
         if contrast_error is not None:
             raise HTTPException(status_code=422, detail=contrast_error)
         return await upsert_theme(
@@ -345,6 +350,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             principal=actor,
             settings=resolved,
             tokens=payload.tokens,
+            preset=payload.preset,
             logo=payload.logo,
             clear_logo=payload.clear_logo,
             header=payload.header,

@@ -170,3 +170,43 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert "--bg: #001122;" in still_a.text
     assert "#330000" not in still_a.text
     assert "Bob tried" not in still_a.text
+
+
+def test_builtin_aweb_preset_themes_present_page_per_scheme(
+    folio: RunningFolio,
+    aw_workspace_factory: Callable[[str], AWWorkspace],
+) -> None:
+    team = _provision_team(aw_workspace_factory("preset"), alias="dev")
+    _create_document(folio, team, slug="brand", title="Brand", body="# Hi\n\nBody")
+
+    saved = _put_theme(folio, team, {"preset": "aweb"})
+    assert saved["preset"] == "aweb"
+    assert _get_theme(folio, team)["preset"] == "aweb"
+
+    # Document/light default → the warm-green brand palette.
+    light_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
+        "</style>", 1
+    )[0]
+    assert "--bg: #fffaf0;" in light_style
+    assert "--accent: #246b49;" in light_style
+
+    # Same preset, dark presentation scheme → the brand's dark palette.
+    _put_theme(
+        folio,
+        team,
+        {"preset": "aweb", "tokens": {"layout": {"color_scheme": "dark", "mode": "presentation"}}},
+    )
+    dark_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
+        "</style>", 1
+    )[0]
+    assert "--bg: #10180f;" in dark_style
+    assert "--accent: #5cb98a;" in dark_style
+
+    # The reserved 'preset' key inside tokens fails closed over the wire.
+    collision = _aw_request(
+        team,
+        "PUT",
+        f"{folio.origin}/v1/theme",
+        body=json.dumps({"tokens": {"preset": {"x": "y"}}}, separators=(",", ":")),
+    )
+    _assert_aw_status(collision, 422, context="reject reserved preset key in tokens")

@@ -151,6 +151,7 @@ class ThemeRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tokens: dict[str, dict[str, str]] = Field(default_factory=dict)
+    preset: str | None = Field(default=None, max_length=80)
     logo: ThemeLogoInput | None = None
     clear_logo: bool = False
     header: str | None = Field(default=None, max_length=2_000)
@@ -159,6 +160,7 @@ class ThemeRequest(BaseModel):
 
 class ThemeResponse(BaseModel):
     tokens: dict[str, dict[str, str]]
+    preset: str | None = None
     logo_asset_id: UUID | None = None
     logo_url: str | None = None
     header: str | None = None

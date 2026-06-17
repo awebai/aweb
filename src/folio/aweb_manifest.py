@@ -192,6 +192,7 @@ MANIFEST: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "tokens": {"type": "object"},
+                    "preset": {"type": "string"},
                     "logo": {"type": "object"},
                     "clear_logo": {"type": "boolean"},
                     "header": {"type": "string"},
@@ -200,6 +201,7 @@ MANIFEST: dict[str, Any] = {
             },
             "params": [
                 {"name": "tokens", "in": "body"},
+                {"name": "preset", "in": "body"},
                 {"name": "logo", "in": "body"},
                 {"name": "clear_logo", "in": "body"},
                 {"name": "header", "in": "body"},

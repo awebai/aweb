@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import folio.api as folio_api
 from folio.presentation import (
+    _BUILTIN_THEMES,
     content_security_policy,
     contrast_ratio,
     render_editor_page,
@@ -457,6 +458,120 @@ def test_put_theme_rejects_transparent_or_alpha_contrast_bypass() -> None:
     for value in ("transparent", "rgba(0, 0, 0, 0)", "#00000000"):
         response = client.put("/v1/theme", json={"tokens": {"colors": {"text": value, "surface": "#ffffff"}}})
         assert response.status_code == 422, (value, response.text)
+
+
+def test_aweb_builtin_palette_passes_wcag_in_both_schemes() -> None:
+    # The brand's contract: every text/bg pair in both schemes clears WCAG AA.
+    light, dark = _BUILTIN_THEMES["aweb"]
+    for palette in (light, dark):
+        for fg in ("--text", "--muted", "--accent"):
+            for bg in ("--bg", "--surface"):
+                ratio = contrast_ratio(palette[fg], palette[bg])
+                assert ratio is not None and ratio >= 4.5, (fg, bg, palette[fg], palette[bg], ratio)
+
+
+def test_render_presented_page_aweb_preset_light() -> None:
+    html = render_presented_page(body="# Hi", theme={"preset": "aweb"})
+    assert '<meta name="color-scheme" content="light">' in html
+    style = html.split("</style>", 1)[0]
+    assert "color-scheme: light;" in style
+    assert "--bg: #fffaf0;" in style
+    assert "--accent: #246b49;" in style
+    assert "--text: #17201a;" in style
+
+
+def test_render_presented_page_aweb_preset_dark() -> None:
+    theme = {"preset": "aweb", "tokens": {"layout": {"color_scheme": "dark"}}}
+    html = render_presented_page(body="# Hi", theme=theme)
+    assert '<meta name="color-scheme" content="dark">' in html
+    style = html.split("</style>", 1)[0]
+    assert "color-scheme: dark;" in style
+    assert "--bg: #10180f;" in style
+    assert "--accent: #5cb98a;" in style
+
+
+def test_render_presented_page_aweb_preset_auto_emits_green_dark_media_query() -> None:
+    theme = {"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}}}
+    style = render_presented_page(body="# Hi", theme=theme).split("</style>", 1)[0]
+    assert "--bg: #fffaf0;" in style  # light base
+    assert "@media (prefers-color-scheme: dark)" in style
+    assert "--bg: #10180f;" in style  # dark inside the media query
+
+
+def test_render_presented_page_unknown_preset_falls_back_to_default() -> None:
+    style = render_presented_page(body="# Hi", theme={"preset": "bogus"}).split("</style>", 1)[0]
+    assert "--bg: #f8fafc;" in style  # the un-themed default, never a leaked name
+    assert "bogus" not in style
+
+
+def test_render_presented_page_custom_colors_still_override_preset() -> None:
+    theme = {"preset": "aweb", "tokens": {"colors": {"accent": "#ff0000"}}}
+    style = render_presented_page(body="# Hi", theme=theme).split("</style>", 1)[0]
+    # The custom override is applied last and wins over the preset base.
+    assert "--accent: #ff0000;" in style
+
+
+def test_theme_contrast_error_passes_for_aweb_preset_both_schemes() -> None:
+    assert theme_contrast_error({}, preset="aweb") is None
+    assert theme_contrast_error({"layout": {"color_scheme": "dark"}}, preset="aweb") is None
+
+
+def test_theme_contrast_error_checks_custom_text_against_preset_surface() -> None:
+    # A near-white custom text on the aweb light surface (#ffffff) must be flagged.
+    error = theme_contrast_error({"colors": {"text": "#fdfdfd"}}, preset="aweb")
+    assert error is not None
+    assert "contrast" in error.lower()
+
+
+def test_theme_contrast_error_auto_scheme_checks_both_palettes_for_preset() -> None:
+    # Custom dark text is readable on the aweb light surface but 1:1 against the
+    # aweb dark surface (#17201a). 'auto' renders BOTH, so it must be rejected.
+    error = theme_contrast_error(
+        {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}, preset="aweb"
+    )
+    assert error is not None
+    assert "contrast" in error.lower()
+
+
+def test_theme_contrast_error_auto_scheme_passes_preset_without_overrides() -> None:
+    assert theme_contrast_error({"layout": {"color_scheme": "auto"}}, preset="aweb") is None
+
+
+def test_put_theme_rejects_auto_scheme_unreadable_against_dark_palette() -> None:
+    app = folio_api.create_app()
+    theme_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/theme" and "PUT" in getattr(route, "methods", set())
+    )
+    for dependency in theme_route.dependant.dependencies:
+        if getattr(dependency.call, "__name__", "") in {"db", "principal"}:
+            app.dependency_overrides[dependency.call] = lambda: object()
+    client = TestClient(app)
+
+    response = client.put(
+        "/v1/theme",
+        json={"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_put_theme_rejects_reserved_preset_key_inside_tokens() -> None:
+    app = folio_api.create_app()
+    theme_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/theme" and "PUT" in getattr(route, "methods", set())
+    )
+    for dependency in theme_route.dependant.dependencies:
+        if getattr(dependency.call, "__name__", "") in {"db", "principal"}:
+            app.dependency_overrides[dependency.call] = lambda: object()
+    client = TestClient(app)
+
+    # A custom token group literally named 'preset' must fail closed (collision guard).
+    response = client.put("/v1/theme", json={"tokens": {"preset": {"x": "y"}}})
+    assert response.status_code == 422, response.text
+    assert "preset" in response.text
 
 
 _MEDIA_A = UUID("11111111-1111-4111-8111-111111111111")

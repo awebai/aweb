@@ -126,6 +126,41 @@ _DARK_PALETTE = {
     "--accent": "#60a5fa",
     "--code-bg": "#1f2937",
 }
+_AWEB_LIGHT_PALETTE = {
+    "--bg": "#fffaf0",
+    "--surface": "#ffffff",
+    "--text": "#17201a",
+    "--muted": "#5f685f",
+    "--border": "#ded6c4",
+    "--accent": "#246b49",
+    "--code-bg": "#eef4ea",
+}
+_AWEB_DARK_PALETTE = {
+    "--bg": "#10180f",
+    "--surface": "#17201a",
+    "--text": "#eff9ef",
+    "--muted": "#9fb0a3",
+    "--border": "#263b2d",
+    "--accent": "#5cb98a",
+    "--code-bg": "#1b241d",
+}
+# Built-in named themes: a preset supplies a (light, dark) base palette applied
+# per color_scheme. Per-team custom color tokens still override the base.
+_BUILTIN_THEMES = {
+    "aweb": (_AWEB_LIGHT_PALETTE, _AWEB_DARK_PALETTE),
+}
+
+
+def builtin_preset(value: Any) -> str | None:
+    """The built-in theme name if recognized, else None (unknown names fall back)."""
+    return value if isinstance(value, str) and value in _BUILTIN_THEMES else None
+
+
+def _resolve_base_palettes(preset: Any) -> tuple[dict[str, str], dict[str, str]]:
+    name = builtin_preset(preset)
+    if name is not None:
+        return _BUILTIN_THEMES[name]
+    return _LIGHT_PALETTE, _DARK_PALETTE
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _RGB_COLOR_RE = re.compile(r"^rgba?\(([^)]+)\)$", re.IGNORECASE)
 _ASSET_PATH_RE = re.compile(r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
@@ -311,26 +346,39 @@ def _is_opaque_color(value: str) -> bool:
     return candidate in _NAMED_COLOR_RGB
 
 
-def theme_contrast_error(tokens: Any) -> str | None:
+def theme_contrast_error(tokens: Any, *, preset: Any = None) -> str | None:
     """Reject a theme whose body text would fail WCAG AA against its surface.
 
-    Colors fall back to the palette of the chosen scheme, so a default theme
-    always passes and only an explicit unreadable override is flagged. Text and
-    surface must be fully opaque: a transparent or alpha-bearing value fails the
-    gate closed rather than slipping invisible text through.
+    Colors fall back to the resolved base palette (a built-in preset's palette
+    if one is selected, else the default), so a preset or default theme always
+    passes and only an explicit unreadable override is flagged. ``auto`` renders
+    both the light and the dark palette, so the effective pair is checked against
+    BOTH and rejected if either fails. Text and surface must be fully opaque: a
+    transparent or alpha-bearing value fails the gate closed rather than slipping
+    invisible text through.
     """
     colors = sanitize_theme_tokens(tokens).get("colors", {})
-    palette = _DARK_PALETTE if sanitize_layout_tokens(tokens)["color_scheme"] == "dark" else _LIGHT_PALETTE
-    text = colors.get("text") or palette["--text"]
-    surface = colors.get("surface") or palette["--surface"]
-    for label, value in (("text", text), ("surface", surface)):
-        if not _is_opaque_color(value):
-            return f"Theme {label} color must be a fully opaque color so contrast can be verified."
-    ratio = contrast_ratio(text, surface)
-    if ratio is None:
-        return "Theme text/surface colors could not be evaluated for contrast."
-    if ratio < _WCAG_AA_NORMAL:
-        return f"Theme text/surface contrast {ratio:.2f}:1 is below the WCAG AA minimum of {_WCAG_AA_NORMAL}:1."
+    light_palette, dark_palette = _resolve_base_palettes(preset)
+    scheme = sanitize_layout_tokens(tokens)["color_scheme"]
+    if scheme == "dark":
+        palettes = [dark_palette]
+    elif scheme == "auto":
+        palettes = [light_palette, dark_palette]
+    else:
+        palettes = [light_palette]
+    custom_text = colors.get("text")
+    custom_surface = colors.get("surface")
+    for palette in palettes:
+        text = custom_text or palette["--text"]
+        surface = custom_surface or palette["--surface"]
+        for label, value in (("text", text), ("surface", surface)):
+            if not _is_opaque_color(value):
+                return f"Theme {label} color must be a fully opaque color so contrast can be verified."
+        ratio = contrast_ratio(text, surface)
+        if ratio is None:
+            return "Theme text/surface colors could not be evaluated for contrast."
+        if ratio < _WCAG_AA_NORMAL:
+            return f"Theme text/surface contrast {ratio:.2f}:1 is below the WCAG AA minimum of {_WCAG_AA_NORMAL}:1."
     return None
 
 
@@ -338,12 +386,18 @@ def _palette_declarations(palette: dict[str, str], indent: str) -> str:
     return "\n".join(f"{indent}{name}: {value};" for name, value in palette.items())
 
 
-def _root_css(layout: dict[str, str], theme_css: str) -> str:
+def _root_css(
+    layout: dict[str, str],
+    theme_css: str,
+    *,
+    light_palette: dict[str, str] = _LIGHT_PALETTE,
+    dark_palette: dict[str, str] = _DARK_PALETTE,
+) -> str:
     """Build the :root block: color-scheme, the scheme's palette, a dark media
     query for ``auto``, and theme color/font overrides applied last so they win.
     """
     scheme = layout["color_scheme"]
-    base = _DARK_PALETTE if scheme == "dark" else _LIGHT_PALETTE
+    base = dark_palette if scheme == "dark" else light_palette
     block = f""":root {{
       color-scheme: {_COLOR_SCHEME_META[scheme]};
 {_palette_declarations(base, "      ")}
@@ -353,7 +407,7 @@ def _root_css(layout: dict[str, str], theme_css: str) -> str:
     if scheme == "auto":
         block += (
             "\n    @media (prefers-color-scheme: dark) {\n      :root {\n"
-            + _palette_declarations(_DARK_PALETTE, "        ")
+            + _palette_declarations(dark_palette, "        ")
             + "\n      }\n    }"
         )
     if theme_css:
@@ -642,7 +696,8 @@ def render_presented_page(
     safe_tokens = sanitize_theme_tokens(tokens)
     theme_css = _theme_css(safe_tokens)
     layout = sanitize_layout_tokens(tokens)
-    root_css = _root_css(layout, theme_css)
+    light_palette, dark_palette = _resolve_base_palettes((theme or {}).get("preset"))
+    root_css = _root_css(layout, theme_css, light_palette=light_palette, dark_palette=dark_palette)
     body_class = f"folio-layout-{layout['mode']} folio-measure-{layout['measure']}"
     color_scheme_meta = _COLOR_SCHEME_META[layout["color_scheme"]]
     fullscreen_html = _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
