@@ -102,9 +102,48 @@ column must be tagged:
   `messages`/`chat_messages` (§2B) and any workspace-keyed FKs (#2,3,4,6,19,20)
   are 8b.
 
-TODO before the decomposition milestone: add an explicit `8a`/`8b` column to the
-table in §1 and the alterations in §2, so m8 is never over-promised as complete
-overlay/FK removal.
+### Per-FK tags (ac-team, verified against live migrations 2026-06-17)
+
+`# | tag | logical ref after FK removal`
+
+| # | tag | logical ref after removal |
+|---|---|---|
+| 1 | 8a | `aweb_team_id` (server UUID kept as ac-local row id only) |
+| 2 | 8b | `workspace_id` + `aweb_team_id` (verify via core workspace API) |
+| 3 | 8b | `workspace_id` + `aweb_team_id` — 8a dual-write projection now |
+| 4 | 8b | `workspace_id` + `agent_id`/`aweb_team_id` — 8a dual-write projection now |
+| 5 | 8a | `aweb_team_id` |
+| 6 | 8b | `workspace_id` + `aweb_team_id` |
+| 7 | 8a | `inviter_aweb_team_id` |
+| 8 | 8a | `aweb_team_id` / namespace domain owner ref |
+| 9 | 8a | `agent_id` + `aweb_team_id` |
+| 10–12 | 8a | `aweb_team_id` (12: or public team slug) |
+| 13 | 8a | `agent_id` + stable id where available |
+| 14 | 8a | `created_by_agent_id` + `aweb_team_id` |
+| 15–18 | 8a | `aweb_team_id` (17: / org membership scope) |
+| 19 | 8b | `workspace_id` + `agent_id`/`did_aw` — 8a dual-write projection now |
+| 20 | 8b | nullable `workspace_id` + hosted identity ref (SET NULL today) |
+| 21 | — | intra-`aweb_cloud`; keep unless a2a splits inside ac |
+| 22 | 8a | `owner_aweb_team_id` |
+| 23 | 8a | move `aweb.api_keys` to ac-owned schema; ref by `aweb_team_id` |
+| 24 | 8a | move table; `agent_id` logical ref + explicit stale-key checks (NO ACTION, not CASCADE — special) |
+| 25 | 8a | move `aweb.spawn_invite_tokens`; `aweb_team_id` |
+| 26 | 8a | move table; creator `agent_id` logical ref |
+| 27 | 8a | move `aweb.replacement_announcements`; `aweb_team_id` |
+| 28–29 | 8a | move table; old/new `agent_id` logical ref |
+| 30 | 8a | move `aweb.dns_namespaces`; `scope_aweb_team_id` (SET NULL today) |
+
+Overlay (§2): 2A (11 `aweb.agents` cols + indexes) = **8a** (→ ac-owned
+identity/custody projection); 2D (7 overlay tables) = **8a** (relocate to
+ac-owned); 2B (`signing_key_id` on messages/chat_messages) = **8b** (ride m10);
+2C (`tasks.parent_task_id` DEFERRABLE) = **preserve** wherever tasks lands (tiny
+core compat patch if tasks still in core at m8).
+
+**Deploy-path completeness (confirmed):** awid same-pool appears only in tests
+(`test_external_namespaces.py`, `test_workspaces_init_api_key.py`, `conftest.py`);
+runtime + `Dockerfile.release` point at the external `api.awid.ai`. The m8
+verifier (`default-aaao.2`) asserts no runtime awid schema in the ac pool and
+flags any path that differs.
 
 ## 3. Decomposition implication
 
