@@ -25,7 +25,8 @@ vocabulary changes:
 - internal/legacy implementation: **soul** may remain as a directory name until
   migration is worth doing;
 - composition unit: **team blueprint**;
-- authority unit: **team app grants**, not profile-owned app installs.
+- authority unit: **team app grants**, not profile-owned app installs;
+- learning surface: **library.aweb.ai**, an app, not a new core layer.
 
 The goal is not to invent a new abstraction. It is to productize the pattern we
 already dogfood in blueprint repos such as `../aweb-team-dev-simple/`: make it
@@ -73,29 +74,36 @@ envelopes. Translate them:
 The billing, admin, and human governance container. A company owns teams,
 installed apps, billing, quotas, hosted identities, and audit policy.
 
-### Company library
+### Library app (`library.aweb.ai`)
 
-The company's canonical, versioned operating knowledge for agents.
+The company's canonical, versioned operating knowledge for agents, delivered as
+a cert-authed app.
 
 It contains profiles, skills, playbooks, memory, policies, app recipes, evals,
-and glossary/context that should be reused across teams. It is the missing layer
-between the public catalog and one team's installed copy:
+and glossary/context that should be reused across teams. It is the app-owned
+source of reusable artifacts between the public catalog and one team's installed
+copy:
 
 ```text
 Aweb/catalog profile
-  -> company library entry
+  -> library.aweb.ai company entry
     -> team-installed snapshot
       -> runtime instance
 ```
 
-The company library is **not** live mutable role text. It is a versioned source
-of truth with diffs, approvals, provenance, rollback, and promotion flows. Teams
-pin versions from the library; they do not automatically change every time the
-library changes.
+`library.aweb.ai` is **not** live mutable role text, and it is not part of
+aweb core. It is a versioned source of truth with diffs, approvals, provenance,
+rollback, and promotion flows. Teams pin versions from the library; they do not
+automatically change every time the library changes.
 
-For dev-heavy customers, the company library may be backed by a git repo. For
-non-technical customers, aweb hosts the library but keeps the same semantics:
-versioned, reviewable, promotable, and rollbackable.
+Core's job is only to enforce identity, team authority, app grants, installed
+pins, and runtime facts. The library app produces versioned artifacts and
+promotion proposals. It should reuse the app install/grant and pinned digest
+rails, not create a parallel catalog or authority system.
+
+For dev-heavy customers, the library may be backed by a git repo. For
+non-technical customers, aweb hosts the library app but keeps the same
+semantics: versioned, reviewable, promotable, and rollbackable.
 
 ### Team
 
@@ -486,7 +494,7 @@ There is no live dependency on the source blueprint at runtime.
 Teams may install from:
 
 - the public/catalog source directly;
-- a company library profile/blueprint version;
+- a `library.aweb.ai` profile/blueprint version;
 - a repo-local or local-directory blueprint.
 
 The important invariant is that execution uses a pinned team-installed snapshot.
@@ -495,8 +503,9 @@ mutation.
 
 ### Non-dev teams
 
-For non-dev teams that do not have a repo, aweb provides a hosted company
-library and hosted team-installed snapshots. It must preserve the same semantics:
+For non-dev teams that do not have a repo, aweb provides a hosted
+`library.aweb.ai` app and hosted team-installed snapshots. It must preserve the
+same semantics:
 
 - immutable versions;
 - diffs;
@@ -509,16 +518,26 @@ library and hosted team-installed snapshots. It must preserve the same semantics
 Do not build a mutable hosted "role text" editor as the primary model. That
 recreates the roles feature nobody used.
 
-## 7. Company library and learning model
+## 7. `library.aweb.ai` and learning model
 
-Without a company library, teams can learn locally but the company does not
-learn reliably. A developer profile improved in one repo may never reach another
-repo; a marketing lesson learned by a hosted MCP team may disappear into that
-team's local profile snapshot. The company library solves this.
+Without a library app, teams can learn locally but the company does not learn
+reliably. A developer profile improved in one repo may never reach another repo;
+a marketing lesson learned by a hosted MCP team may disappear into that team's
+local profile snapshot. `library.aweb.ai` solves this as an app, not by
+expanding core.
+
+The first product wedge is still excellent team creation:
+
+```text
+good blueprint -> aw inspect/apply/team-create -> aw agent add/start
+```
+
+The library app is the learning and reuse loop that follows. It should not
+delay making blueprints and native `aw` support work well.
 
 ### Library entry types
 
-The company library can store:
+Long term, the library app can store:
 
 - **Profiles** — operating packages for agent types.
 - **Skills** — reusable procedures.
@@ -528,6 +547,21 @@ The company library can store:
 - **App recipes** — how this company uses GitHub, Slack, HubSpot, Linear, etc.
 - **Evals** — how the company judges quality.
 - **Glossary/context** — product names, customer names, KPI definitions, tone.
+
+V1 should prove the full learning loop with one entry type before broadening the
+surface. The recommended first entry type is **Memory**:
+
+```text
+team produces a useful durable fact
+  -> agent proposes it as a patch/blob
+  -> human reviews
+  -> library.aweb.ai publishes a new version
+  -> other teams can pin that version
+```
+
+Profiles, skills, playbooks, policies, recipes, and evals should be represented
+in the SOT because they are where the product likely goes, but they should not
+all be v1 implementation scope.
 
 Keep these categories distinct:
 
@@ -545,7 +579,7 @@ Learning flows upward; execution flows downward.
 Team install learns something
   -> agent proposes a change
   -> team accepts locally or rejects
-  -> company promotes the useful change to the library
+  -> company promotes the useful change to library.aweb.ai
   -> other teams can update from the library
 ```
 
@@ -555,9 +589,8 @@ Concrete flow:
 2. The agent writes a short retrospective when useful.
 3. The agent proposes a profile/skill/memory/policy/workflow change.
 4. A human or coordinator reviews it.
-5. The change lands locally for that team, or is promoted to the company
-   library.
-6. The company library creates a new version.
+5. The change lands locally for that team, or is promoted to `library.aweb.ai`.
+6. `library.aweb.ai` creates a new version.
 7. Other teams are shown an update with a diff and impact.
 
 Example:
@@ -566,7 +599,7 @@ Example:
 Learned from: Marketing Team / campaign-2026-06 / researcher
 Proposed change: add competitor matrix format to market-research skill
 Impact: 4 teams use this skill
-Options: approve to this team only / promote to company / reject
+Options: approve to this team only / promote to library / reject
 ```
 
 ### Versioning and pins
@@ -604,7 +637,7 @@ configures an auto-update policy for a low-risk category.
 
 Both modes must share semantics:
 
-- hosted library for non-technical companies;
+- hosted `library.aweb.ai` for non-technical companies;
 - git-backed library for technical companies;
 - repo-local installs for dev teams.
 
@@ -686,7 +719,8 @@ events wake me?", and "what requires approval?"
 
 ### Library commands
 
-The company learning loop needs explicit CLI/MCP affordances.
+The company learning loop needs explicit CLI/MCP affordances. These commands
+target `library.aweb.ai`, not core.
 
 ```bash
 aw library list
@@ -694,14 +728,20 @@ aw library search <query>
 aw library show <entry>
 aw library diff <entry>@<old> <entry>@<new>
 aw library propose memory --title <title> --body-file <file>
-aw library propose skill-change <skill> --patch-file <patch>
-aw library propose profile-change <profile> --patch-file <patch>
 aw library promote <team-change-id> --to company
 aw library update-team <team> --entry <entry>@<version>
 ```
 
 Agents may read and propose through these commands. Direct mutation of company
 library entries requires explicit human/coordinator authority.
+
+Profile and skill change proposals are later commands. V1 should not require
+automatic patch application to profile packs:
+
+```bash
+aw library propose skill-change <skill> --patch-file <patch>
+aw library propose profile-change <profile> --patch-file <patch>
+```
 
 ### Agent commands
 
@@ -813,14 +853,15 @@ profiles it should show:
 - signed audit trail;
 - available upstream blueprint/profile updates.
 
-For the company library, it should show:
+For `library.aweb.ai`, it should show:
 
-- profiles, skills, playbooks, policies, memory, app recipes, evals, glossary;
+- memory proposals in v1;
+- later: profiles, skills, playbooks, policies, app recipes, evals, glossary;
 - proposed changes;
 - source team/task/agent for each proposal;
 - diff and impact analysis;
 - which teams use each entry/version;
-- approve to team only / promote to company / reject;
+- approve to team only / promote to library / reject;
 - updates available for teams;
 - rollback history.
 
@@ -876,7 +917,7 @@ Do not sell "self-improving agents" as magic. The concrete loop is:
 2. The agent writes a short retrospective when useful.
 3. The agent proposes a profile/skill/memory/workflow improvement.
 4. A human or coordinator reviews the change.
-5. The change lands in the team install, the company library, or both.
+5. The change lands in the team install, `library.aweb.ai`, or both.
 6. Future agents use updated pinned versions after approval.
 7. The dashboard can later show whether metrics improved.
 
@@ -888,8 +929,9 @@ Profiles may evolve, but not silently. The rule:
 For code agents, these are ordinary git diffs. For hosted profile stores, they
 are reviewed versioned changes with rollback.
 
-The company library is what makes this company-level learning instead of
-team-local drift.
+`library.aweb.ai` is what makes this company-level learning instead of
+team-local drift. It should consume core authority and app-install primitives;
+it should not become a second core control plane.
 
 ## 12. Runtime model
 
@@ -932,8 +974,8 @@ People should be able to publish blueprints and profiles in git repos.
 Distribution levels:
 
 1. **Aweb built-ins**: high-quality first-party blueprints/profiles.
-2. **Company library**: private canonical profiles, skills, playbooks, memory,
-   policies, app recipes, and evals.
+2. **Library app**: private canonical profiles, skills, playbooks, memory,
+   policies, app recipes, and evals, exposed by `library.aweb.ai`.
 3. **Team installs**: pinned working copies used by a specific team/repo.
 4. **Community**: public repos discoverable through aweb.
 5. **Vendor**: app-specific profiles maintained by app providers.
@@ -983,6 +1025,11 @@ The customer flow:
 
 This should work before marketplace/profile hosting is built.
 
+The quality bar for first-party blueprints is product-level, not sample-code
+level. A blueprint must be something a company can actually start from: clear
+profiles, useful defaults, realistic app requests, runtime hints, reviewable
+code artifacts, and enough workflow shape that the first task can start quickly.
+
 ## 15. Migration from today's blueprints
 
 Near-term migration:
@@ -997,11 +1044,16 @@ Near-term migration:
 7. Keep existing `spawn-instance`/`retire-instance` skills as the runtime
    implementation while CLI commands mature.
 8. Add dashboard read-only visualization of installed blueprint/profile state.
-9. Add the company library object with hosted storage first, even if minimal:
-   profile/skill/playbook/memory/policy entries, versions, proposals, and
-   promotion from team installs.
-10. Add remote git source support.
-11. Add hosted catalog/search only after the local/git path and company-library
+9. Add remote git source support.
+10. Specify `library.aweb.ai` as an app that reuses app installs/grants and
+   pinned digests. Do not add a new core library layer.
+11. Build the smallest library-app v1 only when product priority justifies it:
+   memory entries, proposal blobs, diff/show/promote, team pin/update. This can
+   follow the first app-extraction milestone unless a concrete hosted
+   non-technical customer need pulls it forward.
+12. Add profile/skill/playbook/policy promotion only after the memory loop
+   proves value.
+13. Add hosted catalog/search only after the local/git path and library-app
    learning loop prove value.
 
 Do not build a hosted mutable profile editor first. That path recreates roles.
@@ -1017,15 +1069,18 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
 - Which app is first for external capabilities: GitHub, Tasks, Messages, or Dev?
 - What is the minimal signed audit trail in v1?
 - How hosted MCP profile binding appears in the dashboard.
-- Whether the first company library backend is hosted-only, git-backed, or both.
-- Which library entry types are v1: profiles + memory only, or profiles + skills
-  + playbooks + policies.
+- Whether `library.aweb.ai` should build before or after the first extracted
+  anapp proves the extraction template.
+- Whether the first library backend is hosted-only, git-backed, or both.
+- Whether the v1 library entry type is memory only, or memory plus profiles.
 - How team-local changes are represented so they can be promoted cleanly to the
-  company library.
+  library app.
 - Whether community catalog lives in a repo first or in hosted aweb.ai.
 
 The default answers are: keep compatibility with current soul layout, support
 local dir first, make `inspect/apply` the primitive and `team create --from` the
-wrapper, prove with engineering blueprint, ship a minimal hosted company library
-for learning, and defer public hosted catalog until the git/local flow and
-company-library promotion loop work.
+wrapper, prove with engineering blueprint, prioritize native `aw` team creation
+and agent add/start support, specify `library.aweb.ai` as an app rather than a
+core layer, prove the learning loop with memory before broadening it, and defer
+public hosted catalog until the git/local flow and library-app promotion loop
+work.
