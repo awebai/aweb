@@ -103,7 +103,7 @@ Emit authorization is app-scoped, privileged, and attributable: the producer is
 an app acting in a team, not a random team member and not the hosted gateway.
 Apps do not sign as the team and do not hold team certificates.
 
-First implementation app-service credential:
+First implementation app-service credential (**v1 stopgap, not the durable credential class**):
 
 ```http
 Authorization: AWEB-App DIDKey <did:key> <base64-signature>
@@ -132,6 +132,15 @@ The canonical signed payload is:
 }
 ```
 
+This registered emit-key shape is intentionally a forward-compatible stopgap.
+It gives apps an app-owned DIDKey for v1 emits without making that key the
+permanent app principal model.
+
+**Durable direction:** app-as-AWID-identity. The app will have an AWID/DID
+principal and sign emits like any principal; app cert-auth and app emit-auth
+converge on that one app identity. The v1 `did_key` emit key is compatible with
+that direction but is not the final authority model.
+
 The app registry stores app-owned emit keys at app registration/install time:
 
 ```json
@@ -143,8 +152,8 @@ The app registry stores app-owned emit keys at app registration/install time:
 ```
 
 The app holds the private key; team agents do not. Key rotation is an explicit
-registry/app-registration update. Core accepts an emit only when all of these are
-true:
+registry/app-registration update in the stopgap model. Core accepts an emit only
+when all of these are true:
 
 1. the app-service signature verifies over the canonical payload;
 2. `team_id` and `app_id` from headers/payload match the request body and route
@@ -157,9 +166,9 @@ true:
 
 Core records `producer_app_id`, `producer_key_id`, `producer_did_key`, and team
 attribution with the event. An app cannot emit for another app namespace, for a
-team where it is not installed, with a key absent from the pinned manifest, or
-for an undeclared event type. Discovery of app manifests remains public; app
-event emission is an installed-app capability.
+team where it is not installed, with a key absent from the app registry, or for
+an undeclared event type. Discovery of app manifests remains public; app event
+emission is an installed-app capability.
 
 Response:
 
@@ -397,6 +406,8 @@ All m3.2 contract points are closed for first implementation:
   event-id de-dupe, generic app render, no app hydration.
 - ac/gateway: standard subscription management only; writes sign as identity,
   reads may use internal gateway auth; relay to keyless runtimes deferred v2.
-- emit auth: `AWEB-App DIDKey` app-scoped credential tied to an active registry
-  emit key for an installed app; core authorizes via the app<->team install
-  grant and declared manifest event type.
+- emit auth: v1 stopgap `AWEB-App DIDKey` app-scoped credential tied to an
+  active registry emit key for an installed app; core authorizes via the
+  app<->team install grant and declared manifest event type. Durable direction is
+  app-as-AWID-identity so app cert-auth and emit-auth converge on one app
+  principal.
