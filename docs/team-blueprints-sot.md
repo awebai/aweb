@@ -73,6 +73,30 @@ envelopes. Translate them:
 The billing, admin, and human governance container. A company owns teams,
 installed apps, billing, quotas, hosted identities, and audit policy.
 
+### Company library
+
+The company's canonical, versioned operating knowledge for agents.
+
+It contains profiles, skills, playbooks, memory, policies, app recipes, evals,
+and glossary/context that should be reused across teams. It is the missing layer
+between the public catalog and one team's installed copy:
+
+```text
+Aweb/catalog profile
+  -> company library entry
+    -> team-installed snapshot
+      -> runtime instance
+```
+
+The company library is **not** live mutable role text. It is a versioned source
+of truth with diffs, approvals, provenance, rollback, and promotion flows. Teams
+pin versions from the library; they do not automatically change every time the
+library changes.
+
+For dev-heavy customers, the company library may be backed by a git repo. For
+non-technical customers, aweb hosts the library but keeps the same semantics:
+versioned, reviewable, promotable, and rollbackable.
+
 ### Team
 
 A managed group of agent identities with roles/profiles, app grants, work
@@ -459,10 +483,20 @@ Once applied, the team owns the installed copy:
 
 There is no live dependency on the source blueprint at runtime.
 
+Teams may install from:
+
+- the public/catalog source directly;
+- a company library profile/blueprint version;
+- a repo-local or local-directory blueprint.
+
+The important invariant is that execution uses a pinned team-installed snapshot.
+Learning and updates flow through proposals and promotion, not implicit live
+mutation.
+
 ### Non-dev teams
 
-For non-dev teams that do not have a repo, aweb may provide a hosted versioned
-profile store. It must preserve the same semantics:
+For non-dev teams that do not have a repo, aweb provides a hosted company
+library and hosted team-installed snapshots. It must preserve the same semantics:
 
 - immutable versions;
 - diffs;
@@ -475,7 +509,109 @@ profile store. It must preserve the same semantics:
 Do not build a mutable hosted "role text" editor as the primary model. That
 recreates the roles feature nobody used.
 
-## 7. CLI surface
+## 7. Company library and learning model
+
+Without a company library, teams can learn locally but the company does not
+learn reliably. A developer profile improved in one repo may never reach another
+repo; a marketing lesson learned by a hosted MCP team may disappear into that
+team's local profile snapshot. The company library solves this.
+
+### Library entry types
+
+The company library can store:
+
+- **Profiles** — operating packages for agent types.
+- **Skills** — reusable procedures.
+- **Playbooks** — workflows, checklists, and recurring operating patterns.
+- **Memory** — durable company facts.
+- **Policies** — approval rules, forbidden actions, escalation rules.
+- **App recipes** — how this company uses GitHub, Slack, HubSpot, Linear, etc.
+- **Evals** — how the company judges quality.
+- **Glossary/context** — product names, customer names, KPI definitions, tone.
+
+Keep these categories distinct:
+
+- Knowledge: "ACME calls customers members, not users."
+- Policy: "Legal approval is required before sending external claims."
+- Skill: "How to draft a launch email."
+- Profile: "Marketing Writer uses these skills, policies, apps, and style
+  constraints."
+
+### Learning flow
+
+Learning flows upward; execution flows downward.
+
+```text
+Team install learns something
+  -> agent proposes a change
+  -> team accepts locally or rejects
+  -> company promotes the useful change to the library
+  -> other teams can update from the library
+```
+
+Concrete flow:
+
+1. An agent completes work.
+2. The agent writes a short retrospective when useful.
+3. The agent proposes a profile/skill/memory/policy/workflow change.
+4. A human or coordinator reviews it.
+5. The change lands locally for that team, or is promoted to the company
+   library.
+6. The company library creates a new version.
+7. Other teams are shown an update with a diff and impact.
+
+Example:
+
+```text
+Learned from: Marketing Team / campaign-2026-06 / researcher
+Proposed change: add competitor matrix format to market-research skill
+Impact: 4 teams use this skill
+Options: approve to this team only / promote to company / reject
+```
+
+### Versioning and pins
+
+Everything reusable should be versioned:
+
+```text
+company/code-reviewer@1.4
+company/legal-approval-policy@2.1
+company/launch-email-skill@0.8
+team/website-redesign/reviewer@local+3
+```
+
+Teams pin library entries:
+
+```yaml
+profiles:
+  reviewer: company/code-reviewer@1.4
+policies:
+  approval: company/engineering-approval@2.1
+```
+
+The dashboard may say:
+
+```text
+Update available: company/code-reviewer 1.5
+Changes: adds migration-review checklist and stricter security escalation.
+Used by: 6 teams.
+```
+
+No update is applied without review/approval unless the company deliberately
+configures an auto-update policy for a low-risk category.
+
+### Git-backed and hosted-backed libraries
+
+Both modes must share semantics:
+
+- hosted library for non-technical companies;
+- git-backed library for technical companies;
+- repo-local installs for dev teams.
+
+The storage backend changes, not the product contract: versioned, diffable,
+reviewable, promotable, pinned, and rollbackable.
+
+## 8. CLI surface
 
 The CLI should make blueprint use boring and inspectable.
 
@@ -547,6 +683,25 @@ aw profile propose-change <profile> --body-file <proposal.md>
 `profile show` must be useful to agents as well as humans: it should answer
 "what am I for?", "what work do I accept?", "what apps/scopes do I need?", "what
 events wake me?", and "what requires approval?"
+
+### Library commands
+
+The company learning loop needs explicit CLI/MCP affordances.
+
+```bash
+aw library list
+aw library search <query>
+aw library show <entry>
+aw library diff <entry>@<old> <entry>@<new>
+aw library propose memory --title <title> --body-file <file>
+aw library propose skill-change <skill> --patch-file <patch>
+aw library propose profile-change <profile> --patch-file <patch>
+aw library promote <team-change-id> --to company
+aw library update-team <team> --entry <entry>@<version>
+```
+
+Agents may read and propose through these commands. Direct mutation of company
+library entries requires explicit human/coordinator authority.
 
 ### Agent commands
 
@@ -641,7 +796,7 @@ aw subscription approve <request>
 These commands must reinforce the authority model: teams grant apps; profiles
 request; agents receive the intersection.
 
-## 8. Dashboard surface
+## 9. Dashboard surface
 
 The dashboard is the human workroom and control surface. For blueprints and
 profiles it should show:
@@ -658,18 +813,32 @@ profiles it should show:
 - signed audit trail;
 - available upstream blueprint/profile updates.
 
+For the company library, it should show:
+
+- profiles, skills, playbooks, policies, memory, app recipes, evals, glossary;
+- proposed changes;
+- source team/task/agent for each proposal;
+- diff and impact analysis;
+- which teams use each entry/version;
+- approve to team only / promote to company / reject;
+- updates available for teams;
+- rollback history.
+
 The dashboard should not start as the primary profile authoring tool. It can
 show diffs, approve changes, and later edit hosted profile stores. The first
 product path for dev teams should be repo/git/CLI because that matches how the
-target customers already review operational code.
+target customers already review operational code. For non-technical users,
+hosted library editing is allowed, but it must still be versioned and reviewed.
 
-## 9. Agent-first UX
+## 10. Agent-first UX
 
 Agents need a simple operating contract:
 
 ```bash
 aw whoami
 aw agent profile show
+aw library search "pricing tone"
+aw library show company/style-guide
 aw app list
 aw work ready
 aw work claim <ref>
@@ -677,6 +846,7 @@ aw mail send ...
 aw chat send-and-wait ...
 aw memory read
 aw profile propose-change
+aw library propose memory --title "Preferred KPI definitions" --body-file kpis.md
 ```
 
 The exact commands may differ, but the questions must be answerable:
@@ -690,13 +860,15 @@ The exact commands may differ, but the questions must be answerable:
 - What needs human approval?
 - Who do I ask when blocked?
 - What should I record when I learn something durable?
+- What company knowledge or policy should I reuse?
+- How do I propose that the company remember what I learned?
 
 The same team state should power human and agent surfaces:
 
 - humans see workroom, approvals, activity, costs, and audit;
 - agents see tools, tasks, instructions, memory, subscriptions, and events.
 
-## 10. Learning and improvement
+## 11. Learning and improvement
 
 Do not sell "self-improving agents" as magic. The concrete loop is:
 
@@ -704,8 +876,8 @@ Do not sell "self-improving agents" as magic. The concrete loop is:
 2. The agent writes a short retrospective when useful.
 3. The agent proposes a profile/skill/memory/workflow improvement.
 4. A human or coordinator reviews the change.
-5. The change lands as a commit/version.
-6. Future agents use the updated profile.
+5. The change lands in the team install, the company library, or both.
+6. Future agents use updated pinned versions after approval.
 7. The dashboard can later show whether metrics improved.
 
 Profiles may evolve, but not silently. The rule:
@@ -716,7 +888,10 @@ Profiles may evolve, but not silently. The rule:
 For code agents, these are ordinary git diffs. For hosted profile stores, they
 are reviewed versioned changes with rollback.
 
-## 11. Runtime model
+The company library is what makes this company-level learning instead of
+team-local drift.
+
+## 12. Runtime model
 
 ### Local dev runtime
 
@@ -750,16 +925,18 @@ sandboxing, runtime billing, secrets isolation, and fleet operations. The
 blueprint/profile model should support them later without making them required
 for early customer value.
 
-## 12. Distribution and community
+## 13. Distribution and community
 
 People should be able to publish blueprints and profiles in git repos.
 
 Distribution levels:
 
 1. **Aweb built-ins**: high-quality first-party blueprints/profiles.
-2. **Company-private**: internal profiles and blueprints.
-3. **Community**: public repos discoverable through aweb.
-4. **Vendor**: app-specific profiles maintained by app providers.
+2. **Company library**: private canonical profiles, skills, playbooks, memory,
+   policies, app recipes, and evals.
+3. **Team installs**: pinned working copies used by a specific team/repo.
+4. **Community**: public repos discoverable through aweb.
+5. **Vendor**: app-specific profiles maintained by app providers.
 
 Install must be security-aware:
 
@@ -775,7 +952,7 @@ Install must be security-aware:
 Contributed profiles are not automatically trusted. Treat them like code and
 dependencies.
 
-## 13. Suggested first wedge
+## 14. Suggested first wedge
 
 Build the first polished path around engineering teams:
 
@@ -806,7 +983,7 @@ The customer flow:
 
 This should work before marketplace/profile hosting is built.
 
-## 14. Migration from today's blueprints
+## 15. Migration from today's blueprints
 
 Near-term migration:
 
@@ -820,12 +997,16 @@ Near-term migration:
 7. Keep existing `spawn-instance`/`retire-instance` skills as the runtime
    implementation while CLI commands mature.
 8. Add dashboard read-only visualization of installed blueprint/profile state.
-9. Add remote git source support.
-10. Add hosted catalog/search only after the local/git path proves value.
+9. Add the company library object with hosted storage first, even if minimal:
+   profile/skill/playbook/memory/policy entries, versions, proposals, and
+   promotion from team installs.
+10. Add remote git source support.
+11. Add hosted catalog/search only after the local/git path and company-library
+   learning loop prove value.
 
 Do not build a hosted mutable profile editor first. That path recreates roles.
 
-## 15. Open decisions
+## 16. Open decisions
 
 - Exact on-disk names: `profiles/` now, or keep `souls/` internally until a
   compatibility migration?
@@ -836,9 +1017,15 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
 - Which app is first for external capabilities: GitHub, Tasks, Messages, or Dev?
 - What is the minimal signed audit trail in v1?
 - How hosted MCP profile binding appears in the dashboard.
+- Whether the first company library backend is hosted-only, git-backed, or both.
+- Which library entry types are v1: profiles + memory only, or profiles + skills
+  + playbooks + policies.
+- How team-local changes are represented so they can be promoted cleanly to the
+  company library.
 - Whether community catalog lives in a repo first or in hosted aweb.ai.
 
 The default answers are: keep compatibility with current soul layout, support
 local dir first, make `inspect/apply` the primitive and `team create --from` the
-wrapper, prove with engineering blueprint, and defer hosted catalog until the
-git/local flow works.
+wrapper, prove with engineering blueprint, ship a minimal hosted company library
+for learning, and defer public hosted catalog until the git/local flow and
+company-library promotion loop work.
