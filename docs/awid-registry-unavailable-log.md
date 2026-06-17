@@ -30,6 +30,7 @@ home**. Always log the cwd so the two are distinguishable.
 ## Entries — genuine AWID registry-unavailable (503 from correct home base)
 
 - ~2026-06-17 | cwd `~/prj/awebai/aweb/agents/instances/aweb-coordinator` (correct) | `aw chat send-and-wait coordinator` (folio status pull, bg task be6n78smj) | `aweb: http 503: {"detail":"AWID registry unavailable"}` — message did not send | re-sent later, succeeded | `api.awid.ai/health` 200, `app.aweb.ai/health` 200, `aw workspace status` OK — confirmed intermittent, not sustained
+- 2026-06-17T~10:45Z | cwd `~/prj/awebai/aweb/agents/instances/aweb-coordinator` (correct; `aw whoami` → `aweb-coordinator` confirmed in the same batch) | `aw task comment add default-aaaj.2` (recording the emit-wire lock) | `aweb: http 503: {"detail":"AWID registry unavailable"}` — failed twice (the immediate in-shell retry also 503'd) | re-ran ~10:46:50Z, succeeded (`✓ Added comment`) | health not checked at the moment. **Strong intermittence signal:** in the *same* batch (same identity, same cwd, same second) the preceding `aw chat send-and-leave aw-coordinator` SUCCEEDED while this `aw task comment` 503'd — so the blip is per-request/transient, not a sustained outage and not a wrong-cwd identity issue.
 
 ## Entries — NOT the registry: wrong-cwd / wrong-identity (operator error, reclassified)
 
