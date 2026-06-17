@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     cloudflare_stream_direct_upload_ttl_seconds: int = Field(default=3_600, ge=60)
     cloudflare_stream_signed_playback_ttl_seconds: int = Field(default=3_600, ge=60)
     cloudflare_stream_max_duration_seconds: int = Field(default=600, ge=1)
+    app_id: str = Field(default="folio")
+    app_events_origin: str | None = None
+    app_emit_kid: str | None = None
+    app_emit_key_seed_hex: str | None = None
+    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
 
     @model_validator(mode="after")
     def validate_db_pool(self) -> Self:

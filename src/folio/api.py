@@ -13,6 +13,7 @@ from folio.aweb_manifest import read_manifest_bytes
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
 from folio.db import FolioDatabase
+from folio.event_emit import emit_doc_changed
 from folio.models import (
     AppendTemplateVersionRequest,
     AssetMetadataResponse,
@@ -218,7 +219,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = (await request.body()).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=400, detail="Version body must be valid UTF-8") from exc
-        return await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        await emit_doc_changed(
+            settings=resolved,
+            team_id=actor.team_id,
+            slug=slug,
+            version=int(result["current_version"]),
+            source="api",
+        )
+        return result
 
     @app.post("/v1/documents/{slug}/versions/template", response_model=DocumentResponse)
     async def append_template_version_route(
@@ -229,7 +238,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         payload = AppendTemplateVersionRequest.model_validate(await request.json())
         body = render_declarative_template(payload.model_dump())
-        return await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
+        await emit_doc_changed(
+            settings=resolved,
+            team_id=actor.team_id,
+            slug=slug,
+            version=int(result["current_version"]),
+            source="api",
+        )
+        return result
 
     @app.get("/v1/billing", response_model=BillingResponse)
     async def billing_route(

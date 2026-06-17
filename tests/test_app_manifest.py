@@ -248,6 +248,17 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
         assert expected_scope in tool["scopes"], tool["name"]
 
 
+def test_manifest_declares_doc_changed_event_and_holds_emitters() -> None:
+    events = {event["type"]: event for event in MANIFEST.get("events", [])}
+    assert "folio/doc.changed" in events
+    doc_changed = events["folio/doc.changed"]
+    assert doc_changed["default_delivery_intent"] == "wake"
+    assert doc_changed["description"]
+    # event_emitters is held until a real emit key is provisioned — no placeholder
+    # did_key ships in the digest-pinned, cli-vendored manifest.
+    assert "event_emitters" not in MANIFEST
+
+
 def test_conformance_validator_rejects_host_injecting_paths() -> None:
     # Guards against a vacuous conformance test: host-injecting paths must fail.
     absolute = copy.deepcopy(MANIFEST)

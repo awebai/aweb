@@ -280,6 +280,17 @@ MANIFEST: dict[str, Any] = {
             "mutation": False,
         },
     ],
+    "events": [
+        {
+            "type": "folio/doc.changed",
+            "default_delivery_intent": "wake",
+            "description": (
+                "A document gained a new version. resource_ref is the document slug; "
+                "core exact-matches it against a subscription. Payload is metadata only "
+                "(version, edit source) — never the document body."
+            ),
+        }
+    ],
 }
 
 
