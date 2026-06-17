@@ -15,17 +15,35 @@ Per-entry format: `UTC | cwd (dir aw ran from) | command/context | exact error |
 Append a new entry on **every** occurrence (use `date -u`). The cwd matters: `aw`
 derives identity/context from `.aw/` in the working directory.
 
-**All entries below ran `aw` from `~/prj/awebai/aweb/agents/instances/aweb-coordinator`**
-(this coordinator's instance home) unless a later entry notes otherwise.
+**CRITICAL distinction (verified 2026-06-17):** an `agent not found` alias
+failure is usually **NOT a registry outage** — it's `aw` being run from the
+**wrong directory**. From the repo root `/Users/juanre/prj/awebai/aweb`, `aw`
+resolves identity **`grace` (aweb:juan.aweb.ai)**; only from this coordinator's
+instance home does it resolve **`aweb-coordinator` (default:atext.aweb.ai)**.
+Running `aw` from the repo root (e.g. by batching `git` + `aw` in one shell) sends
+**as the wrong identity**, which cannot resolve this team's aliases → `agent not
+found`. That is operator error / an identity-safety violation, **not** the
+registry being down. Genuine registry-unavailable = a `503 AWID registry
+unavailable` (or health failing) **while running from the correct instance
+home**. Always log the cwd so the two are distinguishable.
 
-## Entries
+## Entries — genuine AWID registry-unavailable (503 from correct home base)
 
-Backfill — earlier in the 2026-06-17 session, times approximate (precise stamping
-begins below this block):
+- ~2026-06-17 | cwd `~/prj/awebai/aweb/agents/instances/aweb-coordinator` (correct) | `aw chat send-and-wait coordinator` (folio status pull, bg task be6n78smj) | `aweb: http 503: {"detail":"AWID registry unavailable"}` — message did not send | re-sent later, succeeded | `api.awid.ai/health` 200, `app.aweb.ai/health` 200, `aw workspace status` OK — confirmed intermittent, not sustained
 
-- ~2026-06-17 (early) | `aw mail send --to aw-coordinator` and `--to coordinator` (folio prod directive + reply) | `agent not found: aw-coordinator` / `agent not found: coordinator` (alias lookup failed) | retried after diagnosis, both sent | `aw doctor registry` clean; `api.awid.ai/health` 200 shortly after
-- ~2026-06-17 | `aw chat send-and-wait coordinator` (folio status pull, bg task be6n78smj) | `aweb: http 503: {"detail":"AWID registry unavailable"}` — message did not send | re-sent later as mail, succeeded | `api.awid.ai/health` 200, `app.aweb.ai/health` 200, `aw workspace status` OK — confirmed up
-- ~2026-06-17 | `aw mail send --to ac-coordinator` (m8 sign-off) | `agent not found: ac-coordinator` | retry succeeded | (not separately checked; up per prior check)
-- ~2026-06-17 | `aw mail send --to ac-coordinator` (applied-table confirm) | `agent not found: ac-coordinator` | retry succeeded | (not separately checked)
+## Entries — NOT the registry: wrong-cwd / wrong-identity (operator error, reclassified)
 
-Log started: 2026-06-17T08:46:30Z. New occurrences appended below with precise UTC.
+These three were initially mis-logged as registry events. Root cause (per Juan +
+verified): `aw` ran from the **repo root as `grace`** because I batched `git`
+(repo root) + `aw` in one shell. Fix: run `aw` only from the instance home.
+
+- ~2026-06-17 | cwd `/Users/juanre/prj/awebai/aweb` (REPO ROOT = grace, wrong) | `aw mail send --to aw-coordinator` and `--to coordinator` (batched after `git`) | `agent not found` | retried from instance home, sent | not the registry
+- ~2026-06-17 | cwd `/Users/juanre/prj/awebai/aweb` (REPO ROOT = grace, wrong) | `aw mail send --to ac-coordinator` (m8 sign-off, batched after `git`) | `agent not found: ac-coordinator` | retried from instance home, sent | not the registry
+- ~2026-06-17 | cwd `/Users/juanre/prj/awebai/aweb` (REPO ROOT = grace, wrong) | `aw mail send --to ac-coordinator` (applied-table confirm, batched after `git`) | `agent not found: ac-coordinator` | retried from instance home, sent | not the registry
+
+Evidence (2026-06-17): `aw whoami` from the instance home → `aweb-coordinator` /
+`default:atext.aweb.ai` (DID `z6MkvE1j…`); from the repo root → `grace` /
+`aweb:juan.aweb.ai` (DID `z6MkncRg…`). Different identity → wrong-team alias
+resolution → `agent not found`.
+
+Log started: 2026-06-17T08:46:30Z. New occurrences appended below with precise UTC + cwd.
