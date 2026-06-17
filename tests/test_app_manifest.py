@@ -287,6 +287,14 @@ def test_interpreted_spec_append_present_asset_image() -> None:
     assert asset["body"] == b'{"content_type":"image/png","data_base64":"iVBORw0KGgo="}'
     assert asset["mutation"] is True
 
+    # `aw folio theme-set --preset aweb` must dispatch as PUT /v1/theme {"preset":"aweb"}.
+    theme_set = _interpret(MANIFEST, "theme-set", {"preset": "aweb"})
+    assert theme_set["method"] == "PUT"
+    assert theme_set["path"] == "/v1/theme"
+    assert theme_set["content_type"] == "application/json"
+    assert theme_set["body"] == b'{"preset":"aweb"}'
+    assert theme_set["mutation"] is True
+
 
 def test_well_known_route_serves_raw_committed_bytes() -> None:
     committed = MANIFEST_PATH.read_bytes()

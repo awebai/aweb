@@ -15,7 +15,7 @@ from pgdbm import AsyncDatabaseManager
 from folio.auth import Principal
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
-from folio.presentation import sanitize_theme_tokens
+from folio.presentation import builtin_preset, sanitize_theme_tokens
 
 ACTIVE_TIER = "active"
 
@@ -590,15 +590,24 @@ def _theme_from_row(row: Any, *, public_origin: str | None) -> dict[str, Any] | 
     data = dict(row)
     if "tokens" not in data:
         return None
-    tokens = sanitize_theme_tokens(_json_value(data.get("tokens")) or {})
+    raw_tokens = _json_value(data.get("tokens")) or {}
+    tokens = sanitize_theme_tokens(raw_tokens)
+    preset = builtin_preset(raw_tokens.get("preset") if isinstance(raw_tokens, dict) else None)
     logo_asset_id = data.get("logo_asset_id")
     logo_url = None
     if logo_asset_id is not None and public_origin is not None:
         logo_url = f"{public_origin.rstrip('/')}/assets/{logo_asset_id}"
-    if not tokens and logo_asset_id is None and data.get("header") is None and data.get("footer") is None:
+    if (
+        not tokens
+        and preset is None
+        and logo_asset_id is None
+        and data.get("header") is None
+        and data.get("footer") is None
+    ):
         return None
     return {
         "tokens": tokens,
+        "preset": preset,
         "logo_asset_id": logo_asset_id,
         "logo_url": logo_url,
         "header": data.get("header"),
@@ -804,10 +813,26 @@ async def get_theme(
         principal.team_id,
     )
     if row is None:
-        return {"tokens": {}, "logo_asset_id": None, "logo_url": None, "header": None, "footer": None, "updated_at": None}
+        return {
+            "tokens": {},
+            "preset": None,
+            "logo_asset_id": None,
+            "logo_url": None,
+            "header": None,
+            "footer": None,
+            "updated_at": None,
+        }
     theme = _theme_from_row(row, public_origin=settings.public_origin)
     if theme is None:
-        return {"tokens": {}, "logo_asset_id": None, "logo_url": None, "header": None, "footer": None, "updated_at": None}
+        return {
+            "tokens": {},
+            "preset": None,
+            "logo_asset_id": None,
+            "logo_url": None,
+            "header": None,
+            "footer": None,
+            "updated_at": None,
+        }
     return theme
 
 
@@ -817,13 +842,18 @@ async def upsert_theme(
     principal: Principal,
     settings: Settings,
     tokens: dict[str, dict[str, str]],
+    preset: str | None,
     logo: Any | None,
     clear_logo: bool,
     header: str | None,
     footer: str | None,
 ) -> dict[str, Any]:
     safe_tokens = sanitize_theme_tokens(tokens)
-    token_bytes = json.dumps(safe_tokens, separators=(",", ":"))
+    stored_tokens: dict[str, Any] = dict(safe_tokens)
+    preset_name = builtin_preset(preset)
+    if preset_name is not None:
+        stored_tokens["preset"] = preset_name
+    token_bytes = json.dumps(stored_tokens, separators=(",", ":"))
     async with db.transaction() as tx:
         current = await tx.fetch_one(
             "SELECT logo_asset_id FROM {{tables.themes}} WHERE team_id = $1",
