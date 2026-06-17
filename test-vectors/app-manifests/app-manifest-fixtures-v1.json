@@ -69,11 +69,11 @@
       ]
     },
     {
-      "name": "folio-prod-2026-06-17",
+      "name": "folio-prod-2026-06-17-theme-preset",
       "origin_url": "https://folio.aweb.ai/.well-known/aweb-app.json",
-      "source_commit": "folio@ae59598:src/folio/aweb-app.json",
+      "source_commit": "folio@41f2a10:src/folio/aweb-app.json",
       "manifest_path": "folio/aweb-app.json",
-      "sha256": "5c639344e434383f7838b898952c57c4df28aed9919cd590ec968ed53949f08d",
+      "sha256": "5404824c496a12983cc877e87717b699c462658161fd90296c6c30612885415e",
       "reserved_names": [
         "id",
         "whoami",
@@ -180,6 +180,30 @@
               "timestamp": "2026-06-16T00:00:00Z",
               "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"05d6cf53722621391a56282499aae647087eea68607cb96b760936c7ff510b08\",\"method\":\"POST\",\"path\":\"/v1/assets\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
               "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6IjA1ZDZjZjUzNzIyNjIxMzkxYTU2MjgyNDk5YWFlNjQ3MDg3ZWVhNjg2MDdjYjk2Yjc2MDkzNmM3ZmY1MTBiMDgiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9hc3NldHMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+            }
+          }
+        },
+        {
+          "name": "folio_theme_set_preset_json_body",
+          "verb": "theme-set",
+          "args": {
+            "preset": "aweb"
+          },
+          "expected": {
+            "method": "PUT",
+            "url": "https://folio.aweb.ai/v1/theme",
+            "path_query": "/v1/theme",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": "{\"preset\":\"aweb\"}",
+            "body_sha256": "577a1d095c71227b75ad3b8b7fbcdde240e8a8768902f99541f01573668ab76c",
+            "mutation": true,
+            "signed_payload": {
+              "team_id": "default:example.aweb.ai",
+              "timestamp": "2026-06-16T00:00:00Z",
+              "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"577a1d095c71227b75ad3b8b7fbcdde240e8a8768902f99541f01573668ab76c\",\"method\":\"PUT\",\"path\":\"/v1/theme\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+              "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6IjU3N2ExZDA5NWM3MTIyN2I3NWFkM2I4YjdmYmNkZGUyNDBlOGE4NzY4OTAyZjk5NTQxZjAxNTczNjY4YWI3NmMiLCJtZXRob2QiOiJQVVQiLCJwYXRoIjoiL3YxL3RoZW1lIiwidGVhbV9pZCI6ImRlZmF1bHQ6ZXhhbXBsZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xNlQwMDowMDowMFoiLCJ2IjoyfQ"
             }
           }
         }
