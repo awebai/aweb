@@ -212,8 +212,6 @@ type appEmitCredentialVector struct {
 	Name                string         `json:"name"`
 	SeedHex             string         `json:"seed_hex"`
 	DIDKey              string         `json:"did_key"`
-	AppID               string         `json:"app_id"`
-	KeyID               string         `json:"kid"`
 	Body                string         `json:"body"`
 	Payload             map[string]any `json:"payload"`
 	CanonicalPayload    string         `json:"canonical_payload"`
@@ -250,14 +248,8 @@ func TestAppEmitCredentialVectors(t *testing.T) {
 			if got := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); got != v.DIDKey {
 				t.Fatalf("did:key got %s want %s", got, v.DIDKey)
 			}
-			if v.Payload["v"] != float64(2) {
-				t.Fatalf("payload must use v2 signed-request envelope shape: %#v", v.Payload)
-			}
-			if !strings.HasPrefix(v.Body, "{\"type\":\""+v.AppID+"/") {
-				t.Fatalf("body type must carry producer app_id prefix %q: %s", v.AppID, v.Body)
-			}
-			if v.KeyID == "" {
-				t.Fatalf("vector must name the emit key id used to select the registry event_emitters key")
+			if v.Payload["auth"] != "app-event" || v.Payload["v"] != float64(1) {
+				t.Fatalf("payload must be app-event v1: %#v", v.Payload)
 			}
 			payload := make(map[string]any, len(v.Payload))
 			for key, value := range v.Payload {
