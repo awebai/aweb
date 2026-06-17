@@ -6,7 +6,9 @@ Status: **interface-first draft** for `default-aaaj.2` cross-validation with
 Goal: make the core Event/SSE channel app-generic without changing the host
 adapter contract shape: awakenings still carry `kind`, `content`, `meta`, and
 `deliveryIntent`, and host adapters still interpret the existing
-`wake | steer | ambient` delivery-intent taxonomy.
+`wake | steer | ambient` delivery-intent taxonomy. Channel-core adds exactly
+one generic app awakening kind, `kind: "app"`; app-specific identity stays in
+`meta`, not in an open-ended kind vocabulary.
 
 ## Delivery intent taxonomy
 
@@ -24,6 +26,37 @@ This taxonomy covers the target cases:
   the subscriber.
 - high-priority control-like app workflows: `steer`, but only when the agent's
   subscription chose `steer`; an app emission alone cannot force escalation.
+
+## Manifest-declared event catalog
+
+An app manifest may declare the app events it can emit. This mirrors `tools`:
+
+```json
+{
+  "events": [
+    {
+      "type": "doc.changed",
+      "description": "A document changed.",
+      "default_delivery_intent": "wake",
+      "resource_ref": {
+        "description": "Document slug",
+        "examples": ["pitch"]
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+- Manifest event `type` is app-local (for example `doc.changed`); core combines
+  it with `app.id` to produce the fully-qualified event type
+  `folio/doc.changed`.
+- `default_delivery_intent` uses `wake | steer | ambient` and seeds the
+  subscription UI/default. The stored subscription still carries the effective
+  delivery intent.
+- `resource_ref` describes the opaque resource key shape for humans/clients; core
+  only exact-matches the string.
 
 ## App-emitted event shape
 
@@ -55,9 +88,10 @@ Field rules:
     as `doc.changed`, `asset.video.status`, or `task.status_changed`.
 - `resource_ref`: optional opaque app-owned resource key (doc slug, task ref,
   token, asset id). Core treats it as an exact-match string only.
-- `delivery_intent`: producer default/recommendation and audit metadata using
-  `wake | steer | ambient`. It does **not** override the subscriber's chosen
-  delivery intent.
+- `delivery_intent`: producer recommendation/audit metadata using
+  `wake | steer | ambient`. It defaults from the manifest event's
+  `default_delivery_intent` when omitted. It does **not** override the
+  subscriber's chosen delivery intent.
 - `payload`: optional small JSON object for metadata needed in the wake. No
   secrets or encrypted plaintext; app-specific hydration remains app-owned.
 
@@ -83,6 +117,8 @@ Response:
 
 An agent subscribes, within its authenticated team, to one event type plus an
 optional exact resource filter and chooses the delivery intent it consents to.
+If the caller omits `delivery_intent`, core defaults it from the manifest event's
+`default_delivery_intent`.
 
 ```http
 POST /v1/events/subscriptions
@@ -166,12 +202,28 @@ data: {
 - Existing mail/chat/control events continue to stream unchanged during the
   bundled-comms transition.
 
-Channel consumer note for cross-validation: this requires channel-core to accept
-an `app_event` SSE event and map it into the existing `ChannelAwakening` object
-shape with `deliveryIntent = data.delivery_intent` and app metadata in `meta`.
-The adapter boundary remains `{kind, content, meta, deliveryIntent}`; the exact
-`kind` value for generic app wakes should be confirmed by the channel owner
-before implementation.
+Channel consumer contract: channel-core accepts an `app_event` SSE event and maps
+it into the existing `ChannelAwakening` object shape as:
+
+```ts
+{
+  kind: "app",
+  content: "",
+  deliveryIntent: data.delivery_intent,
+  meta: {
+    type: "app_event",
+    app_id: "folio",
+    app_event_type: "folio/doc.changed",
+    resource_ref: "docs/pitch",
+    event_id: "uuid",
+    ...payload-as-string-metadata
+  }
+}
+```
+
+The adapter boundary remains `{kind, content, meta, deliveryIntent}`. Adapters do
+not gain one kind per app event; `formatAwakeningForAgent` already displays
+`meta.type || kind`, and app-specific routing data lives in `meta`.
 
 ## Durability and replay semantics
 
@@ -237,11 +289,8 @@ following agent instead of forcing polling of `/assets/{id}`.
 
 ## Open cross-validation points
 
-1. **channel-core:** confirm whether generic app wakes can add a `kind: "app"`
-   while preserving the `ChannelAwakening` shape, or whether another existing
-   kind mapping is required for the no-adapter-change constraint.
-2. **aweb core:** confirm emit authorization shape for first implementation:
+1. **aweb core:** confirm emit authorization shape for first implementation:
    team-auth caller, internal trusted app call, or app-auth tied to installed
    `app_id`.
-3. **ac:** confirm hosted gateway/control-plane only needs subscription
+2. **ac:** confirm hosted gateway/control-plane only needs subscription
    management, not app-event hydration, for m3.2.
