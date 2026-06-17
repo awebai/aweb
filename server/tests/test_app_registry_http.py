@@ -194,7 +194,8 @@ async def test_internal_gateway_auth_can_read_installed_apps(aweb_cloud_db, monk
 
 
 @pytest.mark.asyncio
-async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch):
+@pytest.mark.parametrize("app_id", ["mail", "doctor"])
+async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch, app_id):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     app = _build_apps_app(aweb_cloud_db.aweb_db)
     await _seed_team_and_agent(aweb_cloud_db.aweb_db)
@@ -203,8 +204,8 @@ async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch):
         resp = await client.post(
             "/v1/apps/install",
             json={
-                "app_id": "mail",
-                "origin": "https://mail.example.com",
+                "app_id": app_id,
+                "origin": f"https://{app_id}.example.com",
                 "app_version": "1.0.0",
                 "manifest_version": 1,
                 "digest": DIGEST_1,
@@ -214,6 +215,30 @@ async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch):
 
     assert resp.status_code == 409
     assert "reserved" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["https://example.com:bad", "https://example.com:99999"])
+async def test_install_rejects_invalid_origin_port(aweb_cloud_db, monkeypatch, origin):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    app = _build_apps_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/apps/install",
+            json={
+                "app_id": "folio",
+                "origin": origin,
+                "app_version": "1.0.0",
+                "manifest_version": 1,
+                "digest": DIGEST_1,
+                "granted_scopes": [],
+            },
+        )
+
+    assert resp.status_code == 422
+    assert "port" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio

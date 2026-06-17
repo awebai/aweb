@@ -16,42 +16,61 @@ SCOPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$")
 
 RESERVED_APP_IDS = frozenset(
     {
+        # Current aw top-level command namespace. Keep this in sync with
+        # `aw --help` until the CLI exports a shared canonical list.
         "a2a",
-        "agent",
         "agents",
+        "check",
         "chat",
+        "claim-human",
+        "completion",
+        "contacts",
+        "control",
+        "directory",
+        "doctor",
+        "events",
+        "heartbeat",
+        "help",
+        "id",
+        "inbound-mode",
+        "init",
+        "instructions",
+        "lock",
+        "log",
+        "mail",
+        "mcp-config",
+        "notify",
+        "plugin",
+        "reset",
+        "role-name",
+        "roles",
+        "run",
+        "service",
+        "task",
+        "team",
+        "upgrade",
+        "version",
+        "whoami",
+        "work",
+        "workspace",
+        # Compatibility/plural spellings used by older docs or subdomains.
+        "agent",
         "claim",
         "claims",
         "connect",
         "contact",
-        "contacts",
-        "control",
-        "heartbeat",
-        "help",
-        "id",
         "instruction",
-        "instructions",
-        "lock",
         "locks",
-        "mail",
         "mcp",
-        "mcp-config",
-        "plugin",
         "plugins",
         "repo",
         "repos",
         "reservation",
         "reservations",
         "role",
-        "roles",
-        "run",
         "status",
-        "task",
         "tasks",
-        "team",
         "teams",
-        "work",
-        "workspace",
         "workspaces",
     }
 )
@@ -96,7 +115,11 @@ def normalize_origin(value: str) -> str:
     host = parsed.hostname.lower()
     host_out = f"[{host}]" if ":" in host and not host.startswith("[") else host
     default_port = 80 if scheme == "http" else 443
-    port = None if parsed.port in {None, default_port} else parsed.port
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValidationError("origin port is invalid") from exc
+    port = None if parsed_port in {None, default_port} else parsed_port
     return f"{scheme}://{host_out}{f':{port}' if port is not None else ''}"
 
 
