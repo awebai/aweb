@@ -7,7 +7,10 @@ normal future product migrations must be added as ordered forward files.
 """
 from importlib.resources import files
 from pathlib import Path
+import shutil
+import subprocess
 import tomllib
+import zipfile
 
 import pytest
 from pgdbm.errors import QueryError
@@ -19,12 +22,37 @@ AWEB_MIGRATIONS = files("aweb") / "migrations" / "aweb"
 AWID_ENCRYPTION_KEY_API_VERSION = Version("0.5.9")
 
 
-def test_defaults_and_migrations_are_packaged():
+def test_defaults_migrations_and_reserved_app_ids_are_packaged():
     package_root = files("aweb")
 
     assert (package_root / "defaults" / "team_instructions.md").is_file()
     assert (package_root / "defaults" / "roles" / "backend.md").is_file()
     assert (AWEB_MIGRATIONS / "001_initial.sql").is_file()
+
+    packaged_reserved = package_root / "data" / "reserved-app-ids-v1.json"
+    source_reserved = Path(__file__).resolve().parents[2] / "test-vectors" / "reserved-app-ids-v1.json"
+    assert packaged_reserved.is_file()
+    assert packaged_reserved.read_text() == source_reserved.read_text()
+
+
+def test_reserved_app_ids_artifact_ships_in_built_wheel(tmp_path):
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is required to build the wheel for package-data inspection")
+
+    server_root = Path(__file__).resolve().parents[1]
+    subprocess.run(
+        [uv, "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=server_root,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    wheels = list(tmp_path.glob("aweb-*.whl"))
+    assert wheels
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        assert "aweb/data/reserved-app-ids-v1.json" in wheel.namelist()
 
 
 def test_awid_service_floor_covers_encryption_key_api():

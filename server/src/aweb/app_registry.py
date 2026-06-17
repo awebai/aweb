@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from importlib.resources import files
+from pathlib import Path
 from urllib.parse import urlparse
 
 from awid.team_ids import parse_team_id
@@ -14,66 +18,8 @@ APP_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SCOPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$")
 
-RESERVED_APP_IDS = frozenset(
-    {
-        # Current aw top-level command namespace. Keep this in sync with
-        # `aw --help` until the CLI exports a shared canonical list.
-        "a2a",
-        "agents",
-        "check",
-        "chat",
-        "claim-human",
-        "completion",
-        "contacts",
-        "control",
-        "directory",
-        "doctor",
-        "events",
-        "heartbeat",
-        "help",
-        "id",
-        "inbound-mode",
-        "init",
-        "instructions",
-        "lock",
-        "log",
-        "mail",
-        "mcp-config",
-        "notify",
-        "plugin",
-        "reset",
-        "role-name",
-        "roles",
-        "run",
-        "service",
-        "task",
-        "team",
-        "upgrade",
-        "version",
-        "whoami",
-        "work",
-        "workspace",
-        # Compatibility/plural spellings used by older docs or subdomains.
-        "agent",
-        "claim",
-        "claims",
-        "connect",
-        "contact",
-        "instruction",
-        "locks",
-        "mcp",
-        "plugins",
-        "repo",
-        "repos",
-        "reservation",
-        "reservations",
-        "role",
-        "status",
-        "tasks",
-        "teams",
-        "workspaces",
-    }
-)
+RESERVED_APP_IDS_ARTIFACT = "reserved-app-ids-v1.json"
+RESERVED_APP_IDS_SCHEMA = "aweb.reserved-app-ids.v1"
 
 
 @dataclass(frozen=True)
@@ -86,13 +32,55 @@ class AppInstall:
     granted_scopes: list[str]
 
 
+def _reserved_app_ids_source_path() -> Path:
+    """Locate the CLI-owned reserved app-id artifact from a source checkout."""
+
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "test-vectors" / RESERVED_APP_IDS_ARTIFACT
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(f"missing reserved app ids artifact: test-vectors/{RESERVED_APP_IDS_ARTIFACT}")
+
+
+def _read_reserved_app_ids_artifact() -> str:
+    """Read packaged reserved app-id artifact, with source fallback for editable checkouts."""
+
+    packaged = files("aweb").joinpath("data", RESERVED_APP_IDS_ARTIFACT)
+    if packaged.is_file():
+        return packaged.read_text(encoding="utf-8")
+    return _reserved_app_ids_source_path().read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def reserved_app_ids() -> frozenset[str]:
+    """Return CLI-owned reserved app ids from the packaged artifact.
+
+    The aw CLI owns the top-level namespace and drift-gates the root artifact in
+    its own tests. The server wheel packages a copy so deployed registries do not
+    depend on source-checkout paths.
+    """
+
+    payload = json.loads(_read_reserved_app_ids_artifact())
+    if payload.get("schema") != RESERVED_APP_IDS_SCHEMA:
+        raise RuntimeError("reserved app ids artifact has unsupported schema")
+    values = payload.get("reserved_app_ids")
+    if not isinstance(values, list) or not values:
+        raise RuntimeError("reserved app ids artifact must contain a non-empty reserved_app_ids list")
+    ids: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not APP_ID_RE.match(value):
+            raise RuntimeError(f"reserved app ids artifact contains invalid app id: {value!r}")
+        ids.add(value)
+    return frozenset(ids)
+
+
 def normalize_app_id(value: str) -> str:
     app_id = (value or "").strip().lower()
     if not APP_ID_RE.match(app_id):
         raise ValidationError("app_id must match ^[a-z][a-z0-9-]{0,62}$")
     if app_id.endswith("-") or "--" in app_id:
         raise ValidationError("app_id must not end with '-' or contain '--'")
-    if app_id in RESERVED_APP_IDS:
+    if app_id in reserved_app_ids():
         raise ConflictError(f"app_id {app_id!r} is reserved")
     return app_id
 
