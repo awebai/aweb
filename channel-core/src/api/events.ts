@@ -10,6 +10,7 @@ export type AgentEventType =
   | "work_available"
   | "claim_update"
   | "claim_removed"
+  | "app_event"
   | "error";
 
 export interface AgentEvent {
@@ -27,6 +28,13 @@ export interface AgentEvent {
   status?: string;
   text?: string;
   sender_waiting?: boolean;
+  event_id?: string;
+  app_id?: string;
+  app_event_type?: string;
+  resource_ref?: string;
+  delivery_intent?: "wake" | "steer" | "ambient";
+  producer_delivery_intent?: "wake" | "steer" | "ambient";
+  payload?: Record<string, unknown>;
 }
 
 /**
@@ -125,7 +133,7 @@ async function* parseSSEResponse(
 const KNOWN_TYPES: Set<string> = new Set([
   "connected", "mail_message", "chat_message",
   "control_pause", "control_resume", "control_interrupt",
-  "work_available", "claim_update", "claim_removed", "error",
+  "work_available", "claim_update", "claim_removed", "app_event", "error",
   "actionable_mail", "actionable_chat",
 ]);
 

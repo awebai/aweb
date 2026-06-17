@@ -86,7 +86,7 @@ async function* parseSSEResponse(resp, signal) {
 const KNOWN_TYPES = new Set([
     "connected", "mail_message", "chat_message",
     "control_pause", "control_resume", "control_interrupt",
-    "work_available", "claim_update", "claim_removed", "error",
+    "work_available", "claim_update", "claim_removed", "app_event", "error",
     "actionable_mail", "actionable_chat",
 ]);
 export function parseAgentEvent(eventName, data) {

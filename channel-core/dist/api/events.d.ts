@@ -1,5 +1,5 @@
 import type { APIClient } from "./client.js";
-export type AgentEventType = "connected" | "mail_message" | "chat_message" | "control_pause" | "control_resume" | "control_interrupt" | "work_available" | "claim_update" | "claim_removed" | "error";
+export type AgentEventType = "connected" | "mail_message" | "chat_message" | "control_pause" | "control_resume" | "control_interrupt" | "work_available" | "claim_update" | "claim_removed" | "app_event" | "error";
 export interface AgentEvent {
     type: AgentEventType;
     agent_id?: string;
@@ -15,6 +15,13 @@ export interface AgentEvent {
     status?: string;
     text?: string;
     sender_waiting?: boolean;
+    event_id?: string;
+    app_id?: string;
+    app_event_type?: string;
+    resource_ref?: string;
+    delivery_intent?: "wake" | "steer" | "ambient";
+    producer_delivery_intent?: "wake" | "steer" | "ambient";
+    payload?: Record<string, unknown>;
 }
 /**
  * Consume the agent event stream (GET /v1/events/stream).

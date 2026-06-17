@@ -27,7 +27,7 @@ export interface SelfIdentity {
   stableID: string;
 }
 
-export type ChannelAwakeningKind = "mail" | "chat" | "control" | "work" | "claim" | "claim_removed";
+export type ChannelAwakeningKind = "mail" | "chat" | "control" | "work" | "claim" | "claim_removed" | "app";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 
 export interface ChannelAwakening {
@@ -230,8 +230,42 @@ export async function dispatchAgentEvent(
         },
       });
       break;
+    case "app_event":
+      await dispatchAppEvent(options, dispatched, event);
+      break;
     default:
       break;
+  }
+}
+
+async function dispatchAppEvent(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  event: AgentEvent,
+): Promise<void> {
+  if (!event.event_id) return;
+  const key = dispatchKey("app", event.app_event_type || "app_event", event.event_id);
+  if (dispatched.has(key) || options.deliveryStore?.has(key)) return;
+  const meta: Record<string, string> = {
+    type: event.app_event_type || "app_event",
+    event_id: event.event_id,
+    app_id: event.app_id || "",
+    app_event_type: event.app_event_type || "",
+    resource_ref: event.resource_ref || "",
+    producer_delivery_intent: event.producer_delivery_intent || "",
+  };
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : undefined;
+  if (payload) meta.payload = summarizePayload(payload);
+  await options.onAwakening({
+    kind: "app",
+    content: "",
+    deliveryIntent: event.delivery_intent || "ambient",
+    meta,
+  });
+  dispatched.add(key);
+  if (options.deliveryStore) {
+    options.deliveryStore.mark(key);
+    await options.deliveryStore.save();
   }
 }
 
@@ -463,7 +497,12 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   for (const [key, value] of Object.entries(awakening.meta)) {
     if (value) lines.push(`- ${key}: ${value}`);
   }
-  if (awakening.content) {
+  if (awakening.kind === "app") {
+    const appType = awakening.meta.app_event_type || awakening.meta.type || "app_event";
+    lines.push("", "App event:", appType);
+    if (awakening.meta.resource_ref) lines.push(`Resource: ${awakening.meta.resource_ref}`);
+    if (awakening.meta.payload) lines.push(`Payload: ${awakening.meta.payload}`);
+  } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
   lines.push("", "Use the aw CLI to respond when appropriate.");
@@ -481,9 +520,15 @@ function pruneDispatched(dispatched: Set<string>): void {
   }
 }
 
-function dispatchKey(channel: "mail" | "chat", conversationID: string | undefined, messageID: string): string {
+function dispatchKey(channel: "mail" | "chat" | "app", conversationID: string | undefined, messageID: string): string {
   const conversation = (conversationID || "").trim();
   return `${channel}:${conversation}:${messageID}`;
+}
+
+function summarizePayload(payload: Record<string, unknown>): string {
+  const json = JSON.stringify(payload);
+  if (!json) return "";
+  return json.length > 500 ? `${json.slice(0, 497)}...` : json;
 }
 
 function senderDisplayAddress(alias: string | undefined, address: string | undefined): string {
