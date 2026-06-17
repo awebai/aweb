@@ -152,16 +152,24 @@ The app registry stores app-owned emit keys at app registration/install time:
 ```
 
 The app holds the private key; team agents do not. Key rotation is an explicit
-registry/app-registration update in the stopgap model. Core accepts an emit only
-when all of these are true:
+registry/app-registration update in the stopgap model.
+
+The canonical payload and body hash are covered by conformance vectors in
+`cli/go/internal/conformance/vectors/app-emit-credential-v1.json`; any producer
+(Go CLI helper, Python app backend, or third-party app) must generate the exact
+same canonical bytes and `body_sha256`.
+
+Core accepts an emit only when all of these are true:
 
 1. the app-service signature verifies over the canonical payload;
-2. `team_id` and `app_id` from headers/payload match the request body and route
+2. the signed timestamp passes the same freshness/replay-window check used by
+   existing signed requests;
+3. `team_id` and `app_id` from headers/payload match the request body and route
    context;
-3. `app_id` is installed for `team_id`;
-4. `(kid, did_key)` is an active registry emit key for `app_id`;
-5. body `type` has prefix `<app_id>/`; and
-6. the pinned manifest for that installed app declares the emitted app-local
+4. `app_id` is installed for `team_id`;
+5. `(kid, did_key)` is an active registry emit key for `app_id`;
+6. body `type` has prefix `<app_id>/`; and
+7. the pinned manifest for that installed app declares the emitted app-local
    event type.
 
 Core records `producer_app_id`, `producer_key_id`, `producer_did_key`, and team
@@ -336,7 +344,7 @@ The consumer-side change is intentionally narrow and contained to channel-core:
 - Channel-core does **not** fetch or hydrate app data on app events. The payload
   is metadata-only wake content; deeper state comes from the app's own CLI/API.
 
-## Durability and replay semantics
+## Durability, replay, and idempotency semantics
 
 These are wake signals, not an app event ledger:
 
@@ -347,6 +355,10 @@ These are wake signals, not an app event ledger:
 - Core may expire old delivered/undelivered app events by TTL.
 - Apps that need authoritative state must expose their own app API; the wake
   carries enough metadata to decide whether to hydrate.
+- Emit idempotency is deferred for v1: a retried successful `POST /v1/events/app`
+  creates a second event with a new `event_id`, so subscribers may receive a
+  duplicate semantic wake. A later app-supplied idempotency key or signed-payload
+  hash de-dupe can harden this if app producers need exactly-once wake creation.
 
 ## Concrete examples
 
@@ -408,6 +420,7 @@ All m3.2 contract points are closed for first implementation:
   reads may use internal gateway auth; relay to keyless runtimes deferred v2.
 - emit auth: v1 stopgap `AWEB-App DIDKey` app-scoped credential tied to an
   active registry emit key for an installed app; core authorizes via the
-  app<->team install grant and declared manifest event type. Durable direction is
-  app-as-AWID-identity so app cert-auth and emit-auth converge on one app
-  principal.
+  app<->team install grant and declared manifest event type. Canonical payload +
+  body hash are pinned by app-emit-credential conformance vectors. Durable
+  direction is app-as-AWID-identity so app cert-auth and emit-auth converge on
+  one app principal.

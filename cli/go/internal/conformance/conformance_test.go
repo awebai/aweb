@@ -197,6 +197,91 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 	}
 }
 
+// --- app-emit-credential-v1 ---
+
+type appEmitCredentialVectors struct {
+	Schema              string                    `json:"schema"`
+	ReplayWindowSeconds int                       `json:"replay_window_seconds"`
+	Cases               []appEmitCredentialVector `json:"cases"`
+	NegativeCases       []struct {
+		Name string `json:"name"`
+	} `json:"negative_cases"`
+}
+
+type appEmitCredentialVector struct {
+	Name                string         `json:"name"`
+	SeedHex             string         `json:"seed_hex"`
+	DIDKey              string         `json:"did_key"`
+	Body                string         `json:"body"`
+	Payload             map[string]any `json:"payload"`
+	CanonicalPayload    string         `json:"canonical_payload"`
+	SignedPayloadB64URL string         `json:"signed_payload_b64url"`
+	SignatureB64        string         `json:"signature_b64"`
+}
+
+func TestAppEmitCredentialVectors(t *testing.T) {
+	data, err := vectorsFS.ReadFile("vectors/app-emit-credential-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors appEmitCredentialVectors
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors.Schema != "aweb.app-emit-credential.v1" {
+		t.Fatalf("schema=%q", vectors.Schema)
+	}
+	if vectors.ReplayWindowSeconds > 300 {
+		t.Fatalf("replay_window_seconds=%d want <= 300", vectors.ReplayWindowSeconds)
+	}
+	if len(vectors.NegativeCases) < 2 {
+		t.Fatalf("expected stale timestamp and tampered body negative cases")
+	}
+
+	for _, v := range vectors.Cases {
+		t.Run(v.Name, func(t *testing.T) {
+			seed, err := hex.DecodeString(v.SeedHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := ed25519.NewKeyFromSeed(seed)
+			if got := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); got != v.DIDKey {
+				t.Fatalf("did:key got %s want %s", got, v.DIDKey)
+			}
+			if v.Payload["auth"] != "app-event" || v.Payload["v"] != float64(1) {
+				t.Fatalf("payload must be app-event v1: %#v", v.Payload)
+			}
+			payload := make(map[string]any, len(v.Payload))
+			for key, value := range v.Payload {
+				if key != "timestamp" {
+					payload[key] = value
+				}
+			}
+			timestamp, _ := v.Payload["timestamp"].(string)
+			didKey, signature, canonical, err := awid.SignArbitraryPayload(key, payload, timestamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if didKey != v.DIDKey {
+				t.Fatalf("SignArbitraryPayload did:key got %s want %s", didKey, v.DIDKey)
+			}
+			if canonical != v.CanonicalPayload {
+				t.Fatalf("canonical:\n got:  %s\n want: %s", canonical, v.CanonicalPayload)
+			}
+			if got := base64.RawURLEncoding.EncodeToString([]byte(canonical)); got != v.SignedPayloadB64URL {
+				t.Fatalf("signed payload b64 got %s want %s", got, v.SignedPayloadB64URL)
+			}
+			if signature != v.SignatureB64 {
+				t.Fatalf("signature got %s want %s", signature, v.SignatureB64)
+			}
+			sum := sha256.Sum256([]byte(v.Body))
+			if got := strings.TrimSpace(v.Payload["body_sha256"].(string)); got != hex.EncodeToString(sum[:]) {
+				t.Fatalf("body_sha256 got %s want %s", got, hex.EncodeToString(sum[:]))
+			}
+		})
+	}
+}
+
 // --- app-manifest-interpretation-v1 ---
 
 type appManifestInterpretationVectors struct {
