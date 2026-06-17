@@ -53,8 +53,9 @@ Rules:
   it with `app.id` to produce the fully-qualified event type
   `folio/doc.changed`.
 - `default_delivery_intent` uses `wake | steer | ambient` and seeds the
-  subscription UI/default. The stored subscription still carries the effective
-  delivery intent.
+  subscription UI/default. When a subscription omits `delivery_intent`, core
+  stores this manifest default as the subscription's effective intent. The
+  subscriber may override it; the stored subscriber choice governs delivery.
 - `resource_ref` describes the opaque resource key shape for humans/clients; core
   only exact-matches the string.
 
@@ -95,10 +96,24 @@ Field rules:
 - `payload`: optional small JSON object for metadata needed in the wake. No
   secrets or encrypted plaintext; app-specific hydration remains app-owned.
 
-Team scope comes from auth/authorization, not a global broadcast body field. An
-emit is accepted only for a team where the app is installed/authorized to emit
-that `app_id` event. Discovery of app manifests remains public; app event
-emission and subscription state are team data.
+Team scope comes from auth/authorization, not a global broadcast body field. App
+event emission and subscription state are team data.
+
+Emit authorization is app-scoped, privileged, and attributable: the producer is
+an app acting in a team, not a random team member and not the hosted gateway.
+Core accepts an emit only when all of these are true:
+
+1. the request is authenticated as `producer_app_id` for `team_id` (exact app-auth
+   wire/credential to cross-validate before implementation),
+2. `producer_app_id` is installed for `team_id`,
+3. body `type` has prefix `<producer_app_id>/`, and
+4. the pinned manifest for that installed app declares the emitted app-local
+   event type.
+
+Core records `producer_app_id`/team attribution with the event. An app cannot
+emit for another app namespace, for a team where it is not installed, or for an
+undeclared event type. Discovery of app manifests remains public; app event
+emission is an installed-app capability.
 
 Response:
 
@@ -106,6 +121,7 @@ Response:
 {
   "event_id": "uuid",
   "team_id": "default:atext.aweb.ai",
+  "app_id": "folio",
   "type": "folio/doc.changed",
   "resource_ref": "docs/pitch",
   "delivery_intent": "wake",
@@ -118,7 +134,8 @@ Response:
 An agent subscribes, within its authenticated team, to one event type plus an
 optional exact resource filter and chooses the delivery intent it consents to.
 If the caller omits `delivery_intent`, core defaults it from the manifest event's
-`default_delivery_intent`.
+`default_delivery_intent`. The subscriber may override that default; once stored,
+the subscription's `delivery_intent` is the effective delivery behavior.
 
 ```http
 POST /v1/events/subscriptions
@@ -167,6 +184,9 @@ Rules:
   `(event_id, agent_id)`.
 - No subscription means no delivery. Apps do not broadcast to every team agent by
   default.
+- Hosted control planes/gateways may manage subscriptions on behalf of hosted
+  custodial identities using normal authority for that `agent_id`; they do not
+  get a separate event-relay or hydration path.
 
 ## Matching and SSE delivery
 
@@ -191,6 +211,7 @@ event: app_event
 data: {
   "type": "app_event",
   "event_id": "uuid",
+  "app_id": "folio",
   "app_event_type": "folio/doc.changed",
   "resource_ref": "docs/pitch",
   "delivery_intent": "wake",
@@ -216,7 +237,7 @@ it into the existing `ChannelAwakening` object shape as:
   content: "",
   deliveryIntent: data.delivery_intent,
   meta: {
-    type: "app_event",
+    type: "folio/doc.changed",
     app_id: "folio",
     app_event_type: "folio/doc.changed",
     resource_ref: "docs/pitch",
@@ -308,8 +329,7 @@ following agent instead of forcing polling of `/assets/{id}`.
 
 ## Open cross-validation points
 
-1. **aweb core:** confirm emit authorization shape for first implementation:
-   team-auth caller, internal trusted app call, or app-auth tied to installed
-   `app_id`.
-2. **ac:** confirm hosted gateway/control-plane only needs subscription
-   management, not app-event hydration, for m3.2.
+1. **aweb/aw/ac:** cross-validate the exact app-auth wire/credential for
+   `POST /v1/events/app`. The semantic requirement is pinned above: emit is an
+   app-scoped write by an installed app acting in a team; the remaining decision
+   is the concrete credential/header/signature shape.
