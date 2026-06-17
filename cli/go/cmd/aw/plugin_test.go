@@ -21,6 +21,60 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func TestReservedAppIDsArtifactMatchesLiveCobraReservedNames(t *testing.T) {
+	artifactPath := filepath.Join(cmdMonorepoRootForTest(t), "test-vectors", "reserved-app-ids-v1.json")
+	data, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var artifact reservedAppIDsOutput
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatal(err)
+	}
+	live := reservedAppIDsArtifact()
+	if artifact.Schema != live.Schema {
+		t.Fatalf("schema got %q want %q", artifact.Schema, live.Schema)
+	}
+	if strings.Join(artifact.ReservedAppIDs, "\n") != strings.Join(live.ReservedAppIDs, "\n") {
+		t.Fatalf("reserved app ids artifact drifted\nartifact=%v\nlive=%v", artifact.ReservedAppIDs, live.ReservedAppIDs)
+	}
+}
+
+func TestPluginReservedNamesCommandJSON(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cmd := exec.CommandContext(ctx, bin, "plugin", "reserved-names", "--json")
+	cmd.Env = append(os.Environ(), "HOME="+tmp, "AW_NO_UPDATE_CHECK=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("reserved-names failed: %v\n%s", err, string(out))
+	}
+	var got reservedAppIDsOutput
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, string(out))
+	}
+	want := reservedAppIDsArtifact()
+	if got.Schema != want.Schema || strings.Join(got.ReservedAppIDs, "\n") != strings.Join(want.ReservedAppIDs, "\n") {
+		t.Fatalf("reserved-names output got %#v want %#v", got, want)
+	}
+}
+
+func cmdMonorepoRootForTest(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
+}
+
 func TestTrustedPluginResolutionPrecedenceNetworkFree(t *testing.T) {
 	tmp := t.TempDir()
 	awHome := filepath.Join(tmp, "aw-home")
