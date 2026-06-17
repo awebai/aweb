@@ -33,6 +33,11 @@ already dogfood in blueprint repos such as `../aweb-team-dev-simple/`: make it
 explicit, inspectable, installable, versioned, permission-aware, and supported
 by the CLI and dashboard.
 
+`aw` support must orchestrate existing core/control-plane primitives, not create
+a parallel control plane. Team creation, blueprint application, app grants,
+identity creation, role/instruction installation, and runtime binding should be
+composed from the same primitives the rest of aweb uses.
+
 ## 1. Customer promise
 
 The product promise is:
@@ -128,6 +133,10 @@ installed copy.
 ### Agent profile
 
 An operating package for one kind of AI coworker.
+
+This is the same concept as a **profile pack**. Do not create separate schema or
+storage concepts for "agent profile", "profile pack", and library profile
+entries. A profile pack is the packaged form of an agent profile.
 
 It can include:
 
@@ -479,6 +488,16 @@ aw team create eng --from github.com/awebai/aweb-team-dev-simple
 same plan and composes explicit primitives. The recoverable lower-level verbs
 must exist.
 
+Those primitives must reuse existing authority rails:
+
+- team and identity creation from core/control-plane APIs;
+- app install/grant from the app-grant model;
+- role/instruction/profile installation as pinned artifacts;
+- effective permissions from team grant intersect profile request intersect
+  per-agent override intersect approval policy.
+
+Do not implement blueprint application as a second team-setup system.
+
 ### Installed ownership
 
 Once applied, the team owns the installed copy:
@@ -660,6 +679,10 @@ Required CLI principle:
 > obvious commands with a dry-run plan, clear recovery, and no hidden identity
 > magic.
 
+The commands are orchestration over existing primitives. They are product UX,
+not a second source of truth for teams, identities, apps, grants, or installed
+runtime facts.
+
 ### Blueprint commands
 
 ```bash
@@ -786,6 +809,11 @@ the product happy path.
 
 Runtime launch should be first-class enough that a human can add an agent and
 start it without hand-building tmux sessions.
+
+For v1, `aw agent start` is a thin local launcher only. It starts local runtimes
+such as Claude Code or Pi in the right instance home, optionally under tmux. It
+is not a new daemon, hosted runtime service, scheduler, or fleet manager.
+Hosted MCP teams do not depend on it.
 
 ```bash
 aw runtime list
@@ -1024,6 +1052,12 @@ The customer flow:
 7. Watch work, approve sensitive actions, review output, inspect audit trail.
 
 This should work before marketplace/profile hosting is built.
+
+Wedge v1 has zero dependency on `library.aweb.ai`. It reads blueprints from a
+local directory or git source, applies a pinned installed snapshot, grants apps
+through existing app-grant rails, and starts local runtimes through the thin
+launcher. The library app adds company-level learning later; it is not required
+for initial team creation.
 
 The quality bar for first-party blueprints is product-level, not sample-code
 level. A blueprint must be something a company can actually start from: clear
