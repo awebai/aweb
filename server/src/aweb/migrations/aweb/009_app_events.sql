@@ -19,12 +19,16 @@ CREATE TABLE IF NOT EXISTS {{tables.app_registry_event_types}} (
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.app_registry_emit_keys}} (
-    app_id     TEXT NOT NULL REFERENCES {{tables.app_registry_apps}}(app_id) ON DELETE CASCADE,
+    app_id     TEXT NOT NULL,
+    origin     TEXT NOT NULL,
+    digest     TEXT NOT NULL,
     key_id     TEXT NOT NULL,
     did_key    TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at TIMESTAMPTZ,
-    PRIMARY KEY (app_id, key_id),
+    PRIMARY KEY (app_id, origin, digest, key_id),
+    FOREIGN KEY (app_id, origin, digest)
+        REFERENCES {{tables.app_registry_entries}}(app_id, origin, digest),
     CONSTRAINT app_registry_emit_keys_key_id_not_blank
         CHECK (BTRIM(key_id) <> ''),
     CONSTRAINT app_registry_emit_keys_did_key_not_blank
@@ -32,7 +36,7 @@ CREATE TABLE IF NOT EXISTS {{tables.app_registry_emit_keys}} (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_registry_emit_keys_active_did
-    ON {{tables.app_registry_emit_keys}} (app_id, did_key)
+    ON {{tables.app_registry_emit_keys}} (app_id, origin, digest, did_key)
     WHERE revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS {{tables.app_events}} (

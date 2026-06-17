@@ -371,13 +371,15 @@ async def install_app(
         for emit_key in emit_keys:
             await tx.execute(
                 """
-                INSERT INTO {{tables.app_registry_emit_keys}} (app_id, key_id, did_key)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (app_id, key_id) DO UPDATE SET
+                INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (app_id, origin, digest, key_id) DO UPDATE SET
                     did_key = EXCLUDED.did_key,
                     revoked_at = NULL
                 """,
                 app_id,
+                origin,
+                digest,
                 emit_key.kid,
                 emit_key.did_key,
             )
@@ -460,22 +462,30 @@ async def get_installed_app_event_type(
 async def get_active_app_emit_key(
     db,
     *,
+    team_id: str,
     app_id: str,
     kid: str,
     did_key: str,
 ) -> dict | None:
+    team_id = validate_team_id(team_id)
     app_id = normalize_app_id(app_id)
     kid = normalize_key_id(kid)
     did_key = normalize_did_key(did_key)
     return await db.fetch_one(
         """
-        SELECT app_id, key_id, did_key
-        FROM {{tables.app_registry_emit_keys}}
-        WHERE app_id = $1
-          AND key_id = $2
-          AND did_key = $3
-          AND revoked_at IS NULL
+        SELECT k.app_id, k.origin, k.digest, k.key_id, k.did_key
+        FROM {{tables.team_app_installs}} AS i
+        JOIN {{tables.app_registry_emit_keys}} AS k
+          ON k.app_id = i.app_id
+         AND k.origin = i.origin
+         AND k.digest = i.digest
+        WHERE i.team_id = $1
+          AND i.app_id = $2
+          AND k.key_id = $3
+          AND k.did_key = $4
+          AND k.revoked_at IS NULL
         """,
+        team_id,
         app_id,
         kid,
         did_key,

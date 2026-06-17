@@ -119,7 +119,14 @@ def _make_app_keypair():
     return bytes(signing_key), did_key
 
 
-async def _install_folio(aweb_db, *, did_key: str, team_id: str = TEAM_ID, kid: str = "emit-1") -> None:
+async def _install_folio(
+    aweb_db,
+    *,
+    did_key: str,
+    team_id: str = TEAM_ID,
+    kid: str = "emit-1",
+    digest: str = DIGEST,
+) -> None:
     await install_app(
         aweb_db,
         team_id=team_id,
@@ -127,7 +134,7 @@ async def _install_folio(aweb_db, *, did_key: str, team_id: str = TEAM_ID, kid: 
         origin="https://folio.aweb.ai",
         app_version="1.x",
         manifest_version=1,
-        digest=DIGEST,
+        digest=digest,
         granted_scopes=["folio:read"],
         installed_by_agent_id=str(AGENT_ID),
         event_types=[
@@ -138,7 +145,16 @@ async def _install_folio(aweb_db, *, did_key: str, team_id: str = TEAM_ID, kid: 
     )
 
 
-def _signed_app_headers(*, signing_key: bytes, did_key: str, body: bytes, path: str = "/v1/events/app"):
+def _signed_app_headers(
+    *,
+    signing_key: bytes,
+    did_key: str,
+    body: bytes,
+    path: str = "/v1/events/app",
+    team_id: str = TEAM_ID,
+    app_id: str = "folio",
+    kid: str = "emit-1",
+):
     timestamp = datetime.now(timezone.utc).isoformat()
     canonical = canonical_json_bytes(
         {
@@ -147,9 +163,9 @@ def _signed_app_headers(*, signing_key: bytes, did_key: str, body: bytes, path: 
             "aud": "http://test",
             "method": "POST",
             "path": path,
-            "team_id": TEAM_ID,
-            "app_id": "folio",
-            "kid": "emit-1",
+            "team_id": team_id,
+            "app_id": app_id,
+            "kid": kid,
             "did_key": did_key,
             "body_sha256": hashlib.sha256(body).hexdigest(),
             "timestamp": timestamp,
@@ -157,9 +173,9 @@ def _signed_app_headers(*, signing_key: bytes, did_key: str, body: bytes, path: 
     )
     return {
         "Authorization": f"AWEB-App DIDKey {did_key} {sign_message(signing_key, canonical)}",
-        "X-AWEB-App-ID": "folio",
-        "X-AWEB-App-Key-ID": "emit-1",
-        "X-AWEB-Team-ID": TEAM_ID,
+        "X-AWEB-App-ID": app_id,
+        "X-AWEB-App-Key-ID": kid,
+        "X-AWEB-Team-ID": team_id,
         "X-AWEB-Timestamp": timestamp,
         "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical).decode().rstrip("="),
         "Content-Type": "application/json",
@@ -309,6 +325,43 @@ async def test_app_event_emit_rejects_uninstalled_or_wrong_namespace(aweb_cloud_
 
     assert resp.status_code == 403
     assert "own event namespace" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_app_event_emit_key_is_scoped_to_team_pinned_digest(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
+    old_signing_key, old_did_key = _make_app_keypair()
+    new_signing_key, new_did_key = _make_app_keypair()
+    app = _build_events_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db, team_id="frontend:acme.com")
+    await _install_folio(aweb_cloud_db.aweb_db, did_key=old_did_key, digest="sha256:" + "c" * 64)
+    await _install_folio(
+        aweb_cloud_db.aweb_db,
+        team_id="frontend:acme.com",
+        did_key=new_did_key,
+        digest="sha256:" + "d" * 64,
+    )
+
+    body = json.dumps(
+        {"type": "folio/doc.changed", "resource_ref": "pitch", "payload": {}},
+        separators=(",", ":"),
+    ).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stale_key_resp = await client.post(
+            "/v1/events/app",
+            content=body,
+            headers=_signed_app_headers(signing_key=new_signing_key, did_key=new_did_key, body=body),
+        )
+        pinned_key_resp = await client.post(
+            "/v1/events/app",
+            content=body,
+            headers=_signed_app_headers(signing_key=old_signing_key, did_key=old_did_key, body=body),
+        )
+
+    assert stale_key_resp.status_code == 403, stale_key_resp.text
+    assert "App emit key is not registered" in stale_key_resp.json()["detail"]
+    assert pinned_key_resp.status_code == 200, pinned_key_resp.text
 
 
 @pytest.mark.asyncio

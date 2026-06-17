@@ -147,7 +147,7 @@ async def verify_app_event_auth(request: Request, db) -> AppEventAuth:
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid app event signature") from exc
 
-    row = await get_active_app_emit_key(db, app_id=app_id, kid=kid, did_key=did_key)
+    row = await get_active_app_emit_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
     if row is None:
         raise HTTPException(status_code=403, detail="App emit key is not registered")
 
