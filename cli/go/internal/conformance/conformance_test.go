@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -192,6 +193,106 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 			sum := sha256.Sum256([]byte(v.Body))
 			if got := strings.TrimSpace(v.Payload["body_sha256"].(string)); got != hex.EncodeToString(sum[:]) {
 				t.Fatalf("body_sha256 got %s want %s", got, hex.EncodeToString(sum[:]))
+			}
+		})
+	}
+}
+
+// --- app-emit-credential-v1 ---
+
+type appEmitCredentialVectors struct {
+	Schema              string                    `json:"schema"`
+	ReplayWindowSeconds int                       `json:"replay_window_seconds"`
+	Cases               []appEmitCredentialVector `json:"cases"`
+	NegativeCases       []struct {
+		Name string `json:"name"`
+	} `json:"negative_cases"`
+}
+
+type appEmitCredentialVector struct {
+	Name                string         `json:"name"`
+	SeedHex             string         `json:"seed_hex"`
+	DIDKey              string         `json:"did_key"`
+	Body                string         `json:"body"`
+	Payload             map[string]any `json:"payload"`
+	CanonicalPayload    string         `json:"canonical_payload"`
+	SignedPayloadB64URL string         `json:"signed_payload_b64url"`
+	SignatureB64        string         `json:"signature_b64"`
+}
+
+func TestAppEmitCredentialVectors(t *testing.T) {
+	data, err := vectorsFS.ReadFile("vectors/app-emit-credential-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors appEmitCredentialVectors
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors.Schema != "aweb.app-emit-credential.v1" {
+		t.Fatalf("schema=%q", vectors.Schema)
+	}
+	if vectors.ReplayWindowSeconds > 300 {
+		t.Fatalf("replay_window_seconds=%d want <= 300", vectors.ReplayWindowSeconds)
+	}
+	if len(vectors.NegativeCases) < 2 {
+		t.Fatalf("expected stale timestamp and tampered body negative cases")
+	}
+
+	for _, v := range vectors.Cases {
+		t.Run(v.Name, func(t *testing.T) {
+			seed, err := hex.DecodeString(v.SeedHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := ed25519.NewKeyFromSeed(seed)
+			if got := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); got != v.DIDKey {
+				t.Fatalf("did:key got %s want %s", got, v.DIDKey)
+			}
+			if v.Payload["auth"] != "app-event" || v.Payload["v"] != float64(1) {
+				t.Fatalf("payload must be app-event v1: %#v", v.Payload)
+			}
+			target, err := url.Parse(fmt.Sprintf("%s%s", v.Payload["aud"], v.Payload["path"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential, err := awid.SignAppEmitCredential(
+				key,
+				fmt.Sprint(v.Payload["method"]),
+				target,
+				fmt.Sprint(v.Payload["team_id"]),
+				fmt.Sprint(v.Payload["app_id"]),
+				fmt.Sprint(v.Payload["kid"]),
+				[]byte(v.Body),
+				fmt.Sprint(v.Payload["timestamp"]),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if credential.DIDKey != v.DIDKey {
+				t.Fatalf("SignAppEmitCredential did:key got %s want %s", credential.DIDKey, v.DIDKey)
+			}
+			if credential.CanonicalPayload != v.CanonicalPayload {
+				t.Fatalf("canonical:\n got:  %s\n want: %s", credential.CanonicalPayload, v.CanonicalPayload)
+			}
+			if credential.SignedPayloadB64URL != v.SignedPayloadB64URL {
+				t.Fatalf("signed payload b64 got %s want %s", credential.SignedPayloadB64URL, v.SignedPayloadB64URL)
+			}
+			if credential.SignatureB64 != v.SignatureB64 {
+				t.Fatalf("signature got %s want %s", credential.SignatureB64, v.SignatureB64)
+			}
+			sum := sha256.Sum256([]byte(v.Body))
+			if got := strings.TrimSpace(v.Payload["body_sha256"].(string)); got != hex.EncodeToString(sum[:]) {
+				t.Fatalf("body_sha256 got %s want %s", got, hex.EncodeToString(sum[:]))
+			}
+			if credential.Headers.Get("Authorization") != fmt.Sprintf("AWEB-App DIDKey %s %s", v.DIDKey, v.SignatureB64) {
+				t.Fatalf("authorization header mismatch: %q", credential.Headers.Get("Authorization"))
+			}
+			if credential.Headers.Get("X-AWEB-App-ID") != fmt.Sprint(v.Payload["app_id"]) || credential.Headers.Get("X-AWEB-App-Key-ID") != fmt.Sprint(v.Payload["kid"]) || credential.Headers.Get("X-AWEB-Team-ID") != fmt.Sprint(v.Payload["team_id"]) {
+				t.Fatalf("app emit headers mismatch: %#v", credential.Headers)
+			}
+			if credential.Headers.Get("X-AWEB-Timestamp") != fmt.Sprint(v.Payload["timestamp"]) || credential.Headers.Get("X-AWEB-Signed-Payload") != v.SignedPayloadB64URL {
+				t.Fatalf("signed payload headers mismatch: %#v", credential.Headers)
 			}
 		})
 	}

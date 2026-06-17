@@ -33,7 +33,10 @@ a separate contract (SoT §3.2) and must not appear here.
     "llms_txt": "/llms.txt",
     "skills": "/skills/"
   },
-  "tools": [ /* tool objects */ ]
+  "tools": [ /* tool objects */ ],
+  "event_emitters": [
+    { "kid": "emit-2026-06", "did_key": "did:key:z6Mk..." }
+  ]
 }
 ```
 
@@ -110,6 +113,33 @@ the folio team — the original freeze omitted the manifest's own location.)*
 - **`mutation`** — `true` iff a *successful* call is a hosted state change per
   the SoT §9 mutation definition (not reads, not failed validation, not retries).
   Drives bundled-quota counting.
+
+## Event emitters (additive m3.2 section)
+
+`event_emitters` declares app-owned Ed25519 `did:key` emit keys that may sign
+app-emitted events for an installed app. This is the first-cut m3.2 stopgap key
+source, not the durable app-as-AWID-identity model (tracked separately in m3.1
+follow-up / `default-aaaj.6`).
+
+```jsonc
+{
+  "event_emitters": [
+    {
+      "kid": "emit-2026-06",          // app-owned key id; unique within this manifest
+      "did_key": "did:key:z6Mk..."    // public emit key; private key stays with the app
+    }
+  ]
+}
+```
+
+Emit credentials use the shared app-emit conformance vectors in
+`cli/go/internal/conformance/vectors/app-emit-credential-v1.json`. The signed
+payload binds `team_id`, `app_id`, `kid`, `did_key`, `aud`, `method`, `path`,
+`body_sha256`, and `timestamp`; request headers carry the same app/team/key
+identity (`Authorization: AWEB-App DIDKey ...`, `X-AWEB-App-ID`,
+`X-AWEB-App-Key-ID`, `X-AWEB-Team-ID`, `X-AWEB-Timestamp`,
+`X-AWEB-Signed-Payload`). Verifiers must accept only active `(kid, did_key)`
+pairs for the installed app and team.
 
 ## Verb → HTTP mapping (the precise contract the dispatcher + conformance suite key off)
 
