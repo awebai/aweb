@@ -218,8 +218,18 @@ async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch, app_i
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("origin", ["https://example.com:bad", "https://example.com:99999"])
-async def test_install_rejects_invalid_origin_port(aweb_cloud_db, monkeypatch, origin):
+@pytest.mark.parametrize(
+    ("origin", "detail_fragment"),
+    [
+        ("https://example.com:bad", "port"),
+        ("https://example.com:99999", "port"),
+        ("http://[::1", "origin URL"),
+        ("http://[not-an-ip]", "origin URL"),
+    ],
+)
+async def test_install_rejects_malformed_origin_parse_errors(
+    aweb_cloud_db, monkeypatch, origin, detail_fragment
+):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     app = _build_apps_app(aweb_cloud_db.aweb_db)
     await _seed_team_and_agent(aweb_cloud_db.aweb_db)
@@ -238,7 +248,7 @@ async def test_install_rejects_invalid_origin_port(aweb_cloud_db, monkeypatch, o
         )
 
     assert resp.status_code == 422
-    assert "port" in resp.json()["detail"]
+    assert detail_fragment in resp.json()["detail"]
 
 
 @pytest.mark.asyncio

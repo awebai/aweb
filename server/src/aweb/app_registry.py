@@ -99,26 +99,34 @@ def normalize_app_id(value: str) -> str:
 
 def normalize_origin(value: str) -> str:
     raw = (value or "").strip()
-    parsed = urlparse(raw)
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        raise ValidationError("origin scheme must be http or https")
-    if parsed.username or parsed.password:
-        raise ValidationError("origin must not include userinfo")
-    if parsed.params or parsed.query or parsed.fragment:
-        raise ValidationError("origin must not include params, query, or fragment")
-    if not parsed.hostname:
-        raise ValidationError("origin host is required")
-    path = (parsed.path or "").rstrip("/")
-    if path:
-        raise ValidationError("origin must be an origin URL, not a path")
-    host = parsed.hostname.lower()
-    host_out = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    default_port = 80 if scheme == "http" else 443
     try:
+        parsed = urlparse(raw)
+        scheme = parsed.scheme.lower()
+        username = parsed.username
+        password = parsed.password
+        params = parsed.params
+        query = parsed.query
+        fragment = parsed.fragment
+        hostname = parsed.hostname
+        path = (parsed.path or "").rstrip("/")
         parsed_port = parsed.port
     except ValueError as exc:
-        raise ValidationError("origin port is invalid") from exc
+        detail = "origin port is invalid" if "port" in str(exc).lower() else "origin URL is invalid"
+        raise ValidationError(detail) from exc
+
+    if scheme not in {"http", "https"}:
+        raise ValidationError("origin scheme must be http or https")
+    if username or password:
+        raise ValidationError("origin must not include userinfo")
+    if params or query or fragment:
+        raise ValidationError("origin must not include params, query, or fragment")
+    if not hostname:
+        raise ValidationError("origin host is required")
+    if path:
+        raise ValidationError("origin must be an origin URL, not a path")
+    host = hostname.lower()
+    host_out = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    default_port = 80 if scheme == "http" else 443
     port = None if parsed_port in {None, default_port} else parsed_port
     return f"{scheme}://{host_out}{f':{port}' if port is not None else ''}"
 
