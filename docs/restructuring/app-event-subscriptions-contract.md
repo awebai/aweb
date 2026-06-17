@@ -103,37 +103,40 @@ Emit authorization is app-scoped, privileged, and attributable: the producer is
 an app acting in a team, not a random team member and not the hosted gateway.
 Apps do not sign as the team and do not hold team certificates.
 
-First implementation app-service credential (**v1 stopgap, not the durable credential class**):
+First implementation app-service credential (**v1 stopgap key source, not the
+durable credential class**) reuses the existing v2 signed-request envelope shape;
+it does **not** introduce a new HTTP auth scheme:
 
 ```http
-Authorization: AWEB-App DIDKey <did:key> <base64-signature>
-X-AWEB-App-ID: folio
-X-AWEB-App-Key-ID: emit-2026-06
-X-AWEB-Team-ID: default:atext.aweb.ai
+Authorization: DIDKey <did:key> <base64-signature>
+X-AWEB-Key-ID: emit-2026-06
 X-AWEB-Timestamp: 2026-06-17T12:00:00Z
 X-AWEB-Signed-Payload: <base64url canonical JSON>
 ```
 
-The canonical signed payload is:
+The canonical signed payload is the v2 signed-request payload:
 
 ```json
 {
-  "v": 1,
-  "auth": "app-event",
+  "v": 2,
   "aud": "https://aweb.example",
   "method": "POST",
   "path": "/v1/events/app",
   "team_id": "default:atext.aweb.ai",
-  "app_id": "folio",
-  "kid": "emit-2026-06",
-  "did_key": "did:key:z6Mk...",
   "body_sha256": "...",
   "timestamp": "2026-06-17T12:00:00Z"
 }
 ```
 
+`producer_app_id` is not a separate envelope field. Core derives it from the
+signed body (`type: "<app_id>/<event_name>"`), which is tamper-proof because the
+body bytes are bound by `body_sha256`. `X-AWEB-Key-ID` is a key-selection hint;
+the signed DIDKey plus body-derived `producer_app_id` must match an active
+registry emit key for that app.
+
 This registered emit-key shape is intentionally a forward-compatible stopgap.
-It gives apps an app-owned DIDKey for v1 emits without making that key the
+It gives apps an app-owned DIDKey for v1 emits and reuses the same v2 envelope
+canonicalization as other signed requests, without making the registered key the
 permanent app principal model.
 
 **Durable direction:** app-as-AWID-identity. The app will have an AWID/DID
@@ -157,17 +160,18 @@ registry/app-registration update in the stopgap model.
 The canonical payload and body hash are covered by conformance vectors in
 `cli/go/internal/conformance/vectors/app-emit-credential-v1.json`; any producer
 (Go CLI helper, Python app backend, or third-party app) must generate the exact
-same canonical bytes and `body_sha256`.
+same v2 canonical envelope bytes and `body_sha256`.
 
 Core accepts an emit only when all of these are true:
 
-1. the app-service signature verifies over the canonical payload;
+1. the DIDKey signature verifies over the canonical v2 payload;
 2. the signed timestamp passes the same freshness/replay-window check used by
    existing signed requests;
-3. `team_id` and `app_id` from headers/payload match the request body and route
-   context;
-4. `app_id` is installed for `team_id`;
-5. `(kid, did_key)` is an active registry emit key for `app_id`;
+3. `team_id` from the signed payload is valid and the request path/method/body
+   hash/audience match the actual request;
+4. core derives `app_id` from signed body `type` and that `app_id` is installed
+   for `team_id`;
+5. `(kid, did_key)` is an active registry emit key for the derived `app_id`;
 6. body `type` has prefix `<app_id>/`; and
 7. the pinned manifest for that installed app declares the emitted app-local
    event type.
@@ -418,9 +422,10 @@ All m3.2 contract points are closed for first implementation:
   event-id de-dupe, generic app render, no app hydration.
 - ac/gateway: standard subscription management only; writes sign as identity,
   reads may use internal gateway auth; relay to keyless runtimes deferred v2.
-- emit auth: v1 stopgap `AWEB-App DIDKey` app-scoped credential tied to an
-  active registry emit key for an installed app; core authorizes via the
-  app<->team install grant and declared manifest event type. Canonical payload +
-  body hash are pinned by app-emit-credential conformance vectors. Durable
-  direction is app-as-AWID-identity so app cert-auth and emit-auth converge on
-  one app principal.
+- emit auth: existing v2 signed-request envelope signed with an app-owned DIDKey;
+  v1 stopgap key source is an active registry emit key for an installed app.
+  Core derives producer app id from body `type`, authorizes via the app<->team
+  install grant and declared manifest event type, and uses app-emit-credential
+  conformance vectors to pin canonical payload + body hash. Durable direction is
+  app-as-AWID-identity so app cert-auth and emit-auth converge on one app
+  principal.
