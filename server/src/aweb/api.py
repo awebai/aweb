@@ -20,6 +20,7 @@ from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .routes.agents import router as agents_router
+from .routes.apps import router as apps_router
 from .routes.connect import router as connect_router
 from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
@@ -332,6 +333,7 @@ def create_app(
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}
 
     app.include_router(agents_router)
+    app.include_router(apps_router)
     app.include_router(connect_router)
     app.include_router(chat_router)
     app.include_router(dashboard_router)
