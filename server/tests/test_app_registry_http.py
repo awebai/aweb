@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -7,7 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 import aweb.routes.apps as apps_routes
-from aweb.app_registry import install_app
+from aweb.app_registry import install_app, reserved_app_ids
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.apps import router as apps_router
 from aweb.team_auth_deps import TeamIdentity
@@ -193,8 +195,16 @@ async def test_internal_gateway_auth_can_read_installed_apps(aweb_cloud_db, monk
     assert resp.json()["apps"][0]["app_id"] == "folio"
 
 
+def test_reserved_app_ids_are_loaded_from_cli_artifact():
+    artifact = Path(__file__).resolve().parents[2] / "test-vectors" / "reserved-app-ids-v1.json"
+    expected = set(json.loads(artifact.read_text())["reserved_app_ids"])
+
+    assert reserved_app_ids() == expected
+    assert "introspect" in reserved_app_ids()
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("app_id", ["mail", "doctor"])
+@pytest.mark.parametrize("app_id", ["mail", "doctor", "introspect"])
 async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch, app_id):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     app = _build_apps_app(aweb_cloud_db.aweb_db)
