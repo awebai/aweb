@@ -285,6 +285,7 @@ it into the existing `ChannelAwakening` object shape as:
     app_id: "folio",
     app_event_type: "folio/doc.changed",
     resource_ref: "docs/pitch",
+    producer_delivery_intent: "ambient",
     event_id: "uuid",
     ...payload-as-string-metadata
   }
@@ -293,8 +294,10 @@ it into the existing `ChannelAwakening` object shape as:
 
 The adapter boundary remains `{kind, content, meta, deliveryIntent}`. Adapters do
 not gain one kind per app event; app-specific routing data lives in `meta`.
-Channel-core adds a generic app render in `formatAwakeningForAgent` using
-`meta.type` (the app event type), `resource_ref`, and a compact payload summary.
+Because app event `content` is empty metadata-only wake content, channel-core
+adds a generic app render in `formatAwakeningForAgent` using `meta.type` (the
+app event type), `resource_ref`, and a compact payload summary. This is a
+channel-core consumer task; adapters remain unchanged.
 
 ## Channel-core consumer behavior
 
