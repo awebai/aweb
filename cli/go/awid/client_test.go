@@ -1727,6 +1727,7 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 		w.Header().Set("Authorization", "response-secret-auth")
 		w.Header().Set("X-AWEB-Signed-Payload", "response-secret-payload")
 		w.Header().Set("X-AWID-Team-Certificate", "response-secret-cert")
+		w.Header().Set("Set-Cookie", "session=response-secret-cookie")
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = w.Write([]byte(`{"detail":"short and stout"}`))
 	}))
@@ -1741,6 +1742,7 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 			"Authorization":                  "secret-auth",
 			"X-AWEB-Signed-Payload":          "secret-payload",
 			"X-AWID-Team-Certificate":        "secret-cert",
+			"Cookie":                         "session=request-secret-cookie",
 			"X-Unredacted-Diagnostic-Header": "visible",
 		})
 	})
@@ -1759,11 +1761,13 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 		"Authorization: <redacted>",
 		"X-Aweb-Signed-Payload: <redacted>",
 		"X-Awid-Team-Certificate: <redacted>",
+		"Cookie: <redacted>",
 		"X-Unredacted-Diagnostic-Header: visible",
 		"AW TRACE response: HTTP 418",
 		"AW TRACE response header: Authorization: <redacted>",
 		"AW TRACE response header: X-Aweb-Signed-Payload: <redacted>",
 		"AW TRACE response header: X-Awid-Team-Certificate: <redacted>",
+		"AW TRACE response header: Set-Cookie: <redacted>",
 		"X-Request-Id: req-123",
 		"Retry-After: 7",
 		"X-Render-Origin-Server: iad",
@@ -1774,7 +1778,7 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 			t.Fatalf("trace missing %q:\n%s", want, trace)
 		}
 	}
-	for _, secret := range []string{"secret-auth", "secret-payload", "secret-cert", "response-secret-auth", "response-secret-payload", "response-secret-cert"} {
+	for _, secret := range []string{"secret-auth", "secret-payload", "secret-cert", "request-secret-cookie", "response-secret-auth", "response-secret-payload", "response-secret-cert", "response-secret-cookie"} {
 		if strings.Contains(trace, secret) {
 			t.Fatalf("trace leaked %q:\n%s", secret, trace)
 		}

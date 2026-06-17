@@ -1025,7 +1025,7 @@ func traceHeaders(prefix string, headers http.Header, redact bool) {
 
 func shouldRedactTraceHeader(key string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(key)) {
-	case "Authorization", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate":
+	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate":
 		return true
 	default:
 		return false
