@@ -65,6 +65,13 @@ var pluginUpdateCmd = &cobra.Command{
 	RunE:  runPluginUpdate,
 }
 
+var pluginReservedNamesCmd = &cobra.Command{
+	Use:   "reserved-names",
+	Short: "Emit reserved top-level aw app ids",
+	Args:  cobra.NoArgs,
+	RunE:  runPluginReservedNames,
+}
+
 type pluginListOutput struct {
 	Plugins []pluginListItem `json:"plugins"`
 }
@@ -101,6 +108,11 @@ type pluginRemoveOutput struct {
 	Path string `json:"path"`
 }
 
+type reservedAppIDsOutput struct {
+	Schema         string   `json:"schema"`
+	ReservedAppIDs []string `json:"reserved_app_ids"`
+}
+
 func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallAppID, "app-id", "", "App id to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallManifestVersion, "manifest-version", "", "Manifest version to record in plugin provenance")
@@ -108,7 +120,7 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
 
 	pluginCmd.GroupID = groupUtility
-	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd)
+	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd, pluginReservedNamesCmd)
 	rootCmd.AddCommand(pluginCmd)
 }
 
@@ -118,6 +130,11 @@ func runPluginList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	printOutput(pluginListOutput{Plugins: plugins}, formatPluginList)
+	return nil
+}
+
+func runPluginReservedNames(cmd *cobra.Command, args []string) error {
+	printOutput(reservedAppIDsArtifact(), formatReservedAppIDs)
 	return nil
 }
 
@@ -322,6 +339,11 @@ func formatPluginInstall(v any) string {
 func formatPluginRemove(v any) string {
 	out := v.(pluginRemoveOutput)
 	return fmt.Sprintf("Removed plugin %s (%s)\n", out.Name, out.Path)
+}
+
+func formatReservedAppIDs(v any) string {
+	out := v.(reservedAppIDsOutput)
+	return strings.Join(out.ReservedAppIDs, "\n") + "\n"
 }
 
 func pluginNameFromSource(source string) (string, error) {
@@ -1001,7 +1023,25 @@ func isReservedRootCommandName(name string) bool {
 	return reservedRootCommandNames()[strings.TrimSpace(name)]
 }
 
+func reservedAppIDsArtifact() reservedAppIDsOutput {
+	return reservedAppIDsOutput{
+		Schema:         "aweb.reserved-app-ids.v1",
+		ReservedAppIDs: sortedReservedRootCommandNames(),
+	}
+}
+
+func sortedReservedRootCommandNames() []string {
+	reserved := reservedRootCommandNames()
+	names := make([]string, 0, len(reserved))
+	for name := range reserved {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func reservedRootCommandNames() map[string]bool {
+	rootCmd.InitDefaultCompletionCmd()
 	reserved := map[string]bool{
 		"help": true,
 	}
