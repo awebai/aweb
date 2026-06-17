@@ -42,7 +42,8 @@ Field rules:
 
 - `team_id`: colon-form team id, echoed exactly after validation.
 - `apps`: deterministic order by `app_id`; no pagination in v1 because this is a
-  compose-time control-plane read.
+  compose-time control-plane read. A team with zero installed apps returns
+  `200` with `apps: []`, not `404`.
 - `app_id`: manifest `app.id`; unique per team install; reserved built-in CLI
   names/aliases are rejected at install.
 - `origin`: manifest `app.origin`; consumers fetch
@@ -53,7 +54,14 @@ Field rules:
   no JSON reparse or canonicalization before hashing.
 - `granted_scopes`: scopes granted to this `(team_id, app_id)` install. Grantable
   scopes are derived from the union of the manifest tools' `scopes`; the registry
-  does not maintain a separate scope vocabulary.
+  does not maintain a separate scope vocabulary. An installed app with no current
+  grants remains listed with `granted_scopes: []`; consumers compose no tools for
+  that app.
+
+Caching/resilience: consumers MAY cache this installed-apps/grants read with a
+short TTL and serve a last-known-good value during transient `500`/`503` registry
+failures. The read is not required to be live on every compose operation; digest
+pinning and explicit install/update make it slow-changing control-plane data.
 
 Errors:
 

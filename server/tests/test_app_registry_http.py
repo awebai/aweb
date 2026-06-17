@@ -69,6 +69,19 @@ async def _seed_team_and_agent(aweb_db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_apps_empty_team_returns_empty_apps(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    app = _build_apps_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"team_id": TEAM_ID, "apps": []}
+
+
+@pytest.mark.asyncio
 async def test_install_and_list_apps_returns_contract_shape(aweb_cloud_db, monkeypatch):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     app = _build_apps_app(aweb_cloud_db.aweb_db)
@@ -102,6 +115,40 @@ async def test_install_and_list_apps_returns_contract_shape(aweb_cloud_db, monke
         "team_id": TEAM_ID,
         "apps": [install_resp.json()],
     }
+
+
+@pytest.mark.asyncio
+async def test_zero_scope_install_remains_listed_with_empty_grants(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    app = _build_apps_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        install_resp = await client.post(
+            "/v1/apps/install",
+            json={
+                "app_id": "folio",
+                "origin": "https://folio.aweb.ai",
+                "app_version": "1.x",
+                "manifest_version": 1,
+                "digest": DIGEST_1,
+                "granted_scopes": [],
+            },
+        )
+        list_resp = await client.get(f"/v1/apps/installed?team_id={TEAM_ID}")
+
+    assert install_resp.status_code == 200, install_resp.text
+    assert list_resp.status_code == 200, list_resp.text
+    assert list_resp.json()["apps"] == [
+        {
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "app_version": "1.x",
+            "manifest_version": 1,
+            "digest": DIGEST_1,
+            "granted_scopes": [],
+        }
+    ]
 
 
 @pytest.mark.asyncio
