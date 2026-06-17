@@ -55,6 +55,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "005_messages_encrypted_v2_shape_legacy_fields.sql",
         "006_chat_participants_left_at.sql",
         "007_agent_encryption_key_custody.sql",
+        "008_app_registry_grants.sql",
     ]
 
 
