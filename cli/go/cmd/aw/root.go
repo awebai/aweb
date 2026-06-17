@@ -12,6 +12,7 @@ var serverFlag string
 var teamFlag string
 var debugFlag bool
 var jsonFlag bool
+var traceFlag bool
 
 const (
 	groupWorkspace    = "workspace"
@@ -29,6 +30,9 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 			debugFlag = true
+		}
+		if traceFlag {
+			_ = os.Setenv("AW_TRACE", "1")
 		}
 		loadDotenvBestEffort()
 		maybeCheckLatestVersion(cmd)
@@ -100,6 +104,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")
+	rootCmd.PersistentFlags().BoolVar(&traceFlag, "trace", false, "Trace redacted HTTP requests and responses to stderr")
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output as JSON")
 	bindTeamSelector(mailCmd)
 	bindTeamSelector(chatCmd)
@@ -135,6 +140,9 @@ func bindTeamSelector(cmd *cobra.Command) {
 }
 
 func Execute() {
+	if argsContainTraceFlag(os.Args[1:]) {
+		_ = os.Setenv("AW_TRACE", "1")
+	}
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
 		os.Exit(code)
 	}
@@ -148,6 +156,15 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(exitCode(err))
 	}
+}
+
+func argsContainTraceFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--trace" {
+			return true
+		}
+	}
+	return false
 }
 
 // checkVersionFromHeader prints a stderr warning if the server reported
