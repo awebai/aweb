@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -31,7 +32,7 @@ class AppInstall:
     granted_scopes: list[str]
 
 
-def _reserved_app_ids_path() -> Path:
+def _reserved_app_ids_source_path() -> Path:
     """Locate the CLI-owned reserved app-id artifact from a source checkout."""
 
     for parent in Path(__file__).resolve().parents:
@@ -41,15 +42,25 @@ def _reserved_app_ids_path() -> Path:
     raise RuntimeError(f"missing reserved app ids artifact: test-vectors/{RESERVED_APP_IDS_ARTIFACT}")
 
 
+def _read_reserved_app_ids_artifact() -> str:
+    """Read packaged reserved app-id artifact, with source fallback for editable checkouts."""
+
+    packaged = files("aweb").joinpath("data", RESERVED_APP_IDS_ARTIFACT)
+    if packaged.is_file():
+        return packaged.read_text(encoding="utf-8")
+    return _reserved_app_ids_source_path().read_text(encoding="utf-8")
+
+
 @lru_cache(maxsize=1)
 def reserved_app_ids() -> frozenset[str]:
-    """Return CLI-owned reserved app ids from the committed artifact.
+    """Return CLI-owned reserved app ids from the packaged artifact.
 
-    The aw CLI owns the top-level namespace and drift-gates this artifact in its
-    own tests. The registry consumes it instead of carrying a hardcoded copy.
+    The aw CLI owns the top-level namespace and drift-gates the root artifact in
+    its own tests. The server wheel packages a copy so deployed registries do not
+    depend on source-checkout paths.
     """
 
-    payload = json.loads(_reserved_app_ids_path().read_text(encoding="utf-8"))
+    payload = json.loads(_read_reserved_app_ids_artifact())
     if payload.get("schema") != RESERVED_APP_IDS_SCHEMA:
         raise RuntimeError("reserved app ids artifact has unsupported schema")
     values = payload.get("reserved_app_ids")
