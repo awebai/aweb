@@ -361,6 +361,71 @@
           "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6IjJhNGIwYmI4YThkZDU2NmUwZTMyM2M2OTQ2ZDlmM2UxZGNiZTExMGIxNmE4MzIzMzMwNWU4OTgzZTg0NmQ2ZDQiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9kb2N1bWVudHMvcGl0Y2gvdmVyc2lvbnMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
         }
       }
+    },
+    {
+      "name": "array_items_not_recursively_coerced",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "arrays",
+          "version": "1.0.0",
+          "origin": "https://arrays.example"
+        },
+        "tools": [
+          {
+            "name": "set",
+            "method": "POST",
+            "path": "/v1/items",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "items",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "arrays:write"
+            ],
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "set",
+      "args": {
+        "items": [
+          "1"
+        ]
+      },
+      "expected": {
+        "method": "POST",
+        "url": "https://arrays.example/v1/items",
+        "path_query": "/v1/items",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"items\":[\"1\"]}",
+        "body_sha256": "b2c6a3f89c73cb2f5160b6b430d39cea1e81637ebcaa8f27ea32659e58d2ff6a",
+        "mutation": true,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://arrays.example\",\"body_sha256\":\"b2c6a3f89c73cb2f5160b6b430d39cea1e81637ebcaa8f27ea32659e58d2ff6a\",\"method\":\"POST\",\"path\":\"/v1/items\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2FycmF5cy5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiJiMmM2YTNmODljNzNjYjJmNTE2MGI2YjQzMGQzOWNlYTFlODE2MzdlYmNhYThmMjdlYTMyNjU5ZTU4ZDJmZjZhIiwibWV0aG9kIjoiUE9TVCIsInBhdGgiOiIvdjEvaXRlbXMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+        }
+      }
     }
   ],
   "negative_cases": [
@@ -931,6 +996,173 @@
       "verb": "x",
       "args": {},
       "expected_error_contains": "unsupported manifest_version"
+    },
+    {
+      "name": "reject_raw_mode_missing_runtime_body",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "append",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "body": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "body",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw_param": "body",
+              "content_type": "text/plain"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "append",
+      "args": {},
+      "expected_error_contains": "missing raw body param"
+    },
+    {
+      "name": "reject_array_param_non_array_value",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "items",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {
+        "items": "not-array"
+      },
+      "expected_error_contains": "expected array"
+    },
+    {
+      "name": "reject_object_param_non_object_value",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "options": {
+                  "type": "object"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "options",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {
+        "options": "not-object"
+      },
+      "expected_error_contains": "expected object"
+    },
+    {
+      "name": "reject_unsupported_schema_type_body_param",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "safe",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [
+          {
+            "name": "x",
+            "method": "POST",
+            "path": "/v1/x",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "null"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "value",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "x",
+      "args": {
+        "value": "anything"
+      },
+      "expected_error_contains": "unsupported schema type"
     }
   ]
 }
