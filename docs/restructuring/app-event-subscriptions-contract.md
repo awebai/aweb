@@ -217,6 +217,19 @@ GET /v1/events/subscriptions
 DELETE /v1/events/subscriptions/{subscription_id}
 ```
 
+Authorization follows the same dual model as the app registry endpoints:
+
+- `POST /v1/events/subscriptions` and `DELETE /v1/events/subscriptions/{id}`
+  require team-auth/sign-as-identity. They are privileged, attributable writes
+  by the identity choosing/removing its delivery behavior.
+- `GET /v1/events/subscriptions` accepts team-auth or trusted
+  internal-gateway-auth for the requested team/identity context.
+- The hosted gateway manages subscriptions for hosted custodial identities by
+  signing as that identity against these existing endpoints. It gets no special
+  subscription endpoint and no special core behavior.
+- Gateway relay of SSE app events to keyless runtimes is deferred v2; it is not
+  part of m3.2.
+
 Rules:
 
 - Subscriptions are keyed by `(team_id, agent_id, type, resource_ref)`; `POST`
@@ -228,9 +241,9 @@ Rules:
   `(event_id, agent_id)`.
 - No subscription means no delivery. Apps do not broadcast to every team agent by
   default.
-- Hosted control planes/gateways may manage subscriptions on behalf of hosted
-  custodial identities using normal authority for that `agent_id`; they do not
-  get a separate event-relay or hydration path.
+- Hosted control planes/gateways use the dual-auth rules above. They may read
+  subscriptions via internal-gateway-auth, but subscription writes still happen
+  by sign-as-identity for the hosted custodial `agent_id`.
 
 ## Matching and SSE delivery
 
