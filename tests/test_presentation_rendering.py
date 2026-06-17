@@ -523,6 +523,39 @@ def test_theme_contrast_error_checks_custom_text_against_preset_surface() -> Non
     assert "contrast" in error.lower()
 
 
+def test_theme_contrast_error_auto_scheme_checks_both_palettes_for_preset() -> None:
+    # Custom dark text is readable on the aweb light surface but 1:1 against the
+    # aweb dark surface (#17201a). 'auto' renders BOTH, so it must be rejected.
+    error = theme_contrast_error(
+        {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}, preset="aweb"
+    )
+    assert error is not None
+    assert "contrast" in error.lower()
+
+
+def test_theme_contrast_error_auto_scheme_passes_preset_without_overrides() -> None:
+    assert theme_contrast_error({"layout": {"color_scheme": "auto"}}, preset="aweb") is None
+
+
+def test_put_theme_rejects_auto_scheme_unreadable_against_dark_palette() -> None:
+    app = folio_api.create_app()
+    theme_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/theme" and "PUT" in getattr(route, "methods", set())
+    )
+    for dependency in theme_route.dependant.dependencies:
+        if getattr(dependency.call, "__name__", "") in {"db", "principal"}:
+            app.dependency_overrides[dependency.call] = lambda: object()
+    client = TestClient(app)
+
+    response = client.put(
+        "/v1/theme",
+        json={"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}},
+    )
+    assert response.status_code == 422, response.text
+
+
 def test_put_theme_rejects_reserved_preset_key_inside_tokens() -> None:
     app = folio_api.create_app()
     theme_route = next(

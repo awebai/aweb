@@ -350,25 +350,35 @@ def theme_contrast_error(tokens: Any, *, preset: Any = None) -> str | None:
     """Reject a theme whose body text would fail WCAG AA against its surface.
 
     Colors fall back to the resolved base palette (a built-in preset's palette
-    if one is selected, else the default) for the chosen scheme, so a preset or
-    default theme always passes and only an explicit unreadable override is
-    flagged. Text and surface must be fully opaque: a transparent or
-    alpha-bearing value fails the gate closed rather than slipping invisible
-    text through.
+    if one is selected, else the default), so a preset or default theme always
+    passes and only an explicit unreadable override is flagged. ``auto`` renders
+    both the light and the dark palette, so the effective pair is checked against
+    BOTH and rejected if either fails. Text and surface must be fully opaque: a
+    transparent or alpha-bearing value fails the gate closed rather than slipping
+    invisible text through.
     """
     colors = sanitize_theme_tokens(tokens).get("colors", {})
     light_palette, dark_palette = _resolve_base_palettes(preset)
-    palette = dark_palette if sanitize_layout_tokens(tokens)["color_scheme"] == "dark" else light_palette
-    text = colors.get("text") or palette["--text"]
-    surface = colors.get("surface") or palette["--surface"]
-    for label, value in (("text", text), ("surface", surface)):
-        if not _is_opaque_color(value):
-            return f"Theme {label} color must be a fully opaque color so contrast can be verified."
-    ratio = contrast_ratio(text, surface)
-    if ratio is None:
-        return "Theme text/surface colors could not be evaluated for contrast."
-    if ratio < _WCAG_AA_NORMAL:
-        return f"Theme text/surface contrast {ratio:.2f}:1 is below the WCAG AA minimum of {_WCAG_AA_NORMAL}:1."
+    scheme = sanitize_layout_tokens(tokens)["color_scheme"]
+    if scheme == "dark":
+        palettes = [dark_palette]
+    elif scheme == "auto":
+        palettes = [light_palette, dark_palette]
+    else:
+        palettes = [light_palette]
+    custom_text = colors.get("text")
+    custom_surface = colors.get("surface")
+    for palette in palettes:
+        text = custom_text or palette["--text"]
+        surface = custom_surface or palette["--surface"]
+        for label, value in (("text", text), ("surface", surface)):
+            if not _is_opaque_color(value):
+                return f"Theme {label} color must be a fully opaque color so contrast can be verified."
+        ratio = contrast_ratio(text, surface)
+        if ratio is None:
+            return "Theme text/surface colors could not be evaluated for contrast."
+        if ratio < _WCAG_AA_NORMAL:
+            return f"Theme text/surface contrast {ratio:.2f}:1 is below the WCAG AA minimum of {_WCAG_AA_NORMAL}:1."
     return None
 
 
