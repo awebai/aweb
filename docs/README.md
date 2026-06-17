@@ -45,10 +45,9 @@ These documents define the system:
 - [cli-setup-surface-sot.md](cli-setup-surface-sot.md): supporting SOT for
   the `aw` team/identity/setup command taxonomy: everyday intents, agent
   primitives, protocol/admin primitives, and obsolete/legacy compatibility
-- [team-blueprints-sot.md](team-blueprints-sot.md): product SOT for team
-  blueprints — repos of souls, roles, skills, and playbooks that an agent
-  uses to create a team in the human's repo; defines the souls/instances
-  model, vocabulary, target layout, and blueprint contents
+- [team-blueprints-sot.md](team-blueprints-sot.md): product SOT for creating
+  AI teams from blueprint repos/directories, profile packs, runtime bindings,
+  team-owned app grants, subscriptions, and signed audit trails
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
   instructions, playbooks, skills, and adapters without identity/workspace state;

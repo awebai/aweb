@@ -1,211 +1,844 @@
 ---
-title: "Team blueprints"
+title: "Team blueprints and agent profiles"
 kicker: "Product SOT"
-description: "What a team blueprint is, why it replaces bootstrap-era templates and operating-pattern vocabulary, and what every blueprint must contain."
+description: "How companies create and operate AI teams from blueprint repos, profile packs, app grants, runtime bindings, and signed audit trails."
 weight: 26
 ---
 
-# Team blueprints
+# Team blueprints and agent profiles
 
-This document is the source of truth for **team blueprints**: the product
-motion that replaces bootstrap-era template repos and the interim
-"team operating pattern" vocabulary.
+This is the source of truth for the product surface that lets a company start
+using aweb quickly:
 
-It defines the user flow, the vocabulary, the target repo layout a blueprint
-produces, and the contract for what a blueprint must contain. The
-[setup-surface taxonomy](cli-setup-surface-sot.md) and the
-[resource-pack contract](resource-pack-template-contract.md) remain the SOTs
-for command classification and the manifest layer; this document sits above
-them and defines the product story they serve.
+> A human points aweb at a blueprint repo or directory. Aweb inspects it, shows
+> the proposed AI team, copies profile packs into the customer's team/repo,
+> connects agents to runtimes and apps, and opens a workroom where humans can
+> assign work, approve sensitive actions, watch progress, and keep a signed
+> audit trail.
 
-## What the user does
+This document supersedes the older "blueprints are repos of souls" framing.
+The old mechanism is still useful: identity-free agent bodies are copied into
+the customer's repo and symlinked from runnable instance homes. The product
+vocabulary changes:
 
-> A human owns a repo and wants a team working in it. They point their agent
-> at a **blueprint** — a repo containing souls, roles, skills, playbooks, and
-> instructions. The agent clones the blueprint somewhere disposable, follows
-> its `create-team` skill, copies the identity-free resources into the
-> human's repo, commits them, connects the first instance with explicit aweb
-> primitives, and publishes the shared team context. From then on the team
-> grows itself: existing instances spawn new ones with the `spawn-instance`
-> skill, and every agent grows its own soul with `self-maintenance`.
+- external/customer-facing: **agent profile** or **profile pack**;
+- internal/legacy implementation: **soul** may remain as a directory name until
+  migration is worth doing;
+- composition unit: **team blueprint**;
+- authority unit: **team app grants**, not profile-owned app installs.
 
-The human then runs the team: `cd agents/instances/<name>` and launch the
-harness. The agent that created the team has no role in the finished team.
+The goal is not to invent a new abstraction. It is to productize the pattern we
+already dogfood in blueprint repos such as `../aweb-team-dev-simple/`: make it
+explicit, inspectable, installable, versioned, permission-aware, and supported
+by the CLI and dashboard.
 
-There is no monolithic bootstrap command in the CLI. Each blueprint may ship
-a `create-team` program that performs the whole creation in one go — but it
-must compose the same explicit primitives, show every `aw` command it runs,
-refuse to overwrite existing identities or published team context, and on
-failure report what exists rather than delete anything. The fast path and
-the agent-driven skill are two speeds of the same explicit procedure.
+## 1. Customer promise
 
-## Why
+The product promise is:
 
-Two forces drove this design.
+> Put AI agents to work across your company without losing control.
 
-**The bootstrap monolith failed a real customer.** `aw agents bootstrap`
-combined template reading, team creation, identity minting, role/instruction
-publication, filesystem mutation, gitignore edits, and worktree creation in
-one command. A non-TTY run created `agents/` before hosted setup completed;
-retry refused the existing `agents/`; provision could not create the missing
-hosted team. The customer was stranded (see their write-up in
-`a2am/docs/aweb-setup-feedback.md`). Rollback fixes landed, but the deeper
-fix is the abstraction: identity/team/service mutation must stay separate
-from filesystem/template/git mutation, and each step must be explicit.
+More specifically:
 
-**The same customer then built the model we want.** Their repo (`a2am`)
-defines the team as committed, identity-free **souls** and runs it as
-gitignored **instances**, each minted explicitly with aweb primitives. Souls
-are living state — they accumulate `docs/`, `decisions/`, `memory/`, and
-skills as the team works — so they belong in the team's own repo, versioned
-and reviewed. That is why a blueprint is a **seed, not a dependency**: its
-resources are copied in, committed, and owned by the team from day one.
-There is no upstream to sync; the copies fork and grow.
+> Aweb lets companies turn scattered AI tools into managed AI coworkers that can
+> be assigned work, use company apps safely, coordinate with each other, and
+> leave a verifiable record of what happened.
 
-## Vocabulary
+Why companies need this:
 
-- **Blueprint** — a repo packaging souls, roles, skills, playbooks,
-  instructions, and adapters that an agent uses to create a team. Replaces
-  "template repo", "pattern repo", and "team operating pattern" in all
-  happy-path copy.
-- **Create a team (from a blueprint)** — the activity. The blueprint's skill
-  is named `create-team`. Do not call this "bootstrapping" in product copy:
-  `aw agents bootstrap` is the obsolete/legacy command, and one word cannot
-  name both the deprecated path and its replacement.
-- **Soul** — the committed, identity-free canonical body of an agent:
-  `AGENTS.md`, `soul.yaml`, its own skills, and accumulated
-  `docs/`/`decisions/`/`memory/`. One soul can back many instances.
-- **Instance** — a runnable copy of a soul with its own aweb identity. Its
-  directory is its **home** (`.aw`, body symlinked to the soul) plus a
-  `work` location (the main checkout or its own git worktree). Instances are
-  gitignored and machine-local.
-- **Spawn an instance** — minting one instance from a soul
-  (`spawn-instance` skill).
-- **Resource pack** — the low-level manifest layer (`resource-pack.yaml`)
-  that declares what a blueprint contains. A blueprint *is* a resource pack
-  plus the knowledge needed to apply and understand it.
-- **Community blueprints** — externally contributed blueprints.
-- **Template** — legacy/compatibility vocabulary only, for the bootstrap-era
-  repos and `aw agents` surfaces.
+- agents are scattered across Claude Code, Codex, ChatGPT, Copilot, n8n,
+  internal scripts, and future hosted runners;
+- each runtime has its own context, tool wiring, and failure modes;
+- humans need to know who did what, what changed, which system was touched, and
+  which approval allowed it;
+- agents need shared work queues, app access, instructions, profiles, and event
+  subscriptions;
+- companies need signed audit trails for legal, security, compliance, and
+  operational review.
 
-`aw team create` (network-team creation) and creating a team from a
-blueprint are different layers: the first creates the hosted/BYOT team
-object; the second creates the working team in the repo and uses the first
-(or the dashboard) for authority.
+Do not lead the customer with AWID, MCP, A2A, app manifests, BYOT, or signed
+envelopes. Translate them:
 
-## Target layout
+- AWID -> verified agent identity
+- MCP -> connect agents from Claude, ChatGPT, Copilot, and other clients
+- A2A -> open agent interoperability
+- app manifests -> apps agents can use
+- BYOT -> keep your company's keys and control
+- mutation quota -> included agent actions
 
-A blueprint's `create-team` skill produces this shape in the human's repo:
+## 2. Product objects
 
-```text
-agents/
-  souls/<role>/          committed canonical bodies
-    soul.yaml            role, work (main | worktree | home), runtime hint
-    AGENTS.md            the operating doc; never edited by the agent itself
-    docs/ decisions/ memory/   accumulated knowledge (living)
-    .agents/skills/      soul-specific skills, if any
-  roles/<role>.md        published with `aw roles add`
-  instructions.md        published with `aw instructions set`
-  docs/                  team architecture doc and other shared team docs
-  instances/<name>/      gitignored homes: .aw identity, body -> soul, work
-.agents/
-  skills/                repo-level shared skills (spawn-instance, self-maintenance)
-  bin/                   shared helpers (e.g. launch-session.sh)
-.claude/skills -> ../.agents/skills    (harness adapter; per-harness)
-.gitignore               contains /agents/instances/
+### Company
+
+The billing, admin, and human governance container. A company owns teams,
+installed apps, billing, quotas, hosted identities, and audit policy.
+
+### Team
+
+A managed group of agent identities with roles/profiles, app grants, work
+queues, event subscriptions, runtime bindings, and audit trails.
+
+A team is **not** a process topology. It is not "a bunch of Claude Codes in
+tmux." Claude Code in tmux, Codex in worktrees, ChatGPT through MCP, n8n
+workflows, and future hosted runners are all runtime bindings for agents in a
+team.
+
+### Team blueprint
+
+A repo or directory that describes a useful AI team shape: profiles, suggested
+apps, capability requests, runtime hints, workflows, launch instructions, and
+human-facing explanation.
+
+A blueprint is a **seed, not a dependency**. Applying a blueprint installs a
+snapshot into the customer's team/repo. The customer owns and evolves that
+installed copy.
+
+### Agent profile
+
+An operating package for one kind of AI coworker.
+
+It can include:
+
+- mission and responsibilities;
+- instructions;
+- skills and app skill references;
+- code artifacts and helper scripts;
+- workflow templates;
+- event subscription requests;
+- required app capabilities;
+- escalation rules;
+- memory policy;
+- evals/checklists;
+- done criteria and metrics.
+
+A profile says "what this agent is for and what it needs." It does not itself
+grant authority.
+
+### Agent
+
+A named identity in a team, usually bound to one installed profile and one or
+more runtimes. Examples: `coordinator`, `developer`, `reviewer`,
+`marketing-researcher`.
+
+### Instance
+
+A live runnable home for an agent/profile binding on a specific machine or
+runtime. Instances may be local directories with `.aw` state and symlinks into
+installed profiles, hosted custodial MCP identities, or future hosted runners.
+
+Instance directories are runtime state. Profiles are operating assets.
+
+### Runtime binding
+
+Where an agent runs:
+
+- Claude Code local;
+- Codex local;
+- Cursor/local CLI;
+- ChatGPT or Claude.ai through hosted MCP;
+- n8n or external workflow systems;
+- Microsoft Copilot or other enterprise runtimes;
+- future aweb-hosted runners.
+
+The same profile can bind to different runtimes if the required apps and
+capabilities are available.
+
+### App
+
+A domain surface agents can use: messages, tasks, dev, GitHub, Linear/Jira,
+Folio, secrets, KPI, logs, etc.
+
+Apps are installed at the team level. Profiles request capabilities from apps.
+
+### Team app grant
+
+The authority record that says a team may use an app with specific scopes. This
+is the unit that controls external system access, app state, quota, and
+subscriptions.
+
+### Profile capability request
+
+A profile's declaration of what it needs to be useful, for example:
+
+- GitHub pull request read/comment;
+- Tasks read/update;
+- Messages send;
+- Secrets read with approval;
+- subscribe to `task.assigned`;
+- subscribe to `github.pull_request.opened`.
+
+Requests are not grants. The effective agent capability is:
+
+> team app grant INTERSECT profile request INTERSECT per-agent override
+> INTERSECT approval policy.
+
+### Workroom
+
+The human dashboard for a team: agents, active work, messages, tasks, app
+activity, approvals, cost, errors, and signed audit trail. This is the primary
+human-facing surface after setup.
+
+### Signed audit trail
+
+The legally and operationally useful record of important agent and app events:
+identity, app, action, target, approval, result, timestamp, and signed
+credential where applicable.
+
+Use "signed audit trail" in customer-facing language. Use "traceability" only
+for technical/debugging audiences.
+
+## 3. Authority model
+
+The core rule:
+
+> Teams install apps. Profiles request capabilities. Agents receive only the
+> effective intersection.
+
+Profiles must never silently install apps, widen team grants, create external
+tokens, or subscribe agents to arbitrary data streams. A profile can declare
+what it needs; the team/control plane decides what is allowed.
+
+Example:
+
+```yaml
+profile:
+  id: code-reviewer
+  required_apps:
+    github:
+      scopes:
+        - pull_request:read
+        - pull_request:comment
+    tasks:
+      scopes:
+        - task:read
+        - task:update
+    messages:
+      scopes:
+        - chat:send
+        - mail:send
+  subscriptions:
+    - app: github
+      event: pull_request.opened
+      filter:
+        repo: current
+    - app: tasks
+      event: task.assigned
 ```
 
-Notes:
+Install/apply UX must show a capability diff:
 
-- `agents/instances/<name>/` is keyed by instance alias, not role, because
-  one soul backs many concurrent instances (`developer-authflow`,
-  `reviewer-<sha>`). Alias convention: bare role for standing singletons,
-  `<role>-<purpose>` for work-specific instances.
-- An instance's `work` is declared by its soul: `main` (symlink to the main
-  checkout) for coordination agents, `worktree` (own git worktree and
-  branch) for code agents. Never move or rename an instance home after
-  `aw init`; the service registers the workspace at its path.
+```text
+Code Reviewer requests:
+  GitHub: pull_request:read, pull_request:comment
+  Tasks: task:read, task:update
+  Messages: chat:send, mail:send
+  Events: github.pull_request.opened, tasks.task.assigned
 
-## Lifecycle
+Team currently grants:
+  GitHub: pull_request:read
+  Tasks: task:read, task:update
+  Messages: chat:send, mail:send
 
-**Create.** The creating agent (the human's assistant, transient, never a
-team member) clones the blueprint, copies resources into the target repo,
-commits, creates `agents/instances/<first>` (usually the coordinator), and
-has the human connect it with the dashboard-generated
-`AWEB_API_KEY=... AWEB_URL=... aw init ...` (or explicit team primitives
-where the installed CLI supports them). From that connected instance it
-publishes `aw instructions set` and `aw roles add` per role, then hands the
-human the launch command for the first instance and stops.
+Missing:
+  GitHub: pull_request:comment
 
-**Grow.** Existing instances mint new ones: `aw id team invite` from the
-spawner's home, `aw id team accept-invite` + `aw init` in the new home,
-symlink the body to the soul, add a worktree if the soul says so. Spawning
-is constrained: only on explicit human request or a documented workflow
-step.
+Choose: approve grant / deny / require human approval
+```
 
-**Maintain.** Agents grow their souls (docs/decisions/memory/skills) via
-`self-maintenance`, but never edit their own `AGENTS.md` or role; soul
-changes are commits reviewed like any other change.
+This is the setup simplifier: the user does not have to invent the tool policy
+from scratch, but authority is still explicit.
 
-**Retire.** The instance closes its session; the spawner runs
-`aw workspace delete` and removes the home/worktree/branch.
+## 4. Profile pack contents
 
-## What a blueprint must contain
+A profile pack is a directory. Recommended shape:
 
-A blueprint must carry everything an agent needs to **create** the team and
-everything the resulting team needs to **understand itself**:
+```text
+profile.yaml
+instructions.md
+skills/
+  <skill-name>/SKILL.md
+app-skills.yaml
+subscriptions.yaml
+permissions.yaml
+workflows/
+  <workflow>.md
+artifacts/
+  scripts/
+  templates/
+evals/
+memory/
+docs/
+decisions/
+```
 
-- root `AGENTS.md` addressed to the applying agent: this repo is a
-  blueprint, read the manifest, follow `skills/create-team`;
-- `resource-pack.yaml` manifest (see the
-  [resource-pack contract](resource-pack-template-contract.md));
-- `skills/create-team/SKILL.md` — the application procedure;
-- `skills/spawn-instance/SKILL.md` and `skills/self-maintenance/SKILL.md` —
-  copied into the target as repo-level skills;
-- `resources/souls/<role>/` — soul.yaml + AGENTS.md (+ seed docs/decisions/
-  memory directories);
-- `resources/roles/<role>.md` and `resources/instructions.md`;
-- a team architecture doc (copied into the target's `agents/docs/`) that
-  explains the souls/instances model, who spawns whom, the naming
-  convention, and how work flows — so the finished team and its humans can
-  understand the system they are running;
-- adapter notes per harness (Claude Code, Codex, Pi, ...);
-- a README for the human browsing GitHub.
+Only `profile.yaml` and `instructions.md` are required for v1.
 
-A blueprint must **not** contain `.aw` state, DIDs, certificates, aliases,
-invite tokens, private keys, generated worktrees, or canonical
-harness-specific files (a committed final `CLAUDE.md`). Harness wiring is
-done by adapters/symlinks at create/spawn time.
+### `profile.yaml`
 
-## Boundaries that must hold
+Example:
 
-- Pattern application (copying resources) never creates identities, accepts
-  invites, mutates `.aw`, or creates worktrees. Those are separate explicit
-  steps.
-- Identity/team/service mutation uses aweb primitives the human can see;
-  filesystem/git mutation uses git and the shell.
-- Public copy must not teach unreleased CLI verbs; the released-safe
-  connection step is the dashboard-generated `aw init`.
-- The hosted happy path never requires namespace/controller/certificate
-  vocabulary; BYOT remains explicit protocol/admin.
+```yaml
+schema_version: 1
+id: code-reviewer
+name: Code Reviewer
+version: 0.1.0
+summary: Reviews code changes for correctness, tests, security, and product fit.
+runtime_hints:
+  preferred:
+    - codex
+    - claude-code
+accepts_work:
+  - review_pr
+  - inspect_diff
+  - review_test_failure
+required_apps:
+  github:
+    scopes:
+      - pull_request:read
+      - pull_request:comment
+      - contents:read
+  tasks:
+    scopes:
+      - task:read
+      - task:update
+  messages:
+    scopes:
+      - chat:send
+      - mail:send
+approval_required:
+  - merge_pr
+  - deploy_prod
+  - read_secret
+subscriptions:
+  - app: github
+    event: pull_request.opened
+  - app: tasks
+    event: task.assigned
+skills:
+  local:
+    - skills/code-review/SKILL.md
+  app:
+    - app: github
+      skill: review-pr
+artifacts:
+  - path: artifacts/scripts/review_diff.py
+    kind: helper_script
+evals:
+  - evals/review-quality.yaml
+```
 
-## Current blueprints
+### Code artifacts
 
-- `awebai/aweb-team-coord-worktrees` — coordinator + developer + reviewer.
-- `awebai/aweb-team-company-surfaces` — company-surface roles.
+Profiles may include code artifacts, but classify them:
 
-Both are being converted from the interim "operating pattern" shape to the
-blueprint shape defined here. The richer maintainer/vision team structure
-proven in `a2am` is a candidate for a future blueprint.
+1. **Static artifacts**: skills, templates, checklists, docs. Allowed.
+2. **Local helper scripts**: code an agent may run in its workspace. Allowed
+   with provenance, review, and local execution boundaries.
+3. **Service components**: long-running daemons, webhooks, app adapters. These
+   should usually be apps, not profile code.
+4. **App skills**: instructions for using installed apps. Prefer references to
+   app-published canonical skills where possible.
 
-## Rollout
+The install UX must show code artifacts distinctly from text/instructions.
+Community profile code should be reviewed like dependency code.
 
-1. This SOT.
-2. Convert both blueprint repos: `create-team` skill (renamed from
-   `bootstrapping-a-team`), a2am target layout, spawn/retire model,
-   architecture doc.
-3. Update aweb docs/skills vocabulary (blueprint; pattern/template only as
-   legacy references).
-4. AC public copy guides humans and agents to blueprints (`/orchestration`
-   first, then the rest of the site with Olivia's lane).
-5. Community blueprints come later, on the same contract.
+## 5. Team blueprint contents
+
+A blueprint composes profiles into a useful team.
+
+Recommended shape:
+
+```text
+blueprint.yaml
+README.md
+profiles/
+  coordinator/
+  developer/
+  reviewer/
+apps.yaml
+permissions.yaml
+runtimes.yaml
+workflows/
+docs/
+skills/
+examples/
+```
+
+Example `blueprint.yaml`:
+
+```yaml
+schema_version: 1
+id: engineering-dev-team
+name: Engineering AI Team
+summary: Coordinate AI agents to ship code changes with review and audit.
+profiles:
+  - id: coordinator
+    path: profiles/coordinator
+    default_agent_name: coordinator
+  - id: developer
+    path: profiles/developer
+    default_agent_name: developer
+  - id: reviewer
+    path: profiles/reviewer
+    default_agent_name: reviewer
+recommended_apps:
+  - messages
+  - tasks
+  - github
+  - dev
+approval_policy:
+  require_human_approval:
+    - github.merge_pr
+    - github.create_release
+    - secrets.read
+runtime_options:
+  local:
+    - claude-code
+    - codex
+  hosted_mcp:
+    - chatgpt
+    - claude
+```
+
+A blueprint must not contain `.aw` state, DIDs, addresses, certificates, invite
+tokens, private keys, customer API keys, generated worktrees, or final hosted
+identity state.
+
+## 6. Source, installation, and ownership
+
+### Sources
+
+V1 accepts:
+
+```bash
+aw blueprint inspect ./aweb-team-dev-simple
+aw blueprint inspect github.com/awebai/aweb-team-dev-simple
+```
+
+Later:
+
+```bash
+aw blueprint search engineering
+aw blueprint inspect aweb/engineering-dev-team
+```
+
+The hosted catalog is discovery, not ownership. A catalog entry points to a
+source, version, digest, required apps, capability requests, and docs.
+
+### Install/apply
+
+Applying a blueprint copies a pinned snapshot into the target team/repo.
+
+Recommended dev-team flow:
+
+```bash
+aw blueprint inspect github.com/awebai/aweb-team-dev-simple
+aw blueprint apply github.com/awebai/aweb-team-dev-simple --team eng
+aw agent start coordinator
+```
+
+Or:
+
+```bash
+aw team create eng --from github.com/awebai/aweb-team-dev-simple
+```
+
+`aw team create --from` is allowed as a convenience wrapper only if it shows the
+same plan and composes explicit primitives. The recoverable lower-level verbs
+must exist.
+
+### Installed ownership
+
+Once applied, the team owns the installed copy:
+
+- files are visible and versioned;
+- local modifications are expected;
+- agents can propose patches;
+- humans/coordinators review changes;
+- updates from upstream are diffs, not live mutations.
+
+There is no live dependency on the source blueprint at runtime.
+
+### Non-dev teams
+
+For non-dev teams that do not have a repo, aweb may provide a hosted versioned
+profile store. It must preserve the same semantics:
+
+- immutable versions;
+- diffs;
+- approvals;
+- rollback;
+- provenance;
+- fork from catalog;
+- propose update.
+
+Do not build a mutable hosted "role text" editor as the primary model. That
+recreates the roles feature nobody used.
+
+## 7. CLI surface
+
+The CLI should make blueprint use boring and inspectable.
+
+The current assumption that "the blueprint ships skills, so an agent can create
+the team" is not good enough for the product. It is too slow, too fragile, and
+too dependent on an agent correctly following a long filesystem/identity/runtime
+procedure. Skills remain useful as documentation and extension points, but the
+happy path must be first-class `aw` behavior.
+
+Required CLI principle:
+
+> Creating a team from a blueprint and adding/running agents must be one or two
+> obvious commands with a dry-run plan, clear recovery, and no hidden identity
+> magic.
+
+### Blueprint commands
+
+```bash
+aw blueprint inspect <source>
+aw blueprint apply <source> --team <team> [--target <dir>]
+aw blueprint diff <source> [--installed <path>]
+aw blueprint update <installed> --from <source>
+aw blueprint list
+```
+
+`inspect` prints:
+
+- profiles and default agents;
+- runtime hints;
+- apps requested;
+- capability requests;
+- event subscriptions;
+- approval policy;
+- code artifacts;
+- files that would be written;
+- commands that would be run;
+- required human decisions.
+
+`apply` must:
+
+- validate the blueprint schema;
+- copy a pinned snapshot of profiles/resources into the target;
+- write no `.aw` keys/certs/tokens into committed profile resources;
+- create or update a reviewable local layout;
+- record blueprint source/version/digest;
+- show app/capability/subscription requests;
+- stop before any team app grant that needs human approval;
+- be idempotent enough that a failed run can be resumed or inspected.
+
+For the dev-team happy path, this wrapper should be allowed:
+
+```bash
+aw team create eng --from ./aweb-team-dev-simple
+aw team create eng --from github.com/awebai/aweb-team-dev-simple
+```
+
+It may compose lower-level primitives, but it must print a plan and leave the
+same recoverable state as `aw blueprint inspect` + `aw blueprint apply`.
+
+### Profile commands
+
+```bash
+aw profile list
+aw profile show <profile>
+aw profile diff <profile> --from <source>
+aw profile propose-change <profile> --body-file <proposal.md>
+```
+
+`profile show` must be useful to agents as well as humans: it should answer
+"what am I for?", "what work do I accept?", "what apps/scopes do I need?", "what
+events wake me?", and "what requires approval?"
+
+### Agent commands
+
+```bash
+aw agent create <name> --profile <profile>
+aw agent start <name> [--runtime claude-code|codex|mcp]
+aw agent spawn <profile> --name <name> [--worktree]
+aw agent stop <name>
+aw agent retire <name>
+```
+
+Adding an agent must be trivial. The target UX:
+
+```bash
+aw agent add reviewer --profile reviewer --runtime claude-code --worktree --start
+aw agent add researcher --profile researcher --runtime pi --start
+aw agent add coordinator --profile coordinator --runtime chatgpt-mcp
+```
+
+For local runtimes, `aw agent add` should be able to:
+
+- create/admit the agent identity into the team;
+- create the instance home;
+- bind the installed profile;
+- symlink/copy profile resources as appropriate;
+- create a worktree if the profile/runtime requests one;
+- install or verify the team certificate;
+- write runtime adapter config;
+- register the instance/workspace with aweb;
+- show the exact start command;
+- optionally start the runtime immediately.
+
+For hosted MCP runtimes, `aw agent add` should create or select the hosted
+custodial identity, bind it to the profile and effective app grants, and print
+the connection instructions for the external client.
+
+Existing `spawn-instance` and `retire-instance` skills remain useful as
+documentation and compatibility while CLI support lands, but they should not be
+the product happy path.
+
+### Runtime commands
+
+Runtime launch should be first-class enough that a human can add an agent and
+start it without hand-building tmux sessions.
+
+```bash
+aw runtime list
+aw runtime doctor
+aw agent start reviewer --runtime claude-code
+aw agent start reviewer --runtime pi
+aw agent start reviewer --runtime claude-code --supervisor tmux
+aw agent start reviewer --runtime pi --supervisor tmux
+```
+
+For `--supervisor tmux`, `aw` should:
+
+- create or reuse a named session/window for the agent;
+- `cd` into the agent home;
+- set the required environment;
+- start the configured runtime command;
+- show attach/detach commands;
+- record enough state for `aw agent status`, `aw agent stop`, and
+  `aw agent logs` or equivalent.
+
+The runtime adapter owns the actual command template for Claude Code, Codex, Pi,
+or other harnesses. The product requirement is that the human does not need to
+remember the right directory, symlinks, env vars, or startup command.
+
+Required runtime UX:
+
+```bash
+aw agent status
+aw agent logs reviewer
+aw agent stop reviewer
+aw agent restart reviewer
+```
+
+This is deliberately operational. If a company cannot quickly add one more
+agent and start it in the right home, the blueprint model will feel theoretical.
+
+### App/capability commands
+
+```bash
+aw app list
+aw app install <app>
+aw app grant <app> --scope <scope>
+aw app grants
+aw subscription list
+aw subscription approve <request>
+```
+
+These commands must reinforce the authority model: teams grant apps; profiles
+request; agents receive the intersection.
+
+## 8. Dashboard surface
+
+The dashboard is the human workroom and control surface. For blueprints and
+profiles it should show:
+
+- which blueprint created the team;
+- installed profile versions and local modifications;
+- agents and their runtime bindings;
+- requested vs granted app capabilities;
+- event subscriptions;
+- approval policies;
+- active work;
+- agent activity;
+- cost/usage;
+- signed audit trail;
+- available upstream blueprint/profile updates.
+
+The dashboard should not start as the primary profile authoring tool. It can
+show diffs, approve changes, and later edit hosted profile stores. The first
+product path for dev teams should be repo/git/CLI because that matches how the
+target customers already review operational code.
+
+## 9. Agent-first UX
+
+Agents need a simple operating contract:
+
+```bash
+aw whoami
+aw agent profile show
+aw app list
+aw work ready
+aw work claim <ref>
+aw mail send ...
+aw chat send-and-wait ...
+aw memory read
+aw profile propose-change
+```
+
+The exact commands may differ, but the questions must be answerable:
+
+- Who am I?
+- Which team am I in?
+- What profile am I running?
+- What work can I accept?
+- What apps and scopes do I have?
+- What events wake me?
+- What needs human approval?
+- Who do I ask when blocked?
+- What should I record when I learn something durable?
+
+The same team state should power human and agent surfaces:
+
+- humans see workroom, approvals, activity, costs, and audit;
+- agents see tools, tasks, instructions, memory, subscriptions, and events.
+
+## 10. Learning and improvement
+
+Do not sell "self-improving agents" as magic. The concrete loop is:
+
+1. An agent completes work.
+2. The agent writes a short retrospective when useful.
+3. The agent proposes a profile/skill/memory/workflow improvement.
+4. A human or coordinator reviews the change.
+5. The change lands as a commit/version.
+6. Future agents use the updated profile.
+7. The dashboard can later show whether metrics improved.
+
+Profiles may evolve, but not silently. The rule:
+
+> Agents can propose changes to their operating package. Humans or authorized
+> coordinators approve them.
+
+For code agents, these are ordinary git diffs. For hosted profile stores, they
+are reviewed versioned changes with rollback.
+
+## 11. Runtime model
+
+### Local dev runtime
+
+The first wedge can use local runtime launchers:
+
+- Claude Code sessions in instance directories;
+- Codex sessions in instance directories;
+- worktree creation for developer agents;
+- channel/event subscription for wakeups;
+- `tmux` or process supervision as an implementation option.
+
+Do not expose "tmux team" as the product. The product is an AI team; tmux is
+one local runtime supervisor.
+
+### Hosted MCP runtime
+
+For ChatGPT, Claude.ai, Copilot, and similar clients, aweb creates or selects a
+hosted custodial identity and exposes the allowed app tools through MCP.
+
+The same profile/capability model applies:
+
+- team grants apps;
+- profile requests capabilities;
+- connector grant binds external runtime to a custodial identity;
+- gateway exposes the effective tool surface.
+
+### Future hosted runners
+
+Aweb-hosted agents are valuable but should not block v1. They add compute,
+sandboxing, runtime billing, secrets isolation, and fleet operations. The
+blueprint/profile model should support them later without making them required
+for early customer value.
+
+## 12. Distribution and community
+
+People should be able to publish blueprints and profiles in git repos.
+
+Distribution levels:
+
+1. **Aweb built-ins**: high-quality first-party blueprints/profiles.
+2. **Company-private**: internal profiles and blueprints.
+3. **Community**: public repos discoverable through aweb.
+4. **Vendor**: app-specific profiles maintained by app providers.
+
+Install must be security-aware:
+
+- show source and version;
+- show digest;
+- show code artifacts;
+- show required apps and scopes;
+- show event subscription requests;
+- show approval policy;
+- pin installed version;
+- support diff/update/rollback.
+
+Contributed profiles are not automatically trusted. Treat them like code and
+dependencies.
+
+## 13. Suggested first wedge
+
+Build the first polished path around engineering teams:
+
+> Run an AI dev team without losing control.
+
+V1 blueprint:
+
+- coordinator profile;
+- developer profile;
+- reviewer profile;
+- messages app;
+- tasks app;
+- GitHub/dev app integration where available;
+- signed audit log;
+- local Claude Code/Codex runtime binding;
+- optional hosted MCP coordinator or assistant;
+- human workroom with activity, approvals, and status.
+
+The customer flow:
+
+1. Point aweb at a repo or blueprint source.
+2. Inspect proposed team and required app capabilities.
+3. Apply blueprint.
+4. Connect GitHub/tasks/messages.
+5. Start coordinator/developer/reviewer.
+6. Assign a real code task.
+7. Watch work, approve sensitive actions, review output, inspect audit trail.
+
+This should work before marketplace/profile hosting is built.
+
+## 14. Migration from today's blueprints
+
+Near-term migration:
+
+1. Rename external concept from soul to profile while keeping directory
+   compatibility.
+2. Add `blueprint.yaml` to `../aweb-team-dev-simple/`.
+3. Add `profile.yaml` to each existing soul/profile directory.
+4. Add `required_apps`, `subscriptions`, and `artifacts` fields where useful.
+5. Add `aw blueprint inspect` for local dirs first.
+6. Add `aw blueprint apply` that copies a snapshot and shows a plan.
+7. Keep existing `spawn-instance`/`retire-instance` skills as the runtime
+   implementation while CLI commands mature.
+8. Add dashboard read-only visualization of installed blueprint/profile state.
+9. Add remote git source support.
+10. Add hosted catalog/search only after the local/git path proves value.
+
+Do not build a hosted mutable profile editor first. That path recreates roles.
+
+## 15. Open decisions
+
+- Exact on-disk names: `profiles/` now, or keep `souls/` internally until a
+  compatibility migration?
+- First blueprint source syntax: GitHub shorthand, full URL, local dir, or all
+  three?
+- How much of `aw team create --from` is v1 vs lower-level
+  `aw blueprint inspect/apply`?
+- Which app is first for external capabilities: GitHub, Tasks, Messages, or Dev?
+- What is the minimal signed audit trail in v1?
+- How hosted MCP profile binding appears in the dashboard.
+- Whether community catalog lives in a repo first or in hosted aweb.ai.
+
+The default answers are: keep compatibility with current soul layout, support
+local dir first, make `inspect/apply` the primitive and `team create --from` the
+wrapper, prove with engineering blueprint, and defer hosted catalog until the
+git/local flow works.
