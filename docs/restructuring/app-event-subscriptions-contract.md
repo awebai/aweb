@@ -176,6 +176,11 @@ Core matches an emitted event when:
 2. `event.type == subscription.type`, and
 3. `subscription.resource_ref IS NULL OR subscription.resource_ref == event.resource_ref`.
 
+If multiple subscriptions for the same agent match one emitted event, core
+resolves a single effective `delivery_intent` by strongest subscriber-selected
+intent, ordered `steer > wake > ambient`. This strongest-intent resolution is
+server/core-side; channel-core receives one resolved `app_event` frame.
+
 Matched events are delivered through the existing authenticated
 `GET /v1/events/stream` SSE channel.
 
@@ -222,8 +227,22 @@ it into the existing `ChannelAwakening` object shape as:
 ```
 
 The adapter boundary remains `{kind, content, meta, deliveryIntent}`. Adapters do
-not gain one kind per app event; `formatAwakeningForAgent` already displays
-`meta.type || kind`, and app-specific routing data lives in `meta`.
+not gain one kind per app event; app-specific routing data lives in `meta`.
+Channel-core adds a generic app render in `formatAwakeningForAgent` using
+`meta.type` (the app event type), `resource_ref`, and a compact payload summary.
+
+## Channel-core consumer behavior
+
+The consumer-side change is intentionally narrow and contained to channel-core:
+
+- `parseAgentEvent` accepts `app_event` SSE frames.
+- `dispatchAgentEvent` maps `app_event` to `ChannelAwakening` with `kind: "app"`.
+- `deliveryIntent` is `data.delivery_intent` (effective subscriber-selected
+  intent), never `producer_delivery_intent`.
+- `event_id` is the channel-core de-dupe key for app events.
+- `producer_delivery_intent` is copied into `meta` for audit/debug only.
+- Channel-core does **not** fetch or hydrate app data on app events. The payload
+  is metadata-only wake content; deeper state comes from the app's own CLI/API.
 
 ## Durability and replay semantics
 
@@ -232,7 +251,7 @@ These are wake signals, not an app event ledger:
 - Core stores emitted app events long enough for active/reconnecting SSE clients
   to receive and de-dupe them.
 - Clients may receive duplicate app events after reconnect; `event_id` is the
-  de-dupe key.
+  de-dupe key used by channel-core.
 - Core may expire old delivered/undelivered app events by TTL.
 - Apps that need authoritative state must expose their own app API; the wake
   carries enough metadata to decide whether to hydrate.
