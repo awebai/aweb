@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -171,7 +173,7 @@ def test_append_template_version_route_renders_template_body(monkeypatch) -> Non
     route = next(route for route in app.routes if getattr(route, "path", None) == "/v1/documents/{slug}/versions/template")
     principal_dependency = route.dependant.dependencies[0].call
     db_dependency = route.dependant.dependencies[1].call
-    app.dependency_overrides[principal_dependency] = lambda: object()
+    app.dependency_overrides[principal_dependency] = lambda: SimpleNamespace(team_id="default:test")
     app.dependency_overrides[db_dependency] = lambda: object()
     captured: dict[str, object] = {}
 
