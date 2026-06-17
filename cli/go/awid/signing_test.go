@@ -3,6 +3,8 @@ package awid
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -528,6 +530,38 @@ func TestSignArbitraryPayloadRoundtrip(t *testing.T) {
 	}
 	if !ed25519.Verify(pub, []byte(canonical), sigBytes) {
 		t.Fatal("signature did not verify")
+	}
+}
+
+func TestSignAppEmitCredentialVectorShape(t *testing.T) {
+	t.Parallel()
+
+	seed, err := hex.DecodeString("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	target, err := url.Parse("https://core.aweb.ai/v1/events/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"type":"folio/doc.changed","resource_ref":"pitch","delivery_intent":"ambient","payload":{"title":"Café <draft>","version":"7"}}`)
+	credential, err := SignAppEmitCredential(key, "POST", target, "default:atext.aweb.ai", "folio", "emit-2026-06", body, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.DIDKey != "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd" {
+		t.Fatalf("did=%s", credential.DIDKey)
+	}
+	wantCanonical := `{"app_id":"folio","aud":"https://core.aweb.ai","auth":"app-event","body_sha256":"98677f0e37aaf312137d431f4510a86cde0c882b7af1b272427645b5240285e2","did_key":"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd","kid":"emit-2026-06","method":"POST","path":"/v1/events/app","team_id":"default:atext.aweb.ai","timestamp":"2026-06-17T12:00:00Z","v":1}`
+	if credential.CanonicalPayload != wantCanonical {
+		t.Fatalf("canonical=%s want %s", credential.CanonicalPayload, wantCanonical)
+	}
+	if credential.Headers.Get("Authorization") != "AWEB-App DIDKey "+credential.DIDKey+" "+credential.SignatureB64 {
+		t.Fatalf("authorization=%q", credential.Headers.Get("Authorization"))
+	}
+	if credential.Headers.Get("X-AWEB-App-ID") != "folio" || credential.Headers.Get("X-AWEB-App-Key-ID") != "emit-2026-06" || credential.Headers.Get("X-AWEB-Team-ID") != "default:atext.aweb.ai" {
+		t.Fatalf("headers=%#v", credential.Headers)
 	}
 }
 
