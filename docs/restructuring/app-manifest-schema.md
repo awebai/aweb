@@ -221,6 +221,21 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 - **Auth method** — fixed: v2 team-auth (`aw id request --team-auth` for CLI;
   gateway-signed for hosted MCP). Not a per-tool field.
 
+## Future manifest versions (backlog — not v1)
+
+Deferred consistently; capture so they aren't lost. None block v1.
+
+- **Cross-field param constraints** (e.g. `oneOf` / mutual-exclusion). folio's
+  `create` accepts mutually-exclusive `body | template` (exactly-one, enforced
+  server-side as 422); the v1 manifest declares both fields but **cannot express
+  the exactly-one-of constraint**, so it's invisible to a consumer reading the
+  manifest. v1 relies on server enforcement (correct today). A later version
+  could carry a small constraint grammar over params. *(Flagged by folio at real
+  usage, 2026-06-17.)*
+- **`multipart` body mode** (no current app needs it).
+- **Float body fields** (pin Go↔Python float canonicalization; v1 forbids them).
+- **Output selectors / streaming responses** (v1 is verbatim passthrough).
+
 ## Open questions for reviewers
 
 1. **cli (dispatch):** is `body.raw_param` + `body.content_type` the right way to
