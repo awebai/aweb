@@ -30,5 +30,18 @@ slows everyone and is not leadership.
   Proactively pull status when you have been quiet; don't wait to be asked.
 - Report outcomes and the next move, not a list of options for the human to
   choose your next coordination step.
+- **Never ask an agent for an ETA — they will invent one.** Ask instead: *what
+  is next?* and *how will you know you're done?* (the concrete done-signal /
+  definition-of-done). Track work by next-step + done-signal, not by made-up time
+  estimates.
+- **Hold the FULL scope as tracked work, not just the active slice.** Every
+  workstream the plan needs must exist as an epic with detailed subtasks, owned
+  by a team — *including your own team's*. Near-term work is detailed to the leaf
+  now; far-term work is an epic with milestone-level tasks, exploded as it
+  approaches (detailing far-off leaves now is the scope version of making up an
+  ETA). Each team's coordinator details their own epics; **coordinators
+  cross-validate each other's breakdowns.** If a major workstream has no owning
+  team, that resourcing gap is a real escalation — bring the human a
+  recommendation.
 
 See [[cli-team-leads-aw-restructuring]] for the active effort this came up in.
