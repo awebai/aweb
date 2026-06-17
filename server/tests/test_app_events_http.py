@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
+import aweb.app_events as app_events
 import aweb.routes.events as events_routes
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -51,12 +53,12 @@ def _cached_body_receive(body: bytes):
     return _receive
 
 
-def _build_events_app(aweb_db) -> FastAPI:
+def _build_events_app(aweb_db, *, public_origin: str = "http://test") -> FastAPI:
     app = FastAPI()
     app.include_router(events_router)
     app.state.db = _DbShim(aweb_db)
     app.state.redis = object()
-    app.state.public_origin = "http://test"
+    app.state.public_origin = public_origin
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -86,14 +88,17 @@ async def _fake_team_identity(request, db_infra) -> TeamIdentity:
     )
 
 
-async def _seed_team_and_agent(aweb_db) -> None:
+async def _seed_team_and_agent(aweb_db, *, team_id: str = TEAM_ID) -> None:
+    team_name, namespace = team_id.split(":", 1)
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'backend', 'did:key:z6Mkteam')
+        VALUES ($1, $2, $3, 'did:key:z6Mkteam')
         ON CONFLICT DO NOTHING
         """,
-        TEAM_ID,
+        team_id,
+        namespace,
+        team_name,
     )
     await aweb_db.execute(
         """
@@ -104,7 +109,7 @@ async def _seed_team_and_agent(aweb_db) -> None:
         ON CONFLICT DO NOTHING
         """,
         AGENT_ID,
-        TEAM_ID,
+        team_id,
     )
 
 
@@ -114,10 +119,10 @@ def _make_app_keypair():
     return bytes(signing_key), did_key
 
 
-async def _install_folio(aweb_db, *, did_key: str) -> None:
+async def _install_folio(aweb_db, *, did_key: str, team_id: str = TEAM_ID, kid: str = "emit-1") -> None:
     await install_app(
         aweb_db,
-        team_id=TEAM_ID,
+        team_id=team_id,
         app_id="folio",
         origin="https://folio.aweb.ai",
         app_version="1.x",
@@ -129,7 +134,7 @@ async def _install_folio(aweb_db, *, did_key: str) -> None:
             AppEventType(type="doc.changed", default_delivery_intent="wake"),
             AppEventType(type="asset.video.status", default_delivery_intent="ambient"),
         ],
-        emit_keys=[AppEmitKey(kid="emit-1", did_key=did_key)],
+        emit_keys=[AppEmitKey(kid=kid, did_key=did_key)],
     )
 
 
@@ -159,6 +164,67 @@ def _signed_app_headers(*, signing_key: bytes, did_key: str, body: bytes, path: 
         "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical).decode().rstrip("="),
         "Content-Type": "application/json",
     }
+
+
+def _app_emit_vector_case() -> dict:
+    vectors_path = (
+        Path(__file__).resolve().parents[2]
+        / "cli"
+        / "go"
+        / "internal"
+        / "conformance"
+        / "vectors"
+        / "app-emit-credential-v1.json"
+    )
+    vectors = json.loads(vectors_path.read_text(encoding="utf-8"))
+    assert vectors["schema"] == "aweb.app-emit-credential.v1"
+    return vectors["cases"][0]
+
+
+@pytest.mark.asyncio
+async def test_app_event_emit_accepts_shared_conformance_vector(aweb_cloud_db, monkeypatch):
+    """Core verifier consumes the same byte-freeze vector as the CLI signer."""
+
+    case = _app_emit_vector_case()
+    payload = case["payload"]
+    body = case["body"].encode()
+    canonical = case["canonical_payload"].encode()
+    assert canonical_json_bytes(payload) == canonical
+    assert base64.urlsafe_b64encode(canonical).decode().rstrip("=") == case["signed_payload_b64url"]
+    assert hashlib.sha256(body).hexdigest() == payload["body_sha256"]
+
+    # The vector timestamp is fixed for byte parity; this test exercises the
+    # verifier bytes/signature path and separately leaves freshness covered by
+    # the dedicated stale-timestamp negative vector and route checks.
+    monkeypatch.setattr(app_events, "enforce_timestamp_skew", lambda _timestamp: None)
+    app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=payload["aud"])
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db, team_id=payload["team_id"])
+    await _install_folio(
+        aweb_cloud_db.aweb_db,
+        team_id=payload["team_id"],
+        kid=payload["kid"],
+        did_key=payload["did_key"],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=payload["aud"]) as client:
+        resp = await client.post(
+            payload["path"],
+            content=body,
+            headers={
+                "Authorization": f"AWEB-App DIDKey {payload['did_key']} {case['signature_b64']}",
+                "X-AWEB-App-ID": payload["app_id"],
+                "X-AWEB-App-Key-ID": payload["kid"],
+                "X-AWEB-Team-ID": payload["team_id"],
+                "X-AWEB-Timestamp": payload["timestamp"],
+                "X-AWEB-Signed-Payload": case["signed_payload_b64url"],
+                "Content-Type": "application/json",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["team_id"] == payload["team_id"]
+    assert resp.json()["app_id"] == payload["app_id"]
+    assert resp.json()["type"] == json.loads(case["body"])["type"]
 
 
 @pytest.mark.asyncio
