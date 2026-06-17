@@ -432,8 +432,12 @@ Non-negotiable: conformance + versioning, not packaging on day one.
 - `from aweb.api import create_app` + `app.mount("/api", aweb_app)`
   (`main.py:33,432-483`) and the hosted MCP mount at `/mcp` — the OSS server runs
   **in-process**.
-- One Postgres pool spans **four schemas** (`aweb_cloud`, `server`, `aweb`,
-  `awid`).
+- One Postgres pool spans **three runtime schemas** (`aweb_cloud`, `server`,
+  `aweb`). **`awid` is the external HTTP registry** (`api.awid.ai`), *not* a
+  same-pool schema in production — a same-pool `awid` manager appears only in
+  tests (ac-team survey, 2026-06-17; corroborated: no FK references `awid`). So
+  m8's awid decoupling is **packaging** (stop compiling `awid` into
+  `Dockerfile.release`), not FK/schema cleanup.
 - **30 cross-boundary foreign keys** lock the schemas into one deployable
   (representative: `aweb_cloud.* → server.teams`, `aweb_cloud.* → aweb.workspaces`,
   `aweb_cloud.* → aweb.agents`, `a2a_gateway_routes → server.teams`,

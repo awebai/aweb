@@ -8,8 +8,21 @@ the schemas can live in separate services.
 
 ## 1. Cross-boundary foreign keys (30)
 
-Schemas: `aweb_cloud` (SaaS/control-plane), `server` (cloud coordination),
-`aweb` (OSS canonical), `awid`.
+Runtime schemas (one Postgres pool): `aweb_cloud` (SaaS/control-plane), `server`
+(cloud coordination), `aweb` (OSS canonical). **`awid` is the external HTTP
+registry (`api.awid.ai`), NOT a same-pool runtime schema** — a same-pool `awid`
+manager appears only in tests, and **no FK below references `awid`** (ac-team
+survey, 2026-06-17). m8's awid decoupling is packaging (stop baking `awid` into
+`Dockerfile.release`), not FK/schema cleanup.
+
+**8a/8b staging (ac-team verdicts, confirmed against live migrations):** 8b = the
+6 workspace-keyed FKs to `aweb.workspaces` (#2, #3, #4, #6, #19, #20) + the
+overlay messaging columns (`signing_key_id`, ride m10); everything else is 8a
+(incl. the 11 `aweb.agents` identity columns and the 7 overlay tables). For #3
+(agent certs) and #4/#19 (custodial keys) — control-plane identity state — add
+the `agent_id`/`aweb_team_id` logical projections in 8a (dual-write) so 8b is
+pure constraint removal, not data-model discovery. *(The per-row 8a/8b column is
+being applied from the ac-team's tagged table.)*
 
 | # | From `table.column` (schema) | → To `schema.table.column` | File:line | On delete |
 |---|---|---|---|---|
