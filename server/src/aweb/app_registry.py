@@ -16,6 +16,9 @@ from aweb.service_errors import BadRequestError, ConflictError, ValidationError
 APP_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SCOPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$")
+LOCAL_EVENT_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+DELIVERY_INTENTS = frozenset({"wake", "steer", "ambient"})
 
 RESERVED_APP_IDS_ARTIFACT = "reserved-app-ids-v1.json"
 RESERVED_APP_IDS_SCHEMA = "aweb.reserved-app-ids.v1"
@@ -29,6 +32,19 @@ class AppInstall:
     manifest_version: int
     digest: str
     granted_scopes: list[str]
+
+
+@dataclass(frozen=True)
+class AppEventType:
+    type: str
+    default_delivery_intent: str = "ambient"
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class AppEmitKey:
+    kid: str
+    did_key: str
 
 
 def _reserved_app_ids_path() -> Path:
@@ -143,6 +159,75 @@ def normalize_scopes(values: list[str]) -> list[str]:
     return sorted(normalized)
 
 
+def normalize_delivery_intent(value: str | None, *, default: str = "ambient") -> str:
+    intent = (value or default).strip().lower()
+    if intent not in DELIVERY_INTENTS:
+        raise ValidationError("delivery_intent must be wake, steer, or ambient")
+    return intent
+
+
+def normalize_local_event_type(value: str) -> str:
+    event_type = (value or "").strip().lower()
+    if not LOCAL_EVENT_TYPE_RE.match(event_type):
+        raise ValidationError("event type must be lower-case app-local text")
+    if "/" in event_type:
+        raise ValidationError("manifest event type must be app-local, not app-qualified")
+    return event_type
+
+
+def normalize_app_event_type(value: str) -> tuple[str, str]:
+    raw = (value or "").strip().lower()
+    if raw.count("/") != 1:
+        raise ValidationError("event type must be <app_id>/<event_type>")
+    app_id, local_type = raw.split("/", 1)
+    return normalize_app_id(app_id), normalize_local_event_type(local_type)
+
+
+def normalize_key_id(value: str) -> str:
+    kid = (value or "").strip()
+    if not KEY_ID_RE.match(kid):
+        raise ValidationError("key id is invalid")
+    return kid
+
+
+def normalize_did_key(value: str) -> str:
+    did_key = (value or "").strip()
+    if not did_key.startswith("did:key:"):
+        raise ValidationError("did_key must be did:key")
+    return did_key
+
+
+def normalize_event_types(values: list[AppEventType]) -> list[AppEventType]:
+    out: list[AppEventType] = []
+    seen: set[str] = set()
+    for item in values:
+        event_type = normalize_local_event_type(item.type)
+        if event_type in seen:
+            continue
+        out.append(
+            AppEventType(
+                type=event_type,
+                default_delivery_intent=normalize_delivery_intent(item.default_delivery_intent),
+                description=(item.description or "").strip()[:4096],
+            )
+        )
+        seen.add(event_type)
+    return out
+
+
+def normalize_emit_keys(values: list[AppEmitKey]) -> list[AppEmitKey]:
+    out: list[AppEmitKey] = []
+    seen: set[str] = set()
+    for item in values:
+        kid = normalize_key_id(item.kid)
+        did_key = normalize_did_key(item.did_key)
+        if kid in seen:
+            continue
+        out.append(AppEmitKey(kid=kid, did_key=did_key))
+        seen.add(kid)
+    return out
+
+
 def validate_team_id(team_id: str) -> str:
     value = (team_id or "").strip()
     try:
@@ -163,6 +248,8 @@ async def install_app(
     digest: str,
     granted_scopes: list[str],
     installed_by_agent_id: str | None = None,
+    event_types: list[AppEventType] | None = None,
+    emit_keys: list[AppEmitKey] | None = None,
 ) -> AppInstall:
     """Install or explicitly re-install an app for a team.
 
@@ -178,6 +265,8 @@ async def install_app(
     manifest_version = normalize_manifest_version(manifest_version)
     digest = normalize_digest(digest)
     granted_scopes = normalize_scopes(granted_scopes)
+    event_types = normalize_event_types(event_types or [])
+    emit_keys = normalize_emit_keys(emit_keys or [])
 
     registered = await db.fetch_one(
         """
@@ -248,6 +337,39 @@ async def install_app(
             granted_scopes,
             installed_by_agent_id,
         )
+        for event_type in event_types:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.app_registry_event_types}} (
+                    app_id, origin, digest, event_type, default_delivery_intent,
+                    description, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                ON CONFLICT (app_id, origin, digest, event_type) DO UPDATE SET
+                    default_delivery_intent = EXCLUDED.default_delivery_intent,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()
+                """,
+                app_id,
+                origin,
+                digest,
+                event_type.type,
+                event_type.default_delivery_intent,
+                event_type.description,
+            )
+        for emit_key in emit_keys:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.app_registry_emit_keys}} (app_id, key_id, did_key)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (app_id, key_id) DO UPDATE SET
+                    did_key = EXCLUDED.did_key,
+                    revoked_at = NULL
+                """,
+                app_id,
+                emit_key.kid,
+                emit_key.did_key,
+            )
 
     return AppInstall(
         app_id=app_id,
@@ -291,3 +413,59 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
         )
         for row in rows
     ]
+
+
+async def get_installed_app_event_type(
+    db,
+    *,
+    team_id: str,
+    app_id: str,
+    local_event_type: str,
+) -> dict | None:
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    local_event_type = normalize_local_event_type(local_event_type)
+    return await db.fetch_one(
+        """
+        SELECT
+            i.origin,
+            i.digest,
+            e.default_delivery_intent
+        FROM {{tables.team_app_installs}} AS i
+        JOIN {{tables.app_registry_event_types}} AS e
+          ON e.app_id = i.app_id
+         AND e.origin = i.origin
+         AND e.digest = i.digest
+        WHERE i.team_id = $1
+          AND i.app_id = $2
+          AND e.event_type = $3
+        """,
+        team_id,
+        app_id,
+        local_event_type,
+    )
+
+
+async def get_active_app_emit_key(
+    db,
+    *,
+    app_id: str,
+    kid: str,
+    did_key: str,
+) -> dict | None:
+    app_id = normalize_app_id(app_id)
+    kid = normalize_key_id(kid)
+    did_key = normalize_did_key(did_key)
+    return await db.fetch_one(
+        """
+        SELECT app_id, key_id, did_key
+        FROM {{tables.app_registry_emit_keys}}
+        WHERE app_id = $1
+          AND key_id = $2
+          AND did_key = $3
+          AND revoked_at IS NULL
+        """,
+        app_id,
+        kid,
+        did_key,
+    )

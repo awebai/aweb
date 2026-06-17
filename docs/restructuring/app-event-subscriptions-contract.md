@@ -43,12 +43,6 @@ An app manifest may declare the app events it can emit. This mirrors `tools`:
         "examples": ["pitch"]
       }
     }
-  ],
-  "event_emitters": [
-    {
-      "kid": "emit-2026-06",
-      "did_key": "did:key:z6Mk..."
-    }
   ]
 }
 ```
@@ -64,10 +58,6 @@ Rules:
   subscriber may override it; the stored subscriber choice governs delivery.
 - `resource_ref` describes the opaque resource key shape for humans/clients; core
   only exact-matches the string.
-- `event_emitters` lists app-owned service signing keys allowed to emit events
-  for this pinned manifest digest. The app holds the private key; team agents do
-  not. Key rotation is an explicit manifest update/re-install because install
-  pins the digest.
 
 ## App-emitted event shape
 
@@ -113,7 +103,7 @@ Emit authorization is app-scoped, privileged, and attributable: the producer is
 an app acting in a team, not a random team member and not the hosted gateway.
 Apps do not sign as the team and do not hold team certificates.
 
-Proposed v1 app-service credential:
+First implementation app-service credential:
 
 ```http
 Authorization: AWEB-App DIDKey <did:key> <base64-signature>
@@ -142,13 +132,25 @@ The canonical signed payload is:
 }
 ```
 
-Core accepts an emit only when all of these are true:
+The app registry stores app-owned emit keys at app registration/install time:
+
+```json
+{
+  "event_emitters": [
+    {"kid":"emit-2026-06", "did_key":"did:key:z6Mk..."}
+  ]
+}
+```
+
+The app holds the private key; team agents do not. Key rotation is an explicit
+registry/app-registration update. Core accepts an emit only when all of these are
+true:
 
 1. the app-service signature verifies over the canonical payload;
 2. `team_id` and `app_id` from headers/payload match the request body and route
    context;
 3. `app_id` is installed for `team_id`;
-4. `(kid, did_key)` appears in the pinned manifest digest's `event_emitters`;
+4. `(kid, did_key)` is an active registry emit key for `app_id`;
 5. body `type` has prefix `<app_id>/`; and
 6. the pinned manifest for that installed app declares the emitted app-local
    event type.
@@ -387,7 +389,14 @@ the app cannot escalate beyond the subscriber's chosen behavior.
 `folio/asset.video.status` with `resource_ref = <asset_id>` wakes an owning or
 following agent instead of forcing polling of `/assets/{id}`.
 
-## Open cross-validation points
+## Cross-validation status
 
-1. **aweb/aw/ac:** cross-validate the proposed `AWEB-App DIDKey` credential and
-   manifest `event_emitters` key source for `POST /v1/events/app`.
+All m3.2 contract points are closed for first implementation:
+
+- channel-core: one generic `kind: "app"`, `meta.type` as app event type,
+  event-id de-dupe, generic app render, no app hydration.
+- ac/gateway: standard subscription management only; writes sign as identity,
+  reads may use internal gateway auth; relay to keyless runtimes deferred v2.
+- emit auth: `AWEB-App DIDKey` app-scoped credential tied to an active registry
+  emit key for an installed app; core authorizes via the app<->team install
+  grant and declared manifest event type.

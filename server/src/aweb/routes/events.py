@@ -12,11 +12,25 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
+from aweb.app_events import (
+    AppEventAuth,
+    AppEventRecord,
+    AppEventSubscription,
+    current_app_events_for_agent,
+    delete_app_event_subscription,
+    emit_app_event,
+    list_app_event_subscriptions,
+    upsert_app_event_subscription,
+    verify_app_event_auth,
+)
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
+from aweb.internal_auth import parse_internal_auth_context
+from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 logger = logging.getLogger(__name__)
@@ -26,6 +40,48 @@ router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 EVENTS_POLL_INTERVAL = 1.0  # seconds between polls
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
+
+
+class AppEventEmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(..., min_length=1, max_length=256)
+    resource_ref: str | None = Field(None, max_length=1024)
+    delivery_intent: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AppEventEmitResponse(BaseModel):
+    event_id: str
+    team_id: str
+    app_id: str
+    type: str
+    resource_ref: str | None = None
+    delivery_intent: str
+    created_at: str
+
+
+class AppEventSubscriptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(..., min_length=1, max_length=256)
+    resource_ref: str | None = Field(None, max_length=1024)
+    delivery_intent: str | None = None
+
+
+class AppEventSubscriptionResponse(BaseModel):
+    subscription_id: str
+    team_id: str
+    agent_id: str
+    type: str
+    resource_ref: str | None = None
+    delivery_intent: str
+    created_at: str
+    updated_at: str
+
+
+class AppEventSubscriptionsResponse(BaseModel):
+    subscriptions: list[AppEventSubscriptionResponse]
 
 
 def _parse_deadline(raw: str) -> datetime:
@@ -44,6 +100,39 @@ def _mail_wake_mode(priority: str | None) -> str:
 
 def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
+
+
+def _app_event_response(record: AppEventRecord) -> AppEventEmitResponse:
+    return AppEventEmitResponse(
+        event_id=record.event_id,
+        team_id=record.team_id,
+        app_id=record.app_id,
+        type=record.event_type,
+        resource_ref=record.resource_ref,
+        delivery_intent=record.delivery_intent,
+        created_at=record.created_at,
+    )
+
+
+def _subscription_response(subscription: AppEventSubscription) -> AppEventSubscriptionResponse:
+    return AppEventSubscriptionResponse(
+        subscription_id=subscription.subscription_id,
+        team_id=subscription.team_id,
+        agent_id=subscription.agent_id,
+        type=subscription.event_type,
+        resource_ref=subscription.resource_ref,
+        delivery_intent=subscription.delivery_intent,
+        created_at=subscription.created_at,
+        updated_at=subscription.updated_at,
+    )
+
+
+async def _subscription_read_identity(request: Request, db) -> tuple[str, str]:
+    internal = parse_internal_auth_context(request)
+    if internal is not None:
+        return internal["team_id"], internal["actor_id"]
+    identity = await get_team_identity(request, db)
+    return identity.team_id, identity.agent_id
 
 
 async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
@@ -303,14 +392,18 @@ async def _sse_agent_events(
         participant_agent_id=agent_id,
     )
     control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
+    app_events = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
+    previous_app = _index_events(app_events, key_field="event_id")
 
     for evt in mail_events:
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in chat_events:
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in control_events:
+        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+    for evt in app_events:
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
     while datetime.now(timezone.utc) < deadline:
@@ -333,6 +426,7 @@ async def _sse_agent_events(
                 participant_agent_id=agent_id,
             )
             control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
+            current_app = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
@@ -348,6 +442,11 @@ async def _sse_agent_events(
             previous_chat,
             key_field="session_id",
         )
+        app_events = _new_or_changed_events(
+            current_app,
+            previous_app,
+            key_field="event_id",
+        )
 
         for evt in mail_events:
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
@@ -355,8 +454,10 @@ async def _sse_agent_events(
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in control_events:
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        for evt in app_events:
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
-        if mail_events or chat_events or control_events:
+        if mail_events or chat_events or control_events or app_events:
             last_heartbeat_at = datetime.now(timezone.utc)
         else:
             now = datetime.now(timezone.utc)
@@ -366,6 +467,83 @@ async def _sse_agent_events(
 
         previous_mail = _index_events(current_mail, key_field="message_id")
         previous_chat = _index_events(current_chat, key_field="session_id")
+        previous_app = _index_events(current_app, key_field="event_id")
+
+
+@router.post("/app", response_model=AppEventEmitResponse)
+async def emit_app_event_route(
+    request: Request,
+    payload: AppEventEmitRequest,
+    db=Depends(get_db),
+) -> AppEventEmitResponse:
+    aweb_db = db.get_manager("aweb")
+    try:
+        auth = await verify_app_event_auth(request, aweb_db)
+        record = await emit_app_event(
+            aweb_db,
+            auth=auth,
+            event_type=payload.type,
+            resource_ref=payload.resource_ref,
+            producer_delivery_intent=payload.delivery_intent,
+            payload=payload.payload,
+        )
+    except ServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return _app_event_response(record)
+
+
+@router.post("/subscriptions", response_model=AppEventSubscriptionResponse)
+async def upsert_app_event_subscription_route(
+    request: Request,
+    payload: AppEventSubscriptionRequest,
+    db=Depends(get_db),
+) -> AppEventSubscriptionResponse:
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
+    try:
+        subscription = await upsert_app_event_subscription(
+            aweb_db,
+            team_id=identity.team_id,
+            agent_id=identity.agent_id,
+            event_type=payload.type,
+            resource_ref=payload.resource_ref,
+            delivery_intent=payload.delivery_intent,
+        )
+    except ServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return _subscription_response(subscription)
+
+
+@router.get("/subscriptions", response_model=AppEventSubscriptionsResponse)
+async def list_app_event_subscriptions_route(
+    request: Request,
+    db=Depends(get_db),
+) -> AppEventSubscriptionsResponse:
+    team_id, agent_id = await _subscription_read_identity(request, db)
+    aweb_db = db.get_manager("aweb")
+    subscriptions = await list_app_event_subscriptions(aweb_db, team_id=team_id, agent_id=agent_id)
+    return AppEventSubscriptionsResponse(
+        subscriptions=[_subscription_response(item) for item in subscriptions]
+    )
+
+
+@router.delete("/subscriptions/{subscription_id}")
+async def delete_app_event_subscription_route(
+    subscription_id: str,
+    request: Request,
+    db=Depends(get_db),
+) -> dict[str, str]:
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
+    deleted = await delete_app_event_subscription(
+        aweb_db,
+        team_id=identity.team_id,
+        agent_id=identity.agent_id,
+        subscription_id=subscription_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    return {"subscription_id": subscription_id, "status": "deleted"}
 
 
 @router.get("/stream")

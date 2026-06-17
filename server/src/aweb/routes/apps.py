@@ -5,13 +5,28 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from aweb.app_registry import AppInstall, install_app, list_installed_apps, validate_team_id
+from aweb.app_registry import AppEmitKey, AppEventType, AppInstall, install_app, list_installed_apps, validate_team_id
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
 
 router = APIRouter(prefix="/v1/apps", tags=["apps"])
+
+
+class AppEventTypeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(..., min_length=1, max_length=128)
+    default_delivery_intent: str = "ambient"
+    description: str = ""
+
+
+class AppEmitKeyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kid: str = Field(..., min_length=1, max_length=128)
+    did_key: str = Field(..., min_length=1, max_length=512)
 
 
 class AppInstallRequest(BaseModel):
@@ -23,6 +38,8 @@ class AppInstallRequest(BaseModel):
     manifest_version: int = Field(..., gt=0)
     digest: str = Field(..., min_length=71, max_length=71)
     granted_scopes: list[str] = Field(default_factory=list)
+    events: list[AppEventTypeRequest] = Field(default_factory=list)
+    event_emitters: list[AppEmitKeyRequest] = Field(default_factory=list)
 
 
 class InstalledAppResponse(BaseModel):
@@ -103,6 +120,15 @@ async def install_app_route(
             digest=payload.digest,
             granted_scopes=payload.granted_scopes,
             installed_by_agent_id=identity.agent_id,
+            event_types=[
+                AppEventType(
+                    type=item.type,
+                    default_delivery_intent=item.default_delivery_intent,
+                    description=item.description,
+                )
+                for item in payload.events
+            ],
+            emit_keys=[AppEmitKey(kid=item.kid, did_key=item.did_key) for item in payload.event_emitters],
         )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

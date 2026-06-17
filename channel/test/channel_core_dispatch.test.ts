@@ -737,4 +737,46 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
   });
+
+  test("dispatches app events without hydration and de-dupes by event_id", async () => {
+    const onAwakening = vi.fn();
+    const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aw-app-event-")), "delivered.json"));
+    const event = {
+      type: "app_event",
+      event_id: "event-1",
+      app_id: "folio",
+      app_event_type: "folio/doc.changed",
+      resource_ref: "pitch",
+      delivery_intent: "wake",
+      producer_delivery_intent: "ambient",
+      payload: { version: "7" },
+    } satisfies AgentEvent;
+
+    const options = {
+      client: {} as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      onAwakening,
+      deliveryStore,
+    };
+    const dispatched = new Set<string>();
+
+    await dispatchAgentEvent(options, dispatched, event);
+    await dispatchAgentEvent(options, dispatched, event);
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "app",
+      content: "",
+      deliveryIntent: "wake",
+      meta: expect.objectContaining({
+        type: "folio/doc.changed",
+        app_id: "folio",
+        resource_ref: "pitch",
+        producer_delivery_intent: "ambient",
+        payload: '{"version":"7"}',
+      }),
+    }));
+  });
 });

@@ -13,7 +13,7 @@ export interface SelfIdentity {
     did: string;
     stableID: string;
 }
-export type ChannelAwakeningKind = "mail" | "chat" | "control" | "work" | "claim" | "claim_removed";
+export type ChannelAwakeningKind = "mail" | "chat" | "control" | "work" | "claim" | "claim_removed" | "app";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 export interface ChannelAwakening {
     kind: ChannelAwakeningKind;
