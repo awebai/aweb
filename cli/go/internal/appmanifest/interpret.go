@@ -16,9 +16,10 @@ import (
 const SupportedManifestVersion = 1
 
 type Manifest struct {
-	ManifestVersion int    `json:"manifest_version"`
-	App             App    `json:"app"`
-	Tools           []Tool `json:"tools"`
+	ManifestVersion int            `json:"manifest_version"`
+	App             App            `json:"app"`
+	Tools           []Tool         `json:"tools"`
+	EventEmitters   []EventEmitter `json:"event_emitters,omitempty"`
 }
 
 type App struct {
@@ -50,6 +51,11 @@ type Body struct {
 	Mode        string `json:"mode,omitempty"`
 	RawParam    string `json:"raw_param,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
+}
+
+type EventEmitter struct {
+	KID    string `json:"kid"`
+	DIDKey string `json:"did_key"`
 }
 
 type InterpretRequest struct {
@@ -88,6 +94,31 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 	for _, tool := range manifest.Tools {
 		if err := validateTool(tool, reservedNames); err != nil {
 			return err
+		}
+	}
+	if err := validateEventEmitters(manifest.EventEmitters); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateEventEmitters(emitters []EventEmitter) error {
+	seen := map[string]bool{}
+	for _, emitter := range emitters {
+		kid := strings.TrimSpace(emitter.KID)
+		if kid == "" {
+			return fmt.Errorf("event_emitters[].kid is required")
+		}
+		if seen[kid] {
+			return fmt.Errorf("duplicate event emitter kid %q", kid)
+		}
+		seen[kid] = true
+		didKey := strings.TrimSpace(emitter.DIDKey)
+		if didKey == "" {
+			return fmt.Errorf("event_emitters[].did_key is required")
+		}
+		if _, err := awid.ExtractPublicKey(didKey); err != nil {
+			return fmt.Errorf("event emitter kid %q did_key: %w", kid, err)
 		}
 	}
 	return nil

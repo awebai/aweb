@@ -3,9 +3,12 @@ package awid
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -152,6 +155,82 @@ func CanonicalJSONValue(v any) (string, error) {
 
 // SignArbitraryPayload signs a JSON object after injecting the required
 // timestamp field into the signed payload.
+type AppEmitCredential struct {
+	DIDKey              string
+	SignatureB64        string
+	CanonicalPayload    string
+	SignedPayloadB64URL string
+	BodySHA256          string
+	Headers             http.Header
+}
+
+func SignAppEmitCredential(key ed25519.PrivateKey, method string, target *url.URL, teamID, appID, keyID string, body []byte, timestamp string) (*AppEmitCredential, error) {
+	if key == nil {
+		return nil, fmt.Errorf("signing key is required")
+	}
+	if target == nil || target.Scheme == "" || target.Host == "" {
+		return nil, fmt.Errorf("target URL is required")
+	}
+	teamID = strings.TrimSpace(teamID)
+	appID = strings.TrimSpace(appID)
+	keyID = strings.TrimSpace(keyID)
+	if teamID == "" {
+		return nil, fmt.Errorf("team_id is required")
+	}
+	if appID == "" {
+		return nil, fmt.Errorf("app_id is required")
+	}
+	if keyID == "" {
+		return nil, fmt.Errorf("key_id is required")
+	}
+	bodyHashBytes := sha256.Sum256(body)
+	bodyHash := fmt.Sprintf("%x", bodyHashBytes)
+	didKey := ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	payload := map[string]any{
+		"v":           1,
+		"auth":        "app-event",
+		"aud":         target.Scheme + "://" + target.Host,
+		"method":      strings.ToUpper(strings.TrimSpace(method)),
+		"path":        appEmitRequestTargetPath(target),
+		"team_id":     teamID,
+		"app_id":      appID,
+		"kid":         keyID,
+		"did_key":     didKey,
+		"body_sha256": bodyHash,
+	}
+	signedDIDKey, signature, canonical, err := SignArbitraryPayload(key, payload, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	signedPayload := base64.RawURLEncoding.EncodeToString([]byte(canonical))
+	headers := make(http.Header)
+	headers.Set("Authorization", fmt.Sprintf("AWEB-App DIDKey %s %s", signedDIDKey, signature))
+	headers.Set("X-AWEB-App-ID", appID)
+	headers.Set("X-AWEB-App-Key-ID", keyID)
+	headers.Set("X-AWEB-Team-ID", teamID)
+	headers.Set("X-AWEB-Timestamp", strings.TrimSpace(timestamp))
+	headers.Set("X-AWEB-Signed-Payload", signedPayload)
+	return &AppEmitCredential{
+		DIDKey:              signedDIDKey,
+		SignatureB64:        signature,
+		CanonicalPayload:    canonical,
+		SignedPayloadB64URL: signedPayload,
+		BodySHA256:          bodyHash,
+		Headers:             headers,
+	}, nil
+}
+
+func appEmitRequestTargetPath(target *url.URL) string {
+	path := target.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if target.RawQuery != "" {
+		path += "?" + target.RawQuery
+	}
+	return path
+}
+
 func SignArbitraryPayload(key ed25519.PrivateKey, payload map[string]any, timestamp string) (didKey string, signature string, canonical string, err error) {
 	if key == nil {
 		return "", "", "", fmt.Errorf("signing key is required")
