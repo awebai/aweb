@@ -426,6 +426,74 @@
           "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2FycmF5cy5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiJiMmM2YTNmODljNzNjYjJmNTE2MGI2YjQzMGQzOWNlYTFlODE2MzdlYmNhYThmMjdlYTMyNjU5ZTU4ZDJmZjZhIiwibWV0aG9kIjoiUE9TVCIsInBhdGgiOiIvdjEvaXRlbXMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
         }
       }
+    },
+    {
+      "name": "path_query_params_are_not_coerced",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "coercion",
+          "version": "1.0.0",
+          "origin": "https://coercion.example"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/{flag}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "flag": {
+                  "type": "boolean"
+                },
+                "amount": {
+                  "type": "integer"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "flag",
+                "in": "path"
+              },
+              {
+                "name": "amount",
+                "in": "query"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "coercion:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "flag": "TRUE",
+        "amount": "1.2"
+      },
+      "expected": {
+        "method": "GET",
+        "url": "https://coercion.example/v1/TRUE?amount=1.2",
+        "path_query": "/v1/TRUE?amount=1.2",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "",
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "mutation": false,
+        "signed_payload": {
+          "team_id": "default:example.aweb.ai",
+          "timestamp": "2026-06-16T00:00:00Z",
+          "canonical_payload": "{\"aud\":\"https://coercion.example\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/v1/TRUE?amount=1.2\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2NvZXJjaW9uLmV4YW1wbGUiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL1RSVUU_YW1vdW50PTEuMiIsInRlYW1faWQiOiJkZWZhdWx0OmV4YW1wbGUuYXdlYi5haSIsInRpbWVzdGFtcCI6IjIwMjYtMDYtMTZUMDA6MDA6MDBaIiwidiI6Mn0"
+        }
+      }
     }
   ],
   "negative_cases": [
