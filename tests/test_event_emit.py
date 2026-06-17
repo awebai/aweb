@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from awid.signing import canonical_json_bytes
 from fastapi.testclient import TestClient
 
@@ -31,6 +33,44 @@ def _emit_settings(**overrides) -> Settings:
 def _decode_signed_payload(headers: dict[str, str]) -> dict:
     raw = headers["X-AWEB-Signed-Payload"]
     return json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+
+
+def _fake_document(slug: str, body: str, version: int) -> dict:
+    return {
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "slug": slug,
+        "title": "Pitch",
+        "body": body,
+        "current_version": version,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "latest": {
+            "version_id": "22222222-2222-4222-8222-222222222222",
+            "version_number": version,
+            "body": body,
+            "created_by_did_key": "did:key:zAgent",
+            "created_by_alias": "agent",
+            "certificate_id": "cert",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    }
+
+
+def _template_route_app(settings: Settings, monkeypatch, *, version: int = 3):
+    """A folio app whose template-append route is stubbed to succeed, so a test
+    can observe only the emit side-effect."""
+    app = folio_api.create_app(settings)
+    route = next(
+        r for r in app.routes if getattr(r, "path", None) == "/v1/documents/{slug}/versions/template"
+    )
+    app.dependency_overrides[route.dependant.dependencies[0].call] = lambda: SimpleNamespace(team_id=_TEAM)
+    app.dependency_overrides[route.dependant.dependencies[1].call] = lambda: object()
+
+    async def fake_append_version(_database, *, principal, settings, slug: str, body: str) -> dict:
+        return _fake_document(slug, body, version)
+
+    monkeypatch.setattr(folio_api, "append_version", fake_append_version)
+    return app
 
 
 def test_doc_changed_event_body_is_canonical_and_metadata_only() -> None:
@@ -146,36 +186,7 @@ def test_append_route_emits_doc_changed_when_configured(monkeypatch) -> None:
 
     monkeypatch.setattr(httpx.AsyncClient, "post", capture_post)
 
-    app = folio_api.create_app(_emit_settings())
-    route = next(
-        r for r in app.routes if getattr(r, "path", None) == "/v1/documents/{slug}/versions/template"
-    )
-    principal_dependency = route.dependant.dependencies[0].call
-    db_dependency = route.dependant.dependencies[1].call
-    app.dependency_overrides[principal_dependency] = lambda: SimpleNamespace(team_id=_TEAM)
-    app.dependency_overrides[db_dependency] = lambda: object()
-
-    async def fake_append_version(_database, *, principal, settings, slug: str, body: str) -> dict:
-        return {
-            "document_id": "11111111-1111-4111-8111-111111111111",
-            "slug": slug,
-            "title": "Pitch",
-            "body": body,
-            "current_version": 3,
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "latest": {
-                "version_id": "22222222-2222-4222-8222-222222222222",
-                "version_number": 3,
-                "body": body,
-                "created_by_did_key": "did:key:zAgent",
-                "created_by_alias": "agent",
-                "certificate_id": "cert",
-                "created_at": "2026-01-01T00:00:00Z",
-            },
-        }
-
-    monkeypatch.setattr(folio_api, "append_version", fake_append_version)
+    app = _template_route_app(_emit_settings(), monkeypatch, version=3)
 
     response = TestClient(app).post(
         "/v1/documents/pitch/versions/template",
@@ -192,6 +203,33 @@ def test_append_route_emits_doc_changed_when_configured(monkeypatch) -> None:
     assert emitted["type"] == "folio/doc.changed"
     assert emitted["resource_ref"] == "pitch"
     assert emitted["payload"] == {"version": "3", "source": "api"}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"app_emit_key_seed_hex": "nothex-nothex-nothex"},  # unparseable seed
+        {"app_events_origin": "not-a-valid-origin"},  # no scheme/host
+    ],
+)
+def test_append_route_swallows_misconfigured_emit(monkeypatch, caplog, overrides) -> None:
+    # A configured-but-invalid emit (bad seed or origin) must NOT break the write:
+    # construction happens inside the best-effort boundary, logged and swallowed.
+    settings = _emit_settings(**overrides)
+    app = _template_route_app(settings, monkeypatch, version=4)
+
+    with caplog.at_level(logging.WARNING):
+        response = TestClient(app).post(
+            "/v1/documents/pitch/versions/template",
+            json={"name": "pitch", "slots": {"cover": {"title": "Q3"}}},
+        )
+
+    assert response.status_code == 200, response.text
+    assert any("emit failed" in record.getMessage() for record in caplog.records)
+    # The configured seed must never be echoed into logs.
+    assert all(_TEST_SEED_HEX not in record.getMessage() for record in caplog.records)
+    if "app_emit_key_seed_hex" in overrides:
+        assert all(overrides["app_emit_key_seed_hex"] not in record.getMessage() for record in caplog.records)
 
 
 async def test_emit_doc_changed_logs_rejection_without_raising(monkeypatch, caplog) -> None:

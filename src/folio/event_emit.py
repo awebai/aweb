@@ -79,25 +79,28 @@ async def emit_doc_changed(
     source: str,
     timestamp: str | None = None,
 ) -> None:
-    """Emit a folio/doc.changed event. Never raises: a failed emit is logged and
-    swallowed so it cannot break the document write that triggered it."""
-    request = build_emit_request(
-        settings=settings,
-        team_id=team_id,
-        slug=slug,
-        version=version,
-        source=source,
-        timestamp=timestamp or _utc_timestamp(),
-    )
-    if request is None:
-        return
-    target, body, headers = request
+    """Emit a folio/doc.changed event. Never raises: a failed or misconfigured
+    emit is logged and swallowed so it cannot break the document write that
+    triggered it. Request construction (which can raise on an invalid emit key or
+    origin) is inside the best-effort boundary; the configured seed is never
+    logged."""
     try:
+        request = build_emit_request(
+            settings=settings,
+            team_id=team_id,
+            slug=slug,
+            version=version,
+            source=source,
+            timestamp=timestamp or _utc_timestamp(),
+        )
+        if request is None:
+            return
+        target, body, headers = request
         async with httpx.AsyncClient(timeout=settings.app_emit_timeout_seconds) as client:
             response = await client.post(target, content=body, headers=headers)
         if response.status_code >= 400:
             logger.warning(
                 "folio/doc.changed emit rejected (%s): %s", response.status_code, response.text[:200]
             )
-    except Exception as exc:  # best-effort: a doc update must succeed even if the channel is down
-        logger.warning("folio/doc.changed emit failed: %s", exc)
+    except Exception as exc:  # best-effort: a doc update must succeed even if emit is broken
+        logger.warning("folio/doc.changed emit failed: %s", type(exc).__name__)
