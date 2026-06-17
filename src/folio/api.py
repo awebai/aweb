@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
 
 from folio.auth import AWIDTeamCache, Principal, authenticate_request
+from folio.aweb_manifest import read_manifest_bytes
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
 from folio.db import FolioDatabase
@@ -148,6 +149,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if skill is None:
             raise HTTPException(status_code=404, detail="Skill not found")
         return PlainTextResponse(skill, headers={"X-Content-Type-Options": "nosniff"})
+
+    @app.get("/.well-known/aweb-app.json")
+    async def aweb_app_manifest_route() -> Response:
+        return Response(
+            content=read_manifest_bytes(),
+            media_type="application/json",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     @app.get("/health")
     @app.get("/live")

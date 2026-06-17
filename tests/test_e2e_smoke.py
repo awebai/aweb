@@ -515,6 +515,19 @@ def test_no_envelope_fails_closed(folio_origin: str) -> None:
     assert response.status_code == 401, response.text
 
 
+def test_well_known_manifest_is_public_and_byte_stable(folio: RunningFolio) -> None:
+    from folio.aweb_manifest import MANIFEST_PATH
+
+    # Public discovery doc: no team-auth envelope, still 200.
+    response = httpx.get(f"{folio.origin}/.well-known/aweb-app.json", timeout=10.0)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/json")
+    # The running container serves the committed file bytes verbatim (the digest
+    # the cli team pins), not a runtime re-serialization keyed off public_origin.
+    assert response.content == MANIFEST_PATH.read_bytes()
+
+
 def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
     result = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
