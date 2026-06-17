@@ -385,6 +385,36 @@ modes (the `atext` spine already proves this). The entire hosted/BYOT distinctio
 stays in the control plane and gateway — it must **not** leak into the app
 contract or the core transport. This is both a simplification and a leak guard.
 
+### 6.7 App emit-key custody (LOCKED v1 — Juan, 2026-06-17)
+
+An app's event-emit signing key (the m3.2 `event_emitters` did:key) is a
+**platform-managed app *service* credential** — distinct from user/agent
+*custodial identity*. Two things are kept orthogonal (cf. §6.1): custody
+*classification* (who holds the key) vs signing *location* (where bytes are
+signed).
+
+- **Hosted first-party app (e.g. `folio.aweb.ai`):** the platform stores the
+  emit key encrypted and **provisions it into the hosted app runtime for
+  in-process signing** of app-event credentials. Platform-held custody +
+  in-process signing.
+- **Self-hosted / third-party app:** the app operator holds its own emit key
+  and publishes the public `did_key`.
+- **Verifier is the authority** (not the app's self-claim): core binds
+  `app_id + team_id + kid + did_key` to the installed-app grant **scoped to the
+  team's pinned manifest digest**, and rejects inactive/rotated keys. (Enforced
+  by the m3.2 digest-scoping in `009_app_events.sql`.)
+- A central **gateway/KMS signer** (app never holds the raw key; smaller blast
+  radius, central audit/rotation) is a **future hardening** that rides the
+  durable app-as-AWID-identity work (aaaj.6) — **not v1**.
+
+**Guardrails:** per-app / per-env / per-`kid` keys only; **never** reuse an
+agent identity, team-controller, namespace-controller, or A2A-gateway key as an
+app emit key.
+
+So the in-process Python emit signer is the real v1 emit primitive (used by
+both self-hosted folio and platform-provisioned hosted folio), not merely a
+conformance/self-hosted reference. Consultant-reviewed; Juan-confirmed.
+
 ## 7. App manifest and the app contract
 
 **Manifest (minimal, declarative).** Per contributed tool: `name`,
