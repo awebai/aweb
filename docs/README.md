@@ -48,6 +48,9 @@ These documents define the system:
 - [team-blueprints-sot.md](team-blueprints-sot.md): product SOT for creating
   AI teams from blueprint repos/directories, profile packs, runtime bindings,
   team-owned app grants, subscriptions, and signed audit trails
+- [launch-readiness-sot.md](launch-readiness-sot.md): product SOT for the
+  launch/VC-readiness wedge: first-party engineering blueprint, native `aw`
+  setup path, workroom, hosted MCP, signed audit trail, and demo proof
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
   instructions, playbooks, skills, and adapters without identity/workspace state;
