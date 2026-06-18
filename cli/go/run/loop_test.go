@@ -1259,6 +1259,26 @@ func TestLoopEventBusBasePromptWaitsForEvents(t *testing.T) {
 	}
 }
 
+func TestWaitForBusEventsWakesOnAppEventDeliveryIntent(t *testing.T) {
+	bus := newTestEventBus()
+	bus.queue.Push(BusEvent{Priority: PriorityCommunication, Event: awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", AppID: "folio", AppEventType: "folio/doc.changed", DeliveryIntent: "wake"}})
+
+	loop := NewLoop(ClaudeProvider{}, &bytes.Buffer{})
+	loop.EventBus = bus
+
+	st := &state{}
+	err := loop.waitForBusEvents(context.Background(), 30, st)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st.LastWakeEvent == nil {
+		t.Fatal("expected LastWakeEvent to be set")
+	}
+	if st.LastWakeEvent.Type != awid.AgentEventAppEvent || st.LastWakeEvent.EventID != "evt-1" || st.LastWakeEvent.DeliveryIntent != "wake" {
+		t.Fatalf("expected app_event wake, got %#v", st.LastWakeEvent)
+	}
+}
+
 func TestWaitForBusEventsSkipsCoordinationWithoutAutofeed(t *testing.T) {
 	// Pre-queue a coordination event, then a communication event.
 	bus := newTestEventBus()

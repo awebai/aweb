@@ -134,6 +134,21 @@ func TestClassifyInterruptWakeEventsAsCommunication(t *testing.T) {
 	}
 }
 
+func TestClassifyAppEventWakeOnly(t *testing.T) {
+	pri, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: "wake"})
+	if !ok {
+		t.Fatal("app_event with delivery_intent=wake should be queued")
+	}
+	if pri != PriorityCommunication {
+		t.Fatalf("app_event wake should be communication priority, got %d", pri)
+	}
+	for _, intent := range []string{"ambient", "steer", ""} {
+		if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: intent}); ok {
+			t.Fatalf("app_event with delivery_intent=%q should not wake aw run", intent)
+		}
+	}
+}
+
 func TestClassifyCoordinationEvents(t *testing.T) {
 	for _, typ := range []awid.AgentEventType{awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved} {
 		pri, ok := classifyAgentEvent(awid.AgentEvent{Type: typ})
@@ -477,6 +492,56 @@ func TestEventBusInjectAutofeed(t *testing.T) {
 	if evt.Priority != PriorityAutofeed {
 		t.Fatalf("expected autofeed priority, got %d", evt.Priority)
 	}
+}
+
+func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
+	first := newFakeEventSource(
+		awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", AppID: "folio", AppEventType: "folio/doc.changed", ResourceRef: "pitch", DeliveryIntent: "wake"},
+	)
+	second := newFakeEventSource(
+		awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", AppID: "folio", AppEventType: "folio/doc.changed", ResourceRef: "pitch", DeliveryIntent: "wake"},
+	)
+
+	streamCalls := 0
+	bus := NewEventBus(EventBusConfig{
+		Stream: func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+			streamCalls++
+			switch streamCalls {
+			case 1:
+				return first, nil
+			case 2:
+				return second, nil
+			default:
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bus.Start(ctx)
+
+	select {
+	case <-bus.Queue().Ready():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for app_event wake")
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if got := bus.Queue().Len(); got != 1 {
+		t.Fatalf("expected exactly 1 app_event after replay, got %d", got)
+	}
+	evt, ok := bus.Queue().Pop()
+	if !ok {
+		t.Fatal("expected queued app_event")
+	}
+	if evt.Event.Type != awid.AgentEventAppEvent || evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
+		t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+	}
+
+	cancel()
+	bus.Stop()
 }
 
 func TestEventBusDedupesReplayByMessageIDAcrossReconnects(t *testing.T) {

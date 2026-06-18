@@ -62,6 +62,43 @@ func TestEventBusRetriesEarlyEOF(t *testing.T) {
 	bus.Stop()
 }
 
+func TestEventBusQueuesAppEventWakeFromSSE(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: app_event\ndata: {\"event_id\":\"evt-1\",\"app_id\":\"folio\",\"app_event_type\":\"folio/doc.changed\",\"resource_ref\":\"pitch\",\"delivery_intent\":\"wake\",\"producer_delivery_intent\":\"ambient\",\"payload\":{\"title\":\"Pitch\"}}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := awid.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bus := NewEventBus(EventBusConfig{Stream: NewEventStreamOpener(client)})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bus.Start(ctx)
+
+	select {
+	case <-bus.Queue().Ready():
+		evt, ok := bus.Queue().Pop()
+		if !ok {
+			t.Fatal("expected queued event")
+		}
+		if evt.Event.Type != awid.AgentEventAppEvent || evt.Event.EventID != "evt-1" || evt.Event.AppID != "folio" || evt.Event.AppEventType != "folio/doc.changed" || evt.Event.DeliveryIntent != "wake" {
+			t.Fatalf("unexpected app_event: %#v", evt.Event)
+		}
+		if evt.Event.Payload["title"] != "Pitch" {
+			t.Fatalf("payload not parsed: %#v", evt.Event.Payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for app_event wake")
+	}
+	cancel()
+	bus.Stop()
+}
+
 func TestEventBusRetriesTransientOpenError(t *testing.T) {
 	t.Parallel()
 

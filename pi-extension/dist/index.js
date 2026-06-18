@@ -1714,6 +1714,7 @@ var KNOWN_TYPES = /* @__PURE__ */ new Set([
   "work_available",
   "claim_update",
   "claim_removed",
+  "app_event",
   "error",
   "actionable_mail",
   "actionable_chat"
@@ -6108,8 +6109,40 @@ async function dispatchAgentEvent(options, dispatched, event) {
         }
       });
       break;
+    case "app_event":
+      await dispatchAppEvent(options, dispatched, event);
+      break;
     default:
       break;
+  }
+}
+async function dispatchAppEvent(options, dispatched, event) {
+  if (!event.event_id)
+    return;
+  const key = dispatchKey("app", event.app_event_type || "app_event", event.event_id);
+  if (dispatched.has(key) || options.deliveryStore?.has(key))
+    return;
+  const meta = {
+    type: event.app_event_type || "app_event",
+    event_id: event.event_id,
+    app_id: event.app_id || "",
+    app_event_type: event.app_event_type || "",
+    resource_ref: event.resource_ref || "",
+    producer_delivery_intent: event.producer_delivery_intent || ""
+  };
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : void 0;
+  if (payload)
+    meta.payload = summarizePayload(payload);
+  await options.onAwakening({
+    kind: "app",
+    content: "",
+    deliveryIntent: event.delivery_intent || "ambient",
+    meta
+  });
+  dispatched.add(key);
+  if (options.deliveryStore) {
+    options.deliveryStore.mark(key);
+    await options.deliveryStore.save();
   }
 }
 async function dispatchMailEvent(options, dispatched, event) {
@@ -6305,7 +6338,14 @@ function formatAwakeningForAgent(awakening) {
     if (value)
       lines.push(`- ${key}: ${value}`);
   }
-  if (awakening.content) {
+  if (awakening.kind === "app") {
+    const appType = awakening.meta.app_event_type || awakening.meta.type || "app_event";
+    lines.push("", "App event:", appType);
+    if (awakening.meta.resource_ref)
+      lines.push(`Resource: ${awakening.meta.resource_ref}`);
+    if (awakening.meta.payload)
+      lines.push(`Payload: ${awakening.meta.payload}`);
+  } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
   lines.push("", "Use the aw CLI to respond when appropriate.");
@@ -6326,6 +6366,12 @@ function pruneDispatched(dispatched) {
 function dispatchKey(channel, conversationID, messageID) {
   const conversation = (conversationID || "").trim();
   return `${channel}:${conversation}:${messageID}`;
+}
+function summarizePayload(payload) {
+  const json2 = JSON.stringify(payload);
+  if (!json2)
+    return "";
+  return json2.length > 500 ? `${json2.slice(0, 497)}...` : json2;
 }
 function senderDisplayAddress(alias, address) {
   const qualified = (address || "").trim();

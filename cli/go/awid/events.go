@@ -26,6 +26,7 @@ const (
 	AgentEventControlPause     AgentEventType = "control_pause"
 	AgentEventControlResume    AgentEventType = "control_resume"
 	AgentEventControlInterrupt AgentEventType = "control_interrupt"
+	AgentEventAppEvent         AgentEventType = "app_event"
 	AgentEventError            AgentEventType = "error"
 )
 
@@ -54,6 +55,13 @@ type AgentEvent struct {
 	Title          string          `json:"title,omitempty"`
 	Status         string          `json:"status,omitempty"`
 	SignalID       string          `json:"signal_id,omitempty"`
+	EventID        string          `json:"event_id,omitempty"`
+	AppID          string          `json:"app_id,omitempty"`
+	AppEventType   string          `json:"app_event_type,omitempty"`
+	ResourceRef    string          `json:"resource_ref,omitempty"`
+	DeliveryIntent string          `json:"delivery_intent,omitempty"`
+	ProducerIntent string          `json:"producer_delivery_intent,omitempty"`
+	Payload        map[string]any  `json:"payload,omitempty"`
 	Text           string          `json:"text,omitempty"`
 }
 
@@ -305,6 +313,31 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			Type:     AgentEventType(eventName),
 			Raw:      raw,
 			SignalID: payload.SignalID,
+		}, true, nil
+
+	case AgentEventAppEvent:
+		var payload struct {
+			EventID        string         `json:"event_id"`
+			AppID          string         `json:"app_id"`
+			AppEventType   string         `json:"app_event_type"`
+			ResourceRef    string         `json:"resource_ref"`
+			DeliveryIntent string         `json:"delivery_intent"`
+			ProducerIntent string         `json:"producer_delivery_intent"`
+			Payload        map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return AgentEvent{}, false, fmt.Errorf("parse app_event event: %w", err)
+		}
+		return AgentEvent{
+			Type:           AgentEventAppEvent,
+			Raw:            raw,
+			EventID:        payload.EventID,
+			AppID:          payload.AppID,
+			AppEventType:   payload.AppEventType,
+			ResourceRef:    payload.ResourceRef,
+			DeliveryIntent: payload.DeliveryIntent,
+			ProducerIntent: payload.ProducerIntent,
+			Payload:        payload.Payload,
 		}, true, nil
 
 	case AgentEventError:
