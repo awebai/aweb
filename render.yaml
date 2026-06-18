@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: library-api
+    env: docker
+    region: oregon
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: LIBRARY_DATABASE_URL
+        sync: false
+      - key: LIBRARY_AWID_REGISTRY_URL
+        value: https://api.awid.ai
+      - key: LIBRARY_PUBLIC_ORIGIN
+        sync: false
+      - key: LIBRARY_DB_POOL_MIN_CONNECTIONS
+        value: "1"
+      - key: LIBRARY_DB_POOL_MAX_CONNECTIONS
+        value: "5"
+      - key: LIBRARY_DB_STATEMENT_CACHE_SIZE
+        value: "0"
