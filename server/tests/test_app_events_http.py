@@ -244,6 +244,39 @@ async def test_app_event_emit_accepts_shared_conformance_vector(aweb_cloud_db, m
 
 
 @pytest.mark.asyncio
+async def test_app_event_emit_binds_api_mount_root_path(aweb_cloud_db, monkeypatch):
+    """App-event auth uses the same root_path-aware request target as team auth."""
+
+    monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
+    signing_key, did_key = _make_app_keypair()
+    app = _build_events_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+    await _install_folio(aweb_cloud_db.aweb_db, did_key=did_key)
+    body = json.dumps(
+        {"type": "folio/doc.changed", "resource_ref": "pitch", "payload": {}},
+        separators=(",", ":"),
+    ).encode()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, root_path="/api"),
+        base_url="http://test/api",
+    ) as client:
+        resp = await client.post(
+            "/v1/events/app",
+            content=body,
+            headers=_signed_app_headers(
+                signing_key=signing_key,
+                did_key=did_key,
+                body=body,
+                path="/api/v1/events/app",
+            ),
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["type"] == "folio/doc.changed"
+
+
+@pytest.mark.asyncio
 async def test_app_event_subscriptions_default_intent_and_matching(aweb_cloud_db, monkeypatch):
     monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
     monkeypatch.setattr(events_routes, "_current_actionable_chat", _fake_actionable_chat)
