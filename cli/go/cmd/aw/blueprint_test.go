@@ -13,18 +13,23 @@ func writeBlueprintFixture(t *testing.T, root string) {
 	t.Helper()
 	writeCmdTestFile(t, filepath.Join(root, "blueprint.yaml"), `schema_version: 1
 id: engineering-dev-team
-name: Engineering AI Team
 version: 0.1.0
-summary: Coordinate AI agents to ship code changes with review and audit.
-profiles:
-  - id: coordinator
-    path: profiles/coordinator
+display:
+  name: Engineering AI Team
+  summary: Coordinate AI agents to ship code changes with review and audit.
+slots:
+  - role: coordinator
+    display:
+      name: Coordinator
+      summary: Coordinates work.
+    profile_ref:
+      id: coordinator
+      version: 0.1.0
     default_agent_name: coordinator
-    role: coordinator
-    purpose: Coordinates work.
     default_count: 1
     min: 1
     max: 1
+    app_request_refs: [tasks.basic]
 recommended_apps: [messages]
 approval_policy:
   require_human_approval: [secrets.read]
@@ -33,9 +38,10 @@ runtime_options:
 `)
 	writeCmdTestFile(t, filepath.Join(root, "profiles/coordinator/profile.yaml"), `schema_version: 1
 id: coordinator
-name: Coordinator
 version: 0.1.0
-summary: Keeps the team moving.
+display:
+  name: Coordinator
+  summary: Keeps the team moving.
 runtime_hints:
   preferred: [claude-code]
 required_apps:
@@ -113,9 +119,21 @@ func TestBlueprintInspectRejectsUnsafeBlueprint(t *testing.T) {
 }
 
 func TestBlueprintInspectRejectsRemoteSourcesForNow(t *testing.T) {
+	for _, source := range []string{"https://github.com/awebai/example", "github.com/awebai/foo", "aweb/engineering-dev-team", "git@example.com:awebai/foo"} {
+		t.Run(source, func(t *testing.T) {
+			var out bytes.Buffer
+			err := runBlueprintInspect(&out, source, true)
+			if err == nil || !strings.Contains(err.Error(), "remote blueprint sources are not supported") {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestBlueprintInspectMissingExplicitLocalDir(t *testing.T) {
 	var out bytes.Buffer
-	err := runBlueprintInspect(&out, "https://github.com/awebai/example", true)
-	if err == nil || !strings.Contains(err.Error(), "remote blueprint sources are not supported") {
+	err := runBlueprintInspect(&out, filepath.Join(t.TempDir(), "missing"), true)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error=%v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package teamblueprint
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,13 +24,25 @@ type Source struct {
 	Digest  string `json:"digest"`
 }
 
+type Display struct {
+	Name    string `json:"name,omitempty" yaml:"name"`
+	Summary string `json:"summary,omitempty" yaml:"summary"`
+	Icon    string `json:"icon,omitempty" yaml:"icon"`
+}
+
+type Ref struct {
+	ID      string `json:"id" yaml:"id"`
+	Version string `json:"version" yaml:"version"`
+}
+
 type Blueprint struct {
 	SchemaVersion   int                 `json:"schema_version" yaml:"schema_version"`
 	ID              string              `json:"id" yaml:"id"`
-	Name            string              `json:"name" yaml:"name"`
 	Version         string              `json:"version" yaml:"version"`
-	Summary         string              `json:"summary" yaml:"summary"`
-	Profiles        []BlueprintProfile  `json:"profiles" yaml:"profiles"`
+	Display         Display             `json:"display,omitempty" yaml:"display"`
+	Name            string              `json:"name,omitempty" yaml:"name"`
+	Summary         string              `json:"summary,omitempty" yaml:"summary"`
+	Slots           []SlotSpec          `json:"slots" yaml:"slots"`
 	RecommendedApps []string            `json:"recommended_apps,omitempty" yaml:"recommended_apps"`
 	ApprovalPolicy  ApprovalPolicy      `json:"approval_policy,omitempty" yaml:"approval_policy"`
 	RuntimeOptions  map[string][]string `json:"runtime_options,omitempty" yaml:"runtime_options"`
@@ -36,29 +50,26 @@ type Blueprint struct {
 	LoadedProfiles  []Profile           `json:"loaded_profiles" yaml:"-"`
 }
 
-type BlueprintProfile struct {
-	ID               string              `json:"id" yaml:"id"`
-	Path             string              `json:"path" yaml:"path"`
-	DefaultAgentName string              `json:"default_agent_name,omitempty" yaml:"default_agent_name"`
-	Role             string              `json:"role,omitempty" yaml:"role"`
-	Purpose          string              `json:"purpose,omitempty" yaml:"purpose"`
-	Required         *bool               `json:"required,omitempty" yaml:"required"`
-	DefaultCount     int                 `json:"default_count,omitempty" yaml:"default_count"`
-	Min              int                 `json:"min,omitempty" yaml:"min"`
-	Max              int                 `json:"max,omitempty" yaml:"max"`
-	RuntimeOptions   []string            `json:"runtime_options,omitempty" yaml:"runtime_options"`
-	RequiredApps     map[string]AppGrant `json:"required_apps,omitempty" yaml:"required_apps"`
-	Subscriptions    []Subscription      `json:"subscriptions,omitempty" yaml:"subscriptions"`
-	ApprovalRequired []string            `json:"approval_required,omitempty" yaml:"approval_required"`
-	Artifacts        []Artifact          `json:"artifacts,omitempty" yaml:"artifacts"`
+type SlotSpec struct {
+	Role             string   `json:"role" yaml:"role"`
+	Display          Display  `json:"display,omitempty" yaml:"display"`
+	Required         *bool    `json:"required,omitempty" yaml:"required"`
+	ProfileRef       Ref      `json:"profile_ref" yaml:"profile_ref"`
+	DefaultAgentName string   `json:"default_agent_name,omitempty" yaml:"default_agent_name"`
+	DefaultCount     int      `json:"default_count,omitempty" yaml:"default_count"`
+	Min              int      `json:"min,omitempty" yaml:"min"`
+	Max              int      `json:"max,omitempty" yaml:"max"`
+	RuntimeOptions   []string `json:"runtime_options,omitempty" yaml:"runtime_options"`
+	AppRequestRefs   []string `json:"app_request_refs,omitempty" yaml:"app_request_refs"`
 }
 
 type Profile struct {
 	SchemaVersion    int                 `json:"schema_version" yaml:"schema_version"`
 	ID               string              `json:"id" yaml:"id"`
-	Name             string              `json:"name" yaml:"name"`
 	Version          string              `json:"version" yaml:"version"`
-	Summary          string              `json:"summary" yaml:"summary"`
+	Display          Display             `json:"display,omitempty" yaml:"display"`
+	Name             string              `json:"name,omitempty" yaml:"name"`
+	Summary          string              `json:"summary,omitempty" yaml:"summary"`
 	RuntimeHints     RuntimeHints        `json:"runtime_hints,omitempty" yaml:"runtime_hints"`
 	AcceptsWork      []string            `json:"accepts_work,omitempty" yaml:"accepts_work"`
 	RequiredApps     map[string]AppGrant `json:"required_apps,omitempty" yaml:"required_apps"`
@@ -87,8 +98,9 @@ type Subscription struct {
 }
 
 type Artifact struct {
-	Path string `json:"path" yaml:"path"`
-	Kind string `json:"kind" yaml:"kind"`
+	Path      string `json:"path" yaml:"path"`
+	Kind      string `json:"kind" yaml:"kind"`
+	ProfileID string `json:"profile_id,omitempty" yaml:"-"`
 }
 
 type ApprovalPolicy struct {
@@ -110,21 +122,25 @@ type Plan struct {
 }
 
 type BlueprintSummary struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Summary string `json:"summary"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	Version string  `json:"version"`
+	Summary string  `json:"summary"`
+	Display Display `json:"display,omitempty"`
 }
 
 type AgentPlan struct {
 	Role             string   `json:"role"`
+	Display          Display  `json:"display,omitempty"`
+	ProfileRef       Ref      `json:"profile_ref"`
 	ProfileID        string   `json:"profile_id"`
 	ProfileVersion   string   `json:"profile_version"`
 	DefaultAgentName string   `json:"default_agent_name"`
 	DefaultCount     int      `json:"default_count"`
 	Min              int      `json:"min"`
 	Max              int      `json:"max"`
-	RuntimeHints     []string `json:"runtime_hints,omitempty"`
+	RuntimeHints     []string `json:"runtime_options,omitempty"`
+	AppRequestRefs   []string `json:"app_request_refs,omitempty"`
 	Purpose          string   `json:"purpose,omitempty"`
 }
 
@@ -154,14 +170,14 @@ func LoadLocalDir(dir string) (*Blueprint, error) {
 		return nil, fmt.Errorf("blueprint.yaml: %w", err)
 	}
 	var bp Blueprint
-	if err := yaml.Unmarshal(raw, &bp); err != nil {
+	if err := decodeKnownYAML(raw, &bp); err != nil {
 		return nil, fmt.Errorf("blueprint.yaml: parse: %w", err)
 	}
 	if err := validateBlueprint(abs, &bp); err != nil {
 		return nil, err
 	}
-	profiles := make([]Profile, 0, len(bp.Profiles))
-	for _, slot := range bp.Profiles {
+	profiles := make([]Profile, 0, len(bp.Slots))
+	for _, slot := range bp.Slots {
 		profile, err := loadProfile(abs, slot)
 		if err != nil {
 			return nil, err
@@ -181,7 +197,7 @@ func InspectPlan(bp *Blueprint) Plan {
 	appScopes := map[string]map[string]bool{}
 	subscriptions := []Subscription{}
 	artifacts := []Artifact{}
-	agents := make([]AgentPlan, 0, len(bp.Profiles))
+	agents := make([]AgentPlan, 0, len(bp.Slots))
 	profileByID := map[string]Profile{}
 	for _, p := range bp.LoadedProfiles {
 		profileByID[p.ID] = p
@@ -189,11 +205,8 @@ func InspectPlan(bp *Blueprint) Plan {
 		subscriptions = append(subscriptions, p.Subscriptions...)
 		artifacts = append(artifacts, p.Artifacts...)
 	}
-	for _, slot := range bp.Profiles {
-		p := profileByID[slot.ID]
-		mergeApps(appScopes, slot.RequiredApps)
-		subscriptions = append(subscriptions, slot.Subscriptions...)
-		artifacts = append(artifacts, slot.Artifacts...)
+	for _, slot := range bp.Slots {
+		p := profileByID[slot.ProfileRef.ID]
 		count := slot.DefaultCount
 		if count <= 0 {
 			count = 1
@@ -211,15 +224,18 @@ func InspectPlan(bp *Blueprint) Plan {
 			runtimeHints = append(runtimeHints, p.RuntimeHints.Preferred...)
 		}
 		agents = append(agents, AgentPlan{
-			Role:             firstNonEmpty(slot.Role, slot.ID),
+			Role:             slot.Role,
+			Display:          slot.Display,
+			ProfileRef:       slot.ProfileRef,
 			ProfileID:        p.ID,
 			ProfileVersion:   p.Version,
-			DefaultAgentName: firstNonEmpty(slot.DefaultAgentName, slot.ID),
+			DefaultAgentName: firstNonEmpty(slot.DefaultAgentName, slot.Role, slot.ProfileRef.ID),
 			DefaultCount:     count,
 			Min:              min,
 			Max:              max,
 			RuntimeHints:     runtimeHints,
-			Purpose:          firstNonEmpty(slot.Purpose, p.Summary),
+			AppRequestRefs:   append([]string(nil), slot.AppRequestRefs...),
+			Purpose:          firstNonEmpty(slot.Display.Summary, p.Display.Summary, p.Summary),
 		})
 	}
 	for _, app := range bp.RecommendedApps {
@@ -235,104 +251,242 @@ func InspectPlan(bp *Blueprint) Plan {
 		files = append(files, filepath.ToSlash(filepath.Join(p.Path, "profile.yaml")), filepath.ToSlash(filepath.Join(p.Path, "instructions.md")))
 	}
 	return Plan{
-		Source:             bp.Source,
-		Blueprint:          BlueprintSummary{ID: bp.ID, Name: bp.Name, Version: bp.Version, Summary: bp.Summary},
-		Agents:             agents,
-		RuntimeHints:       flattenRuntimeHints(bp.RuntimeOptions),
-		RequestedApps:      appRequests(appScopes),
-		EventSubscriptions: dedupeSubscriptions(subscriptions),
-		ApprovalPolicy:     bp.ApprovalPolicy,
-		CodeArtifacts:      dedupeArtifacts(artifacts),
-		FilesWouldWrite:    sortedUnique(files),
-		CommandsWouldRun:   []string{},
-		RequiredHumanDecisions: []string{
-			"review requested app grants and scopes",
-			"approve or deny event subscriptions",
-			"choose runtime bindings for planned agents",
-		},
+		Source:                 bp.Source,
+		Blueprint:              BlueprintSummary{ID: bp.ID, Name: blueprintName(bp), Version: bp.Version, Summary: blueprintSummary(bp), Display: bp.Display},
+		Agents:                 agents,
+		RuntimeHints:           flattenRuntimeHints(bp.RuntimeOptions),
+		RequestedApps:          appRequests(appScopes),
+		EventSubscriptions:     dedupeSubscriptions(subscriptions),
+		ApprovalPolicy:         bp.ApprovalPolicy,
+		CodeArtifacts:          dedupeArtifacts(artifacts),
+		FilesWouldWrite:        sortedUnique(files),
+		CommandsWouldRun:       []string{},
+		RequiredHumanDecisions: []string{"review requested app grants and scopes", "approve or deny event subscriptions", "choose runtime bindings for planned agents"},
 	}
 }
 
 func (p Plan) JSON() ([]byte, error) { return json.MarshalIndent(p, "", "  ") }
 
+func decodeKnownYAML(raw []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	return dec.Decode(out)
+}
+
 func validateBlueprint(root string, bp *Blueprint) error {
 	if bp.SchemaVersion != 1 {
 		return fmt.Errorf("blueprint.yaml:schema_version: expected 1")
 	}
-	for field, value := range map[string]string{"id": bp.ID, "name": bp.Name, "version": bp.Version, "summary": bp.Summary} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("blueprint.yaml:%s: required", field)
-		}
-	}
-	if len(bp.Profiles) == 0 {
-		return fmt.Errorf("blueprint.yaml:profiles: at least one profile is required")
-	}
-	seen := map[string]bool{}
-	for idx, slot := range bp.Profiles {
-		prefix := fmt.Sprintf("blueprint.yaml:profiles[%d]", idx)
-		if strings.TrimSpace(slot.ID) == "" {
-			return fmt.Errorf("%s.id: required", prefix)
-		}
-		if seen[slot.ID] {
-			return fmt.Errorf("%s.id: duplicate %q", prefix, slot.ID)
-		}
-		seen[slot.ID] = true
-		if err := validateRelativePath(prefix+".path", slot.Path); err != nil {
+	for field, value := range map[string]string{"id": bp.ID, "version": bp.Version} {
+		if err := validateRequiredString("blueprint.yaml:"+field, value); err != nil {
 			return err
 		}
-		full := filepath.Join(root, filepath.FromSlash(slot.Path))
-		if !isWithin(root, full) {
-			return fmt.Errorf("%s.path: escapes blueprint root", prefix)
+	}
+	if strings.TrimSpace(blueprintName(bp)) == "" {
+		return fmt.Errorf("blueprint.yaml:display.name: required")
+	}
+	if strings.TrimSpace(blueprintSummary(bp)) == "" {
+		return fmt.Errorf("blueprint.yaml:display.summary: required")
+	}
+	if len(bp.Slots) == 0 {
+		return fmt.Errorf("blueprint.yaml:slots: at least one slot is required")
+	}
+	for i, app := range bp.RecommendedApps {
+		if err := validateRequiredString(fmt.Sprintf("blueprint.yaml:recommended_apps[%d]", i), app); err != nil {
+			return err
+		}
+	}
+	for i, approval := range bp.ApprovalPolicy.RequireHumanApproval {
+		if err := validateRequiredString(fmt.Sprintf("blueprint.yaml:approval_policy.require_human_approval[%d]", i), approval); err != nil {
+			return err
+		}
+	}
+	seenRoles := map[string]bool{}
+	for idx, slot := range bp.Slots {
+		prefix := fmt.Sprintf("blueprint.yaml:slots[%d]", idx)
+		if err := validateRequiredString(prefix+".role", slot.Role); err != nil {
+			return err
+		}
+		if seenRoles[slot.Role] {
+			return fmt.Errorf("%s.role: duplicate %q", prefix, slot.Role)
+		}
+		seenRoles[slot.Role] = true
+		if err := validateRequiredString(prefix+".profile_ref.id", slot.ProfileRef.ID); err != nil {
+			return err
+		}
+		if err := validateRequiredString(prefix+".profile_ref.version", slot.ProfileRef.Version); err != nil {
+			return err
+		}
+		if slot.DefaultCount < 0 || slot.Min < 0 || slot.Max < 0 {
+			return fmt.Errorf("%s: counts and ranges must be non-negative", prefix)
+		}
+		count := slot.DefaultCount
+		if count == 0 {
+			count = 1
+		}
+		min := slot.Min
+		if min == 0 {
+			min = 1
+		}
+		max := slot.Max
+		if max == 0 {
+			max = count
+		}
+		if min > count || count > max {
+			return fmt.Errorf("%s: require min <= default_count <= max", prefix)
+		}
+		for i, runtime := range slot.RuntimeOptions {
+			if err := validateRequiredString(fmt.Sprintf("%s.runtime_options[%d]", prefix, i), runtime); err != nil {
+				return err
+			}
+		}
+		for i, ref := range slot.AppRequestRefs {
+			if err := validateRequiredString(fmt.Sprintf("%s.app_request_refs[%d]", prefix, i), ref); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func loadProfile(root string, slot BlueprintProfile) (*Profile, error) {
-	profileDir := filepath.Join(root, filepath.FromSlash(slot.Path))
+func loadProfile(root string, slot SlotSpec) (*Profile, error) {
+	profileRel := filepath.ToSlash(filepath.Join("profiles", slot.ProfileRef.ID))
+	profileDir := filepath.Join(root, filepath.FromSlash(profileRel))
+	if !isWithin(root, profileDir) {
+		return nil, fmt.Errorf("blueprint.yaml:slots.profile_ref.id: resolves outside blueprint root")
+	}
 	profilePath := filepath.Join(profileDir, "profile.yaml")
 	raw, err := os.ReadFile(profilePath)
 	if err != nil {
-		return nil, fmt.Errorf("%s/profile.yaml: %w", slot.Path, err)
+		return nil, fmt.Errorf("%s/profile.yaml: %w", profileRel, err)
 	}
 	var p Profile
-	if err := yaml.Unmarshal(raw, &p); err != nil {
-		return nil, fmt.Errorf("%s/profile.yaml: parse: %w", slot.Path, err)
+	if err := decodeKnownYAML(raw, &p); err != nil {
+		return nil, fmt.Errorf("%s/profile.yaml: parse: %w", profileRel, err)
 	}
 	if p.SchemaVersion != 1 {
-		return nil, fmt.Errorf("%s/profile.yaml:schema_version: expected 1", slot.Path)
+		return nil, fmt.Errorf("%s/profile.yaml:schema_version: expected 1", profileRel)
 	}
-	for field, value := range map[string]string{"id": p.ID, "name": p.Name, "version": p.Version, "summary": p.Summary} {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("%s/profile.yaml:%s: required", slot.Path, field)
+	for field, value := range map[string]string{"id": p.ID, "version": p.Version} {
+		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:%s", profileRel, field), value); err != nil {
+			return nil, err
 		}
 	}
-	if p.ID != slot.ID {
-		return nil, fmt.Errorf("%s/profile.yaml:id: got %q, want slot id %q", slot.Path, p.ID, slot.ID)
+	if strings.TrimSpace(profileName(p)) == "" {
+		return nil, fmt.Errorf("%s/profile.yaml:display.name: required", profileRel)
+	}
+	if strings.TrimSpace(profileSummary(p)) == "" {
+		return nil, fmt.Errorf("%s/profile.yaml:display.summary: required", profileRel)
+	}
+	if p.ID != slot.ProfileRef.ID {
+		return nil, fmt.Errorf("%s/profile.yaml:id: got %q, want profile_ref id %q", profileRel, p.ID, slot.ProfileRef.ID)
+	}
+	if p.Version != slot.ProfileRef.Version {
+		return nil, fmt.Errorf("%s/profile.yaml:version: got %q, want profile_ref version %q", profileRel, p.Version, slot.ProfileRef.Version)
 	}
 	instructions := filepath.Join(profileDir, "instructions.md")
 	if _, err := os.Stat(instructions); err != nil {
-		return nil, fmt.Errorf("%s/instructions.md: required", slot.Path)
+		return nil, fmt.Errorf("%s/instructions.md: required", profileRel)
 	}
-	for i, artifact := range p.Artifacts {
-		if err := validateRelativePath(fmt.Sprintf("%s/profile.yaml:artifacts[%d].path", slot.Path, i), artifact.Path); err != nil {
+	for app, grant := range p.RequiredApps {
+		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:required_apps.%s", profileRel, app), app); err != nil {
 			return nil, err
 		}
+		for i, scope := range grant.Scopes {
+			if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:required_apps.%s.scopes[%d]", profileRel, app, i), scope); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for i, sub := range p.Subscriptions {
+		if err := validateSubscription(fmt.Sprintf("%s/profile.yaml:subscriptions[%d]", profileRel, i), sub); err != nil {
+			return nil, err
+		}
+	}
+	for i, approval := range p.ApprovalRequired {
+		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:approval_required[%d]", profileRel, i), approval); err != nil {
+			return nil, err
+		}
+	}
+	for i, artifact := range p.Artifacts {
+		if err := validateArtifact(root, profileDir, profileRel, i, &artifact); err != nil {
+			return nil, err
+		}
+		p.Artifacts[i] = artifact
 	}
 	digest, err := digestDir(profileDir)
 	if err != nil {
 		return nil, err
 	}
-	p.Path = filepath.ToSlash(slot.Path)
-	p.InstructionsPath = filepath.ToSlash(filepath.Join(slot.Path, "instructions.md"))
+	p.Path = profileRel
+	p.InstructionsPath = filepath.ToSlash(filepath.Join(profileRel, "instructions.md"))
 	p.Digest = digest
 	return &p, nil
+}
+
+func validateArtifact(root, profileDir, profileRel string, idx int, artifact *Artifact) error {
+	field := fmt.Sprintf("%s/profile.yaml:artifacts[%d].path", profileRel, idx)
+	if err := validateRelativePath(field, artifact.Path); err != nil {
+		return err
+	}
+	if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:artifacts[%d].kind", profileRel, idx), artifact.Kind); err != nil {
+		return err
+	}
+	full := filepath.Join(profileDir, filepath.FromSlash(artifact.Path))
+	if !isWithin(profileDir, full) {
+		return fmt.Errorf("%s: escapes profile directory", field)
+	}
+	info, err := os.Lstat(full)
+	if err != nil {
+		return fmt.Errorf("%s: artifact does not exist", field)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s: symlinks are not allowed", field)
+	}
+	rel, _ := filepath.Rel(root, full)
+	artifact.Path = filepath.ToSlash(rel)
+	artifact.ProfileID = strings.TrimPrefix(profileRel, "profiles/")
+	return nil
+}
+
+func validateSubscription(field string, sub Subscription) error {
+	if strings.TrimSpace(sub.Event) == "" && strings.TrimSpace(sub.Type) == "" {
+		return fmt.Errorf("%s.event: required", field)
+	}
+	for name, value := range map[string]string{"app": sub.App, "event": sub.Event, "type": sub.Type, "resource_ref": sub.ResourceRef} {
+		if strings.TrimSpace(value) != "" && hasControl(value) {
+			return fmt.Errorf("%s.%s: control characters are not allowed", field, name)
+		}
+	}
+	return nil
+}
+
+func validateRequiredString(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s: required", field)
+	}
+	if hasControl(value) {
+		return fmt.Errorf("%s: control characters are not allowed", field)
+	}
+	return nil
+}
+
+func hasControl(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRelativePath(field string, value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fmt.Errorf("%s: required", field)
+	}
+	if hasControl(value) {
+		return fmt.Errorf("%s: control characters are not allowed", field)
 	}
 	if filepath.IsAbs(value) || strings.HasPrefix(value, "/") {
 		return fmt.Errorf("%s: absolute paths are not allowed", field)
@@ -357,20 +511,26 @@ func scanUnsafeSource(root string) error {
 		if rel == "." {
 			return nil
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s: symlinks are not allowed in blueprints", relSlash)
+		}
 		for _, segment := range strings.Split(relSlash, "/") {
 			if segment == ".aw" {
 				return fmt.Errorf("%s: .aw runtime state is not allowed in blueprints", relSlash)
 			}
 		}
 		base := strings.ToLower(d.Name())
-		if unsafeFileName(base) {
-			return fmt.Errorf("%s: identity material, credentials, tokens, secrets, or generated runtime state are not allowed", relSlash)
-		}
 		if d.IsDir() {
-			if base == "worktrees" || base == "worktree" || base == "generated-worktrees" || (base == "work" && strings.Contains(relSlash, "instances/")) {
+			if shouldSkipPayloadDir(base) {
+				return filepath.SkipDir
+			}
+			if isGeneratedWorktreeDir(relSlash, base) {
 				return fmt.Errorf("%s: generated worktrees are not allowed in blueprints", relSlash)
 			}
 			return nil
+		}
+		if unsafeFileName(base) {
+			return fmt.Errorf("%s: identity material, credentials, tokens, secrets, or generated runtime state are not allowed", relSlash)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -381,6 +541,19 @@ func scanUnsafeSource(root string) error {
 		}
 		return nil
 	})
+}
+
+func shouldSkipPayloadDir(base string) bool {
+	switch base {
+	case ".git", ".hg", ".svn", "node_modules", ".cache", "dist", "build", "target", "tmp", "vendor", "__pycache__":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGeneratedWorktreeDir(relSlash, base string) bool {
+	return base == "worktrees" || base == "worktree" || base == "generated-worktrees" || (base == "work" && strings.Contains(relSlash, "instances/"))
 }
 
 func unsafeFileName(base string) bool {
@@ -411,7 +584,13 @@ func digestDir(root string) (string, error) {
 		if err != nil {
 			return err
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s: symlinks are not allowed in blueprints", path)
+		}
 		if d.IsDir() {
+			if path != root && shouldSkipPayloadDir(strings.ToLower(d.Name())) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		paths = append(paths, path)
@@ -509,7 +688,7 @@ func dedupeArtifacts(in []Artifact) []Artifact {
 	seen := map[string]Artifact{}
 	keys := []string{}
 	for _, artifact := range in {
-		key := artifact.Path + "\x00" + artifact.Kind
+		key := artifact.ProfileID + "\x00" + artifact.Path + "\x00" + artifact.Kind
 		if _, ok := seen[key]; !ok {
 			seen[key] = artifact
 			keys = append(keys, key)
@@ -546,3 +725,8 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+func blueprintName(bp *Blueprint) string    { return firstNonEmpty(bp.Display.Name, bp.Name) }
+func blueprintSummary(bp *Blueprint) string { return firstNonEmpty(bp.Display.Summary, bp.Summary) }
+func profileName(p Profile) string          { return firstNonEmpty(p.Display.Name, p.Name) }
+func profileSummary(p Profile) string       { return firstNonEmpty(p.Display.Summary, p.Summary) }

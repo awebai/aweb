@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/awebai/aw/internal/teamblueprint"
@@ -36,7 +37,11 @@ func runBlueprintInspect(out io.Writer, source string, jsonOut bool) error {
 	if strings.TrimSpace(source) == "" {
 		return fmt.Errorf("blueprint source is required")
 	}
-	if strings.Contains(source, "://") || strings.HasPrefix(source, "git@") {
+	kind, err := classifyBlueprintInspectSource(source)
+	if err != nil {
+		return err
+	}
+	if kind != "local_dir" {
 		return fmt.Errorf("remote blueprint sources are not supported yet; use a local directory")
 	}
 	bp, err := teamblueprint.LoadLocalDir(source)
@@ -54,6 +59,39 @@ func runBlueprintInspect(out io.Writer, source string, jsonOut bool) error {
 	}
 	printBlueprintPlan(out, plan)
 	return nil
+}
+
+func classifyBlueprintInspectSource(source string) (string, error) {
+	source = strings.TrimSpace(source)
+	if strings.Contains(source, "://") || strings.HasPrefix(source, "git@") || isSSHLikeBlueprintRef(source) || isCatalogBlueprintRef(source) {
+		return "remote", nil
+	}
+	info, err := os.Stat(source)
+	if err == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("blueprint source %s is not a directory", source)
+		}
+		return "local_dir", nil
+	}
+	if isExplicitLocalPath(source) {
+		return "", fmt.Errorf("blueprint source %s not found", source)
+	}
+	return "remote", nil
+}
+
+func isExplicitLocalPath(source string) bool {
+	return strings.HasPrefix(source, ".") || strings.HasPrefix(source, string(os.PathSeparator)) || strings.HasPrefix(source, "~")
+}
+
+func isCatalogBlueprintRef(source string) bool {
+	parts := strings.Split(source, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(parts[0], ".") && !strings.HasPrefix(source, ".")
+}
+
+func isSSHLikeBlueprintRef(source string) bool {
+	at := strings.Index(source, "@")
+	colon := strings.Index(source, ":")
+	return at > 0 && colon > at
 }
 
 func printBlueprintPlan(out io.Writer, plan teamblueprint.Plan) {
