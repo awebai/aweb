@@ -424,11 +424,14 @@ identity, team-controller, namespace-controller, or A2A-gateway key as an app
 emit key.
 
 **Implementation consequence:** the AC-side emit-key custody (mint/store/
-provision/inject private seeds) is removed — AC's emit-key registry holds
-**public key + grant + digest registration only** (no private-seed material, no
-seed-export). folio self-generates its keypair, its operator sets the seed in
-folio's runtime env, folio declares the public `did_key`, AC registers it at
-install.
+provision/inject private seeds) is removed entirely — **registration lives in
+core's `app_registry_emit_keys`** (custody-agnostic), and **AC holds NO emit-key
+tables.** At install the control plane verifies the exact manifest bytes,
+requires one manifest-declared public `{kid, did_key}`, validates its shape, and
+**forwards it to core**, which records it in `app_registry_emit_keys`. No
+private-seed material anywhere in the platform. folio self-generates its
+keypair, its operator sets the seed in folio's runtime env, folio declares the
+public `did_key`, the control plane forwards it, core registers it.
 
 ## 7. App manifest and the app contract
 
