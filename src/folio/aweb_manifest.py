@@ -291,6 +291,9 @@ MANIFEST: dict[str, Any] = {
             ),
         }
     ],
+    "event_emitters": [
+        {"kid": "folio:emit-1", "did_key": "did:key:z6MkhddL2VEzVjKeh36xFg4ULcfWN4Q9VgK6oQ3mdCNJEPWv"},
+    ],
 }
 
 
