@@ -78,8 +78,15 @@ func TestProfilePackInspectJSONLocalDir(t *testing.T) {
 		t.Fatalf("profiles=%v", profiles)
 	}
 	importPreview := got["import_preview"].(map[string]any)
-	if importPreview["would_upload_on_import"] != true || importPreview["separate_future_step"] != true {
+	if importPreview["would_upload_on_import"] != true || importPreview["separate_future_step"] != true || importPreview["optional_layer"] != true || importPreview["requires_library_subscription"] != true {
 		t.Fatalf("import_preview=%v", importPreview)
+	}
+	if required, ok := got["required_human_decisions"].([]any); !ok || len(required) != 0 {
+		t.Fatalf("required_human_decisions=%v", got["required_human_decisions"])
+	}
+	optional := got["optional_next_steps"].([]any)
+	if len(optional) == 0 || !strings.Contains(out.String(), "empty profiles") {
+		t.Fatalf("optional_next_steps=%v", optional)
 	}
 	if !strings.Contains(out.String(), "sha256:") {
 		t.Fatalf("expected digest in output: %s", out.String())
@@ -94,7 +101,7 @@ func TestProfilePackInspectHumanPlan(t *testing.T) {
 		t.Fatalf("inspect returned error: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"Profile pack: Engineering AI Team Starter Pack", "Expected apps (setup hints, not grants):", "Profiles:", "Import preview (separate future step; inspect uploads nothing):", "Materialization preview (separate future step; inspect writes nothing):", "Files that would be written by inspect: none", "Commands that would run: none", "Required human decisions:"} {
+	for _, want := range []string{"Profile pack: Engineering AI Team Starter Pack", "Expected apps (setup hints, not grants):", "Profiles:", "Optional Library import preview (separate future step; inspect uploads nothing):", "Optional materialization preview (separate future step; inspect writes nothing):", "Files that would be written by inspect: none", "Commands that would run: none", "Required human decisions for inspect: none", "Optional next steps:", "continue with empty profiles"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q:\n%s", want, text)
 		}

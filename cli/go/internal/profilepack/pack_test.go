@@ -94,8 +94,11 @@ func TestLoadLocalDirValidatesAndPlansProfilePack(t *testing.T) {
 	if len(plan.Profiles[0].MaterializationPreview.Artifacts) != 1 || plan.Profiles[0].MaterializationPreview.Artifacts[0].ProfileID != "coordinator" {
 		t.Fatalf("artifacts=%+v", plan.Profiles[0].MaterializationPreview.Artifacts)
 	}
-	if !plan.ImportPreview.SeparateFutureStep || !plan.ImportPreview.WouldUploadOnImport || len(plan.ImportPreview.PayloadFiles) == 0 {
+	if !plan.ImportPreview.OptionalLayer || !plan.ImportPreview.RequiresLibrarySubscription || !plan.ImportPreview.SeparateFutureStep || !plan.ImportPreview.WouldUploadOnImport || len(plan.ImportPreview.PayloadFiles) == 0 {
 		t.Fatalf("import preview=%+v", plan.ImportPreview)
+	}
+	if len(plan.RequiredHumanDecisions) != 0 || len(plan.OptionalNextSteps) == 0 || !strings.Contains(strings.Join(plan.OptionalNextSteps, "\n"), "empty profiles") {
+		t.Fatalf("Library/profile packs must be optional: required=%v optional=%v", plan.RequiredHumanDecisions, plan.OptionalNextSteps)
 	}
 	if len(plan.FilesWouldWrite) != 0 || len(plan.CommandsWouldRun) != 0 {
 		t.Fatalf("inspect must not write/run: files=%v commands=%v", plan.FilesWouldWrite, plan.CommandsWouldRun)

@@ -105,6 +105,7 @@ type Plan struct {
 	FilesWouldWrite        []string               `json:"files_would_write"`
 	CommandsWouldRun       []string               `json:"commands_would_run"`
 	RequiredHumanDecisions []string               `json:"required_human_decisions"`
+	OptionalNextSteps      []string               `json:"optional_next_steps"`
 }
 
 type ProfilePackSummary struct {
@@ -146,14 +147,17 @@ type ProfileMaterialization struct {
 }
 
 type ImportPreview struct {
-	SeparateFutureStep  bool     `json:"separate_future_step"`
-	LibraryEndpoint     string   `json:"library_endpoint"`
-	WouldUploadOnImport bool     `json:"would_upload_on_import"`
-	PayloadDigest       string   `json:"payload_digest"`
-	PayloadFiles        []string `json:"payload_files"`
+	OptionalLayer               bool     `json:"optional_layer"`
+	RequiresLibrarySubscription bool     `json:"requires_library_subscription"`
+	SeparateFutureStep          bool     `json:"separate_future_step"`
+	LibraryEndpoint             string   `json:"library_endpoint"`
+	WouldUploadOnImport         bool     `json:"would_upload_on_import"`
+	PayloadDigest               string   `json:"payload_digest"`
+	PayloadFiles                []string `json:"payload_files"`
 }
 
 type MaterializationPreview struct {
+	OptionalLayer                         bool     `json:"optional_layer"`
 	Target                                string   `json:"target"`
 	SeparateFutureStep                    bool     `json:"separate_future_step"`
 	WouldRecordAWProfileRefsOnMaterialize bool     `json:"would_record_aw_profile_refs_on_materialize"`
@@ -255,11 +259,12 @@ func InspectPlan(pack *Pack) Plan {
 			FirstMissionExamples:  append([]string(nil), pack.FirstMissionExamples...),
 		},
 		Profiles:               profileSummaries,
-		ImportPreview:          ImportPreview{SeparateFutureStep: true, LibraryEndpoint: "POST /v1/profile-packs/import", WouldUploadOnImport: true, PayloadDigest: pack.Source.Digest, PayloadFiles: append([]string(nil), pack.PayloadFiles...)},
-		MaterializationPreview: MaterializationPreview{Target: "local_home", SeparateFutureStep: true, WouldRecordAWProfileRefsOnMaterialize: true, WouldWriteOnInspect: []string{}},
+		ImportPreview:          ImportPreview{OptionalLayer: true, RequiresLibrarySubscription: true, SeparateFutureStep: true, LibraryEndpoint: "POST /v1/profile-packs/import", WouldUploadOnImport: true, PayloadDigest: pack.Source.Digest, PayloadFiles: append([]string(nil), pack.PayloadFiles...)},
+		MaterializationPreview: MaterializationPreview{OptionalLayer: true, Target: "local_home", SeparateFutureStep: true, WouldRecordAWProfileRefsOnMaterialize: true, WouldWriteOnInspect: []string{}},
 		FilesWouldWrite:        []string{},
 		CommandsWouldRun:       []string{},
-		RequiredHumanDecisions: []string{"select profiles/counts", "import pack to Library", "bind agent identities to Library profile refs", "materialize selected profiles into local homes"},
+		RequiredHumanDecisions: []string{},
+		OptionalNextSteps:      []string{"continue with empty profiles (no Library subscription required)", "select profiles/counts from this pack", "optionally import pack to Library when the Library contract is available", "optionally bind agent identities to Library profile refs", "optionally materialize selected profiles into local homes"},
 	}
 }
 

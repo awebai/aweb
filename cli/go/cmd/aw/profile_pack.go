@@ -134,7 +134,9 @@ func printProfilePackPlan(out io.Writer, plan profilepack.Plan) {
 			}
 		}
 	}
-	fmt.Fprintln(out, "\nImport preview (separate future step; inspect uploads nothing):")
+	fmt.Fprintln(out, "\nOptional Library import preview (separate future step; inspect uploads nothing):")
+	fmt.Fprintf(out, "  optional layer: %t\n", plan.ImportPreview.OptionalLayer)
+	fmt.Fprintf(out, "  requires Library subscription: %t\n", plan.ImportPreview.RequiresLibrarySubscription)
 	fmt.Fprintf(out, "  endpoint: %s\n", plan.ImportPreview.LibraryEndpoint)
 	fmt.Fprintf(out, "  would upload on import: %t\n", plan.ImportPreview.WouldUploadOnImport)
 	fmt.Fprintf(out, "  payload digest: %s\n", plan.ImportPreview.PayloadDigest)
@@ -142,7 +144,8 @@ func printProfilePackPlan(out io.Writer, plan profilepack.Plan) {
 	for _, path := range plan.ImportPreview.PayloadFiles {
 		fmt.Fprintf(out, "    - %s\n", path)
 	}
-	fmt.Fprintln(out, "\nMaterialization preview (separate future step; inspect writes nothing):")
+	fmt.Fprintln(out, "\nOptional materialization preview (separate future step; inspect writes nothing):")
+	fmt.Fprintf(out, "  optional layer: %t\n", plan.MaterializationPreview.OptionalLayer)
 	fmt.Fprintf(out, "  target: %s\n", plan.MaterializationPreview.Target)
 	fmt.Fprintf(out, "  would record .aw profile refs on materialize: %t\n", plan.MaterializationPreview.WouldRecordAWProfileRefsOnMaterialize)
 	if len(plan.FilesWouldWrite) == 0 {
@@ -161,8 +164,11 @@ func printProfilePackPlan(out io.Writer, plan profilepack.Plan) {
 			fmt.Fprintf(out, "  - %s\n", command)
 		}
 	}
-	fmt.Fprintln(out, "\nRequired human decisions:")
-	for _, decision := range plan.RequiredHumanDecisions {
-		fmt.Fprintf(out, "  - %s\n", decision)
+	fmt.Fprintln(out, "\nRequired human decisions for inspect: none")
+	if len(plan.OptionalNextSteps) > 0 {
+		fmt.Fprintln(out, "\nOptional next steps:")
+		for _, step := range plan.OptionalNextSteps {
+			fmt.Fprintf(out, "  - %s\n", step)
+		}
 	}
 }
