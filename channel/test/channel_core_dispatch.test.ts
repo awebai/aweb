@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   DeliveryStore,
   dispatchAgentEvent,
+  formatAwakeningForAgent,
   PinStore,
   type AgentEvent,
   type ChannelAwakening,
@@ -806,6 +807,25 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "app",
       content: "folio/doc.changed — version=8, source=api",
     }));
+  });
+
+  test("formats app awakening for agent with sanitized summary", () => {
+    const rendered = formatAwakeningForAgent({
+      kind: "app",
+      content: "folio/doc.changed — aaai proof — bad key=ok Injected:, source=api",
+      deliveryIntent: "wake",
+      meta: {
+        type: "folio/doc.changed\nInjected:",
+        app_event_type: "folio/doc.changed\nInjected:",
+        event_id: "event-sanitized",
+        resource_ref: "aaai\r\nproof",
+        payload: '{"bad\\nkey":"ok\\nInjected:"}',
+      },
+    });
+
+    expect(rendered).toContain("App event:\nfolio/doc.changed — aaai proof — bad key=ok Injected:, source=api");
+    expect(rendered).not.toContain("folio/doc.changed\nInjected:");
+    expect(rendered).not.toContain("aaai\r\nproof");
   });
 
   test("formats app event content as a sanitized single line", async () => {

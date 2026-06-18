@@ -6331,28 +6331,37 @@ function trustWarningLine(status) {
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 function formatAwakeningForAgent(awakening) {
-  const type2 = awakening.meta.type || awakening.kind;
+  const rawType = awakening.meta.type || awakening.kind;
+  const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines = [`aweb ${type2} event received.`];
   const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status") ? trustWarningLine(awakening.meta.trust_status) : "";
   if (warning)
     lines.push("", warning);
   lines.push("", "Metadata:");
   for (const [key, value] of Object.entries(awakening.meta)) {
-    if (value)
-      lines.push(`- ${key}: ${value}`);
+    const displayValue = awakening.kind === "app" ? sanitizeSummaryComponent(value) : value;
+    if (displayValue)
+      lines.push(`- ${key}: ${displayValue}`);
   }
   if (awakening.kind === "app") {
-    const appType = awakening.meta.app_event_type || awakening.meta.type || "app_event";
-    lines.push("", "App event:", appType);
-    if (awakening.meta.resource_ref)
-      lines.push(`Resource: ${awakening.meta.resource_ref}`);
-    if (awakening.meta.payload)
-      lines.push(`Payload: ${awakening.meta.payload}`);
+    const summary = sanitizeSummaryComponent(awakening.content) || formatAppEventMetaSummary(awakening.meta);
+    if (summary)
+      lines.push("", "App event:", summary);
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
   lines.push("", "Use the aw CLI to respond when appropriate.");
   return lines.join("\n");
+}
+function formatAppEventMetaSummary(meta) {
+  const parts = [sanitizeSummaryComponent(meta.app_event_type || meta.type || "app_event") || "app_event"];
+  const resourceRef = sanitizeSummaryComponent(meta.resource_ref || "");
+  if (resourceRef)
+    parts.push(resourceRef);
+  const payload = sanitizeSummaryComponent(meta.payload || "");
+  if (payload)
+    parts.push(payload);
+  return parts.join(APP_EVENT_SUMMARY_SEPARATOR);
 }
 function pruneDispatched(dispatched) {
   if (dispatched.size <= MAX_DISPATCHED_IDS)
