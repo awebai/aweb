@@ -8,6 +8,8 @@ const dist = readFileSync(distPath, "utf8");
 
 const certificateFirst = "const stableID = certificateStableID || identityStableID";
 const staleIdentityFirst = "const stableID = (identity?.stable_id || \"\").trim() || (certificate.member_did_aw || \"\").trim()";
+const appEventConsumer = 'case "app_event"';
+const appAwakeningKind = 'kind: "app"';
 
 if (!dist.includes(certificateFirst)) {
   throw new Error(`pi-extension dist is missing certificate-first stable_id resolution: ${certificateFirst}`);
@@ -17,4 +19,8 @@ if (dist.includes(staleIdentityFirst)) {
   throw new Error("pi-extension dist still contains stale identity.yaml-first stable_id resolution");
 }
 
-console.log("pi-extension package dist uses certificate-first stable_id resolution");
+if (!dist.includes(appEventConsumer) || !dist.includes(appAwakeningKind)) {
+  throw new Error("pi-extension dist is missing bundled app_event consumer wake dispatch");
+}
+
+console.log("pi-extension package dist uses certificate-first stable_id resolution and app_event wake dispatch");

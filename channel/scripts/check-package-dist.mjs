@@ -13,6 +13,8 @@ const plugin = JSON.parse(readFileSync(pluginPath, "utf8"));
 
 const certificateFirst = "const stableID = certificateStableID || identityStableID";
 const staleIdentityFirst = "const stableID = (identity?.stable_id || \"\").trim() || (certificate.member_did_aw || \"\").trim()";
+const appEventConsumer = 'case "app_event"';
+const appAwakeningKind = 'kind: "app"';
 
 if (pkg.version !== plugin.version) {
   throw new Error(`plugin version ${plugin.version} does not match package version ${pkg.version}`);
@@ -24,6 +26,10 @@ if (!dist.includes(certificateFirst)) {
 
 if (dist.includes(staleIdentityFirst)) {
   throw new Error("channel dist still contains stale identity.yaml-first stable_id resolution");
+}
+
+if (!dist.includes(appEventConsumer) || !dist.includes(appAwakeningKind)) {
+  throw new Error("channel dist is missing bundled app_event consumer wake dispatch");
 }
 
 console.log(`channel package dist is coherent for ${pkg.version}`);
