@@ -807,4 +807,31 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "folio/doc.changed — version=8, source=api",
     }));
   });
+
+  test("formats app event content as a sanitized single line", async () => {
+    const onAwakening = vi.fn();
+    await dispatchAgentEvent(
+      {
+        client: {} as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "app_event",
+        event_id: "event-sanitized",
+        app_id: "folio",
+        app_event_type: "folio/doc.changed\nInjected:",
+        resource_ref: "aaai\r\nproof",
+        delivery_intent: "wake",
+        payload: { "bad\nkey": "ok\nInjected:", source: "api" },
+      } satisfies AgentEvent,
+    );
+
+    const awakening = onAwakening.mock.calls[0][0] as ChannelAwakening;
+    expect(awakening.content).toBe("folio/doc.changed Injected: — aaai proof — bad key=ok Injected:, source=api");
+    expect(awakening.content).not.toMatch(/[\r\n]/);
+  });
 });

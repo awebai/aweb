@@ -95,6 +95,33 @@ func TestRunDispatcherRendersAppEventWakeSummaryWithoutResourceRef(t *testing.T)
 	}
 }
 
+func TestRunDispatcherSanitizesAppEventWakeSummaryToSingleLine(t *testing.T) {
+	dispatcher := runDispatcher{}
+	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
+		Type:         awid.AgentEventAppEvent,
+		EventID:      "evt-3",
+		AppEventType: "folio/doc.changed\nInjected:",
+		ResourceRef:  "aaai\r\nproof",
+		Raw:          []byte("{\"event_id\":\"evt-3\",\"app_event_type\":\"folio/doc.changed\\nInjected:\",\"resource_ref\":\"aaai\\r\\nproof\",\"delivery_intent\":\"wake\",\"payload\":{\"bad\\nkey\":\"ok\\nInjected:\",\"source\":\"api\"}}"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decision.DisplayLines) != 1 {
+		t.Fatalf("expected one display line, got %d", len(decision.DisplayLines))
+	}
+	want := "folio/doc.changed Injected: — aaai proof — bad key=ok Injected:, source=api"
+	if decision.DisplayLines[0].Text != want {
+		t.Fatalf("display line = %q, want %q", decision.DisplayLines[0].Text, want)
+	}
+	if strings.ContainsAny(decision.DisplayLines[0].Text, "\r\n") {
+		t.Fatalf("display line should be one line, got %q", decision.DisplayLines[0].Text)
+	}
+	if strings.ContainsAny(decision.CycleContext, "\r\n") {
+		t.Fatalf("cycle context should be one line, got %q", decision.CycleContext)
+	}
+}
+
 // TestResolveMailWakeMarksRead verifies that resolveMailWake acks the message
 // after fetching it from the inbox.
 func TestResolveMailWakeMarksRead(t *testing.T) {

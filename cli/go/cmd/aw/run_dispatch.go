@@ -578,8 +578,8 @@ func formatWorkWakeDisplay(evt awid.AgentEvent) []awrun.DisplayLine {
 const appEventSummarySeparator = " — "
 
 func formatAppEventWakeSummary(evt awid.AgentEvent) string {
-	parts := []string{firstNonEmptyAppEventSummaryPart(strings.TrimSpace(evt.AppEventType), "app_event")}
-	if resourceRef := strings.TrimSpace(evt.ResourceRef); resourceRef != "" {
+	parts := []string{firstNonEmptyAppEventSummaryPart(sanitizeAppEventSummaryComponent(evt.AppEventType), "app_event")}
+	if resourceRef := sanitizeAppEventSummaryComponent(evt.ResourceRef); resourceRef != "" {
 		parts = append(parts, resourceRef)
 	}
 	if payload := formatAppEventPayloadSummary(evt); payload != "" {
@@ -602,7 +602,7 @@ func formatAppEventPayloadSummary(evt awid.AgentEvent) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", key, formatAppEventPayloadValue(evt.Payload[key])))
+		parts = append(parts, fmt.Sprintf("%s=%s", sanitizeAppEventSummaryComponent(key), formatAppEventPayloadValue(evt.Payload[key])))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -636,7 +636,7 @@ func formatAppEventPayloadSummaryFromRaw(raw []byte) string {
 		if err := dec.Decode(&value); err != nil {
 			return ""
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", key, formatAppEventPayloadValue(value)))
+		parts = append(parts, fmt.Sprintf("%s=%s", sanitizeAppEventSummaryComponent(key), formatAppEventPayloadValue(value)))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -644,15 +644,25 @@ func formatAppEventPayloadSummaryFromRaw(raw []byte) string {
 func formatAppEventPayloadValue(value any) string {
 	switch v := value.(type) {
 	case string:
-		return truncateAppEventSummary(v, 160)
+		return truncateAppEventSummary(sanitizeAppEventSummaryComponent(v), 160)
 	case json.RawMessage:
-		return truncateAppEventSummary(string(v), 160)
+		return truncateAppEventSummary(sanitizeAppEventSummaryComponent(string(v)), 160)
 	default:
 		if encoded, err := json.Marshal(v); err == nil {
-			return truncateAppEventSummary(string(encoded), 160)
+			return truncateAppEventSummary(sanitizeAppEventSummaryComponent(string(encoded)), 160)
 		}
-		return truncateAppEventSummary(fmt.Sprint(v), 160)
+		return truncateAppEventSummary(sanitizeAppEventSummaryComponent(fmt.Sprint(v)), 160)
 	}
+}
+
+func sanitizeAppEventSummaryComponent(value string) string {
+	mapped := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, value)
+	return strings.Join(strings.Fields(mapped), " ")
 }
 
 func truncateAppEventSummary(value string, max int) string {

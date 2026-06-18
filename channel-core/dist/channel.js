@@ -446,8 +446,8 @@ function summarizePayload(payload) {
     return truncateText(json, MAX_APP_EVENT_PAYLOAD_LENGTH);
 }
 function formatAppEventSummary(event, payload) {
-    const parts = [event.app_event_type || "app_event"];
-    const resourceRef = (event.resource_ref || "").trim();
+    const parts = [sanitizeSummaryComponent(event.app_event_type || "app_event") || "app_event"];
+    const resourceRef = sanitizeSummaryComponent(event.resource_ref || "");
     if (resourceRef)
         parts.push(resourceRef);
     const payloadSummary = payload ? summarizePayloadFields(payload) : "";
@@ -457,18 +457,21 @@ function formatAppEventSummary(event, payload) {
 }
 function summarizePayloadFields(payload) {
     return Object.entries(payload)
-        .map(([key, value]) => `${key}=${formatPayloadSummaryValue(value)}`)
+        .map(([key, value]) => `${sanitizeSummaryComponent(key)}=${formatPayloadSummaryValue(value)}`)
         .filter((part) => part.trim() !== "")
         .join(", ");
 }
 function formatPayloadSummaryValue(value) {
     if (typeof value === "string")
-        return truncateText(value, MAX_APP_EVENT_VALUE_LENGTH);
+        return truncateText(sanitizeSummaryComponent(value), MAX_APP_EVENT_VALUE_LENGTH);
     if (typeof value === "number" || typeof value === "boolean" || value === null) {
         return String(value);
     }
     const json = JSON.stringify(value);
-    return truncateText(json || String(value), MAX_APP_EVENT_VALUE_LENGTH);
+    return truncateText(sanitizeSummaryComponent(json || String(value)), MAX_APP_EVENT_VALUE_LENGTH);
+}
+function sanitizeSummaryComponent(value) {
+    return value.replace(/[\u0000-\u001F\u007F]+/g, " ").trim();
 }
 function truncateText(value, maxLength) {
     if (value.length <= maxLength)
