@@ -571,8 +571,54 @@ protocol, not the app-manifest dispatch path.
 
 - **OSS / self-hostable:** `awid` + the core authority/transport substrate;
   `atext` (public sample).
+- **Repo organization:** `aweb` stays the core/protocol/reference repo. First
+  party apps should normally live in their own repos and expose their own
+  manifests/origins. Do not place every app inside `aweb` just to inherit the
+  core repo's stars; use the `aweb` README/docs, GitHub org pins, app manifests,
+  and an app index for discovery.
 - **Case by case:** apps may be OSS or private (`folio` may stay private).
+  Audit/logs and secrets need OSS/self-hostable cores because customers may need
+  to own retention, compliance, and secret custody. Commercial hosted wrappers,
+  provider integrations, and managed retention/KMS can remain hosted/private
+  where appropriate.
 - **Hosted metering applies only to hosted services**; self-host is unmetered.
+
+### Self-hosted app with hosted core
+
+The app architecture should allow a customer to self-host one app while using
+hosted aweb core for the rest. The existing app registry/grants model already
+points in this direction: an installed app is identified by `(app_id, origin,
+digest, granted_scopes)`, and tool dispatch targets the installed app origin.
+
+What works under the current contracts:
+
+- a self-hosted app can serve `/.well-known/aweb-app.json`;
+- a hosted team can install that origin/digest and grant scopes;
+- CLI/gateway dispatch can call that app origin using team-auth;
+- the app can emit app events back into core with an installed app emit key.
+
+What does **not** exist yet:
+
+- a core signed/hash-chained team audit ledger;
+- `audit:read` or equivalent scoped access to all core protocol facts;
+- a pull/export API or webhook feed for an external audit app;
+- a verifiable event checkpoint contract a self-hosted audit app can store and
+  prove independently.
+
+Therefore, "self-host audit/logs while using hosted aweb core" is a target
+contract, not a finished capability. The correct split is:
+
+```text
+core aweb
+  owns verified protocol facts and signed/hash-chained audit events
+logs.aweb.ai or self-hosted logs app
+  owns storage, views, export, retention, and compliance workflows
+```
+
+For v1, prefer **pull** over push: a self-hosted audit app calls a hosted-core
+audit export endpoint with a team grant, verifies server signatures and the team
+hash chain, and stores its own copy. Webhook delivery can come later after the
+pull contract is stable.
 
 ## 12. Migration and sequencing (revised order)
 

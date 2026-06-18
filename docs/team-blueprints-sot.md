@@ -234,6 +234,11 @@ crosses an Aweb authority surface.
 Use "signed audit trail" in customer-facing language. Use "traceability" only
 for technical/debugging audiences.
 
+Core owns the signed audit facts. `logs.aweb.ai` or a self-hosted logs app owns
+views, search, retention, export, and compliance workflows. Customers should
+eventually be able to self-host audit/logs while using hosted Aweb core, through
+a scoped audit export/feed. See [`audit-logs-app-sot.md`](audit-logs-app-sot.md).
+
 ### Secret-mediated execution
 
 Agents should use secrets without seeing raw secret values.

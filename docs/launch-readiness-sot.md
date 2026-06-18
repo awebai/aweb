@@ -250,6 +250,8 @@ Acceptance criteria:
 
 Outcome: Aweb has a visible governance differentiator.
 
+Design source: [`audit-logs-app-sot.md`](audit-logs-app-sot.md).
+
 Launch audit is scoped to Aweb-mediated actions. It should sign and render the
 authority and outcome of actions that cross Aweb surfaces. It should not claim
 to sign arbitrary filesystem edits, raw shell commands, browser clicks, or model
@@ -272,6 +274,8 @@ Acceptance criteria:
 - each important event has actor, team, app/action, target, timestamp,
   authority/approval, result, and signature/envelope where applicable;
 - audit distinguishes signed Aweb-mediated facts from agent-reported activity;
+- docs and task scope preserve the target where a customer can later self-host
+  `logs.aweb.ai` against hosted Aweb core through a scoped audit export/feed;
 - customer copy uses "signed audit trail" or "reviewable record", not only
   "logs" or "traceability".
 
