@@ -385,35 +385,50 @@ modes (the `atext` spine already proves this). The entire hosted/BYOT distinctio
 stays in the control plane and gateway — it must **not** leak into the app
 contract or the core transport. This is both a simplification and a leak guard.
 
-### 6.7 App emit-key custody (LOCKED v1 — Juan, 2026-06-17)
+### 6.7 App emit-key custody (SELF-CUSTODIAL — Juan, 2026-06-18; supersedes the 2026-06-17 platform-managed lock)
 
-An app's event-emit signing key (the m3.2 `event_emitters` did:key) is a
-**platform-managed app *service* credential** — distinct from user/agent
-*custodial identity*. Two things are kept orthogonal (cf. §6.1): custody
-*classification* (who holds the key) vs signing *location* (where bytes are
-signed).
+App emit keys are **self-custodial by default.** The app **generates its own**
+event-emit keypair (the m3.2 `event_emitters` did:key), **holds the private seed
+in its own runtime** (alongside its DB/API secrets), and declares only the
+**public `did_key`** in its manifest `event_emitters`. The platform manages
+**registration, not custody:** the control plane (AC) **registers the public key
++ grant at install** (its team-custodial-identity job) and **never mints, holds,
+or provisions any app's private seed.**
 
-- **Hosted first-party app (e.g. `folio.aweb.ai`):** the platform stores the
-  emit key encrypted and **provisions it into the hosted app runtime for
-  in-process signing** of app-event credentials. Platform-held custody +
-  in-process signing.
-- **Self-hosted / third-party app:** the app operator holds its own emit key
-  and publishes the public `did_key`.
-- **Verifier is the authority** (not the app's self-claim): core binds
+- **Hosted or self-hosted — same model:** the app's own runtime holds its own
+  seed; the app operator sets the self-generated seed in the app's deployment env
+  (like any app secret). The platform only ever sees public keys.
+- **Verifier is the authority** (unchanged): core binds
   `app_id + team_id + kid + did_key` to the installed-app grant **scoped to the
-  team's pinned manifest digest**, and rejects inactive/rotated keys. (Enforced
-  by the m3.2 digest-scoping in `009_app_events.sql`.)
-- A central **gateway/KMS signer** (app never holds the raw key; smaller blast
-  radius, central audit/rotation) is a **future hardening** that rides the
-  durable app-as-AWID-identity work (aaaj.6) — **not v1**.
+  team's pinned manifest digest**, and rejects inactive/rotated keys (m3.2
+  digest-scoping in `009_app_events.sql`).
+- **The signed-credential WIRE is unchanged** — only *who generates/holds the
+  seed* changes (app, not platform). The m3.2 / aaaj.7 byte-parity vectors are
+  unaffected.
+- **Rotation:** the app generates a new keypair + re-registers the public key.
+- A central **gateway/KMS custody** mode (platform holds the key for apps that
+  want it) is an **optional stricter mode** (rides aaaj.6), **not the default.**
 
-**Guardrails:** per-app / per-env / per-`kid` keys only; **never** reuse an
-agent identity, team-controller, namespace-controller, or A2A-gateway key as an
-app emit key.
+**Why self-custodial (Juan, 2026-06-18):** (1) it deletes the entire per-app
+seed-provisioning apparatus — no platform minting, no encrypted-seed storage, no
+seed-injection (the Option C / GPG / Render-token dance is unnecessary); the seed
+never leaves the app's server. (2) Ecosystem scalability: ANY app joins by
+self-generating a keypair + registering its public key at install — no per-app
+key-provisioning ceremony in the control plane. AC holds public keys + grants,
+never app secrets → smaller blast radius (an AC compromise leaks no app seeds),
+matching trust-model.md's self-custodial mode + aweb's self-sovereign identity
+philosophy.
 
-So the in-process Python emit signer is the real v1 emit primitive (used by
-both self-hosted folio and platform-provisioned hosted folio), not merely a
-conformance/self-hosted reference. Consultant-reviewed; Juan-confirmed.
+**Guardrails:** per-app / per-`kid` keys only; **never** reuse an agent
+identity, team-controller, namespace-controller, or A2A-gateway key as an app
+emit key.
+
+**Implementation consequence:** the AC-side emit-key custody (mint/store/
+provision/inject private seeds) is removed — AC's emit-key registry holds
+**public key + grant + digest registration only** (no private-seed material, no
+seed-export). folio self-generates its keypair, its operator sets the seed in
+folio's runtime env, folio declares the public `did_key`, AC registers it at
+install.
 
 ## 7. App manifest and the app contract
 
