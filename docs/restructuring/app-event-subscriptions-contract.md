@@ -132,6 +132,13 @@ The canonical signed payload is:
 }
 ```
 
+`aud` and `path` are runtime request bindings, not fixed literal values. Apps
+must sign the actual external audience and raw request target that core sees:
+for example, hosted `app.aweb.ai/api` emits sign `/api/v1/events/app`, while a
+standalone aweb server may sign `/v1/events/app`. Query strings, if present, are
+part of `path` exactly as in the shared `raw_request_target` helper used by the
+team-auth verifier.
+
 This registered emit-key shape is intentionally a forward-compatible stopgap.
 It gives apps an app-owned DIDKey for v1 emits without making that key the
 permanent app principal model.
@@ -157,7 +164,10 @@ registry/app-registration update in the stopgap model.
 The canonical payload and body hash are covered by conformance vectors in
 `cli/go/internal/conformance/vectors/app-emit-credential-v1.json`; any producer
 (Go CLI helper, Python app backend, or third-party app) must generate the exact
-same canonical bytes and `body_sha256`.
+same canonical bytes and `body_sha256` for those fixture inputs. The vector's
+`aud=https://core.aweb.ai` and `path=/v1/events/app` are example fixture values
+for byte-parity only; runtime emits must substitute the deployment's actual
+audience and raw request target.
 
 Core accepts an emit only when all of these are true:
 
