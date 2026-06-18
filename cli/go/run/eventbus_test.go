@@ -135,15 +135,18 @@ func TestClassifyInterruptWakeEventsAsCommunication(t *testing.T) {
 }
 
 func TestClassifyAppEventWakeOnly(t *testing.T) {
-	pri, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: "wake"})
+	pri, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", DeliveryIntent: "wake"})
 	if !ok {
-		t.Fatal("app_event with delivery_intent=wake should be queued")
+		t.Fatal("app_event with event_id and delivery_intent=wake should be queued")
 	}
 	if pri != PriorityCommunication {
 		t.Fatalf("app_event wake should be communication priority, got %d", pri)
 	}
+	if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: "wake"}); ok {
+		t.Fatal("app_event without event_id should not wake aw run")
+	}
 	for _, intent := range []string{"ambient", "steer", ""} {
-		if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: intent}); ok {
+		if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", DeliveryIntent: intent}); ok {
 			t.Fatalf("app_event with delivery_intent=%q should not wake aw run", intent)
 		}
 	}
@@ -538,6 +541,49 @@ func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 	}
 	if evt.Event.Type != awid.AgentEventAppEvent || evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
 		t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+	}
+
+	cancel()
+	bus.Stop()
+}
+
+func TestEventBusSkipsAppEventWakeWithoutEventID(t *testing.T) {
+	source := newFakeEventSource(
+		awid.AgentEvent{Type: awid.AgentEventAppEvent, AppID: "folio", AppEventType: "folio/doc.changed", DeliveryIntent: "wake"},
+		awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1", FromAlias: "marker"},
+	)
+	called := false
+	bus := NewEventBus(EventBusConfig{
+		Stream: func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+			if called {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			called = true
+			return source, nil
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bus.Start(ctx)
+
+	select {
+	case <-bus.Queue().Ready():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for marker mail")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if got := bus.Queue().Len(); got != 1 {
+		t.Fatalf("expected only marker mail queued, got %d", got)
+	}
+	evt, ok := bus.Queue().Pop()
+	if !ok {
+		t.Fatal("expected queued marker mail")
+	}
+	if evt.Event.Type != awid.AgentEventActionableMail || evt.Event.FromAlias != "marker" {
+		t.Fatalf("unexpected queued event: %#v", evt.Event)
 	}
 
 	cancel()
