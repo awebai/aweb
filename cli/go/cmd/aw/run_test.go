@@ -763,6 +763,98 @@ func TestResolveChatWakeUsesExactUnreadMessageIDBeforePendingLastMessage(t *test
 	}
 }
 
+func TestRunUsesAppEventWakeToTriggerSecondCycle(t *testing.T) {
+	initRunCommandVars()
+
+	oldLoad := runLoadUserConfig
+	oldResolveSettings := runResolveSettings
+	oldNewProvider := runNewProvider
+	oldResolveClient := runResolveClientForDir
+	oldNewLoop := runNewLoop
+	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
+	t.Cleanup(func() {
+		runLoadUserConfig = oldLoad
+		runResolveSettings = oldResolveSettings
+		runNewProvider = oldNewProvider
+		runResolveClientForDir = oldResolveClient
+		runNewLoop = oldNewLoop
+		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
+		initRunCommandVars()
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
+			flusher.Flush()
+			_, _ = io.WriteString(w, "event: app_event\ndata: {\"event_id\":\"evt-1\",\"app_id\":\"folio\",\"app_event_type\":\"folio/doc.changed\",\"resource_ref\":\"aaai-m22-proof-1781686412\",\"delivery_intent\":\"wake\",\"producer_delivery_intent\":\"ambient\",\"payload\":{\"version\":8,\"source\":\"api\"}}\n\n")
+			flusher.Flush()
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	runLoadUserConfig = func(string) (awrun.UserConfig, error) { return awrun.UserConfig{}, nil }
+	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
+		return awrun.Settings{BasePrompt: "persistent mission", WaitSeconds: 30, IdleWaitSeconds: 1}, nil
+	}
+	provider := &recordingRunProvider{}
+	runNewProvider = func(name string) (awrun.Provider, error) { return provider, nil }
+	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
+		return client, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
+	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
+	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
+		loop := awrun.NewLoop(provider, out)
+		loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+			onLine("done")
+			return nil
+		}
+		return loop
+	}
+	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
+
+	cmd := &cobraCommandClone{Command: *runCmd}
+	cmd.ResetFlagsForTest()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd.Command.SetContext(ctx)
+	runMaxRuns = 2
+	var stdout, stderr bytes.Buffer
+	setRunCommandIO(&cmd.Command, strings.NewReader(""), &stdout, &stderr)
+
+	if err := runRun(&cmd.Command, []string{"claude"}); err != nil {
+		t.Fatalf("runRun returned error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	prompts, builds := provider.snapshot()
+	if len(prompts) != 2 {
+		t.Fatalf("expected app_event wake to trigger second provider run, got %d prompts: %#v", len(prompts), prompts)
+	}
+	want := "folio/doc.changed — aaai-m22-proof-1781686412 — version=8, source=api"
+	if !strings.Contains(prompts[1], want) {
+		t.Fatalf("expected second prompt to include app_event summary %q, got %q", want, prompts[1])
+	}
+	if len(builds) != 2 || !builds[1].ContinueSession || builds[1].SessionID != "sess-42" {
+		t.Fatalf("expected second run to continue session sess-42, got %+v", builds)
+	}
+}
+
 func TestNewRunDispatcherSkipsWorkWakeWithoutAutofeed(t *testing.T) {
 	dispatcher := newRunDispatcher(awrun.Settings{
 		WorkPromptSuffix: "work suffix",
