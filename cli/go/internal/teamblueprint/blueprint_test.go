@@ -39,6 +39,9 @@ slots:
     max: 1
     runtime_options: [claude-code, codex]
     app_request_refs: [tasks.basic]
+app_requests:
+  tasks.basic:
+    scopes: [task.read, task.write]
 recommended_apps: [messages, tasks]
 approval_policy:
   require_human_approval: [github.merge_pr, secrets.read]
@@ -169,6 +172,53 @@ artifacts:
 			}
 		})
 	}
+}
+
+func TestLoadLocalDirRejectsUnsafeProfileRefIDsAndUnresolvedAppRefs(t *testing.T) {
+	t.Run("unsafe profile ref id", func(t *testing.T) {
+		root := t.TempDir()
+		writeValidBlueprint(t, root)
+		writeFile(t, filepath.Join(root, "blueprint.yaml"), `schema_version: 1
+id: engineering-dev-team
+version: 0.1.0
+display:
+  name: Engineering AI Team
+  summary: Coordinate AI agents.
+slots:
+  - role: coordinator
+    profile_ref: {id: ../secret, version: 0.1.0}
+    default_count: 1
+    min: 1
+    max: 1
+`)
+		_, err := LoadLocalDir(root)
+		if err == nil || !strings.Contains(err.Error(), "safe single path segment") {
+			t.Fatalf("error=%v", err)
+		}
+	})
+
+	t.Run("unresolved app request ref", func(t *testing.T) {
+		root := t.TempDir()
+		writeValidBlueprint(t, root)
+		writeFile(t, filepath.Join(root, "blueprint.yaml"), `schema_version: 1
+id: engineering-dev-team
+version: 0.1.0
+display:
+  name: Engineering AI Team
+  summary: Coordinate AI agents.
+slots:
+  - role: coordinator
+    profile_ref: {id: coordinator, version: 0.1.0}
+    app_request_refs: [missing.ref]
+    default_count: 1
+    min: 1
+    max: 1
+`)
+		_, err := LoadLocalDir(root)
+		if err == nil || !strings.Contains(err.Error(), "unresolved app request ref") {
+			t.Fatalf("error=%v", err)
+		}
+	})
 }
 
 func TestLoadLocalDirRejectsUnknownYAMLFieldsAndInvalidRanges(t *testing.T) {

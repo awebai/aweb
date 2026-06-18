@@ -30,6 +30,9 @@ slots:
     min: 1
     max: 1
     app_request_refs: [tasks.basic]
+app_requests:
+  tasks.basic:
+    scopes: [task.read]
 recommended_apps: [messages]
 approval_policy:
   require_human_approval: [secrets.read]

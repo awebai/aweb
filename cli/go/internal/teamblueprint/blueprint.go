@@ -46,6 +46,7 @@ type Blueprint struct {
 	RecommendedApps []string            `json:"recommended_apps,omitempty" yaml:"recommended_apps"`
 	ApprovalPolicy  ApprovalPolicy      `json:"approval_policy,omitempty" yaml:"approval_policy"`
 	RuntimeOptions  map[string][]string `json:"runtime_options,omitempty" yaml:"runtime_options"`
+	AppRequests     map[string]AppGrant `json:"app_requests,omitempty" yaml:"app_requests"`
 	Source          Source              `json:"source" yaml:"-"`
 	LoadedProfiles  []Profile           `json:"loaded_profiles" yaml:"-"`
 }
@@ -207,6 +208,9 @@ func InspectPlan(bp *Blueprint) Plan {
 	}
 	for _, slot := range bp.Slots {
 		p := profileByID[slot.ProfileRef.ID]
+		for _, ref := range slot.AppRequestRefs {
+			mergeApps(appScopes, map[string]AppGrant{appRequestAppName(ref): bp.AppRequests[ref]})
+		}
 		count := slot.DefaultCount
 		if count <= 0 {
 			count = 1
@@ -292,7 +296,7 @@ func validateBlueprint(root string, bp *Blueprint) error {
 		return fmt.Errorf("blueprint.yaml:slots: at least one slot is required")
 	}
 	for i, app := range bp.RecommendedApps {
-		if err := validateRequiredString(fmt.Sprintf("blueprint.yaml:recommended_apps[%d]", i), app); err != nil {
+		if err := validateRefString(fmt.Sprintf("blueprint.yaml:recommended_apps[%d]", i), app); err != nil {
 			return err
 		}
 	}
@@ -311,7 +315,7 @@ func validateBlueprint(root string, bp *Blueprint) error {
 			return fmt.Errorf("%s.role: duplicate %q", prefix, slot.Role)
 		}
 		seenRoles[slot.Role] = true
-		if err := validateRequiredString(prefix+".profile_ref.id", slot.ProfileRef.ID); err != nil {
+		if err := validateProfileRefID(prefix+".profile_ref.id", slot.ProfileRef.ID); err != nil {
 			return err
 		}
 		if err := validateRequiredString(prefix+".profile_ref.version", slot.ProfileRef.Version); err != nil {
@@ -341,7 +345,23 @@ func validateBlueprint(root string, bp *Blueprint) error {
 			}
 		}
 		for i, ref := range slot.AppRequestRefs {
-			if err := validateRequiredString(fmt.Sprintf("%s.app_request_refs[%d]", prefix, i), ref); err != nil {
+			if err := validateRefString(fmt.Sprintf("%s.app_request_refs[%d]", prefix, i), ref); err != nil {
+				return err
+			}
+			if _, ok := bp.AppRequests[ref]; !ok {
+				return fmt.Errorf("%s.app_request_refs[%d]: unresolved app request ref %q", prefix, i, ref)
+			}
+		}
+	}
+	for ref, grant := range bp.AppRequests {
+		if err := validateRefString("blueprint.yaml:app_requests ref", ref); err != nil {
+			return err
+		}
+		if appRequestAppName(ref) == "" {
+			return fmt.Errorf("blueprint.yaml:app_requests.%s: app name is required", ref)
+		}
+		for i, scope := range grant.Scopes {
+			if err := validateRequiredString(fmt.Sprintf("blueprint.yaml:app_requests.%s.scopes[%d]", ref, i), scope); err != nil {
 				return err
 			}
 		}
@@ -389,7 +409,7 @@ func loadProfile(root string, slot SlotSpec) (*Profile, error) {
 		return nil, fmt.Errorf("%s/instructions.md: required", profileRel)
 	}
 	for app, grant := range p.RequiredApps {
-		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:required_apps.%s", profileRel, app), app); err != nil {
+		if err := validateRefString(fmt.Sprintf("%s/profile.yaml:required_apps.%s", profileRel, app), app); err != nil {
 			return nil, err
 		}
 		for i, scope := range grant.Scopes {
@@ -457,6 +477,30 @@ func validateSubscription(field string, sub Subscription) error {
 		if strings.TrimSpace(value) != "" && hasControl(value) {
 			return fmt.Errorf("%s.%s: control characters are not allowed", field, name)
 		}
+	}
+	return nil
+}
+
+func validateProfileRefID(field, value string) error {
+	if err := validateRequiredString(field, value); err != nil {
+		return err
+	}
+	if strings.ContainsAny(value, `/\\`) || strings.Contains(value, "://") || strings.HasPrefix(value, "git@") || strings.Contains(value, "@") && strings.Contains(value, ":") {
+		return fmt.Errorf("%s: profile_ref id must be a safe single path segment", field)
+	}
+	clean := filepath.Clean(value)
+	if clean != value || clean == "." || clean == ".." || filepath.IsAbs(value) {
+		return fmt.Errorf("%s: profile_ref id must be a safe single path segment", field)
+	}
+	return nil
+}
+
+func validateRefString(field, value string) error {
+	if err := validateRequiredString(field, value); err != nil {
+		return err
+	}
+	if strings.Contains(value, "://") || strings.HasPrefix(value, "git@") || strings.Contains(value, "@") && strings.Contains(value, ":") {
+		return fmt.Errorf("%s: host or scheme refs are not allowed", field)
 	}
 	return nil
 }
@@ -633,6 +677,19 @@ func mergeApps(dst map[string]map[string]bool, apps map[string]AppGrant) {
 			}
 		}
 	}
+}
+
+func appRequestAppName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	for _, sep := range []string{".", ":", "/"} {
+		if idx := strings.Index(ref, sep); idx > 0 {
+			return ref[:idx]
+		}
+	}
+	return ref
 }
 
 func appRequests(appScopes map[string]map[string]bool) []AppRequest {
