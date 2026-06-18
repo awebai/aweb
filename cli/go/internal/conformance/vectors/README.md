@@ -10,12 +10,16 @@ and team-auth envelopes.
 The vector's `aud` (`core.aweb.ai`) and `path` (`/v1/events/app`) are
 byte-parity fixture values for the signing algorithm, not mandated runtime
 endpoints. At runtime, the signer uses the actual external audience as a bare
-origin (for example, `https://app.aweb.ai`) and the `raw_request_target` path.
-That path is `/api/v1/events/app` on the hosted deployment with
-`root_path=/api`, and `/v1/events/app` for standalone deployments.
+origin (for example, `https://app.aweb.ai`) and the root-path-aware
+`raw_request_target` that the verifier reconstructs.
+
+For app-emit credentials, standalone deployments sign `/v1/events/app`. Hosted
+deployments mounted at `root_path=/api` sign `/api/v1/events/app` because the
+mount prefix is part of the reconstructed raw request target. Query strings, if
+present, are included exactly as reconstructed in `raw_request_target`.
 
 The vector freezes the canonical JSON, `body_sha256`, and signature
-construction. `aud` and `path` are runtime inputs.
+construction. `aud` and `path` are runtime request bindings.
 
 ## `app-manifest-interpretation-v1.json`
 
