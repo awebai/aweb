@@ -225,8 +225,27 @@ The legally and operationally useful record of important agent and app events:
 identity, app, action, target, approval, result, timestamp, and signed
 credential where applicable.
 
+For launch, the signed audit trail covers Aweb-mediated actions. It should not
+claim to sign arbitrary filesystem edits, shell commands, browser clicks, model
+reasoning, or other side effects that happen outside Aweb-controlled tools. The
+workroom may show agent-reported activity, but it is not signed audit unless it
+crosses an Aweb authority surface.
+
 Use "signed audit trail" in customer-facing language. Use "traceability" only
 for technical/debugging audiences.
+
+### Secret-mediated execution
+
+Agents should use secrets without seeing raw secret values.
+
+`secrets.aweb.ai` owns secret refs, policy, and access checks. Local agents use
+`aw do` to run commands that require secrets; `aw do` resolves approved secret
+refs, injects values into the child process without returning them to the agent,
+redacts output, and writes a signed audit event. Custodial MCP agents use
+app-native actions or runner-mediated secret use; they receive secret handles,
+not values.
+
+See [`secrets-aw-do-sot.md`](secrets-aw-do-sot.md).
 
 ## 3. Authority model
 
@@ -1037,6 +1056,7 @@ V1 blueprint:
 - tasks app;
 - GitHub/dev app integration where available;
 - signed audit log;
+- secret-mediated execution through `aw do` or app-native secret use;
 - local Claude Code/Codex runtime binding;
 - optional hosted MCP coordinator or assistant;
 - human workroom with activity, approvals, and status.

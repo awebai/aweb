@@ -51,6 +51,9 @@ These documents define the system:
 - [launch-readiness-sot.md](launch-readiness-sot.md): product SOT for the
   launch/VC-readiness wedge: first-party engineering blueprint, native `aw`
   setup path, workroom, hosted MCP, signed audit trail, and demo proof
+- [secrets-aw-do-sot.md](secrets-aw-do-sot.md): product SOT for
+  `secrets.aweb.ai`, `aw do`, custodial MCP secret use, and signed audit for
+  secret-mediated actions
 - [resource-pack-template-contract.md](resource-pack-template-contract.md):
   supporting SOT for new-design templates that package harness-neutral roles,
   instructions, playbooks, skills, and adapters without identity/workspace state;

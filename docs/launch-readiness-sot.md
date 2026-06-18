@@ -87,6 +87,11 @@ one polished AI dev team
 - Launch with local/git blueprints; `library.aweb.ai` is not required for wedge
   v1.
 - `aw agent start` is a thin local launcher, not a hosted runtime service.
+- Audit covers Aweb-mediated actions, not arbitrary filesystem or shell effects
+  that happen outside Aweb-controlled tools.
+- Agents should use secrets through `secrets.aweb.ai`, app-native actions,
+  `aw do`, or approved runners; raw secret values should not be returned to
+  agents.
 - Use customer language: AI coworkers, control, coordination, signed audit
   trail, approvals, apps agents can use.
 - Keep protocol language for docs and developers: AWID, MCP, A2A, app
@@ -245,6 +250,11 @@ Acceptance criteria:
 
 Outcome: Aweb has a visible governance differentiator.
 
+Launch audit is scoped to Aweb-mediated actions. It should sign and render the
+authority and outcome of actions that cross Aweb surfaces. It should not claim
+to sign arbitrary filesystem edits, raw shell commands, browser clicks, or model
+reasoning that happen outside Aweb-controlled tools.
+
 Required event classes:
 
 - identity/team changes;
@@ -254,12 +264,14 @@ Required event classes:
 - app actions;
 - human approvals;
 - emitted app events where applicable.
+- `aw do` and secret-mediated actions where included in the demo.
 
 Acceptance criteria:
 
 - workroom shows a readable signed audit trail;
 - each important event has actor, team, app/action, target, timestamp,
   authority/approval, result, and signature/envelope where applicable;
+- audit distinguishes signed Aweb-mediated facts from agent-reported activity;
 - customer copy uses "signed audit trail" or "reviewable record", not only
   "logs" or "traceability".
 
@@ -272,6 +284,8 @@ Required:
 - hosted custodial identity creation/selection;
 - OAuth or connector grant to bind an external runtime;
 - MCP server exposing the effective app tools for that custodial identity;
+- secret tools expose refs/handles and secret-mediated actions, not raw secret
+  values;
 - dashboard visibility that this agent/runtime is part of the team;
 - clear UX distinction between local runtime, hosted MCP runtime, and future
   hosted runner.
@@ -282,6 +296,35 @@ Acceptance criteria:
   tools;
 - no raw key management is required from that external agent;
 - app tools reflect team grant/profile/per-agent policy.
+- custodial MCP agents can request approved secret use but cannot call a
+  general `secrets.get_value` tool.
+
+### L8.5. Secrets and `aw do`
+
+Outcome: agents can use approved secrets without seeing them, and humans get a
+signed record of the mediated action.
+
+Design source: [`secrets-aw-do-sot.md`](secrets-aw-do-sot.md).
+
+Required:
+
+- `secrets.aweb.ai` owns secret refs, metadata, policy, and access checks;
+- local agents use `aw do` to run commands that need secrets;
+- `aw do` injects secrets into the child process without returning the values to
+  the agent;
+- stdout/stderr are redacted before being returned;
+- the signed audit trail records actor, team, secret refs/versions, approval or
+  policy, action/command template, result, and output hashes/redacted excerpts;
+- hosted MCP agents use app-native actions or runner-mediated secret use, not
+  raw value reads.
+
+Acceptance criteria:
+
+- demo includes one secret-mediated local command or a clearly implemented
+  app-native secret use path;
+- agent-visible output never includes the secret value;
+- audit shows that the secret was used without logging the secret value;
+- custodial MCP surface exposes secret refs/request-use, not `get_value`.
 
 ### L9. Minimal learning loop
 
@@ -363,11 +406,13 @@ Acceptance criteria:
 6. Make tasks/messages/dev or GitHub sufficient for one real workflow.
 7. Build the workroom view around the demo path.
 8. Expose the signed audit trail in the workroom.
-9. Add hosted MCP/custodial proof path.
-10. Add minimal learning proposal.
-11. Write pricing/packaging story.
-12. Polish homepage/demo/pitch.
-13. Run the full demo from a clean environment until it is boring.
+9. Add secret-mediated execution proof through `aw do` or app-native secret use.
+10. Add hosted MCP/custodial proof path, including secret refs/request-use
+    without raw value reads.
+11. Add minimal learning proposal.
+12. Write pricing/packaging story.
+13. Polish homepage/demo/pitch.
+14. Run the full demo from a clean environment until it is boring.
 
 ## 7. Explicit deferrals
 
@@ -376,6 +421,7 @@ Do not block launch on:
 - public marketplace;
 - broad `library.aweb.ai`;
 - hosted agent runners;
+- arbitrary hosted secret-backed command execution before a runner exists;
 - many vertical blueprints;
 - visual profile editor;
 - full app ecosystem;
@@ -419,6 +465,8 @@ future.
 - [ ] One real dogfooded task completes through the team.
 - [ ] Signed audit trail is visible and understandable.
 - [ ] Hosted MCP/custodial path is demonstrable.
+- [ ] Secret-mediated action path is demonstrable without exposing raw secret
+      values to agents.
 - [ ] Minimal learning proposal is demonstrable.
 - [ ] Demo script can be reset and rerun.
 - [ ] Pricing/quota story is explainable in one slide.
