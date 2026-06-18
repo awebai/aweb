@@ -48,6 +48,53 @@ func deliveredIDsTestPath(t *testing.T) string {
 	return tmp
 }
 
+func TestRunDispatcherRendersAppEventWakeSummary(t *testing.T) {
+	dispatcher := runDispatcher{}
+	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
+		Type:         awid.AgentEventAppEvent,
+		EventID:      "evt-1",
+		AppEventType: "folio/doc.changed",
+		ResourceRef:  "aaai-m22-proof-1781686412",
+		Raw:          []byte(`{"event_id":"evt-1","app_event_type":"folio/doc.changed","resource_ref":"aaai-m22-proof-1781686412","delivery_intent":"wake","payload":{"version":8,"source":"api"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Skip {
+		t.Fatal("app_event wake should not skip")
+	}
+	if len(decision.DisplayLines) != 1 {
+		t.Fatalf("expected one display line, got %d", len(decision.DisplayLines))
+	}
+	want := "folio/doc.changed — aaai-m22-proof-1781686412 — version=8, source=api"
+	if decision.DisplayLines[0].Text != want {
+		t.Fatalf("display line = %q, want %q", decision.DisplayLines[0].Text, want)
+	}
+	if !strings.Contains(decision.CycleContext, want) {
+		t.Fatalf("cycle context %q should include summary %q", decision.CycleContext, want)
+	}
+}
+
+func TestRunDispatcherRendersAppEventWakeSummaryWithoutResourceRef(t *testing.T) {
+	dispatcher := runDispatcher{}
+	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
+		Type:         awid.AgentEventAppEvent,
+		EventID:      "evt-2",
+		AppEventType: "folio/doc.changed",
+		Raw:          []byte(`{"event_id":"evt-2","app_event_type":"folio/doc.changed","delivery_intent":"wake","payload":{"version":8,"source":"api"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decision.DisplayLines) != 1 {
+		t.Fatalf("expected one display line, got %d", len(decision.DisplayLines))
+	}
+	want := "folio/doc.changed — version=8, source=api"
+	if decision.DisplayLines[0].Text != want {
+		t.Fatalf("display line = %q, want %q", decision.DisplayLines[0].Text, want)
+	}
+}
+
 // TestResolveMailWakeMarksRead verifies that resolveMailWake acks the message
 // after fetching it from the inbox.
 func TestResolveMailWakeMarksRead(t *testing.T) {

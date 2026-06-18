@@ -746,10 +746,10 @@ describe("channel-core dispatchAgentEvent", () => {
       event_id: "event-1",
       app_id: "folio",
       app_event_type: "folio/doc.changed",
-      resource_ref: "pitch",
+      resource_ref: "aaai-m22-proof-1781686412",
       delivery_intent: "wake",
       producer_delivery_intent: "ambient",
-      payload: { version: "7" },
+      payload: { version: 8, source: "api" },
     } satisfies AgentEvent;
 
     const options = {
@@ -768,15 +768,43 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "app",
-      content: "",
+      content: "folio/doc.changed — aaai-m22-proof-1781686412 — version=8, source=api",
       deliveryIntent: "wake",
       meta: expect.objectContaining({
         type: "folio/doc.changed",
         app_id: "folio",
-        resource_ref: "pitch",
+        resource_ref: "aaai-m22-proof-1781686412",
         producer_delivery_intent: "ambient",
-        payload: '{"version":"7"}',
+        payload: '{"version":8,"source":"api"}',
       }),
+    }));
+  });
+
+  test("formats app event content without empty resource_ref", async () => {
+    const onAwakening = vi.fn();
+    await dispatchAgentEvent(
+      {
+        client: {} as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "app_event",
+        event_id: "event-no-resource",
+        app_id: "folio",
+        app_event_type: "folio/doc.changed",
+        resource_ref: "",
+        delivery_intent: "wake",
+        payload: { version: 8, source: "api" },
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "app",
+      content: "folio/doc.changed — version=8, source=api",
     }));
   });
 });

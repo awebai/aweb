@@ -5952,6 +5952,9 @@ var MAX_DELIVERED_IDS = 5e3;
 var DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1e3;
 var MAIL_FETCH_LIMIT = 200;
 var CHAT_FETCH_LIMIT = 2e3;
+var APP_EVENT_SUMMARY_SEPARATOR = " \u2014 ";
+var MAX_APP_EVENT_VALUE_LENGTH = 160;
+var MAX_APP_EVENT_PAYLOAD_LENGTH = 500;
 async function loadPinStore(path = DEFAULT_PIN_STORE_PATH) {
   try {
     const content = await readFile4(path, "utf-8");
@@ -6135,7 +6138,7 @@ async function dispatchAppEvent(options, dispatched, event) {
     meta.payload = summarizePayload(payload);
   await options.onAwakening({
     kind: "app",
-    content: "",
+    content: formatAppEventSummary(event, payload),
     deliveryIntent: event.delivery_intent || "ambient",
     meta
   });
@@ -6371,7 +6374,36 @@ function summarizePayload(payload) {
   const json2 = JSON.stringify(payload);
   if (!json2)
     return "";
-  return json2.length > 500 ? `${json2.slice(0, 497)}...` : json2;
+  return truncateText(json2, MAX_APP_EVENT_PAYLOAD_LENGTH);
+}
+function formatAppEventSummary(event, payload) {
+  const parts = [event.app_event_type || "app_event"];
+  const resourceRef = (event.resource_ref || "").trim();
+  if (resourceRef)
+    parts.push(resourceRef);
+  const payloadSummary = payload ? summarizePayloadFields(payload) : "";
+  if (payloadSummary)
+    parts.push(payloadSummary);
+  return parts.join(APP_EVENT_SUMMARY_SEPARATOR);
+}
+function summarizePayloadFields(payload) {
+  return Object.entries(payload).map(([key, value]) => `${key}=${formatPayloadSummaryValue(value)}`).filter((part) => part.trim() !== "").join(", ");
+}
+function formatPayloadSummaryValue(value) {
+  if (typeof value === "string")
+    return truncateText(value, MAX_APP_EVENT_VALUE_LENGTH);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return String(value);
+  }
+  const json2 = JSON.stringify(value);
+  return truncateText(json2 || String(value), MAX_APP_EVENT_VALUE_LENGTH);
+}
+function truncateText(value, maxLength) {
+  if (value.length <= maxLength)
+    return value;
+  if (maxLength <= 3)
+    return value.slice(0, maxLength);
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 function senderDisplayAddress(alias, address) {
   const qualified = (address || "").trim();

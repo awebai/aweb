@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +68,16 @@ func (d runDispatcher) Next(ctx context.Context, autofeed bool, wakeEvent *awid.
 		return awrun.DispatchDecision{
 			CycleContext: joinPromptSections(formatWorkWakePrompt(*wakeEvent), d.workPromptSuffix),
 			DisplayLines: formatWorkWakeDisplay(*wakeEvent),
+			WaitSeconds:  awrun.DefaultWaitSeconds,
+		}, nil
+	case awid.AgentEventAppEvent:
+		summary := formatAppEventWakeSummary(*wakeEvent)
+		if strings.TrimSpace(summary) == "" {
+			return awrun.DispatchDecision{Skip: true}, nil
+		}
+		return awrun.DispatchDecision{
+			CycleContext: fmt.Sprintf("Wake reason: app event %s. Review the app-emitted event and continue the task-oriented cycle.", summary),
+			DisplayLines: awrun.SplitDisplayText(awrun.DisplayKindCommunication, summary),
 			WaitSeconds:  awrun.DefaultWaitSeconds,
 		}, nil
 	default:
@@ -560,6 +573,105 @@ func formatWorkWakeDisplay(evt awid.AgentEvent) []awrun.DisplayLine {
 		return nil
 	}
 	return awrun.SplitDisplayText(awrun.DisplayKindTaskActivity, text)
+}
+
+const appEventSummarySeparator = " — "
+
+func formatAppEventWakeSummary(evt awid.AgentEvent) string {
+	parts := []string{firstNonEmptyAppEventSummaryPart(strings.TrimSpace(evt.AppEventType), "app_event")}
+	if resourceRef := strings.TrimSpace(evt.ResourceRef); resourceRef != "" {
+		parts = append(parts, resourceRef)
+	}
+	if payload := formatAppEventPayloadSummary(evt); payload != "" {
+		parts = append(parts, payload)
+	}
+	return strings.Join(parts, appEventSummarySeparator)
+}
+
+func formatAppEventPayloadSummary(evt awid.AgentEvent) string {
+	if summary := formatAppEventPayloadSummaryFromRaw(evt.Raw); summary != "" {
+		return summary
+	}
+	if len(evt.Payload) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(evt.Payload))
+	for key := range evt.Payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, formatAppEventPayloadValue(evt.Payload[key])))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatAppEventPayloadSummaryFromRaw(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Payload) == 0 || bytes.Equal(envelope.Payload, []byte("null")) {
+		return ""
+	}
+	dec := json.NewDecoder(bytes.NewReader(envelope.Payload))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return formatAppEventPayloadValue(json.RawMessage(envelope.Payload))
+	}
+	parts := []string{}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return ""
+		}
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return ""
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", key, formatAppEventPayloadValue(value)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatAppEventPayloadValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return truncateAppEventSummary(v, 160)
+	case json.RawMessage:
+		return truncateAppEventSummary(string(v), 160)
+	default:
+		if encoded, err := json.Marshal(v); err == nil {
+			return truncateAppEventSummary(string(encoded), 160)
+		}
+		return truncateAppEventSummary(fmt.Sprint(v), 160)
+	}
+}
+
+func truncateAppEventSummary(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
+}
+
+func firstNonEmptyAppEventSummaryPart(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func formatWakeAlias(alias string) string {
