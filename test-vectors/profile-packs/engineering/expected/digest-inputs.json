@@ -1,0 +1,67 @@
+{
+  "canonicalization": {
+    "go_encoder_set_escape_html": false,
+    "hash": "sha256 hex over UTF-8 canonical JSON bytes",
+    "json_ensure_ascii": false,
+    "json_separators": [
+      ",",
+      ":"
+    ],
+    "json_sort_keys": true
+  },
+  "excluded_from_payload": [
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".cache",
+    "dist",
+    "build",
+    "target",
+    "tmp",
+    "vendor",
+    "__pycache__"
+  ],
+  "forbidden_fail_closed": [
+    ".aw",
+    "private keys",
+    "certificates",
+    "tokens",
+    "secrets",
+    "generated worktrees",
+    "runtime state",
+    "symlinks",
+    "absolute/traversal/scheme/host paths"
+  ],
+  "pack_digest": "sha256:30159b1e8871832feaa5cdf9b9a125fd9386730311b9311ff70478eba082e252",
+  "pack_payload_schema": "aweb.profile-pack.import-payload.v1",
+  "payload_fields": {
+    "files": [
+      {
+        "content_utf8": "<file bytes decoded as UTF-8>",
+        "path": "<profile-pack-relative POSIX path>",
+        "sha256": "sha256:<hex of original file bytes>"
+      }
+    ],
+    "schema": "aweb.profile-pack.import-payload.v1"
+  },
+  "profile_digests": [
+    {
+      "digest": "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619",
+      "profile_ref": "coordinator",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:07e1f0039592b60b492a1406f4a96d85dddb750d00d1f848a90cec419d5265e3",
+      "profile_ref": "developer",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:a48bf63bc15a50b15728a73881f485090b34ada8ba550cd16fb37fb1173587d3",
+      "profile_ref": "reviewer",
+      "version": "0.1.0"
+    }
+  ],
+  "profile_payload_schema": "aweb.profile-pack.profile-payload.v1",
+  "schema": "aweb.profile-pack.digest-inputs.v1"
+}

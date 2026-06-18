@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -270,6 +271,21 @@ func InspectPlan(pack *Pack) Plan {
 
 func (p Plan) JSON() ([]byte, error) { return json.MarshalIndent(p, "", "  ") }
 
+func CanonicalImportPayload(dir string) ([]byte, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	_, files, err := canonicalPayloadDigest(abs, "aweb.profile-pack.import-payload.v1")
+	if err != nil {
+		return nil, err
+	}
+	return canonicalJSON(map[string]any{
+		"schema": "aweb.profile-pack.import-payload.v1",
+		"files":  files,
+	})
+}
+
 func loadProfile(root string, entry PackProfileEntry) (*Profile, error) {
 	profileRel := filepath.ToSlash(filepath.Join("profiles", entry.ID))
 	profileDir := filepath.Join(root, filepath.FromSlash(profileRel))
@@ -287,7 +303,7 @@ func loadProfile(root string, entry PackProfileEntry) (*Profile, error) {
 	if err := validateProfile(root, profileDir, profileRel, entry, &profile); err != nil {
 		return nil, err
 	}
-	digest, _, err := digestDir(profileDir)
+	digest, _, err := canonicalPayloadDigest(profileDir, "aweb.profile-pack.profile-payload.v1")
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +625,24 @@ func unsafeContent(s string) bool {
 }
 
 func digestDir(root string) (string, []string, error) {
-	h := sha256.New()
+	digest, files, err := canonicalPayloadDigest(root, "aweb.profile-pack.import-payload.v1")
+	if err != nil {
+		return "", nil, err
+	}
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return digest, paths, nil
+}
+
+type canonicalPayloadFile struct {
+	ContentUTF8 string `json:"content_utf8"`
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+}
+
+func canonicalPayloadDigest(root string, schema string) (string, []canonicalPayloadFile, error) {
 	paths := []string{}
 	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -630,7 +663,7 @@ func digestDir(root string) (string, []string, error) {
 		return "", nil, err
 	}
 	sort.Strings(paths)
-	files := make([]string, 0, len(paths))
+	files := make([]canonicalPayloadFile, 0, len(paths))
 	for _, path := range paths {
 		rel, _ := filepath.Rel(root, path)
 		relSlash := filepath.ToSlash(rel)
@@ -638,13 +671,28 @@ func digestDir(root string) (string, []string, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		files = append(files, relSlash)
-		h.Write([]byte(relSlash))
-		h.Write([]byte{0})
-		h.Write(data)
-		h.Write([]byte{0})
+		if !utf8.Valid(data) {
+			return "", nil, fmt.Errorf("%s: profile-pack canonical import payload requires UTF-8 text", relSlash)
+		}
+		fileHash := sha256.Sum256(data)
+		files = append(files, canonicalPayloadFile{Path: relSlash, SHA256: "sha256:" + hex.EncodeToString(fileHash[:]), ContentUTF8: string(data)})
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), files, nil
+	canonical, err := canonicalJSON(map[string]any{"schema": schema, "files": files})
+	if err != nil {
+		return "", nil, err
+	}
+	digest := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(digest[:]), files, nil
+}
+
+func canonicalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func validateProfileID(field, value string) error {

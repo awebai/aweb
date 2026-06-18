@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -140,4 +141,34 @@ func TestProfilePackInspectMissingExplicitLocalDir(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error=%v", err)
 	}
+}
+
+func TestProfilePackInspectHumanOutputMatchesEngineeringFixture(t *testing.T) {
+	fixture := engineeringProfilePackFixtureRoot(t)
+	source := filepath.Join(fixture, "source")
+	var out bytes.Buffer
+	if err := runProfilePackInspect(&out, source, false); err != nil {
+		t.Fatalf("inspect returned error: %v", err)
+	}
+	actual := strings.ReplaceAll(out.String(), source, "FIXTURE/source")
+	expected, err := os.ReadFile(filepath.Join(fixture, "expected/inspect.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != string(expected) {
+		t.Fatalf("human inspect mismatch\nactual:\n%s\nexpected:\n%s", actual, string(expected))
+	}
+}
+
+func engineeringProfilePackFixtureRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../../../../test-vectors/profile-packs/engineering"))
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("fixture root: %v", err)
+	}
+	return root
 }

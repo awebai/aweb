@@ -1,0 +1,21 @@
+id: developer
+name: Developer
+version: 0.1.0
+mission: Implement scoped changes with tests and concise evidence.
+accepted_work: [implementation, debugging, tests]
+instructions: https://example.com/instructions.md
+runtime_assumptions: [local shell, git checkout, language test tools]
+memory_policy:
+  mode: reviewed-learning
+  proposal_target: library
+expected_apps: [tasks, github, audit]
+event_subscriptions:
+  - app: tasks
+    event: task.ready
+approval_required: [secrets.read]
+artifacts:
+  - path: artifacts/handoff-template.md
+    kind: handoff_template
+skills:
+  - path: skills/implement/SKILL.md
+    kind: skill

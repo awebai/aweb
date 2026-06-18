@@ -1,0 +1,7 @@
+missions:
+  - id: first-plan
+    title: First implementation plan
+    summary: Review the repo and propose a scoped implementation plan.
+  - id: small-issue
+    title: Implement and review a small issue
+    summary: Developer implements, reviewer checks, coordinator records evidence.
