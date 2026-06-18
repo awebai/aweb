@@ -3,6 +3,7 @@
   "reserved_app_ids": [
     "a2a",
     "agents",
+    "blueprint",
     "chat",
     "check",
     "claim-human",
