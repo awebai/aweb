@@ -58,10 +58,17 @@ The pack import payload canonical input is:
 {"files":[{"content_utf8":"...","path":"...","sha256":"sha256:<file-bytes-hex>"}],"schema":"aweb.profile-pack.import-payload.v1"}
 ```
 
-Files are sorted by profile-pack-relative path. VCS, dependency, build/cache,
-and host-local runtime directories are excluded from the import payload; `.aw`,
-identity material, keys, certs, tokens, secrets, generated worktrees, symlinks,
-and host/path injection fail closed.
+Path bases are part of the conformance contract:
+
+- `aweb.profile-pack.import-payload.v1` uses **pack-relative** POSIX paths,
+  relative to the profile-pack root.
+- `aweb.profile-pack.profile-payload.v1` uses **profile-relative** POSIX paths,
+  relative to `profiles/<profile_ref>/`.
+
+Files are sorted by the payload's relative path base. VCS, dependency,
+build/cache, and host-local runtime directories are excluded from the import
+payload; `.aw`, identity material, keys, certs, tokens, secrets, generated
+worktrees, symlinks, and host/path injection fail closed.
 
 `expected/import-payload.canonical.json` is the exact canonical payload bytes.
 `expected/import-payload.digest` is the pack digest.

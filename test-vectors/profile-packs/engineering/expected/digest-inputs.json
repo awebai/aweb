@@ -34,12 +34,25 @@
     "absolute/traversal/scheme/host paths"
   ],
   "pack_digest": "sha256:30159b1e8871832feaa5cdf9b9a125fd9386730311b9311ff70478eba082e252",
+  "pack_payload_fields": {
+    "files": [
+      {
+        "content_utf8": "<file bytes decoded as UTF-8>",
+        "path": "<pack-relative POSIX path>",
+        "sha256": "sha256:<hex of original file bytes>"
+      }
+    ],
+    "path_base": "pack-relative",
+    "schema": "aweb.profile-pack.import-payload.v1"
+  },
+  "pack_payload_path_base": "pack-relative",
+  "pack_payload_path_base_description": "paths are POSIX paths relative to the profile-pack root directory",
   "pack_payload_schema": "aweb.profile-pack.import-payload.v1",
   "payload_fields": {
     "files": [
       {
         "content_utf8": "<file bytes decoded as UTF-8>",
-        "path": "<profile-pack-relative POSIX path>",
+        "path": "<pack-relative POSIX path>",
         "sha256": "sha256:<hex of original file bytes>"
       }
     ],
@@ -62,6 +75,19 @@
       "version": "0.1.0"
     }
   ],
+  "profile_payload_fields": {
+    "files": [
+      {
+        "content_utf8": "<file bytes decoded as UTF-8>",
+        "path": "<profile-relative POSIX path>",
+        "sha256": "sha256:<hex of original file bytes>"
+      }
+    ],
+    "path_base": "profile-relative",
+    "schema": "aweb.profile-pack.profile-payload.v1"
+  },
+  "profile_payload_path_base": "profile-relative",
+  "profile_payload_path_base_description": "paths are POSIX paths relative to profiles/<profile_ref>/, not relative to the pack root",
   "profile_payload_schema": "aweb.profile-pack.profile-payload.v1",
   "schema": "aweb.profile-pack.digest-inputs.v1"
 }
