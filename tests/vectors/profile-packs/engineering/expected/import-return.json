@@ -1,0 +1,22 @@
+{
+  "digest": "sha256:30159b1e8871832feaa5cdf9b9a125fd9386730311b9311ff70478eba082e252",
+  "pack_ref": "aweb.engineering-pack",
+  "profiles": [
+    {
+      "digest": "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619",
+      "profile_ref": "coordinator",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:07e1f0039592b60b492a1406f4a96d85dddb750d00d1f848a90cec419d5265e3",
+      "profile_ref": "developer",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:a48bf63bc15a50b15728a73881f485090b34ada8ba550cd16fb37fb1173587d3",
+      "profile_ref": "reviewer",
+      "version": "0.1.0"
+    }
+  ],
+  "version": "0.1.0"
+}
