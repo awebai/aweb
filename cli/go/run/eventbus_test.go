@@ -145,6 +145,9 @@ func TestClassifyAppEventWakeOnly(t *testing.T) {
 	if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, DeliveryIntent: "wake"}); ok {
 		t.Fatal("app_event without event_id should not wake aw run")
 	}
+	if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: " \t", DeliveryIntent: "wake"}); ok {
+		t.Fatal("app_event with blank event_id should not wake aw run")
+	}
 	for _, intent := range []string{"ambient", "steer", ""} {
 		if _, ok := classifyAgentEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", DeliveryIntent: intent}); ok {
 			t.Fatalf("app_event with delivery_intent=%q should not wake aw run", intent)
@@ -550,6 +553,7 @@ func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 func TestEventBusSkipsAppEventWakeWithoutEventID(t *testing.T) {
 	source := newFakeEventSource(
 		awid.AgentEvent{Type: awid.AgentEventAppEvent, AppID: "folio", AppEventType: "folio/doc.changed", DeliveryIntent: "wake"},
+		awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: " \t", AppID: "folio", AppEventType: "folio/doc.changed", DeliveryIntent: "wake"},
 		awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1", FromAlias: "marker"},
 	)
 	called := false

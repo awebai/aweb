@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,7 +60,7 @@ func classifyAgentEvent(evt awid.AgentEvent) (EventPriority, bool) {
 	case awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved:
 		return PriorityCoordination, true
 	case awid.AgentEventAppEvent:
-		if evt.DeliveryIntent == "wake" && evt.EventID != "" {
+		if evt.DeliveryIntent == "wake" && strings.TrimSpace(evt.EventID) != "" {
 			return PriorityCommunication, true
 		}
 		return 0, false
