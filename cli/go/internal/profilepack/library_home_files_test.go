@@ -68,3 +68,24 @@ func TestWriteLibraryHomeFilesRejectsEscapingSymlinkTargetWithoutPartialWrite(t 
 		t.Fatalf("partial symlink write occurred, stat err=%v", statErr)
 	}
 }
+
+func TestWriteLibraryHomeFilesRejectsSymlinkTargetThroughExistingSymlinkWithoutPartialWrite(t *testing.T) {
+	target := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(target, "outlink")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := WriteLibraryHomeFiles(target, []LibraryHomeFile{
+		{Path: "AGENTS.md", Kind: "file", ContentUTF8: "# should not be written\n"},
+		{Path: "CLAUDE.md", Kind: "symlink", Target: "outlink/secret"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial file write occurred, stat err=%v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "CLAUDE.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial symlink write occurred, stat err=%v", statErr)
+	}
+}

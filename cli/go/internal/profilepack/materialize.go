@@ -377,6 +377,9 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		if !isWithin(targetRoot, targetPath) {
 			return fmt.Errorf("%s symlink target escapes target directory", rel)
 		}
+		if err := rejectSymlinkedExistingSymlinkTarget(targetRoot, filepath.Dir(path), op.LinkTarget, rel); err != nil {
+			return err
+		}
 	}
 	if !isWithin(targetRoot, path) {
 		return fmt.Errorf("destination %s escapes target directory", rel)
@@ -409,6 +412,44 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
 	return fmt.Errorf("%s already exists and is not a symlink", rel)
+}
+
+func rejectSymlinkedExistingSymlinkTarget(targetRoot, baseDir, linkTarget, label string) error {
+	current := filepath.Clean(baseDir)
+	if !isWithin(targetRoot, current) {
+		return fmt.Errorf("%s symlink target escapes target directory", label)
+	}
+	parts := strings.Split(filepath.FromSlash(linkTarget), string(filepath.Separator))
+	for i, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			current = filepath.Dir(current)
+			if !isWithin(targetRoot, current) {
+				return fmt.Errorf("%s symlink target escapes target directory", label)
+			}
+			continue
+		}
+		current = filepath.Join(current, part)
+		if !isWithin(targetRoot, filepath.Clean(current)) {
+			return fmt.Errorf("%s symlink target escapes target directory", label)
+		}
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s symlink target %s must not be a symlink", label, filepath.ToSlash(current))
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return fmt.Errorf("%s symlink target parent %s must be a directory", label, filepath.ToSlash(current))
+		}
+	}
+	return nil
 }
 
 func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]string, error) {
