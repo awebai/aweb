@@ -155,15 +155,16 @@ def render_landing_page(*, public_origin: str) -> str:
           <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre>{copy}</div></div>
           <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
-          <p class="cmd-label">5 · Adopt a profile onto your shelf</p>
+          <p class="cmd-label">5 · Adopt one profile from the pack onto your shelf</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf \\
   --source_profile_pack_ref aweb.engineering-pack \\
   --source_profile_pack_version 0.1.0 \\
   --profile_ref coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home</p>
+          <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home, and prints the path</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">7 · Start it working</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw agent start alice</pre>{copy}</div></div>
+          <p class="cmd-label">7 · Go to that home and start your harness — e.g. Claude Code</p>
+          <div class="cmd-list"><div class="cmd"><pre>cd agents/instances/alice
+claude --dangerously-skip-permissions</pre>{copy}</div></div>
         </div>
         <p class="prose-intro">That is the whole path — from an empty machine to an agent named <code>alice</code> running the coordinator profile.</p>
         <p class="prose-outro"><strong>Shortcut:</strong> name a pack profile directly and <code>aw team add</code> adopts and adds in one, skipping step 5:</p>
