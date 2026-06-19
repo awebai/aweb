@@ -95,7 +95,6 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
         source_profile_pack_ref="aweb.engineering-pack",
         source_profile_pack_version=None,
         profile_ref="coordinator",
-        target_profile_ref=None,
         tags=["Coder"],
     )
     assert first["created"] is True
@@ -118,7 +117,6 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
         source_profile_pack_ref="aweb.engineering-pack",
         source_profile_pack_version=None,
         profile_ref="coordinator",
-        target_profile_ref=None,
         tags=["Coder"],
     )
     assert second["created"] is False
@@ -126,22 +124,33 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
     assert len(db.writes) == 1
 
 
-async def test_import_to_shelf_honors_target_profile_ref() -> None:
+async def test_import_to_shelf_conflicts_on_different_source() -> None:
+    # A profile_ref already held from a different source pack is a 409 — v1 never
+    # renames or shadows; the team must resolve the name clash explicitly.
     source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / "coordinator"))
     db = _ShelfImportDB(source)
-    result = await import_to_shelf(
-        db,
-        principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
-        source_profile_pack_ref="aweb.engineering-pack",
-        source_profile_pack_version="0.1.0",
-        profile_ref="coordinator",
-        target_profile_ref="my-coordinator",
-        tags=None,
-    )
-    assert result["profile_ref"] == "my-coordinator"
-    assert result["source_profile_ref"] == "coordinator"
-    # The shelf copy is stored under the target ref.
-    assert db.writes[0][1] == "my-coordinator"
+    db.shelf_row = {
+        "profile_ref": "coordinator",
+        "version": "0.1.0",
+        "digest": source.digest,
+        "source_profile_ref": "coordinator",
+        "source_profile_version": "0.1.0",
+        "source_profile_digest": source.digest,
+        "source_profile_pack_ref": "some-other-pack",
+        "source_profile_pack_version": "0.1.0",
+        "source_profile_pack_digest": "sha256:other",
+    }
+    with pytest.raises(HTTPException) as excinfo:
+        await import_to_shelf(
+            db,
+            principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
+            source_profile_pack_ref="aweb.engineering-pack",
+            source_profile_pack_version=None,
+            profile_ref="coordinator",
+            tags=None,
+        )
+    assert excinfo.value.status_code == 409
+    assert db.writes == []
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:

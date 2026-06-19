@@ -236,7 +236,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source_profile_pack_ref=payload.source_profile_pack_ref,
             source_profile_pack_version=payload.source_profile_pack_version,
             profile_ref=payload.profile_ref,
-            target_profile_ref=payload.target_profile_ref,
             tags=payload.tags,
         )
 

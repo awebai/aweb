@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -351,17 +350,17 @@ async def create_shelf_version(
     return await get_shelf_profile(db, principal=principal, profile_ref=profile_ref)
 
 
-def _import_response(*, target_ref: str, profile: ParsedProfile, pack_digest: str, source_pack_ref: str, source_pack_version: str, created: bool) -> dict[str, Any]:
+def _shelf_provenance(data: dict[str, Any], *, created: bool) -> dict[str, Any]:
     return {
-        "profile_ref": target_ref,
-        "version": profile.version,
-        "digest": profile.digest,
-        "source_profile_ref": profile.profile_ref,
-        "source_profile_version": profile.version,
-        "source_profile_digest": profile.digest,
-        "source_profile_pack_ref": source_pack_ref,
-        "source_profile_pack_version": source_pack_version,
-        "source_profile_pack_digest": pack_digest,
+        "profile_ref": data["profile_ref"],
+        "version": data["version"],
+        "digest": data["digest"],
+        "source_profile_ref": data["source_profile_ref"],
+        "source_profile_version": data["source_profile_version"],
+        "source_profile_digest": data["source_profile_digest"],
+        "source_profile_pack_ref": data["source_profile_pack_ref"],
+        "source_profile_pack_version": data["source_profile_pack_version"],
+        "source_profile_pack_digest": data["source_profile_pack_digest"],
         "created": created,
     }
 
@@ -373,40 +372,29 @@ async def import_to_shelf(
     source_profile_pack_ref: str,
     source_profile_pack_version: str | None,
     profile_ref: str,
-    target_profile_ref: str | None,
     tags: list[Any] | None,
 ) -> dict[str, Any]:
-    """Copy a public-pack profile onto the team's private shelf. Idempotent keyed
-    by (team, source pack, source profile): a re-import is a pure no-op returning
-    the existing shelf copy — it NEVER pulls a newer version (that is
-    update-from-source). First import records per-part baselines + provenance."""
-    target = target_profile_ref or profile_ref
-
+    """Copy a public-pack profile onto the team's private shelf under its source
+    profile_ref. Idempotent keyed by (team, source pack, profile_ref): a re-import
+    from the same pack is a pure no-op returning the existing copy — it NEVER pulls
+    a newer version (that is update-from-source). A profile_ref already held from a
+    DIFFERENT source is a 409 conflict. First import records baselines + provenance."""
     existing = await db.fetch_one(
         "SELECT profile_ref, version, digest, source_profile_ref, source_profile_version,"
         " source_profile_digest, source_profile_pack_ref, source_profile_pack_version,"
         " source_profile_pack_digest FROM {{tables.shelf_profiles}}"
-        " WHERE team_id = $1 AND profile_ref = $2 AND source_profile_pack_ref = $3"
-        " AND source_profile_ref = $4 ORDER BY created_at DESC LIMIT 1",
+        " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
-        target,
-        source_profile_pack_ref,
         profile_ref,
     )
     if existing is not None:
         data = dict(existing)
-        return {
-            "profile_ref": data["profile_ref"],
-            "version": data["version"],
-            "digest": data["digest"],
-            "source_profile_ref": data["source_profile_ref"],
-            "source_profile_version": data["source_profile_version"],
-            "source_profile_digest": data["source_profile_digest"],
-            "source_profile_pack_ref": data["source_profile_pack_ref"],
-            "source_profile_pack_version": data["source_profile_pack_version"],
-            "source_profile_pack_digest": data["source_profile_pack_digest"],
-            "created": False,
-        }
+        if data["source_profile_pack_ref"] != source_profile_pack_ref:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Shelf profile '{profile_ref}' already exists from a different source",
+            )
+        return _shelf_provenance(data, created=False)
 
     pack = await db.fetch_one(
         "SELECT owner_team, version, digest FROM {{tables.profile_packs}}"
@@ -447,13 +435,12 @@ async def import_to_shelf(
         approval_required=list(source["approval_required"] or []),
         files=_json_value(source["files"]) or [],
     )
-    # The shelf copy takes the target ref; content (and thus digest) is identical
-    # to the source profile at copy time, so it is the per-part baseline.
-    shelf_profile = replace(source_profile, profile_ref=target)
+    # The shelf copy is byte-identical to the source profile at copy time, so the
+    # shelf digest == source digest and the source content is the per-part baseline.
     await _upsert_shelf_profile(
         db,
         team_id=principal.team_id,
-        profile=shelf_profile,
+        profile=source_profile,
         tags=normalize_tags(tags or []),
         source_profile_pack_ref=source_profile_pack_ref,
         source_profile_pack_version=pack_version,
@@ -463,12 +450,18 @@ async def import_to_shelf(
         source_profile_digest=source_profile.digest,
         part_baselines=part_baselines(source_profile),
     )
-    return _import_response(
-        target_ref=target,
-        profile=source_profile,
-        pack_digest=pack_digest,
-        source_pack_ref=source_profile_pack_ref,
-        source_pack_version=pack_version,
+    return _shelf_provenance(
+        {
+            "profile_ref": source_profile.profile_ref,
+            "version": source_profile.version,
+            "digest": source_profile.digest,
+            "source_profile_ref": source_profile.profile_ref,
+            "source_profile_version": source_profile.version,
+            "source_profile_digest": source_profile.digest,
+            "source_profile_pack_ref": source_profile_pack_ref,
+            "source_profile_pack_version": pack_version,
+            "source_profile_pack_digest": pack_digest,
+        },
         created=True,
     )
 
