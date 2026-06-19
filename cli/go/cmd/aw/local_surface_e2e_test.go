@@ -149,6 +149,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				"version":             "0.1.0",
 				"digest":              profileDigest,
 				"runtime_assumptions": []string{"local shell"},
+				"runtime_hints":       []string{"local-shell"},
 				"files":               files,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
@@ -162,7 +163,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("bind missing signed headers")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": "sha256:coord"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": profileDigest})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/materialize":
 			t.Fatalf("server materialize must not be called in local-compose flow")
 		default:
@@ -184,7 +185,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("install library manifest: %v", err)
 	}
 
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator@0.1.0"}
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create --profile: %v", err)
 	}
@@ -198,10 +199,10 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 
 	teamHumanCreateProfiles = nil
-	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator@0.1.0"}); err != nil {
+	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("team add profile: %v", err)
 	}
-	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator@0.1.0"}); err != nil {
+	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("rerun team add profile: %v", err)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "reviewer")

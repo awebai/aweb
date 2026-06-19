@@ -43,6 +43,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 				"version":             "0.1.0",
 				"digest":              profileDigest,
 				"runtime_assumptions": []string{"local shell"},
+				"runtime_hints":       []string{"local-shell"},
 				"files":               files,
 			})
 		case "/v1/shelf/import":
@@ -78,7 +79,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator@0.1.0")
+	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	if _, err := os.Lstat(filepath.Join(home, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("local-shell profile unexpectedly wrote CLAUDE.md: %v", err)
 	}
-	if importBody["source_profile_pack_ref"] != "aweb.engineering-pack" || importBody["source_profile_pack_version"] != "0.1.0" || importBody["profile_ref"] != "coordinator" {
+	if importBody["source_profile_pack_ref"] != "aweb.engineering-pack" || importBody["source_profile_pack_version"] != nil || importBody["profile_ref"] != "coordinator" {
 		t.Fatalf("import body=%#v", importBody)
 	}
 	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.1.0" || bindBody["profile_digest"] != profileDigest {
@@ -100,6 +101,63 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	}
 	if _, err := os.Stat(filepath.Join(home, ".aw", "profile", "profile.yaml")); err != nil {
 		t.Fatalf("materialized .aw/profile/profile.yaml missing: %v", err)
+	}
+}
+
+func TestApplyLibraryProfileToHomeRejectsVersionedSelectorUntilVersionedSourceFetch(t *testing.T) {
+	home := t.TempDir()
+	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator@0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".aw", "profile", "profile.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("profile written despite unsupported versioned selector: %v", statErr)
+	}
+}
+
+func TestApplyLibraryProfileToHomeRejectsBindImportMismatchBeforeWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+	files := testLibraryProfilePayloadFiles()
+	profileDigest := testLibraryProfilePayloadDigest(t, files)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(map[string]any{"pack_ref": "aweb.engineering-pack", "pack_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "runtime_assumptions": []string{"local shell"}, "runtime_hints": []string{"local-shell"}, "files": files})
+		case "/v1/shelf/import":
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": false})
+		case "/v1/agents/coordinator/profile-binding":
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "coordinator", "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": "sha256:other"})
+		default:
+			t.Fatalf("unexpected library request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLibraryManifestPluginForTest(t, home, server.URL)
+
+	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+	if err == nil || !strings.Contains(err.Error(), "bind/import mismatch") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".aw", "profile", "profile.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("profile written despite bind/import mismatch: %v", statErr)
 	}
 }
 
@@ -148,7 +206,7 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator@0.1.0")
+	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
 	if err != nil {
 		t.Fatal(err)
 	}

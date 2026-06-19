@@ -24,6 +24,7 @@ type libraryProfileDetailResponse struct {
 	Version            string                                  `json:"version"`
 	Digest             string                                  `json:"digest"`
 	RuntimeAssumptions []string                                `json:"runtime_assumptions"`
+	RuntimeHints       []string                                `json:"runtime_hints"`
 	Files              []profilepack.LibraryProfilePayloadFile `json:"files"`
 }
 
@@ -35,6 +36,13 @@ type libraryImportToShelfResponse struct {
 	SourceProfilePackVersion string `json:"source_profile_pack_version"`
 	SourceProfilePackDigest  string `json:"source_profile_pack_digest"`
 	Created                  bool   `json:"created"`
+}
+
+type libraryBindResponse struct {
+	AgentID        string `json:"agent_id"`
+	ProfileRef     string `json:"profile_ref"`
+	ProfileVersion string `json:"profile_version"`
+	ProfileDigest  string `json:"profile_digest"`
 }
 
 func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
@@ -92,6 +100,9 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 	if strings.TrimSpace(agentID) == "" {
 		return nil, nil, fmt.Errorf("agent id is required for Library binding")
 	}
+	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
+		return nil, nil, usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceProfilePackVersion)
+	}
 	var materialized *profilepack.MaterializeResult
 	var written []string
 	err := withWorkingDir(homeDir, func() error {
@@ -99,7 +110,7 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err != nil {
 			return fmt.Errorf("library get-profile: %w", err)
 		}
-		runtimeKind := chooseLibraryRuntimeKind(profile.RuntimeAssumptions)
+		runtimeKind := chooseLibraryRuntimeKind(profile.RuntimeHints)
 		imported, err := callLibraryImportToShelf(selector)
 		if err != nil {
 			return fmt.Errorf("library import-to-shelf: %w", err)
@@ -107,8 +118,12 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err := validateFetchedProfileMatchesImport(selector, profile, imported); err != nil {
 			return err
 		}
-		if err := callLibraryBind(strings.TrimSpace(agentID), imported); err != nil {
+		bound, err := callLibraryBind(strings.TrimSpace(agentID), imported)
+		if err != nil {
 			return fmt.Errorf("library bind: %w", err)
+		}
+		if err := validateBindMatchesImport(bound, imported); err != nil {
+			return err
 		}
 		materialized, err = profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
 			TargetDir:      homeDir,
@@ -205,6 +220,29 @@ func validateFetchedProfileMatchesImport(selector libraryProfileSelector, profil
 	return nil
 }
 
+func validateBindMatchesImport(bound *libraryBindResponse, imported *libraryImportToShelfResponse) error {
+	if bound == nil || imported == nil {
+		return fmt.Errorf("library bind result and import result are required")
+	}
+	checks := []struct {
+		field string
+		got   string
+		want  string
+	}{
+		{field: "profile_ref", got: bound.ProfileRef, want: imported.ProfileRef},
+		{field: "profile_version", got: bound.ProfileVersion, want: imported.Version},
+		{field: "profile_digest", got: bound.ProfileDigest, want: imported.Digest},
+	}
+	for _, check := range checks {
+		got := strings.TrimSpace(check.got)
+		want := strings.TrimSpace(check.want)
+		if got == "" || want == "" || got != want {
+			return fmt.Errorf("library bind/import mismatch for %s: bound %q, imported %q", check.field, got, want)
+		}
+	}
+	return nil
+}
+
 func chooseLibraryRuntimeKind(assumptions []string) string {
 	allowed := map[string]bool{}
 	for _, assumption := range assumptions {
@@ -246,11 +284,11 @@ func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportTo
 	return &out, nil
 }
 
-func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) error {
+func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*libraryBindResponse, error) {
 	if imported == nil {
-		return fmt.Errorf("library import result is required")
+		return nil, fmt.Errorf("library import result is required")
 	}
-	_, err := executeLibraryToolBody([]string{
+	body, err := executeLibraryToolBody([]string{
 		"bind",
 		"--agent_id", agentID,
 		"--profile_ref", imported.ProfileRef,
@@ -258,7 +296,14 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) err
 		"--profile_digest", imported.Digest,
 		"--source_profile_pack_ref", imported.SourceProfilePackRef,
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	var out libraryBindResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("decode library bind response: %w", err)
+	}
+	return &out, nil
 }
 
 func executeLibraryToolBody(args []string) ([]byte, error) {
