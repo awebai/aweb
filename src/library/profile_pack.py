@@ -342,9 +342,11 @@ def import_return(pack: ParsedPack) -> dict[str, Any]:
     }
 
 
+# The proposal target is interpolated (a profile's memory_policy.proposal_target,
+# e.g. "library"); the line wrap is fixed regardless of the target's length.
 _MEMORY_BOILERPLATE = (
     "Your full profile is kept under .aw/profile/. To change how you work, propose a\n"
-    "new profile version from there; library reviews and mints it."
+    "new profile version from there; {target} reviews and mints it."
 )
 _SKILLS_BOILERPLATE = "These skills are installed and discoverable by your harness:"
 
@@ -382,9 +384,8 @@ def _compose_agents_md(doc: dict[str, Any], *, profile_ref: str, instructions: s
     if memory_policy:
         mode = memory_policy.get("mode", "")
         target = memory_policy.get("proposal_target", "")
-        blocks.append(
-            f"## Memory and learning\n\nMode: {mode}\nProposal target: {target}\n\n{_MEMORY_BOILERPLATE}"
-        )
+        boilerplate = _MEMORY_BOILERPLATE.format(target=target)
+        blocks.append(f"## Memory and learning\n\nMode: {mode}\nProposal target: {target}\n\n{boilerplate}")
     skill_names = [_skill_name(str(skill["path"])) for skill in doc.get("skills") or []]
     if skill_names:
         blocks.append(f"## Skills\n\n{_SKILLS_BOILERPLATE}\n\n{_bullets(skill_names)}")
