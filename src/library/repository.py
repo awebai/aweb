@@ -446,7 +446,10 @@ async def _upsert_shelf_profile(
     source_profile_digest: str | None,
     part_baselines: dict[str, str],
 ) -> None:
-    await db.execute(
+    """Insert a shelf-profile version. Versions are unique per (team, profile_ref):
+    supplying a version that already exists is a 409 conflict, never a silent
+    overwrite (the anti-divergence guard — a version's content is immutable)."""
+    row = await db.fetch_one(
         """
         INSERT INTO {{tables.shelf_profiles}}
           (team_id, profile_ref, version, digest, tags, name, mission, accepted_work,
@@ -455,19 +458,8 @@ async def _upsert_shelf_profile(
            source_profile_ref, source_profile_version, source_profile_digest, part_baselines)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14::jsonb,
                 $15, $16, $17, $18, $19, $20, $21::jsonb)
-        ON CONFLICT (team_id, profile_ref, version) DO UPDATE SET
-            digest = EXCLUDED.digest, tags = EXCLUDED.tags, name = EXCLUDED.name,
-            mission = EXCLUDED.mission, accepted_work = EXCLUDED.accepted_work,
-            runtime_assumptions = EXCLUDED.runtime_assumptions, memory_policy = EXCLUDED.memory_policy,
-            expected_apps = EXCLUDED.expected_apps, event_subscriptions = EXCLUDED.event_subscriptions,
-            approval_required = EXCLUDED.approval_required, files = EXCLUDED.files,
-            source_profile_pack_ref = EXCLUDED.source_profile_pack_ref,
-            source_profile_pack_version = EXCLUDED.source_profile_pack_version,
-            source_profile_pack_digest = EXCLUDED.source_profile_pack_digest,
-            source_profile_ref = EXCLUDED.source_profile_ref,
-            source_profile_version = EXCLUDED.source_profile_version,
-            source_profile_digest = EXCLUDED.source_profile_digest,
-            part_baselines = EXCLUDED.part_baselines
+        ON CONFLICT (team_id, profile_ref, version) DO NOTHING
+        RETURNING version
         """,
         team_id, profile.profile_ref, profile.version, profile.digest, tags, profile.name,
         profile.mission, profile.accepted_work, profile.runtime_assumptions,
@@ -477,6 +469,11 @@ async def _upsert_shelf_profile(
         source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest,
         _dumps(part_baselines),
     )
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Shelf profile '{profile.profile_ref}' version '{profile.version}' already exists",
+        )
 
 
 async def create_shelf_profile(
@@ -916,9 +913,8 @@ async def _mint_from_proposal(
         raise HTTPException(
             status_code=409, detail="Proposal base is stale; the shelf profile has a newer version"
         )
-    if profile.version == prior["version"]:
-        raise HTTPException(status_code=422, detail="minted version must differ from the base version")
-
+    # A minted version that already exists for this profile is a 409 (the immutable-
+    # version guard in _upsert_shelf_profile), not a silent overwrite.
     await _upsert_shelf_profile(
         db,
         team_id=principal.team_id,

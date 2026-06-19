@@ -52,6 +52,20 @@ class _ShelfImportDB:
         self.writes: list[tuple] = []
 
     async def fetch_one(self, sql: str, *params):
+        if "INSERT INTO {{tables.shelf_profiles}}" in sql:
+            self.writes.append(params)
+            self.shelf_row = {
+                "profile_ref": params[1],
+                "version": params[2],
+                "digest": params[3],
+                "source_profile_ref": params[17],
+                "source_profile_version": params[18],
+                "source_profile_digest": params[19],
+                "source_profile_pack_ref": params[14],
+                "source_profile_pack_version": params[15],
+                "source_profile_pack_digest": params[16],
+            }
+            return {"version": params[2]}  # RETURNING version (no prior conflict)
         if "FROM {{tables.shelf_profiles}}" in sql:
             return self.shelf_row
         if "FROM {{tables.profile_packs}}" in sql:
@@ -73,21 +87,6 @@ class _ShelfImportDB:
                 "files": json.dumps(s.files),
             }
         raise AssertionError(f"unexpected query: {sql}")
-
-    async def execute(self, sql: str, *params) -> None:
-        self.writes.append(params)
-        # Mirror what was written so a subsequent existence check returns it.
-        self.shelf_row = {
-            "profile_ref": params[1],
-            "version": params[2],
-            "digest": params[3],
-            "source_profile_ref": params[17],
-            "source_profile_version": params[18],
-            "source_profile_digest": params[19],
-            "source_profile_pack_ref": params[14],
-            "source_profile_pack_version": params[15],
-            "source_profile_pack_digest": params[16],
-        }
 
 
 async def test_import_to_shelf_copies_then_is_idempotent() -> None:

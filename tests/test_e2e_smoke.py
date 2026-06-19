@@ -488,9 +488,10 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
 
 def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
-    # Public catalog read with team auth still works.
+    # Public catalog read with team auth still works (a JSON array; may be non-empty
+    # if earlier tests published packs into the shared catalog).
     packs = _aw_request(team, "GET", f"{library.origin}/v1/profile-packs")
-    assert _assert_aw_success(packs, context="list profile packs smoke").strip() == "[]"
+    assert isinstance(json.loads(_assert_aw_success(packs, context="list profile packs smoke")), list)
     # A valid certificate passes auth: get-binding for an unbound agent is a real
     # 404 (not 401), proving auth + the live endpoint.
     binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")

@@ -33,7 +33,7 @@ pytestmark = pytest.mark.e2e
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
-_MANIFEST_SHA256 = "b795e1bb614130893610947b4b008ec6adf577fc17ddcd149b225209cb966213"
+_MANIFEST_SHA256 = "4b2782668ce8df97122cba58ff16540f14e00d8b55efb05b4c06f268bd549e46"
 
 
 def _load_json(path: Path) -> Any:

@@ -130,3 +130,40 @@ async def test_approve_rejects_stale_base(migrated_db) -> None:
     with pytest.raises(HTTPException) as excinfo:
         await approve_proposal(db, principal=principal, proposal_id=proposal["proposal_id"])
     assert excinfo.value.status_code == 409
+
+
+async def test_approve_rejects_minting_an_existing_version(migrated_db) -> None:
+    # Mint 0.2.0, then a fresh proposal whose content version is 0.1.0 (already a
+    # shelf version) must 409 — a version's digest is immutable, never overwritten.
+    db = migrated_db
+    await _publish_and_import(db)
+    principal = SimpleNamespace(team_id=_TEAM, alias="dev")
+
+    first = await create_proposal(
+        db,
+        principal=principal,
+        request=ProposalCreateRequest(
+            target="profile",
+            profile_ref="coordinator",
+            base_profile_version="0.1.0",
+            base_profile_digest=_BASE_DIGEST,
+            content={"schema": PROFILE_PAYLOAD_SCHEMA, "files": _bumped_coordinator_payload("0.2.0")},
+        ),
+    )
+    minted = (await approve_proposal(db, principal=principal, proposal_id=first["proposal_id"]))["minted"]
+
+    # Base is now the current 0.2.0; propose content under the already-existing 0.1.0.
+    colliding = await create_proposal(
+        db,
+        principal=principal,
+        request=ProposalCreateRequest(
+            target="profile",
+            profile_ref="coordinator",
+            base_profile_version=minted["version"],
+            base_profile_digest=minted["digest"],
+            content={"schema": PROFILE_PAYLOAD_SCHEMA, "files": _bumped_coordinator_payload("0.1.0")},
+        ),
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await approve_proposal(db, principal=principal, proposal_id=colliding["proposal_id"])
+    assert excinfo.value.status_code == 409
