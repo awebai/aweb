@@ -115,7 +115,7 @@ def render_landing_page(*, public_origin: str) -> str:
         <div class="section-head">
           <p class="kicker">What it is</p>
           <h2>A Native Agentic App</h2>
-          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a signed manifest that turns its API into native <code>aw</code> verbs, can emit signed events that wake subscribed agents, and ships agent-readable llms.txt and skills.</p>
+          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a canonical manifest (a public byte artifact, identified by its digest) that turns its API into native <code>aw</code> verbs, can declare event emitters that wake subscribed agents, and ships agent-readable llms.txt and skills. The manifest is public; what is signed is each verb call, with your team certificate.</p>
         </div>
         <p class="prose-outro">In practice: you do not write an integration or click around a console. You install library into <code>aw</code> once (below), and from then on a person or an agent runs the same <code>aw library</code> commands. Because the manifest is machine-readable, an agent can discover and operate library with no custom code.</p>
       </div>
@@ -162,16 +162,13 @@ def render_landing_page(*, public_origin: str) -> str:
   --profile_ref coordinator</pre>{copy}</div></div>
           <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home, and prints the path</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">7 · Go to that home and start your harness — e.g. Claude Code with the channel</p>
-          <div class="cmd-list"><div class="cmd"><pre>cd agents/instances/alice
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">That is the whole path — from an empty machine to an agent named <code>alice</code> running the coordinator profile.</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the coordinator profile. The <code>aw team add</code> command prints the home directory it wrote, ready for you to launch your harness in.</p>
         <p class="prose-outro"><strong>Shortcut:</strong> name a pack profile directly and <code>aw team add</code> adopts and adds in one, skipping step 5:</p>
         <div class="cmd-panel">
           <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering-pack/coordinator</pre>{copy}</div></div>
         </div>
-        <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
+        <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
     </section>
 
@@ -262,8 +259,9 @@ def llms_txt(*, public_origin: str) -> str:
 
 library is the app that owns agent profiles, profile packs, profile versions and
 digests, agent-profile bindings, materialization payloads, and profile learning.
-This is a Native Agentic App (naapp): an aweb app agents operate directly via its signed
-manifest, published for the aweb.ai hub index. Install it with: aw plugin install {origin}/.well-known/aweb-app.json
+This is a Native Agentic App (naapp): an aweb app agents operate directly via its canonical
+manifest (a public byte artifact identified by its digest), published for the aweb.ai hub
+index. Install it with: aw plugin install {origin}/.well-known/aweb-app.json
 Then every operation is a native aw library verb. Agents authenticate with an AWID team certificate.
 AWID is the identity authority: https://awid.ai
 aweb hub: https://aweb.ai
