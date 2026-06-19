@@ -180,6 +180,52 @@ func TestAgentStartRejectsExistingRuntimeSymlinkBeforeWrites(t *testing.T) {
 	}
 }
 
+func TestAgentStartRejectsRuntimeFileSymlinksBeforeProcessStart(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file string
+	}{
+		{name: "log", file: "agent.log"},
+		{name: "state", file: "agent.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAgentRuntimeGlobals(t)
+			root := t.TempDir()
+			home := writeAgentRuntimeHome(t, root, "[local shell]")
+			runtimeDir := filepath.Join(home, ".aw", "runtime")
+			if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outsideTarget := filepath.Join(root, "outside-"+tc.file)
+			if err := os.Symlink(outsideTarget, filepath.Join(runtimeDir, tc.file)); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, "started-marker")
+			if _, err := startAgentRuntime("developer", home, "", "printf started > "+marker); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+				t.Fatalf("runtime file symlink error=%v", err)
+			}
+			if _, statErr := os.Lstat(outsideTarget); !os.IsNotExist(statErr) {
+				t.Fatalf("outside runtime target was created/written, stat err=%v", statErr)
+			}
+			if _, statErr := os.Lstat(marker); !os.IsNotExist(statErr) {
+				t.Fatalf("runtime command started despite preflight failure, stat err=%v", statErr)
+			}
+		})
+	}
+}
+
+func TestAgentStartRejectsRuntimeFileNonRegularEntries(t *testing.T) {
+	resetAgentRuntimeGlobals(t)
+	root := t.TempDir()
+	home := writeAgentRuntimeHome(t, root, "[local shell]")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "runtime", "agent.log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startAgentRuntime("developer", home, "", "printf should-not-run"); err == nil || !strings.Contains(err.Error(), "must be a regular file") {
+		t.Fatalf("runtime file directory error=%v", err)
+	}
+}
+
 func TestAgentStartRejectsBadTeamConfigWhenPresent(t *testing.T) {
 	resetAgentRuntimeGlobals(t)
 	root := t.TempDir()

@@ -248,6 +248,13 @@ func startAgentRuntime(name, home, runtimeOverride, commandOverride string) (*ag
 		return nil, err
 	}
 	logPath := filepath.Join(runtimeDir, "agent.log")
+	statePath := agentRuntimeStatePath(home)
+	if err := preflightAgentRuntimeFile(logPath); err != nil {
+		return nil, err
+	}
+	if err := preflightAgentRuntimeFile(statePath); err != nil {
+		return nil, err
+	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
@@ -394,7 +401,27 @@ func agentRuntimeStatePath(home string) string {
 	return filepath.Join(agentRuntimeDir(home), "agent.json")
 }
 
+func preflightAgentRuntimeFile(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("agent runtime file %s must not be a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("agent runtime file %s must be a regular file", path)
+	}
+	return nil
+}
+
 func saveAgentRuntimeState(home string, state *agentRuntimeState) error {
+	if err := preflightAgentRuntimeFile(agentRuntimeStatePath(home)); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
