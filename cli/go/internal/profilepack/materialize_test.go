@@ -19,7 +19,7 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	if result.ProfileRef != "developer" || result.ProfileVersion != "0.1.0" || !strings.HasPrefix(result.ProfileDigest, "sha256:") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home-legacy/developer"), target)
+	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
 }
 
 func TestMaterializeLocalProfileRejectsTargetSymlinkEscape(t *testing.T) {
@@ -61,7 +61,7 @@ func TestMaterializeLocalProfileRejectsSymlinkedTargetParent(t *testing.T) {
 func TestMaterializeLocalProfileRejectsExistingDirectoryDestinationEvenWithForce(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()
-	if err := os.Mkdir(filepath.Join(target, "instructions.md"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(target, "AGENTS.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, Force: true})
@@ -100,11 +100,35 @@ func assertDirsEqual(t *testing.T, wantDir, gotDir string) {
 		t.Fatalf("files mismatch\nwant=%v\ngot=%v", wantFiles, gotFiles)
 	}
 	for _, rel := range wantFiles {
-		want, err := os.ReadFile(filepath.Join(wantDir, filepath.FromSlash(rel)))
+		wantPath := filepath.Join(wantDir, filepath.FromSlash(rel))
+		gotPath := filepath.Join(gotDir, filepath.FromSlash(rel))
+		wantInfo, err := os.Lstat(wantPath)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := os.ReadFile(filepath.Join(gotDir, filepath.FromSlash(rel)))
+		gotInfo, err := os.Lstat(gotPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wantInfo.Mode()&os.ModeSymlink != 0 {
+			if gotInfo.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("%s: got non-symlink", rel)
+			}
+			wantLink, _ := os.Readlink(wantPath)
+			gotLink, _ := os.Readlink(gotPath)
+			if wantLink != gotLink {
+				t.Fatalf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
+			}
+			continue
+		}
+		if gotInfo.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("%s: got symlink, want regular file", rel)
+		}
+		want, err := os.ReadFile(wantPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(gotPath)
 		if err != nil {
 			t.Fatal(err)
 		}

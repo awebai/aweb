@@ -1,6 +1,7 @@
 package profilepack
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -54,46 +55,9 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if err != nil {
 		return nil, err
 	}
-	ref := materializedProfileRef{
-		ProfileDigest:            profile.Digest,
-		ProfileRef:               profile.ID,
-		ProfileVersion:           profile.Version,
-		SourceProfilePackDigest:  pack.Source.Digest,
-		SourceProfilePackRef:     pack.ID,
-		SourceProfilePackVersion: pack.Version,
-	}
-	refBytes, err := json.MarshalIndent(ref, "", "  ")
+	ops, err := materializeOps(pack, profile)
 	if err != nil {
 		return nil, err
-	}
-	refBytes = append(refBytes, '\n')
-	ops := []materializeWriteOp{{Rel: filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json")), Data: refBytes}}
-	instruction, err := materializeCopyOp(pack.Source.Ref, profile.InstructionPath, "instructions.md")
-	if err != nil {
-		return nil, err
-	}
-	ops = append(ops, instruction)
-	for _, skill := range profile.Skills {
-		dest, err := resourceDestPath(profile.ID, "skills", skill.Path)
-		if err != nil {
-			return nil, err
-		}
-		op, err := materializeCopyOp(pack.Source.Ref, skill.Path, dest)
-		if err != nil {
-			return nil, err
-		}
-		ops = append(ops, op)
-	}
-	for _, artifact := range profile.Artifacts {
-		dest, err := resourceDestPath(profile.ID, "artifacts", artifact.Path)
-		if err != nil {
-			return nil, err
-		}
-		op, err := materializeCopyOp(pack.Source.Ref, artifact.Path, dest)
-		if err != nil {
-			return nil, err
-		}
-		ops = append(ops, op)
 	}
 	if err := preflightMaterializeWrites(absTarget, ops, opts.Force); err != nil {
 		return nil, err
@@ -114,6 +78,165 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	}, nil
 }
 
+func materializeOps(pack *Pack, profile Profile) ([]materializeWriteOp, error) {
+	ref := materializedProfileRef{
+		ProfileDigest:            profile.Digest,
+		ProfileRef:               profile.ID,
+		ProfileVersion:           profile.Version,
+		SourceProfilePackDigest:  pack.Source.Digest,
+		SourceProfilePackRef:     pack.ID,
+		SourceProfilePackVersion: pack.Version,
+	}
+	refBytes, err := json.MarshalIndent(ref, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	refBytes = append(refBytes, '\n')
+	instructions, err := os.ReadFile(filepath.Join(pack.Source.Ref, filepath.FromSlash(profile.InstructionPath)))
+	if err != nil {
+		return nil, err
+	}
+	agents, err := composeAgentsMarkdown(pack, profile, instructions)
+	if err != nil {
+		return nil, err
+	}
+	ops := []materializeWriteOp{
+		{Kind: opFile, Rel: "AGENTS.md", Data: agents},
+		{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"},
+		{Kind: opFile, Rel: filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json")), Data: refBytes},
+	}
+	profileYAML, err := materializeCopyOp(pack.Source.Ref, filepath.ToSlash(filepath.Join(profile.Path, "profile.yaml")), filepath.ToSlash(filepath.Join(".aw", "profile", "profile.yaml")))
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, profileYAML)
+	instructionSource, err := materializeCopyOp(pack.Source.Ref, profile.InstructionPath, filepath.ToSlash(filepath.Join(".aw", "profile", "instructions.md")))
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, instructionSource)
+	for _, skill := range profile.Skills {
+		skillName, err := skillNameFromPath(profile.ID, skill.Path)
+		if err != nil {
+			return nil, err
+		}
+		sourceRel, err := resourceSourceRel(profile.ID, "skills", skill.Path)
+		if err != nil {
+			return nil, err
+		}
+		rootDest := filepath.ToSlash(filepath.Join("skills", filepath.FromSlash(sourceRel)))
+		op, err := materializeCopyOp(pack.Source.Ref, skill.Path, rootDest)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+		profileDest := filepath.ToSlash(filepath.Join(".aw", "profile", "skills", filepath.FromSlash(sourceRel)))
+		op, err = materializeCopyOp(pack.Source.Ref, skill.Path, profileDest)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+		ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: filepath.ToSlash(filepath.Join(".claude", "skills", skillName, "SKILL.md")), LinkTarget: filepath.ToSlash(filepath.Join("..", "..", "..", "skills", skillName, "SKILL.md"))})
+	}
+	for _, artifact := range profile.Artifacts {
+		sourceRel, err := resourceSourceRel(profile.ID, "artifacts", artifact.Path)
+		if err != nil {
+			return nil, err
+		}
+		rootDest := filepath.ToSlash(filepath.Join("artifacts", filepath.FromSlash(sourceRel)))
+		op, err := materializeCopyOp(pack.Source.Ref, artifact.Path, rootDest)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+		profileDest := filepath.ToSlash(filepath.Join(".aw", "profile", "artifacts", filepath.FromSlash(sourceRel)))
+		op, err = materializeCopyOp(pack.Source.Ref, artifact.Path, profileDest)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
+}
+
+func composeAgentsMarkdown(pack *Pack, profile Profile, instructions []byte) ([]byte, error) {
+	var b strings.Builder
+	writeParagraph := func(title string, lines []string) {
+		if len(lines) == 0 {
+			return
+		}
+		b.WriteString("## ")
+		b.WriteString(title)
+		b.WriteString("\n\n")
+		for i, line := range lines {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(line)
+		}
+		b.WriteString("\n\n")
+	}
+	b.WriteString("# ")
+	b.WriteString(profile.Name)
+	b.WriteString("\n\n")
+	b.WriteString("> Profile ")
+	b.WriteString(profile.ID)
+	b.WriteString(" v")
+	b.WriteString(profile.Version)
+	b.WriteString(" · pack ")
+	b.WriteString(pack.ID)
+	b.WriteString(" v")
+	b.WriteString(pack.Version)
+	b.WriteString("\n\n")
+	if strings.TrimSpace(profile.Mission) != "" {
+		writeParagraph("Mission", []string{profile.Mission})
+	}
+	if len(profile.AcceptedWork) > 0 {
+		writeParagraph("Work you take on", bulletLines(profile.AcceptedWork))
+	}
+	if strings.TrimSpace(string(instructions)) != "" {
+		normalized := strings.TrimRight(string(instructions), " \t\r\n")
+		writeParagraph("Instructions", strings.Split(normalized, "\n"))
+	}
+	if len(profile.ExpectedApps) > 0 {
+		writeParagraph("Apps you use", bulletLines(profile.ExpectedApps))
+	}
+	if len(profile.ApprovalRequired) > 0 {
+		writeParagraph("Actions requiring human approval", bulletLines(profile.ApprovalRequired))
+	}
+	if len(profile.MemoryPolicy) > 0 {
+		mode, _ := profile.MemoryPolicy["mode"].(string)
+		proposalTarget, _ := profile.MemoryPolicy["proposal_target"].(string)
+		if strings.TrimSpace(mode) != "" || strings.TrimSpace(proposalTarget) != "" {
+			lines := []string{"Mode: " + mode, "Proposal target: " + proposalTarget, "", "Your full profile is kept under .aw/profile/. To change how you work, propose a", "new profile version from there; " + proposalTarget + " reviews and mints it."}
+			writeParagraph("Memory and learning", lines)
+		}
+	}
+	if len(profile.Skills) > 0 {
+		lines := []string{"These skills are installed and discoverable by your harness:", ""}
+		for _, skill := range profile.Skills {
+			name, err := skillNameFromPath(profile.ID, skill.Path)
+			if err != nil {
+				return nil, err
+			}
+			lines = append(lines, "- "+name)
+		}
+		writeParagraph("Skills", lines)
+	}
+	out := strings.TrimRight(b.String(), "\n") + "\n"
+	return []byte(out), nil
+}
+
+func bulletLines(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, "- "+value)
+		}
+	}
+	return out
+}
+
 func findProfile(pack *Pack, id string) (Profile, bool) {
 	for _, profile := range pack.LoadedProfiles {
 		if profile.ID == id {
@@ -123,7 +246,19 @@ func findProfile(pack *Pack, id string) (Profile, bool) {
 	return Profile{}, false
 }
 
-func resourceDestPath(profileID, category, packRelativePath string) (string, error) {
+func skillNameFromPath(profileID, packRelativePath string) (string, error) {
+	rel, err := resourceSourceRel(profileID, "skills", packRelativePath)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		return "", fmt.Errorf("skill path %q must include a skill directory", packRelativePath)
+	}
+	return parts[0], nil
+}
+
+func resourceSourceRel(profileID, category, packRelativePath string) (string, error) {
 	prefix := filepath.ToSlash(filepath.Join("profiles", profileID, category)) + "/"
 	if !strings.HasPrefix(packRelativePath, prefix) {
 		return "", fmt.Errorf("%s path %q is outside profile %s %s directory", category, packRelativePath, profileID, category)
@@ -132,12 +267,21 @@ func resourceDestPath(profileID, category, packRelativePath string) (string, err
 	if err := validateRelativePath(category, rel); err != nil {
 		return "", err
 	}
-	return filepath.ToSlash(filepath.Join(category, filepath.FromSlash(rel))), nil
+	return rel, nil
 }
 
+type materializeWriteKind string
+
+const (
+	opFile    materializeWriteKind = "file"
+	opSymlink materializeWriteKind = "symlink"
+)
+
 type materializeWriteOp struct {
-	Rel  string
-	Data []byte
+	Kind       materializeWriteKind
+	Rel        string
+	Data       []byte
+	LinkTarget string
 }
 
 func materializeCopyOp(sourceRoot, sourceRel, destRel string) (materializeWriteOp, error) {
@@ -151,7 +295,7 @@ func materializeCopyOp(sourceRoot, sourceRel, destRel string) (materializeWriteO
 	if err != nil {
 		return materializeWriteOp{}, err
 	}
-	return materializeWriteOp{Rel: filepath.ToSlash(destRel), Data: data}, nil
+	return materializeWriteOp{Kind: opFile, Rel: filepath.ToSlash(destRel), Data: data}, nil
 }
 
 func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, force bool) error {
@@ -165,7 +309,7 @@ func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, for
 			return fmt.Errorf("duplicate materialized destination %s", rel)
 		}
 		seen[rel] = true
-		if err := validateMaterializeDestination(targetRoot, rel, force); err != nil {
+		if err := validateMaterializeDestination(targetRoot, op, force); err != nil {
 			return err
 		}
 	}
@@ -237,9 +381,15 @@ func isAllowedAmbientSymlinkPrefix(path string) bool {
 	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))
 }
 
-func validateMaterializeDestination(targetRoot, rel string, force bool) error {
+func validateMaterializeDestination(targetRoot string, op materializeWriteOp, force bool) error {
+	rel := filepath.ToSlash(op.Rel)
 	if err := validateRelativePath("destination", rel); err != nil {
 		return err
+	}
+	if op.Kind == opSymlink {
+		if op.LinkTarget == "" || filepath.IsAbs(op.LinkTarget) || strings.Contains(op.LinkTarget, "://") {
+			return fmt.Errorf("%s has invalid symlink target", rel)
+		}
 	}
 	path := filepath.Join(targetRoot, filepath.FromSlash(rel))
 	if !isWithin(targetRoot, path) {
@@ -251,10 +401,16 @@ func validateMaterializeDestination(targetRoot, rel string, force bool) error {
 	info, err := os.Lstat(path)
 	if err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
+			if op.Kind == opSymlink && force {
+				return nil
+			}
 			return fmt.Errorf("%s must not be a symlink", rel)
 		}
-		if !info.Mode().IsRegular() {
+		if op.Kind == opFile && !info.Mode().IsRegular() {
 			return fmt.Errorf("%s must be a regular file", rel)
+		}
+		if op.Kind == opSymlink {
+			return fmt.Errorf("%s already exists and is not a symlink", rel)
 		}
 		if !force {
 			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
@@ -302,10 +458,66 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(path, op.Data, 0o644); err != nil {
-			return nil, err
+		if op.Kind == opSymlink {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+			if err := os.Symlink(op.LinkTarget, path); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := os.WriteFile(path, op.Data, 0o644); err != nil {
+				return nil, err
+			}
 		}
 		written = append(written, filepath.ToSlash(op.Rel))
 	}
 	return written, nil
+}
+
+func compareMaterializedTrees(wantDir, gotDir string) error {
+	return filepath.WalkDir(wantDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(wantDir, path)
+		gotPath := filepath.Join(gotDir, rel)
+		wantInfo, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		gotInfo, err := os.Lstat(gotPath)
+		if err != nil {
+			return err
+		}
+		if wantInfo.Mode()&os.ModeSymlink != 0 {
+			if gotInfo.Mode()&os.ModeSymlink == 0 {
+				return fmt.Errorf("%s: got non-symlink", rel)
+			}
+			wantLink, _ := os.Readlink(path)
+			gotLink, _ := os.Readlink(gotPath)
+			if wantLink != gotLink {
+				return fmt.Errorf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
+			}
+			return nil
+		}
+		if gotInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s: got symlink, want file", rel)
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		got, err := os.ReadFile(gotPath)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(want, got) {
+			return fmt.Errorf("%s: file content mismatch", rel)
+		}
+		return nil
+	})
 }
