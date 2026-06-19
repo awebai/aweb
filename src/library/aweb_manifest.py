@@ -316,9 +316,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "propose",
-            # PROVISIONAL: re-pinned cross-lane in the evolution work-item when the
-            # proposal carries the new version's content for minting (deliberate bump).
-            "description": "Submit a profile learning proposal.",
+            "description": "Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version's content (profile-payload.v1); approve mints it.",
             "method": "POST",
             "path": "/v1/proposals",
             "input_schema": {
@@ -327,7 +325,11 @@ MANIFEST: dict[str, Any] = {
                     "target": {"type": "string"},
                     "profile_ref": {"type": "string"},
                     "profile_version": {"type": "string"},
+                    "base_profile_version": {"type": "string"},
+                    "base_profile_digest": {"type": "string"},
                     "content": {"type": "object"},
+                    "summary": {"type": "string"},
+                    "rationale": {"type": "string"},
                 },
                 "required": ["target"],
             },
@@ -335,7 +337,11 @@ MANIFEST: dict[str, Any] = {
                 {"name": "target", "in": "body"},
                 {"name": "profile_ref", "in": "body"},
                 {"name": "profile_version", "in": "body"},
+                {"name": "base_profile_version", "in": "body"},
+                {"name": "base_profile_digest", "in": "body"},
                 {"name": "content", "in": "body"},
+                {"name": "summary", "in": "body"},
+                {"name": "rationale", "in": "body"},
             ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],

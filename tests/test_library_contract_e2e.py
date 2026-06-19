@@ -19,7 +19,7 @@ from test_e2e_smoke import (
     _provision_team,
 )
 
-from library.digest import PACK_PAYLOAD_SCHEMA, collect_files
+from library.digest import PACK_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
 from library.profile_pack import (
     ParsedPack,
     build_pack_payload,
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.e2e
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
-_MANIFEST_SHA256 = "b795e1bb614130893610947b4b008ec6adf577fc17ddcd149b225209cb966213"
+_MANIFEST_SHA256 = "4b2782668ce8df97122cba58ff16540f14e00d8b55efb05b4c06f268bd549e46"
 
 
 def _load_json(path: Path) -> Any:
@@ -631,23 +631,36 @@ def test_register_bind_materialize_pack_copy_and_proposals(
         "source_profile_pack_digest": pack.digest,
     }
 
-    def assert_proposal_shape(proposal: dict[str, Any], *, status: str, content: dict[str, Any]) -> None:
-        assert set(proposal) == {
+    def assert_proposal_shape(
+        proposal: dict[str, Any], *, status: str, content: dict[str, Any], minted: bool = False
+    ) -> None:
+        expected_keys = {
             "proposal_id",
             "target",
             "profile_ref",
             "profile_version",
+            "base_profile_version",
+            "base_profile_digest",
             "status",
             "content",
+            "summary",
+            "rationale",
             "created_by_alias",
             "created_at",
         }
+        if minted:
+            expected_keys.add("minted")
+        assert set(proposal) == expected_keys
         assert isinstance(proposal["proposal_id"], str)
         assert proposal["target"] == "profile"
         assert proposal["profile_ref"] == "developer"
         assert proposal["profile_version"] == "0.1.0"
         assert proposal["status"] == status
         assert proposal["content"] == content
+        assert proposal["base_profile_version"] is None
+        assert proposal["base_profile_digest"] is None
+        assert proposal["summary"] is None
+        assert proposal["rationale"] is None
         assert proposal["created_by_alias"] == team.alias
         assert isinstance(proposal["created_at"], str)
 
@@ -694,6 +707,7 @@ def test_register_bind_materialize_pack_copy_and_proposals(
         context="approve proposal",
     )
     assert_proposal_shape(approved, status="approved", content=approve_content)
+    assert "minted" not in approved
     assert approved == {**approve_candidate, "status": "approved"}
 
     rejected = _aw_json(
@@ -706,6 +720,135 @@ def test_register_bind_materialize_pack_copy_and_proposals(
     )
     assert_proposal_shape(rejected, status="rejected", content=reject_content)
     assert rejected == {**reject_candidate, "status": "rejected"}
+
+
+def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
+    library: RunningLibrary,
+    aw_workspace: AWWorkspace,
+) -> None:
+    team = _provision_team(aw_workspace)
+    unique = uuid.uuid4().hex[:8]
+    payload = _pack_payload(pack_ref=f"aweb.mint-{unique}")
+    pack = _payload_pack(payload)
+    _publish_pack(team, library, payload)
+    base = _import_to_shelf(team, library, pack=pack, profile_ref="coordinator")
+
+    def assert_profile_proposal_shape(
+        proposal: dict[str, Any], *, status: str, content: dict[str, Any], minted: bool = False
+    ) -> None:
+        expected_keys = {
+            "proposal_id",
+            "target",
+            "profile_ref",
+            "profile_version",
+            "base_profile_version",
+            "base_profile_digest",
+            "status",
+            "content",
+            "summary",
+            "rationale",
+            "created_by_alias",
+            "created_at",
+        }
+        if minted:
+            expected_keys.add("minted")
+        assert set(proposal) == expected_keys
+        assert isinstance(proposal["proposal_id"], str)
+        assert proposal["target"] == "profile"
+        assert proposal["profile_ref"] == "coordinator"
+        assert proposal["profile_version"] is None
+        assert proposal["base_profile_version"] == base["version"]
+        assert proposal["content"] == content
+        assert proposal["created_by_alias"] == team.alias
+        assert isinstance(proposal["created_at"], str)
+        assert proposal["status"] == status
+
+    minted_files = _profile_files_with_version("coordinator", "0.2.0")
+    minted_profile = parse_profile_payload(minted_files)
+    minted_content = {"schema": PROFILE_PAYLOAD_SCHEMA, "files": minted_files}
+    proposal = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/proposals",
+            {
+                "target": "profile",
+                "profile_ref": "coordinator",
+                "base_profile_version": base["version"],
+                "base_profile_digest": base["digest"],
+                "content": minted_content,
+                "summary": "Sharpen coordinator mission",
+                "rationale": "The team learned a better coordination habit.",
+            },
+        ),
+        context="create minting proposal",
+    )
+    assert_profile_proposal_shape(proposal, status="open", content=minted_content)
+    assert proposal["base_profile_digest"] == base["digest"]
+    assert proposal["summary"] == "Sharpen coordinator mission"
+    assert proposal["rationale"] == "The team learned a better coordination habit."
+
+    approved = _aw_json(
+        _post_json(team, f"{library.origin}/v1/proposals/{proposal['proposal_id']}/approve", {}),
+        context="approve minting proposal",
+    )
+    assert_profile_proposal_shape(approved, status="approved", content=minted_content, minted=True)
+    assert approved["minted"] == {
+        "profile_ref": "coordinator",
+        "version": "0.2.0",
+        "digest": minted_profile.digest,
+        "supersedes_profile_version": base["version"],
+        "supersedes_profile_digest": base["digest"],
+    }
+
+    shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after mint")
+    coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
+    assert coordinator["version"] == "0.2.0"
+    assert coordinator["digest"] == minted_profile.digest
+    assert coordinator["source_profile_pack_ref"] == pack.pack_ref
+
+    stale_files = _profile_files_with_version("coordinator", "0.3.0")
+    stale_proposal = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/proposals",
+            {
+                "target": "profile",
+                "profile_ref": "coordinator",
+                "base_profile_version": base["version"],
+                "base_profile_digest": base["digest"],
+                "content": {"schema": PROFILE_PAYLOAD_SCHEMA, "files": stale_files},
+            },
+        ),
+        context="create stale-base proposal",
+    )
+    stale_approve = _post_json(
+        team,
+        f"{library.origin}/v1/proposals/{stale_proposal['proposal_id']}/approve",
+        {},
+    )
+    _assert_aw_status(stale_approve, 409, context="approve stale-base proposal")
+
+    collision_files = _profile_files_with_version("coordinator", "0.1.0")
+    collision_proposal = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/proposals",
+            {
+                "target": "profile",
+                "profile_ref": "coordinator",
+                "base_profile_version": "0.2.0",
+                "base_profile_digest": minted_profile.digest,
+                "content": {"schema": PROFILE_PAYLOAD_SCHEMA, "files": collision_files},
+            },
+        ),
+        context="create version-collision proposal",
+    )
+    collision_approve = _post_json(
+        team,
+        f"{library.origin}/v1/proposals/{collision_proposal['proposal_id']}/approve",
+        {},
+    )
+    _assert_aw_status(collision_approve, 409, context="approve version-collision proposal")
 
 
 def test_empty_profile_invariant_never_requires_reachable_library(
