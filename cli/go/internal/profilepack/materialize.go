@@ -54,7 +54,6 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if err != nil {
 		return nil, err
 	}
-	written := []string{}
 	ref := materializedProfileRef{
 		ProfileDigest:            profile.Digest,
 		ProfileRef:               profile.ID,
@@ -68,29 +67,40 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 		return nil, err
 	}
 	refBytes = append(refBytes, '\n')
-	if err := writeMaterializedFile(absTarget, filepath.Join(".aw", "profile", "ref.json"), refBytes, opts.Force, &written); err != nil {
+	ops := []materializeWriteOp{{Rel: filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json")), Data: refBytes}}
+	instruction, err := materializeCopyOp(pack.Source.Ref, profile.InstructionPath, "instructions.md")
+	if err != nil {
 		return nil, err
 	}
-	if err := copyMaterializedFile(pack.Source.Ref, absTarget, profile.InstructionPath, "instructions.md", opts.Force, &written); err != nil {
-		return nil, err
-	}
+	ops = append(ops, instruction)
 	for _, skill := range profile.Skills {
 		dest, err := resourceDestPath(profile.ID, "skills", skill.Path)
 		if err != nil {
 			return nil, err
 		}
-		if err := copyMaterializedFile(pack.Source.Ref, absTarget, skill.Path, dest, opts.Force, &written); err != nil {
+		op, err := materializeCopyOp(pack.Source.Ref, skill.Path, dest)
+		if err != nil {
 			return nil, err
 		}
+		ops = append(ops, op)
 	}
 	for _, artifact := range profile.Artifacts {
 		dest, err := resourceDestPath(profile.ID, "artifacts", artifact.Path)
 		if err != nil {
 			return nil, err
 		}
-		if err := copyMaterializedFile(pack.Source.Ref, absTarget, artifact.Path, dest, opts.Force, &written); err != nil {
+		op, err := materializeCopyOp(pack.Source.Ref, artifact.Path, dest)
+		if err != nil {
 			return nil, err
 		}
+		ops = append(ops, op)
+	}
+	if err := preflightMaterializeWrites(absTarget, ops, opts.Force); err != nil {
+		return nil, err
+	}
+	written, err := writeMaterializedFiles(absTarget, ops)
+	if err != nil {
+		return nil, err
 	}
 	return &MaterializeResult{
 		ProfileRef:               profile.ID,
@@ -125,21 +135,61 @@ func resourceDestPath(profileID, category, packRelativePath string) (string, err
 	return filepath.ToSlash(filepath.Join(category, filepath.FromSlash(rel))), nil
 }
 
-func copyMaterializedFile(sourceRoot, targetRoot, sourceRel, destRel string, force bool, written *[]string) error {
+type materializeWriteOp struct {
+	Rel  string
+	Data []byte
+}
+
+func materializeCopyOp(sourceRoot, sourceRel, destRel string) (materializeWriteOp, error) {
 	if err := validateRelativePath("source", sourceRel); err != nil {
-		return err
+		return materializeWriteOp{}, err
 	}
 	if err := validateRelativePath("destination", destRel); err != nil {
-		return err
+		return materializeWriteOp{}, err
 	}
 	data, err := os.ReadFile(filepath.Join(sourceRoot, filepath.FromSlash(sourceRel)))
 	if err != nil {
-		return err
+		return materializeWriteOp{}, err
 	}
-	return writeMaterializedFile(targetRoot, destRel, data, force, written)
+	return materializeWriteOp{Rel: filepath.ToSlash(destRel), Data: data}, nil
 }
 
-func writeMaterializedFile(targetRoot, rel string, data []byte, force bool, written *[]string) error {
+func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, force bool) error {
+	if err := ensureMaterializeTargetRoot(targetRoot); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, op := range ops {
+		rel := filepath.ToSlash(op.Rel)
+		if seen[rel] {
+			return fmt.Errorf("duplicate materialized destination %s", rel)
+		}
+		seen[rel] = true
+		if err := validateMaterializeDestination(targetRoot, rel, force); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureMaterializeTargetRoot(targetRoot string) error {
+	info, err := os.Lstat(targetRoot)
+	if os.IsNotExist(err) {
+		return os.MkdirAll(targetRoot, 0o755)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("target directory must not be a symlink")
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("target must be a directory")
+	}
+	return nil
+}
+
+func validateMaterializeDestination(targetRoot, rel string, force bool) error {
 	if err := validateRelativePath("destination", rel); err != nil {
 		return err
 	}
@@ -147,17 +197,64 @@ func writeMaterializedFile(targetRoot, rel string, data []byte, force bool, writ
 	if !isWithin(targetRoot, path) {
 		return fmt.Errorf("destination %s escapes target directory", rel)
 	}
-	if _, err := os.Lstat(path); err == nil && !force {
-		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
-	} else if err != nil && !os.IsNotExist(err) {
+	if err := rejectSymlinkedParents(targetRoot, rel); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s must not be a symlink", rel)
+		}
+		if !force {
+			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
-	}
-	*written = append(*written, filepath.ToSlash(rel))
 	return nil
+}
+
+func rejectSymlinkedParents(targetRoot, rel string) error {
+	parentRel := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rel)))
+	if parentRel == "." {
+		return nil
+	}
+	current := targetRoot
+	for _, part := range strings.Split(parentRel, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination parent %s must not be a symlink", filepath.ToSlash(strings.TrimPrefix(current, targetRoot+string(filepath.Separator))))
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("destination parent %s must be a directory", filepath.ToSlash(strings.TrimPrefix(current, targetRoot+string(filepath.Separator))))
+		}
+	}
+	return nil
+}
+
+func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]string, error) {
+	written := make([]string, 0, len(ops))
+	for _, op := range ops {
+		path := filepath.Join(targetRoot, filepath.FromSlash(op.Rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, op.Data, 0o644); err != nil {
+			return nil, err
+		}
+		written = append(written, filepath.ToSlash(op.Rel))
+	}
+	return written, nil
 }

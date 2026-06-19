@@ -22,6 +22,25 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
 }
 
+func TestMaterializeLocalProfileRejectsTargetSymlinkEscape(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(target, "skills")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "implement", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("materialize wrote through symlink, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".aw", "profile", "ref.json")); !os.IsNotExist(err) {
+		t.Fatalf("preflight should prevent partial writes before symlink failure, stat err=%v", err)
+	}
+}
+
 func TestMaterializeLocalProfileRequiresBoundProfileAndRefusesOverwrite(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()
