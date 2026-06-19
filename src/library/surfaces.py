@@ -91,20 +91,27 @@ def render_landing_page(*, public_origin: str) -> str:
     <section class="section section--tint">
       <div class="wrap">
         <div class="section-head">
+          <p class="kicker">Why this exists</p>
+          <h2>AI agents are starting to do real work — as teams</h2>
+          <p>A coordinator that routes the work, a developer that writes the code, a reviewer that checks it. Each one needs a clear account of its job: its mission, its instructions, the tools it may use, and what needs a human's sign-off.</p>
+        </div>
+        <p class="prose-intro">Today that account is usually a prompt pasted into a box — no versions, nothing shared between teams, no identity behind it, no record of what changed. That does not hold up once you are trusting agents with real work.</p>
+        <p class="prose-outro"><strong>aweb</strong> is the system that makes agent teams workable: it gives every agent and team a verifiable identity — an <a href="https://awid.ai">AWID</a>, a cryptographic passport instead of accounts and API keys — and a single command-line tool, <code>aw</code>, to drive it. <strong>library</strong> is the part of aweb that holds the agents' job descriptions. That is what this is.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
           <p class="kicker">What it is</p>
           <h2>A Native Agentic App</h2>
           <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a signed manifest that turns its API into native <code>aw</code> verbs, can emit signed events that wake subscribed agents, and ships agent-readable llms.txt and skills.</p>
         </div>
-        <p class="prose-intro">Install library once, and every operation becomes a native command — the same for a person at a terminal and an agent on a task:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list">
-            <div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre></div>
-          </div>
-        </div>
+        <p class="prose-outro">In practice: you do not write an integration or click around a console. You install library into <code>aw</code> once (below), and from then on a person or an agent runs the same <code>aw library</code> commands. Because the manifest is machine-readable, an agent can discover and operate library with no custom code.</p>
       </div>
     </section>
 
-    <section class="section" id="model">
+    <section class="section section--tint" id="model">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">The model</p>
@@ -122,28 +129,32 @@ def render_landing_page(*, public_origin: str) -> str:
       </div>
     </section>
 
-    <section class="section section--tint" id="use">
+    <section class="section" id="use">
       <div class="wrap">
         <div class="section-head">
-          <p class="kicker">Use it</p>
-          <h2>Native aw commands, no dashboard</h2>
-          <p>Public catalog reads need no identity; team operations authenticate with your AWID team certificate. There is no web console — the same verbs serve people and agents.</p>
+          <p class="kicker">Get started</p>
+          <h2>From nothing to a running profile</h2>
+          <p>You need <code>aw</code>, the aweb command-line tool — that is the only thing to install. library plugs into it. Browsing the catalog needs no identity; adopting and materializing are signed by your AWID team certificate.</p>
         </div>
         <div class="cmd-panel">
-          <p class="cmd-label">Browse the public catalog — no identity needed</p>
+          <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
+          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre></div></div>
+          <p class="cmd-label">2 · Add library — its operations become native aw library verbs</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre></div></div>
+          <p class="cmd-label">3 · Browse the public catalog — no identity needed</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre></div></div>
-          <p class="cmd-label">Adopt a profile onto your team's shelf</p>
+          <p class="cmd-label">4 · Adopt a profile onto your team's shelf</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --profile_ref coordinator</pre></div></div>
-          <p class="cmd-label">See your shelf, and which profiles have upstream updates</p>
+          <p class="cmd-label">5 · See your shelf, and which profiles have upstream updates</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre></div></div>
-          <p class="cmd-label">Materialize a profile into a local agent home</p>
+          <p class="cmd-label">6 · Materialize a profile into a local agent home</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library materialize --profile_ref coordinator --runtime_kind claude-code --target local</pre></div></div>
         </div>
-        <p class="prose-outro">Every operation is a native <code>aw library</code> verb from the signed manifest — adopt, version, propose, update-from-source, publish. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">manifest</a>.</p>
+        <p class="prose-outro">Steps 4–6 sign with your team certificate. Versioning, proposals, update-from-source, and publishing are native <code>aw library</code> verbs too. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
       </div>
     </section>
 
-    <section class="section" id="engineers">
+    <section class="section section--tint" id="engineers">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">For engineers</p>
@@ -160,7 +171,7 @@ def render_landing_page(*, public_origin: str) -> str:
       </div>
     </section>
 
-    <section class="section section--tint">
+    <section class="section">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">The bigger bet</p>
