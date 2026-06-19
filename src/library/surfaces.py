@@ -116,6 +116,7 @@ Team-auth endpoints (AWID team certificate):
 - GET /v1/profiles/{{profile_id}} — a shelf profile
 - POST /v1/profiles — create a shelf profile
 - POST /v1/profiles/{{profile_ref}}/versions — add a new shelf-profile version
+- POST /v1/profiles/{{profile_ref}}/update-from-source — per-part 3-way merge from a newer source-pack version (mints target_version on a real merge; no-op when nothing pullable)
 - POST /v1/shelf/import — copy a public-pack profile onto the shelf
 - POST /v1/profiles/{{profile_ref}}/publish — publish a shelf profile into a public pack
 - POST /v1/profile-packs/import — publish or update a public pack

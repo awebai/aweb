@@ -156,9 +156,9 @@ name.
 Materialize writes the **full** profile into `.aw/profile/`: `ref.json` (the pin),
 `profile.yaml`, `instructions.md`, and the source `skills/`/`artifacts/`. This is
 the substrate for evolution: the agent reads its current profile here and proposes
-a new version via `memory_policy.proposal_target` (Library reviews and mints it —
-the proposal/minting flow). `AGENTS.md` and the installed `skills/`/`artifacts/`
-are **derived** from this source.
+a new version to its `memory_policy.proposal_target` (e.g. Library), which reviews
+and mints it — the proposal/minting flow. `AGENTS.md` and the installed
+`skills/`/`artifacts/` are **derived** from this source.
 
 `ref.json` records `source_profile_pack_*` as **provenance** (where the shelf copy
 was adopted from) for a pack copy, and omits it for a profile created fresh on the
