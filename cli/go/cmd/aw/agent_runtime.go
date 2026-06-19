@@ -215,6 +215,9 @@ func resolveAgentHome(name string) (string, error) {
 	if strings.TrimSpace(agentHomeFlag) != "" {
 		return filepath.Abs(agentHomeFlag)
 	}
+	if !isValidWorkspaceAlias(name) {
+		return "", usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars); use --home for an explicit path", name)
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -238,6 +241,9 @@ func startAgentRuntime(name, home, runtimeOverride, commandOverride string) (*ag
 		return nil, err
 	}
 	runtimeDir := agentRuntimeDir(home)
+	if err := preflightAgentRuntimeDir(runtimeDir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -265,6 +271,9 @@ func startAgentRuntime(name, home, runtimeOverride, commandOverride string) (*ag
 }
 
 func validateAgentHomeForStart(home string) error {
+	if err := rejectSymlinkedExistingAgentDirs(home, "agent home"); err != nil {
+		return err
+	}
 	info, err := os.Lstat(home)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("agent home %s not found (missing worktree or agents/instances entry)", home)
@@ -290,6 +299,26 @@ func validateAgentHomeForStart(home string) error {
 		}
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+func preflightAgentRuntimeDir(runtimeDir string) error {
+	if err := rejectSymlinkedExistingAgentDirs(runtimeDir, "agent runtime directory"); err != nil {
+		return err
+	}
+	info, err := os.Lstat(runtimeDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("agent runtime directory %s must not be a symlink", runtimeDir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("agent runtime directory %s must be a directory", runtimeDir)
 	}
 	return nil
 }

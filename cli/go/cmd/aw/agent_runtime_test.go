@@ -124,6 +124,62 @@ func TestAgentStartFailuresAreExplicit(t *testing.T) {
 	}
 }
 
+func TestAgentStartRejectsSymlinkedDefaultHomeParentBeforeRuntimeWrites(t *testing.T) {
+	resetAgentRuntimeGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	outside := t.TempDir()
+	writeAgentRuntimeHome(t, outside, "[local shell]")
+	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "agents", "instances"), filepath.Join(root, "agents", "instances")); err != nil {
+		t.Fatal(err)
+	}
+	agentCommandFlag = "printf should-not-run"
+
+	err := runAgentStart(nil, []string{"developer"})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(outside, "agents", "instances", "developer", ".aw", "runtime")); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime state wrote through symlinked parent, stat err=%v", statErr)
+	}
+}
+
+func TestAgentStartRejectsUnsafeDefaultNameUnlessHomeExplicit(t *testing.T) {
+	resetAgentRuntimeGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	if _, err := resolveAgentHome("../developer"); err == nil || !strings.Contains(err.Error(), "invalid agent name") {
+		t.Fatalf("unsafe default name error=%v", err)
+	}
+	home := writeAgentRuntimeHome(t, root, "[local shell]")
+	agentHomeFlag = home
+	got, err := resolveAgentHome("../developer")
+	if err != nil {
+		t.Fatalf("explicit --home should allow non-default name token: %v", err)
+	}
+	if got != home {
+		t.Fatalf("home=%q, want %q", got, home)
+	}
+}
+
+func TestAgentStartRejectsExistingRuntimeSymlinkBeforeWrites(t *testing.T) {
+	resetAgentRuntimeGlobals(t)
+	root := t.TempDir()
+	home := writeAgentRuntimeHome(t, root, "[local shell]")
+	if err := os.Symlink(filepath.Join(root, "missing-runtime-target"), filepath.Join(home, ".aw", "runtime")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startAgentRuntime("developer", home, "", "printf should-not-run"); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("runtime symlink error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "missing-runtime-target")); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime symlink target was created, stat err=%v", statErr)
+	}
+}
+
 func TestAgentStartRejectsBadTeamConfigWhenPresent(t *testing.T) {
 	resetAgentRuntimeGlobals(t)
 	root := t.TempDir()
