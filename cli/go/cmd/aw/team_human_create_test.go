@@ -21,7 +21,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
-	oldAddEmptyAgent := teamHumanAddEmptyAgent
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		jsonFlag = oldJSON
@@ -36,7 +35,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
-		teamHumanAddEmptyAgent = oldAddEmptyAgent
 	})
 	jsonFlag = false
 	teamHumanCreateBYOT = false
@@ -50,7 +48,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
-	teamHumanAddEmptyAgent = createAndAcceptTeamInviteForEmptyAgent
 }
 
 func TestTeamHumanCreateEmptyProfileUsesImplicitLocalTeamNameAndNoLibrary(t *testing.T) {

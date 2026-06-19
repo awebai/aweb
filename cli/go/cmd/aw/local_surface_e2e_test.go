@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,43 +16,66 @@ func TestLocalSurfaceE2EEmptyProfileCreateAddStartFailure(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	resetAgentRuntimeGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
-	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
-	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("AW_CONFIG_PATH", "")
 
-	var created implicitLocalInitRequest
-	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
-		created = req
-		if err := os.MkdirAll(filepath.Join(req.WorkingDir, ".aw"), 0o755); err != nil {
-			return connectOutput{}, err
+	var sawTeamCreate, sawCertificate bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": "", "aweb_url": r.Host, "registry_url": r.Host})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"namespace_id": "ns-local", "domain": "local", "controller_did": body["controller_did"], "verification_status": "verified", "created_at": "2026-06-19T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "eng" {
+				t.Fatalf("team create name=%v, want eng", body["name"])
+			}
+			sawTeamCreate = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "display_name": "", "team_did_key": body["team_did_key"], "visibility": "private", "created_at": "2026-06-19T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates":
+			sawCertificate = true
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "eng", "agent_id": "agent-eng", "workspace_id": "workspace-eng", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent", "eng:local", "developer")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		if err := os.WriteFile(filepath.Join(req.WorkingDir, ".aw", "workspace.yaml"), []byte("team_id: eng:local\nalias: eng\n"), 0o600); err != nil {
-			return connectOutput{}, err
-		}
-		return connectOutput{Status: "connected", TeamID: "eng:local", Alias: req.Alias, AwebURL: req.AwebURL, WorkspaceID: "ws-eng"}, nil
-	}
-	teamHumanAddEmptyAgent = func(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
-		if anchorDir != root {
-			t.Fatalf("anchorDir=%q, want %q", anchorDir, root)
-		}
-		if global {
-			t.Fatal("empty e2e should add local agent")
-		}
-		if err := os.MkdirAll(filepath.Join(homeDir, ".aw"), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(filepath.Join(homeDir, ".aw", "workspace.yaml"), []byte("team_id: eng:local\nalias: "+alias+"\n"), 0o600); err != nil {
-			return nil, err
-		}
-		return &acceptedTeamInvite{Output: &teamAcceptInviteOutput{Status: "accepted", TeamID: "eng:local", Alias: alias, CertPath: filepath.Join(homeDir, ".aw", "team-certificates", "eng-local.jwt")}}, nil
-	}
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	oldInitAwebURL := initAwebURL
+	oldInitAWIDRegistry := initAWIDRegistry
+	initAwebURL = server.URL
+	initAWIDRegistry = server.URL
+	t.Cleanup(func() {
+		initAwebURL = oldInitAwebURL
+		initAWIDRegistry = oldInitAWIDRegistry
+	})
 
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create: %v", err)
 	}
-	if created.TeamName != "eng" || created.Alias != "eng" {
-		t.Fatalf("created request=%+v, want team/alias eng", created)
+	if !sawTeamCreate || !sawCertificate {
+		t.Fatalf("real init_local did not create team/certificate: team=%v cert=%v", sawTeamCreate, sawCertificate)
 	}
 	if err := runTeamHumanAdd(nil, []string{"developer"}); err != nil {
 		t.Fatalf("team add: %v", err)
