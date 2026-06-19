@@ -107,6 +107,16 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 }
 
+func TestResolveReconnectServiceURLsCanonicalizesHostedAppOriginToAPI(t *testing.T) {
+	urls, err := resolveReconnectServiceURLs(guidedOnboardingRequest{WorkingDir: t.TempDir(), BaseURL: "https://app.aweb.ai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if urls.AwebURL != "https://app.aweb.ai/api" {
+		t.Fatalf("AwebURL=%q", urls.AwebURL)
+	}
+}
+
 func TestGuidedOnboardingReconnectSkipsWizardWhenLocalSigningKeyAndCertExist(t *testing.T) {
 	oldConnect := guidedOnboardingConnect
 	oldHosted := guidedOnboardingExecuteHostedPath

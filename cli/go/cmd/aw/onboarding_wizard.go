@@ -841,14 +841,37 @@ func promptHostedClaimHuman(req guidedOnboardingRequest, onboardingURL string) e
 
 func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingServiceURLs, error) {
 	if strings.TrimSpace(req.BaseURL) != "" {
-		return resolveOnboardingServiceURLs(req.BaseURL)
+		if isDefaultHostedAwebURL(req.BaseURL) {
+			awebURL, err := canonicalReconnectAwebURL(req.BaseURL)
+			if err != nil {
+				return onboardingServiceURLs{}, err
+			}
+			return onboardingServiceURLs{OnboardingURL: DefaultAwebURL, AwebURL: awebURL}, nil
+		}
+		urls, err := resolveOnboardingServiceURLs(req.BaseURL)
+		if err != nil {
+			return onboardingServiceURLs{}, err
+		}
+		urls.AwebURL, err = canonicalReconnectAwebURL(urls.AwebURL)
+		if err != nil {
+			return onboardingServiceURLs{}, err
+		}
+		return urls, nil
 	}
 
 	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(req.WorkingDir)
 	if err == nil {
 		rawURL := strings.TrimSpace(workspace.AwebURL)
 		if rawURL != "" {
-			return resolveOnboardingServiceURLs(rawURL)
+			urls, err := resolveOnboardingServiceURLs(rawURL)
+			if err != nil {
+				return onboardingServiceURLs{}, err
+			}
+			urls.AwebURL, err = canonicalReconnectAwebURL(urls.AwebURL)
+			if err != nil {
+				return onboardingServiceURLs{}, err
+			}
+			return urls, nil
 		}
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -856,6 +879,10 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 	}
 
 	awebURL, err := resolveGuidedOnboardingAwebURL(req.BaseURL)
+	if err != nil {
+		return onboardingServiceURLs{}, err
+	}
+	awebURL, err = canonicalReconnectAwebURL(awebURL)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}

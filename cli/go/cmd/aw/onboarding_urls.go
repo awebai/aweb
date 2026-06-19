@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,6 +14,36 @@ type onboardingServiceURLs struct {
 	AwebURL             string
 	RegistryURL         string
 	TeamRegistrationURL string
+}
+
+func canonicalReconnectAwebURL(raw string) (string, error) {
+	normalized, err := normalizeAwebBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(u.Hostname(), "app.aweb.ai") && strings.Trim(strings.TrimSpace(u.EscapedPath()), "/") == "" {
+		u.Path = "/api"
+		u.RawPath = ""
+		return strings.TrimSuffix(u.String(), "/"), nil
+	}
+	return normalized, nil
+}
+
+func isDefaultHostedAwebURL(raw string) bool {
+	normalized, err := normalizeAwebBaseURL(raw)
+	if err != nil {
+		return false
+	}
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return false
+	}
+	path := strings.Trim(strings.TrimSpace(u.EscapedPath()), "/")
+	return strings.EqualFold(u.Hostname(), "app.aweb.ai") && (path == "" || path == "api")
 }
 
 func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
