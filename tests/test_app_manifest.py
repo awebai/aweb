@@ -229,6 +229,17 @@ def test_interpreted_spec_bind() -> None:
     assert spec["mutation"] is True
 
 
+def test_interpreted_spec_propose() -> None:
+    # The propose body must match the implemented ProposalCreateRequest (target
+    # required; profile_ref/profile_version/content optional) so a manifest-driven
+    # caller is accepted, not 422'd.
+    spec = _interpret(MANIFEST, "propose", {"target": "profile", "profile_ref": "coordinator"})
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/v1/proposals"
+    assert spec["body"] == b'{"profile_ref":"coordinator","target":"profile"}'
+    assert spec["mutation"] is True
+
+
 def test_manifest_served_at_both_paths_as_raw_committed_bytes() -> None:
     committed = MANIFEST_PATH.read_bytes()
     client = _client()

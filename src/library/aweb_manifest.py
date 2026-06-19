@@ -221,15 +221,27 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "propose",
+            # PROVISIONAL: re-pinned cross-lane in the evolution work-item when the
+            # proposal carries the new version's content for minting (deliberate bump).
             "description": "Submit a profile learning proposal.",
             "method": "POST",
             "path": "/v1/proposals",
             "input_schema": {
                 "type": "object",
-                "properties": {"proposal": {"type": "object"}},
-                "required": ["proposal"],
+                "properties": {
+                    "target": {"type": "string"},
+                    "profile_ref": {"type": "string"},
+                    "profile_version": {"type": "string"},
+                    "content": {"type": "object"},
+                },
+                "required": ["target"],
             },
-            "params": [{"name": "proposal", "in": "body"}],
+            "params": [
+                {"name": "target", "in": "body"},
+                {"name": "profile_ref", "in": "body"},
+                {"name": "profile_version", "in": "body"},
+                {"name": "content", "in": "body"},
+            ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],
             "mutation": True,
