@@ -50,6 +50,20 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddLayoutOnly = false
 }
 
+func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
+	out := formatTeamHumanCreate(teamHumanCreateOutput{TeamName: "eng", TeamID: "eng:local", Alias: "eng", HomeDir: "/repo", ProfileMode: "library"})
+	if !strings.Contains(out, "Agent home: /repo") {
+		t.Fatalf("output missing home path:\n%s", out)
+	}
+}
+
+func TestFormatTeamHumanAddPrintsEachAgentHome(t *testing.T) {
+	out := formatTeamHumanAdd(teamHumanAddOutput{AgentsRoot: "/repo/agents/instances", Agents: []teamHumanAddedAgent{{Name: "reviewer", HomeDir: "/repo/agents/instances/reviewer"}}, NoLibrary: false})
+	if !strings.Contains(out, "- reviewer: /repo/agents/instances/reviewer") {
+		t.Fatalf("output missing agent path:\n%s", out)
+	}
+}
+
 func TestTeamHumanCreateEmptyProfileUsesImplicitLocalTeamNameAndNoLibrary(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
