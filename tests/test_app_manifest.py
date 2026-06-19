@@ -15,6 +15,9 @@ from library.config import Settings
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 _EXPECTED_TOOLS = {
+    "list-packs",
+    "get-pack",
+    "get-profile",
     "publish-pack",
     "register",
     "create-shelf-profile",
@@ -35,6 +38,9 @@ _EXPECTED_TOOLS = {
 
 # Mutation flag per SoT §9: true iff a successful call is a hosted state change.
 _MUTATIONS = {
+    "list-packs": False,
+    "get-pack": False,
+    "get-profile": False,
     "publish-pack": True,
     "register": True,
     "create-shelf-profile": True,
@@ -206,6 +212,15 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
     for tool in MANIFEST["tools"]:
         expected_scope = "library:write" if tool["mutation"] else "library:read"
         assert expected_scope in tool["scopes"], tool["name"]
+
+    # Public catalog reads are auth:'none'; every other tool is team-cert (default,
+    # no marker).
+    public_reads = {"list-packs", "get-pack", "get-profile"}
+    for tool in MANIFEST["tools"]:
+        if tool["name"] in public_reads:
+            assert tool.get("auth") == "none", tool["name"]
+        else:
+            assert tool.get("auth") != "none", tool["name"]
 
     # library emits no events at v0.
     assert "events" not in MANIFEST

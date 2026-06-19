@@ -84,6 +84,8 @@ def test_public_pack_catalog_is_unauthenticated() -> None:
 
     assert client.get("/v1/profile-packs").json() == []
     assert client.get("/v1/profile-packs/does-not-exist").status_code == 404
+    # A public profile read is also unauthenticated (404, not 401, without a cert).
+    assert client.get("/v1/profile-packs/none/profiles/none").status_code == 404
 
 
 @pytest.mark.parametrize("method,path", _TEAM_SCOPED)

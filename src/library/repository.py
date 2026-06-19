@@ -162,6 +162,47 @@ async def get_profile_pack(db: AsyncDatabaseManager, *, pack_ref: str) -> dict[s
     return summary
 
 
+async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_ref: str) -> dict[str, Any]:
+    """A public profile snapshot from the latest version of a catalog pack — the
+    full profile content, for previewing before import. No auth (public catalog)."""
+    pack = await db.fetch_one(
+        "SELECT owner_team, version FROM {{tables.profile_packs}}"
+        " WHERE pack_ref = $1 ORDER BY created_at DESC LIMIT 1",
+        pack_ref,
+    )
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Profile pack not found")
+    row = await db.fetch_one(
+        "SELECT profile_ref, profile_version, digest, name, mission, accepted_work,"
+        " runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required, files"
+        " FROM {{tables.pack_profiles}}"
+        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
+        pack["owner_team"],
+        pack_ref,
+        pack["version"],
+        profile_ref,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Profile not found in pack")
+    data = dict(row)
+    return {
+        "pack_ref": pack_ref,
+        "pack_version": pack["version"],
+        "profile_ref": data["profile_ref"],
+        "version": data["profile_version"],
+        "digest": data["digest"],
+        "name": data["name"],
+        "mission": data.get("mission"),
+        "accepted_work": list(data.get("accepted_work") or []),
+        "runtime_assumptions": list(data.get("runtime_assumptions") or []),
+        "memory_policy": _json_value(data.get("memory_policy")),
+        "expected_apps": list(data.get("expected_apps") or []),
+        "event_subscriptions": _json_value(data.get("event_subscriptions")) or [],
+        "approval_required": list(data.get("approval_required") or []),
+        "files": _json_value(data.get("files")) or [],
+    }
+
+
 async def set_pack_tags(
     db: AsyncDatabaseManager, *, principal: Principal, pack_ref: str, tags: list[Any]
 ) -> dict[str, Any]:

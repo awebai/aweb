@@ -25,6 +25,7 @@ from library.repository import (
     create_proposal,
     create_shelf_profile,
     create_shelf_version,
+    get_pack_profile,
     get_profile_binding,
     get_profile_pack,
     get_shelf_profile,
@@ -155,6 +156,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         return await get_profile_pack(database, pack_ref=pack_id)
+
+    @app.get("/v1/profile-packs/{pack_id}/profiles/{profile_id}")
+    async def get_pack_profile_route(
+        pack_id: str,
+        profile_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_pack_profile(database, pack_ref=pack_id, profile_ref=profile_id)
 
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
