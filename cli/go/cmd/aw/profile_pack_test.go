@@ -37,6 +37,7 @@ instructions: instructions.md
 runtime_assumptions: [local shell]
 memory_policy:
   mode: reviewed-learning
+  proposal_target: library
 expected_apps: [tasks]
 event_subscriptions:
   - app: tasks

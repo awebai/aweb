@@ -425,8 +425,8 @@ func validateProfile(root, profileDir, profileRel string, entry PackProfileEntry
 			return err
 		}
 	}
-	if len(profile.MemoryPolicy) == 0 {
-		return fmt.Errorf("%s/profile.yaml:memory_policy: required", profileRel)
+	if err := validateMemoryPolicy(fmt.Sprintf("%s/profile.yaml:memory_policy", profileRel), profile.MemoryPolicy); err != nil {
+		return err
 	}
 	if err := validateRelativePath(fmt.Sprintf("%s/profile.yaml:instructions", profileRel), profile.Instructions); err != nil {
 		return err
@@ -707,6 +707,39 @@ func validateProfileID(field, value string) error {
 		return fmt.Errorf("%s: profile id must be a safe single path segment", field)
 	}
 	return nil
+}
+
+func validateMemoryPolicy(field string, policy map[string]any) error {
+	if len(policy) == 0 {
+		return fmt.Errorf("%s: required", field)
+	}
+	mode, err := requiredStringMapValue(field, policy, "mode")
+	if err != nil {
+		return err
+	}
+	if err := validateRequiredString(field+".mode", mode); err != nil {
+		return err
+	}
+	proposalTarget, err := requiredStringMapValue(field, policy, "proposal_target")
+	if err != nil {
+		return err
+	}
+	if err := validateRefString(field+".proposal_target", proposalTarget); err != nil {
+		return err
+	}
+	return nil
+}
+
+func requiredStringMapValue(field string, values map[string]any, key string) (string, error) {
+	value, ok := values[key]
+	if !ok {
+		return "", fmt.Errorf("%s.%s: required", field, key)
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s.%s: must be a string", field, key)
+	}
+	return text, nil
 }
 
 func validateRelativePath(field, value string) error {

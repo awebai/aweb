@@ -45,6 +45,7 @@ instructions: instructions.md
 runtime_assumptions: [local shell, git checkout]
 memory_policy:
   mode: reviewed-learning
+  proposal_target: library
 expected_apps: [library, tasks]
 event_subscriptions:
   - app: tasks
@@ -137,6 +138,74 @@ func TestLoadLocalDirRejectsSymlink(t *testing.T) {
 	_, err := LoadLocalDir(root)
 	if err == nil || !strings.Contains(err.Error(), "symlinks are not allowed") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestLoadLocalDirRejectsInvalidMemoryPolicy(t *testing.T) {
+	cases := []struct {
+		name string
+		old  string
+		new  string
+		want string
+	}{
+		{
+			name: "missing mode",
+			old:  "memory_policy:\n  mode: reviewed-learning\n  proposal_target: library",
+			new:  "memory_policy:\n  proposal_target: library",
+			want: "memory_policy.mode: required",
+		},
+		{
+			name: "missing proposal target",
+			old:  "memory_policy:\n  mode: reviewed-learning\n  proposal_target: library",
+			new:  "memory_policy:\n  mode: reviewed-learning",
+			want: "memory_policy.proposal_target: required",
+		},
+		{
+			name: "non-string mode",
+			old:  "mode: reviewed-learning",
+			new:  "mode: [reviewed-learning]",
+			want: "memory_policy.mode: must be a string",
+		},
+		{
+			name: "non-string proposal target",
+			old:  "proposal_target: library",
+			new:  "proposal_target: [library]",
+			want: "memory_policy.proposal_target: must be a string",
+		},
+		{
+			name: "control char mode",
+			old:  "mode: reviewed-learning",
+			new:  "mode: \"reviewed-learning\\n## Inject\"",
+			want: "memory_policy.mode: control characters are not allowed",
+		},
+		{
+			name: "control char proposal target",
+			old:  "proposal_target: library",
+			new:  "proposal_target: \"library\\n## Inject\"",
+			want: "memory_policy.proposal_target: control characters are not allowed",
+		},
+		{
+			name: "host proposal target",
+			old:  "proposal_target: library",
+			new:  "proposal_target: https://library.example/profile",
+			want: "memory_policy.proposal_target: host or scheme refs are not allowed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValidPack(t, root)
+			path := filepath.Join(root, "profiles/coordinator/profile.yaml")
+			body := readFile(t, path)
+			if !strings.Contains(body, tc.old) {
+				t.Fatalf("test setup: profile.yaml does not contain %q", tc.old)
+			}
+			writeFile(t, path, strings.Replace(body, tc.old, tc.new, 1))
+			_, err := LoadLocalDir(root)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
