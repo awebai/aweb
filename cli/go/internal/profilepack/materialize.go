@@ -272,6 +272,40 @@ func resourceSourceRel(profileID, category, packRelativePath string) (string, er
 	return rel, nil
 }
 
+type LibraryHomeFile struct {
+	Path        string `json:"path"`
+	Kind        string `json:"kind"`
+	ContentUTF8 string `json:"content_utf8,omitempty"`
+	Target      string `json:"target,omitempty"`
+}
+
+func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {
+	if strings.TrimSpace(targetDir) == "" {
+		return nil, fmt.Errorf("target directory is required")
+	}
+	absTarget, err := filepath.Abs(targetDir)
+	if err != nil {
+		return nil, err
+	}
+	ops := make([]materializeWriteOp, 0, len(files))
+	for _, file := range files {
+		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		kind := strings.TrimSpace(file.Kind)
+		switch kind {
+		case "file":
+			ops = append(ops, materializeWriteOp{Kind: opFile, Rel: rel, Data: []byte(file.ContentUTF8)})
+		case "symlink":
+			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: rel, LinkTarget: filepath.ToSlash(strings.TrimSpace(file.Target))})
+		default:
+			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s", file.Kind, rel)
+		}
+	}
+	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
+		return nil, err
+	}
+	return writeMaterializedFiles(absTarget, ops)
+}
+
 type materializeWriteKind string
 
 const (

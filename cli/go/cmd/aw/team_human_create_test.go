@@ -136,34 +136,40 @@ func TestTeamHumanAddRejectsExistingAwSymlinkState(t *testing.T) {
 	}
 }
 
-func TestTeamHumanAddRejectsLibraryProfileBeforeSeam(t *testing.T) {
+func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Chdir(t.TempDir())
 	teamHumanAddLayoutOnly = true
 
 	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer"})
-	if err == nil || !strings.Contains(err.Error(), "aw library plugin seam") {
+	if err == nil || !strings.Contains(err.Error(), "--layout-only") {
 		t.Fatalf("error=%v", err)
 	}
 	if _, statErr := os.Stat("agents/instances/developer"); !os.IsNotExist(statErr) {
-		t.Fatalf("profile-bound add must not create home before seam, stat err=%v", statErr)
+		t.Fatalf("profile-bound add must not create layout-only home, stat err=%v", statErr)
 	}
 }
 
-func TestTeamHumanCreateEmptyProfileRejectsLibraryProfileBeforeSeam(t *testing.T) {
+func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(t.TempDir())
 	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer"}
 	called := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		called = true
-		return connectOutput{}, nil
+		return connectOutput{Status: "connected", TeamID: "eng:local", Alias: req.Alias, AwebURL: req.AwebURL, WorkspaceID: "ws-1"}, nil
 	}
 
 	err := runTeamHumanCreate(nil, []string{"eng"})
-	if err == nil || !strings.Contains(err.Error(), "aw library plugin seam") {
+	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
 		t.Fatalf("error=%v", err)
 	}
-	if called {
-		t.Fatal("profile-bound create must not call init before aw library seam")
+	if !called {
+		t.Fatal("profile-bound create should create identity before Library bind/materialize")
 	}
 }
