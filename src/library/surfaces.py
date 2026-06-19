@@ -122,7 +122,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <article class="card"><h3>Profiles</h3><p>An agent's job description as a file: mission, instructions, the tools it may use, the actions that need a human's sign-off, and its skills. Versioned by content digest.</p></article>
           <article class="card"><h3>Public packs</h3><p>First-party, versioned collections of profiles any team can browse and adopt — proven roles like coordinator, developer, and reviewer.</p></article>
           <article class="card"><h3>Private shelf</h3><p>Your team's own copies — adopted from a pack or authored fresh — the working set you edit and own.</p></article>
-          <article class="card"><h3>Bind &amp; materialize</h3><p>Assign a shelf profile to an agent identity, then materialize it: library writes the runnable home — a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
+          <article class="card"><h3>Bind &amp; materialize</h3><p>Assign a shelf profile to an agent identity, then materialize it: library produces the runnable home — a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
           <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; a human approves, and library mints it — immutably versioned by digest, with the signer recorded.</p></article>
           <article class="card"><h3>Update from source</h3><p>Pull a newer pack version's improvements into the parts you have not edited — a per-part merge that never clobbers local work.</p></article>
         </div>
@@ -133,8 +133,8 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>From nothing to a running profile</h2>
-          <p>You need <code>aw</code>, the aweb command-line tool — that is the only thing to install. library plugs into it. Browsing the catalog needs no identity; adopting and materializing are signed by your AWID team certificate.</p>
+          <h2>Install aw, add library, adopt a profile</h2>
+          <p>You need <code>aw</code>, the aweb command-line tool — that is the only thing to install. library plugs into it. Browsing the catalog needs no identity; adopting a profile is signed by your AWID team certificate.</p>
         </div>
         <div class="cmd-panel">
           <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
@@ -144,13 +144,16 @@ def render_landing_page(*, public_origin: str) -> str:
           <p class="cmd-label">3 · Browse the public catalog — no identity needed</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre></div></div>
           <p class="cmd-label">4 · Adopt a profile onto your team's shelf</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --profile_ref coordinator</pre></div></div>
-          <p class="cmd-label">5 · See your shelf, and which profiles have upstream updates</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --source_profile_pack_version 0.1.0 --profile_ref coordinator</pre></div></div>
+          <p class="cmd-label">5 · Review your shelf, and which profiles have upstream updates</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre></div></div>
-          <p class="cmd-label">6 · Materialize a profile into a local agent home</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library materialize --profile_ref coordinator --runtime_kind claude-code --target local</pre></div></div>
         </div>
-        <p class="prose-outro">Steps 4–6 sign with your team certificate. Versioning, proposals, update-from-source, and publishing are native <code>aw library</code> verbs too. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
+        <p class="prose-intro">Steps 4 and 5 sign with your team certificate. Versioning, proposals, and update-from-source are native <code>aw library</code> verbs too.</p>
+        <p class="prose-outro">Turning a shelf profile into a running agent — adopt, bind, and materialize in one command — is <strong>coming in aw .3.5</strong>:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>aw team add coordinator@aweb.engineering-pack/coordinator</pre></div></div>
+        </div>
+        <p class="prose-outro">Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
       </div>
     </section>
 
@@ -165,7 +168,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <article class="card"><h3>Immutable versions</h3><p>Every profile version is identified by a content digest. Reference a digest and you get exactly that content — there is no "latest" pointer that silently moves.</p></article>
           <article class="card"><h3>Signed, no accounts</h3><p>There are no app accounts or API keys. Every write is a request signed by your team's AWID identity, and the signer is recorded with each change.</p></article>
           <article class="card"><h3>Per-part updates</h3><p>update-from-source merges a newer pack version part by part: it takes upstream changes only where you have not edited, and an existing version is never overwritten.</p></article>
-          <article class="card"><h3>Reproducible homes</h3><p>Materializing a profile by digest writes the same files every time — an agent's starting behavior is set by the profile, not by hidden state.</p></article>
+          <article class="card"><h3>Reproducible homes</h3><p>Materializing a profile by digest produces the same files every time — an agent's starting behavior is set by the profile, not by hidden state.</p></article>
           <article class="card"><h3>Honest boundary</h3><p>library defines how agents behave. It does not run them, route messages, or manage compute — those are separate aweb concerns. v0 has no dashboard and emits no events.</p></article>
         </div>
       </div>
