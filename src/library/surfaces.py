@@ -144,7 +144,7 @@ def render_landing_page(*, public_origin: str) -> str:
         <div class="section-head">
           <p class="kicker">Get started</p>
           <h2>Install aw, create a team, run agents from profiles</h2>
-          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; from step 4 on, each command is signed by the team certificate you create in that step.</p>
+          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; creating your team mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
           <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
@@ -155,14 +155,22 @@ def render_landing_page(*, public_origin: str) -> str:
           <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre>{copy}</div></div>
           <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
-          <p class="cmd-label">5 · Add an agent from a profile — adopt, bind, and materialize in one</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team add coordinator@aweb.engineering-pack/coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">6 · Start it working</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw agent start coordinator</pre>{copy}</div></div>
+          <p class="cmd-label">5 · Adopt a profile onto your shelf</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf \\
+  --source_profile_pack_ref aweb.engineering-pack \\
+  --source_profile_pack_version 0.1.0 \\
+  --profile_ref coordinator</pre>{copy}</div></div>
+          <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator</pre>{copy}</div></div>
+          <p class="cmd-label">7 · Start it working</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw agent start alice</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">That is the whole path — from an empty machine to an agent running your chosen profile.</p>
-        <p class="prose-outro">Under the hood, <code>aw team add</code> composes the raw library operations — adopt (<code>aw library import-to-shelf</code>), bind, and materialize. You can call each directly: every library operation is a native <code>aw library</code> verb, and <code>aw library shelf</code> shows your working set and which profiles have upstream updates.</p>
-        <p class="prose-outro">Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to an agent named <code>alice</code> running the coordinator profile.</p>
+        <p class="prose-outro"><strong>Shortcut:</strong> name a pack profile directly and <code>aw team add</code> adopts and adds in one, skipping step 5:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering-pack/coordinator</pre>{copy}</div></div>
+        </div>
+        <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
       </div>
     </section>
 
