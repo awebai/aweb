@@ -1,8 +1,9 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
 
@@ -10,6 +11,37 @@ from library.auth import AWIDTeamCache, Principal, authenticate_request
 from library.aweb_manifest import read_manifest_bytes
 from library.config import Settings, get_settings
 from library.db import LibraryDatabase
+from library.models import (
+    ImportToShelfRequest,
+    MaterializeRequest,
+    ProfileBindingRequest,
+    ProfilePublishRequest,
+    ProposalCreateRequest,
+    SetTagsRequest,
+    TeamRegisterRequest,
+)
+from library.repository import (
+    approve_proposal,
+    create_proposal,
+    create_shelf_profile,
+    create_shelf_version,
+    get_pack_profile,
+    get_profile_binding,
+    get_profile_pack,
+    get_shelf_profile,
+    import_to_shelf,
+    list_profile_packs,
+    list_proposals,
+    list_shelf,
+    materialize,
+    publish_pack,
+    publish_profile,
+    register_team,
+    reject_proposal,
+    set_pack_tags,
+    set_profile_binding,
+    set_profile_tags,
+)
 from library.surfaces import (
     llms_txt,
     read_skill,
@@ -17,8 +49,6 @@ from library.surfaces import (
     robots_txt,
     skills_index,
 )
-
-_SCAFFOLD_DETAIL = "Not implemented in the library scaffold (default-aaas.14.1)"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -111,64 +141,207 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "library"}
 
-    # --- Public catalog reads (empty until the model task) ------------------------
+    # --- Public catalog: packs are always public; ?tags filter -------------------
 
     @app.get("/v1/profile-packs")
-    async def list_profile_packs_route() -> list[dict]:
-        return []
+    async def list_profile_packs_route(
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        tags: Annotated[list[str] | None, Query()] = None,
+    ) -> list[dict]:
+        return await list_profile_packs(database, tags=tags)
 
     @app.get("/v1/profile-packs/{pack_id}")
-    async def get_profile_pack_route(pack_id: str) -> dict:
-        raise HTTPException(status_code=404, detail="Profile pack not found")
+    async def get_profile_pack_route(
+        pack_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_profile_pack(database, pack_ref=pack_id)
+
+    @app.get("/v1/profile-packs/{pack_id}/profiles/{profile_id}")
+    async def get_pack_profile_route(
+        pack_id: str,
+        profile_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_pack_profile(database, pack_ref=pack_id, profile_ref=profile_id)
+
+    # --- Team shelf reads (private; cert-gated) -----------------------------------
+
+    @app.get("/v1/shelf")
+    async def list_shelf_route(
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await list_shelf(database, principal=actor)
 
     @app.get("/v1/profiles/{profile_id}")
-    async def get_profile_route(profile_id: str) -> dict:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    async def get_shelf_profile_route(
+        profile_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_shelf_profile(database, principal=actor, profile_ref=profile_id)
 
-    # --- Team-scoped, cert-auth-gated write stubs ---------------------------------
+    @app.post("/v1/profiles")
+    async def create_shelf_profile_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        body = await request.json()
+        return await create_shelf_profile(
+            database, principal=actor, files=body.get("files", []), tags=body.get("tags", [])
+        )
+
+    @app.post("/v1/profiles/{profile_ref}/versions")
+    async def create_shelf_version_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        body = await request.json()
+        return await create_shelf_version(
+            database, principal=actor, profile_ref=profile_ref, files=body.get("files", [])
+        )
+
+    # publish-profile: a team publishes a private shelf profile into a PUBLIC pack
+    # (new pack, or a new version of an owned pack). pack.yaml is library-generated
+    # and the profile set accumulates.
+    @app.post("/v1/profiles/{profile_ref}/publish")
+    async def publish_profile_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = ProfilePublishRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await publish_profile(database, principal=actor, profile_ref=profile_ref, request=payload)
+
+    # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a
-    # valid certificate). Real bodies arrive in later tasks; for now each verb is a
-    # 501 stub so the authenticated surface is present and testable.
+    # valid certificate) and keys all state by the verified team_id.
 
+    @app.post("/v1/team/register")
+    async def register_team_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await register_team(database, principal=actor, owner=payload.owner, display_name=payload.display_name)
+
+    # publish-pack: a producer uploads/updates a PUBLIC pack (the former import,
+    # wire-unchanged: canonical import-payload -> import-return).
     @app.post("/v1/profile-packs/import")
-    async def import_profile_pack_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def publish_pack_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await publish_pack(database, principal=actor, payload=await request.json())
+
+    # import-to-shelf: a team copies a public-pack profile onto its private shelf.
+    # Idempotent keyed by (team, source pack, source profile): re-import is a pure
+    # no-op returning the existing copy — never an update-from-source.
+    @app.post("/v1/shelf/import")
+    async def import_to_shelf_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = ImportToShelfRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await import_to_shelf(
+            database,
+            principal=actor,
+            source_profile_pack_ref=payload.source_profile_pack_ref,
+            source_profile_pack_version=payload.source_profile_pack_version,
+            profile_ref=payload.profile_ref,
+            tags=payload.tags,
+        )
 
     @app.post("/v1/agents/{agent_id}/profile-binding")
     async def set_profile_binding_route(
-        agent_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        agent_id: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        binding = ProfileBindingRequest.model_validate(await request.json())
+        return await set_profile_binding(database, principal=actor, agent_id=agent_id, binding=binding)
 
     @app.get("/v1/agents/{agent_id}/profile-binding")
     async def get_profile_binding_route(
-        agent_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        agent_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_profile_binding(database, principal=actor, agent_id=agent_id)
 
     @app.post("/v1/materialize")
-    async def materialize_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def materialize_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        materialize_request = MaterializeRequest.model_validate(await request.json())
+        return await materialize(database, principal=actor, request=materialize_request)
+
+    # Mutable organizational tags (digest-unaffected); visibility is structural in v2.
+    @app.put("/v1/profiles/{profile_ref}/tags")
+    async def set_profile_tags_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = SetTagsRequest.model_validate(await request.json())
+        return await set_profile_tags(database, principal=actor, profile_ref=profile_ref, tags=payload.tags)
+
+    @app.put("/v1/profile-packs/{pack_ref}/tags")
+    async def set_pack_tags_route(
+        pack_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = SetTagsRequest.model_validate(await request.json())
+        return await set_pack_tags(database, principal=actor, pack_ref=pack_ref, tags=payload.tags)
 
     @app.post("/v1/proposals")
-    async def create_proposal_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def create_proposal_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = ProposalCreateRequest.model_validate(await request.json())
+        return await create_proposal(database, principal=actor, request=payload)
 
     @app.get("/v1/proposals")
-    async def list_proposals_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def list_proposals_route(
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> list[dict]:
+        return await list_proposals(database, principal=actor)
 
     @app.post("/v1/proposals/{proposal_id}/approve")
     async def approve_proposal_route(
-        proposal_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        proposal_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await approve_proposal(database, principal=actor, proposal_id=proposal_id)
 
     @app.post("/v1/proposals/{proposal_id}/reject")
     async def reject_proposal_route(
-        proposal_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        proposal_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await reject_proposal(database, principal=actor, proposal_id=proposal_id)
 
     return app
 

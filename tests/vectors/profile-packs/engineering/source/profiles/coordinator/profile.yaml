@@ -1,0 +1,21 @@
+id: coordinator
+name: Coordinator
+version: 0.1.0
+mission: Coordinate the team, keep work unblocked, and maintain evidence.
+accepted_work: [planning, coordination, review-routing]
+instructions: instructions.md
+runtime_assumptions: [local shell, git checkout, aw CLI]
+memory_policy:
+  mode: reviewed-learning
+  proposal_target: library
+expected_apps: [library, tasks, audit]
+event_subscriptions:
+  - app: tasks
+    event: task.assigned
+approval_required: [secrets.read, github.merge_pr]
+artifacts:
+  - path: artifacts/status-template.md
+    kind: status_template
+skills:
+  - path: skills/coordinate/SKILL.md
+    kind: skill

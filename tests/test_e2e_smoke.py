@@ -461,17 +461,18 @@ def test_health_endpoints_are_public(library: RunningLibrary) -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_catalog_reads_need_no_auth(library: RunningLibrary) -> None:
+def test_public_pack_catalog_needs_no_auth(library: RunningLibrary) -> None:
+    # Packs are the public catalog.
     packs = httpx.get(f"{library.origin}/v1/profile-packs", timeout=10.0)
     assert packs.status_code == 200, packs.text
     assert packs.json() == []
     assert httpx.get(f"{library.origin}/v1/profile-packs/none", timeout=10.0).status_code == 404
-    assert httpx.get(f"{library.origin}/v1/profiles/none", timeout=10.0).status_code == 404
 
 
-def test_team_scoped_route_without_envelope_fails_closed(library_origin: str) -> None:
-    response = httpx.get(f"{library_origin}/v1/proposals", timeout=10.0)
-    assert response.status_code == 401, response.text
+def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str) -> None:
+    # The shelf is private: shelf reads + team writes require a certificate.
+    assert httpx.get(f"{library_origin}/v1/shelf", timeout=10.0).status_code == 401
+    assert httpx.get(f"{library_origin}/v1/proposals", timeout=10.0).status_code == 401
 
 
 def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
@@ -485,16 +486,18 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
         assert response.content == committed
 
 
-def test_real_aw_team_auth_reaches_cert_gated_stub(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
     # Public catalog read with team auth still works.
     packs = _aw_request(team, "GET", f"{library.origin}/v1/profile-packs")
     assert _assert_aw_success(packs, context="list profile packs smoke").strip() == "[]"
-    # A valid certificate passes auth and reaches the scaffold stub (501), not 401.
-    proposals = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
-    _assert_aw_status(proposals, 501, context="authenticated proposals stub")
+    # A valid certificate passes auth: get-binding for an unbound agent is a real
+    # 404 (not 401), proving auth + the live endpoint.
     binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
-    _assert_aw_status(binding, 501, context="authenticated binding stub")
+    _assert_aw_status(binding, 404, context="authenticated get-binding for unbound agent")
+    # proposals list for a fresh team is an empty list (live, team-scoped).
+    proposals = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
+    assert _assert_aw_success(proposals, context="list proposals smoke").strip() == "[]"
 
 
 def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
@@ -502,12 +505,11 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    # Valid certificate authenticates (reaches the 501 stub).
-    _assert_aw_status(
+    # Valid certificate authenticates and reaches the live endpoint.
+    assert _assert_aw_success(
         _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
-        501,
-        context="valid certificate reaches stub",
-    )
+        context="valid certificate reaches proposals",
+    ).strip() == "[]"
 
     _run_aw(
         aw_workspace,

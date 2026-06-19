@@ -15,9 +15,20 @@ from library.config import Settings
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 _EXPECTED_TOOLS = {
-    "import",
+    "list-packs",
+    "get-pack",
+    "get-profile",
+    "publish-pack",
+    "register",
+    "create-shelf-profile",
+    "shelf-version",
+    "import-to-shelf",
+    "publish-profile",
+    "set-profile-tags",
+    "set-pack-tags",
     "bind",
     "get-binding",
+    "shelf",
     "materialize",
     "propose",
     "proposals",
@@ -27,9 +38,20 @@ _EXPECTED_TOOLS = {
 
 # Mutation flag per SoT §9: true iff a successful call is a hosted state change.
 _MUTATIONS = {
-    "import": True,
+    "list-packs": False,
+    "get-pack": False,
+    "get-profile": False,
+    "publish-pack": True,
+    "register": True,
+    "create-shelf-profile": True,
+    "shelf-version": True,
+    "import-to-shelf": True,
+    "publish-profile": True,
+    "set-profile-tags": True,
+    "set-pack-tags": True,
     "bind": True,
     "get-binding": False,
+    "shelf": False,
     "materialize": True,
     "propose": True,
     "proposals": False,
@@ -191,6 +213,15 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
         expected_scope = "library:write" if tool["mutation"] else "library:read"
         assert expected_scope in tool["scopes"], tool["name"]
 
+    # Public catalog reads are auth:'none'; every other tool is team-cert (default,
+    # no marker).
+    public_reads = {"list-packs", "get-pack", "get-profile"}
+    for tool in MANIFEST["tools"]:
+        if tool["name"] in public_reads:
+            assert tool.get("auth") == "none", tool["name"]
+        else:
+            assert tool.get("auth") != "none", tool["name"]
+
     # library emits no events at v0.
     assert "events" not in MANIFEST
     assert "event_emitters" not in MANIFEST
@@ -216,6 +247,32 @@ def test_interpreted_spec_bind() -> None:
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/agents/agent-1/profile-binding"
     assert spec["body"] == b'{"profile_digest":"sha256:abc","profile_ref":"pack/dev@1","profile_version":"1"}'
+    assert spec["mutation"] is True
+
+
+def test_interpreted_spec_propose() -> None:
+    # The propose body must match the implemented ProposalCreateRequest (target
+    # required; profile_ref/profile_version/content optional) so a manifest-driven
+    # caller is accepted, not 422'd.
+    spec = _interpret(MANIFEST, "propose", {"target": "profile", "profile_ref": "coordinator"})
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/v1/proposals"
+    assert spec["body"] == b'{"profile_ref":"coordinator","target":"profile"}'
+    assert spec["mutation"] is True
+
+
+def test_interpreted_spec_import_to_shelf() -> None:
+    # The import-to-shelf body must match the implemented ImportToShelfRequest so a
+    # manifest-driven caller is accepted: source_profile_pack_ref + profile_ref
+    # required; version/target/tags optional.
+    spec = _interpret(
+        MANIFEST,
+        "import-to-shelf",
+        {"source_profile_pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"},
+    )
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/v1/shelf/import"
+    assert spec["body"] == b'{"profile_ref":"coordinator","source_profile_pack_ref":"aweb.engineering-pack"}'
     assert spec["mutation"] is True
 
 
