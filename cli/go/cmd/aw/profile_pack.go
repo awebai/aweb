@@ -11,7 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var profilePackInspectJSON bool
+var (
+	profilePackInspectJSON       bool
+	profilePackMaterializeJSON   bool
+	profilePackMaterializeID     string
+	profilePackMaterializeTarget string
+	profilePackMaterializeForce  bool
+)
 
 var profilePackCmd = &cobra.Command{
 	Use:   "profile-pack",
@@ -27,9 +33,23 @@ var profilePackInspectCmd = &cobra.Command{
 	},
 }
 
+var profilePackMaterializeCmd = &cobra.Command{
+	Use:   "materialize <source>",
+	Short: "Materialize one local profile pack profile into a local agent home",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runProfilePackMaterialize(cmd.OutOrStdout(), args[0], profilePackMaterializeID, profilePackMaterializeTarget, profilePackMaterializeForce, profilePackMaterializeJSON)
+	},
+}
+
 func init() {
 	profilePackInspectCmd.Flags().BoolVar(&profilePackInspectJSON, "json", false, "Print machine-readable JSON")
+	profilePackMaterializeCmd.Flags().StringVar(&profilePackMaterializeID, "profile", "", "Profile id to materialize")
+	profilePackMaterializeCmd.Flags().StringVar(&profilePackMaterializeTarget, "target", "", "Target local agent home directory")
+	profilePackMaterializeCmd.Flags().BoolVar(&profilePackMaterializeForce, "force", false, "Overwrite existing materialized files")
+	profilePackMaterializeCmd.Flags().BoolVar(&profilePackMaterializeJSON, "json", false, "Print machine-readable JSON")
 	profilePackCmd.AddCommand(profilePackInspectCmd)
+	profilePackCmd.AddCommand(profilePackMaterializeCmd)
 	rootCmd.AddCommand(profilePackCmd)
 }
 
@@ -87,6 +107,39 @@ func isSSHLikeProfilePackRef(source string) bool {
 	at := strings.Index(source, "@")
 	colon := strings.Index(source, ":")
 	return at > 0 && colon > at
+}
+
+func runProfilePackMaterialize(out io.Writer, source, profileID, target string, force, jsonOut bool) error {
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf("profile-pack source is required")
+	}
+	kind, err := classifyProfilePackInspectSource(source)
+	if err != nil {
+		return err
+	}
+	if kind != "local_dir" {
+		return fmt.Errorf("Library/git profile-pack sources are not supported yet; use a local profile-pack directory")
+	}
+	result, err := profilepack.MaterializeLocalProfile(profilepack.MaterializeOptions{SourceDir: source, ProfileID: profileID, TargetDir: target, Force: force})
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		encoded, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "%s\n", encoded)
+		return err
+	}
+	fmt.Fprintf(out, "Materialized profile %s@%s into %s\n", result.ProfileRef, result.ProfileVersion, result.TargetDir)
+	fmt.Fprintf(out, "Profile digest: %s\n", result.ProfileDigest)
+	fmt.Fprintf(out, "Source profile pack: %s@%s (%s)\n", result.SourceProfilePackRef, result.SourceProfilePackVersion, result.SourceProfilePackDigest)
+	fmt.Fprintln(out, "Files written:")
+	for _, path := range result.FilesWritten {
+		fmt.Fprintf(out, "  - %s\n", path)
+	}
+	return nil
 }
 
 func printProfilePackPlan(out io.Writer, plan profilepack.Plan) {
