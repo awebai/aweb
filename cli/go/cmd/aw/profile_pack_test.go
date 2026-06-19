@@ -143,6 +143,37 @@ func TestProfilePackInspectMissingExplicitLocalDir(t *testing.T) {
 	}
 }
 
+func TestProfilePackMaterializeWritesExpectedHome(t *testing.T) {
+	fixture := engineeringProfilePackFixtureRoot(t)
+	target := t.TempDir()
+	var out bytes.Buffer
+	if err := runProfilePackMaterialize(&out, filepath.Join(fixture, "source"), "reviewer", target, false, false); err != nil {
+		t.Fatalf("materialize returned error: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"Materialized profile reviewer@0.1.0", "Profile digest: sha256:", "Files written:", ".aw/profile/ref.json", "instructions.md", "skills/review/SKILL.md", "artifacts/review-template.md"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("materialize output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestProfilePackMaterializeJSON(t *testing.T) {
+	fixture := engineeringProfilePackFixtureRoot(t)
+	target := t.TempDir()
+	var out bytes.Buffer
+	if err := runProfilePackMaterialize(&out, filepath.Join(fixture, "source"), "coordinator", target, false, true); err != nil {
+		t.Fatalf("materialize returned error: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out.String())
+	}
+	if got["profile_ref"] != "coordinator" || got["source_profile_pack_ref"] != "aweb.engineering-pack" {
+		t.Fatalf("json=%v", got)
+	}
+}
+
 func TestProfilePackInspectHumanOutputMatchesEngineeringFixture(t *testing.T) {
 	fixture := engineeringProfilePackFixtureRoot(t)
 	source := filepath.Join(fixture, "source")
