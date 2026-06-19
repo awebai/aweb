@@ -8,6 +8,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -354,70 +355,15 @@ func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
 }
 
 func preflightEmptyAgentHome(homeDir string) error {
-	if err := rejectSymlinkedExistingAgentDirs(homeDir, "agent home"); err != nil {
+	if err := pathpreflight.PreflightDir(homeDir, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
 	}
-	if info, err := os.Lstat(homeDir); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("agent home %s must not be a symlink", homeDir)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("agent home %s must be a directory", homeDir)
-		}
-		if _, err := os.Lstat(filepath.Join(homeDir, ".aw")); err == nil {
-			return usageError("agent home %s already has identity state", homeDir)
-		} else if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(homeDir, ".aw")); err == nil {
+		return usageError("agent home %s already has identity state", homeDir)
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
-}
-
-func rejectSymlinkedExistingAgentDirs(path, label string) error {
-	clean := filepath.Clean(path)
-	volume := filepath.VolumeName(clean)
-	rest := strings.TrimPrefix(clean, volume)
-	current := volume
-	if filepath.IsAbs(clean) {
-		current += string(filepath.Separator)
-		rest = strings.TrimPrefix(rest, string(filepath.Separator))
-	}
-	for _, part := range strings.Split(rest, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
-		}
-		if current == "" || current == string(filepath.Separator) || strings.HasSuffix(current, string(filepath.Separator)) {
-			current += part
-		} else {
-			current = filepath.Join(current, part)
-		}
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			if isAllowedAmbientAgentSymlinkPrefix(current) {
-				continue
-			}
-			return fmt.Errorf("%s parent %s must not be a symlink", label, filepath.ToSlash(current))
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("%s parent %s must be a directory", label, filepath.ToSlash(current))
-		}
-	}
-	return nil
-}
-
-func isAllowedAmbientAgentSymlinkPrefix(path string) bool {
-	tempDir := filepath.Clean(os.TempDir())
-	rel, err := filepath.Rel(filepath.Clean(path), tempDir)
-	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))
 }
 
 func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {

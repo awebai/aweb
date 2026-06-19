@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -278,21 +279,16 @@ func startAgentRuntime(name, home, runtimeOverride, commandOverride string) (*ag
 }
 
 func validateAgentHomeForStart(home string) error {
-	if err := rejectSymlinkedExistingAgentDirs(home, "agent home"); err != nil {
+	if err := pathpreflight.PreflightDir(home, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("agent home %s not found (missing worktree or agents/instances entry)", home)
+		}
 		return err
 	}
-	info, err := os.Lstat(home)
-	if os.IsNotExist(err) {
+	if _, err := os.Lstat(home); os.IsNotExist(err) {
 		return fmt.Errorf("agent home %s not found (missing worktree or agents/instances entry)", home)
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("agent home %s must not be a symlink", home)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("agent home %s must be a directory", home)
 	}
 	profilePath := filepath.Join(home, ".aw", "profile", "profile.yaml")
 	if _, err := os.Lstat(profilePath); os.IsNotExist(err) {
@@ -311,25 +307,8 @@ func validateAgentHomeForStart(home string) error {
 }
 
 func preflightAgentRuntimeDir(runtimeDir string) error {
-	if err := rejectSymlinkedExistingAgentDirs(runtimeDir, "agent runtime directory"); err != nil {
-		return err
-	}
-	info, err := os.Lstat(runtimeDir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("agent runtime directory %s must not be a symlink", runtimeDir)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("agent runtime directory %s must be a directory", runtimeDir)
-	}
-	return nil
+	return pathpreflight.PreflightDir(runtimeDir, "agent runtime directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
-
 func loadAgentProfileRuntime(home string) (*agentProfileRuntime, error) {
 	path := filepath.Join(home, ".aw", "profile", "profile.yaml")
 	data, err := os.ReadFile(path)
@@ -402,22 +381,8 @@ func agentRuntimeStatePath(home string) string {
 }
 
 func preflightAgentRuntimeFile(path string) error {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("agent runtime file %s must not be a symlink", path)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("agent runtime file %s must be a regular file", path)
-	}
-	return nil
+	return pathpreflight.PreflightFile(path, "agent runtime file", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
-
 func saveAgentRuntimeState(home string, state *agentRuntimeState) error {
 	if err := preflightAgentRuntimeFile(agentRuntimeStatePath(home)); err != nil {
 		return err

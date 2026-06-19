@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/internal/pathpreflight"
 )
 
 type MaterializeOptions struct {
@@ -318,67 +320,13 @@ func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, for
 
 func ensureMaterializeTargetRoot(targetRoot string) error {
 	clean := filepath.Clean(targetRoot)
-	if err := rejectSymlinkedExistingDirs(clean, "target directory"); err != nil {
+	if err := pathpreflight.PreflightDir(clean, "target directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(clean, 0o755); err != nil {
 		return err
 	}
-	info, err := os.Lstat(clean)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("target directory must not be a symlink")
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("target must be a directory")
-	}
-	return nil
-}
-
-func rejectSymlinkedExistingDirs(path, label string) error {
-	clean := filepath.Clean(path)
-	volume := filepath.VolumeName(clean)
-	rest := strings.TrimPrefix(clean, volume)
-	current := volume
-	if filepath.IsAbs(clean) {
-		current += string(filepath.Separator)
-		rest = strings.TrimPrefix(rest, string(filepath.Separator))
-	}
-	for _, part := range strings.Split(rest, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
-		}
-		if current == "" || current == string(filepath.Separator) || strings.HasSuffix(current, string(filepath.Separator)) {
-			current = current + part
-		} else {
-			current = filepath.Join(current, part)
-		}
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			if isAllowedAmbientSymlinkPrefix(current) {
-				continue
-			}
-			return fmt.Errorf("%s parent %s must not be a symlink", label, filepath.ToSlash(current))
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("%s parent %s must be a directory", label, filepath.ToSlash(current))
-		}
-	}
-	return nil
-}
-
-func isAllowedAmbientSymlinkPrefix(path string) bool {
-	tempDir := filepath.Clean(os.TempDir())
-	rel, err := filepath.Rel(filepath.Clean(path), tempDir)
-	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))
+	return pathpreflight.PreflightDir(clean, "target directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func validateMaterializeDestination(targetRoot string, op materializeWriteOp, force bool) error {
@@ -395,60 +343,34 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 	if !isWithin(targetRoot, path) {
 		return fmt.Errorf("destination %s escapes target directory", rel)
 	}
-	if err := rejectSymlinkedParents(targetRoot, rel); err != nil {
+	if op.Kind == opFile {
+		if err := pathpreflight.PreflightFile(path, rel, pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(path); err == nil && !force {
+			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := pathpreflight.RejectSymlinkedExistingComponents(filepath.Dir(path), rel, pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return err
 	}
 	info, err := os.Lstat(path)
-	if err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			if op.Kind == opSymlink && force {
-				return nil
-			}
-			return fmt.Errorf("%s must not be a symlink", rel)
-		}
-		if op.Kind == opFile && !info.Mode().IsRegular() {
-			return fmt.Errorf("%s must be a regular file", rel)
-		}
-		if op.Kind == opSymlink {
-			return fmt.Errorf("%s already exists and is not a symlink", rel)
-		}
-		if !force {
-			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
-		}
+	if os.IsNotExist(err) {
 		return nil
 	}
-	if !os.IsNotExist(err) {
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func rejectSymlinkedParents(targetRoot, rel string) error {
-	parentRel := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rel)))
-	if parentRel == "." {
-		return nil
-	}
-	current := targetRoot
-	for _, part := range strings.Split(parentRel, "/") {
-		if part == "" || part == "." {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
+	if info.Mode()&os.ModeSymlink != 0 {
+		if force {
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("destination parent %s must not be a symlink", filepath.ToSlash(strings.TrimPrefix(current, targetRoot+string(filepath.Separator))))
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("destination parent %s must be a directory", filepath.ToSlash(strings.TrimPrefix(current, targetRoot+string(filepath.Separator))))
-		}
+		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
-	return nil
+	return fmt.Errorf("%s already exists and is not a symlink", rel)
 }
 
 func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]string, error) {
