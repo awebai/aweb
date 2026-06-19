@@ -93,6 +93,49 @@ func TestTeamHumanAddLayoutOnlyCreatesEmptyIdentityOnlyHomes(t *testing.T) {
 	}
 }
 
+func TestTeamHumanAddRejectsExistingHomeThroughSymlinkedParent(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	outside := t.TempDir()
+	if err := os.MkdirAll(outside+"/developer", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root+"/agents", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, root+"/agents/instances"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runTeamHumanAdd(nil, []string{"developer"})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(outside + "/developer/.aw"); !os.IsNotExist(statErr) {
+		t.Fatalf("identity path wrote through symlinked parent, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanAddRejectsExistingAwSymlinkState(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	home := root + "/agents/instances/developer"
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root+"/missing-aw-target", home+"/.aw"); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanAddLayoutOnly = true
+
+	err := runTeamHumanAdd(nil, []string{"developer"})
+	if err == nil || !strings.Contains(err.Error(), "already has identity state") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTeamHumanAddRejectsLibraryProfileBeforeSeam(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Chdir(t.TempDir())

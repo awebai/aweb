@@ -354,6 +354,9 @@ func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
 }
 
 func preflightEmptyAgentHome(homeDir string) error {
+	if err := rejectSymlinkedExistingAgentDirs(homeDir, "agent home"); err != nil {
+		return err
+	}
 	if info, err := os.Lstat(homeDir); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("agent home %s must not be a symlink", homeDir)
@@ -361,7 +364,7 @@ func preflightEmptyAgentHome(homeDir string) error {
 		if !info.IsDir() {
 			return fmt.Errorf("agent home %s must be a directory", homeDir)
 		}
-		if _, err := os.Stat(filepath.Join(homeDir, ".aw")); err == nil {
+		if _, err := os.Lstat(filepath.Join(homeDir, ".aw")); err == nil {
 			return usageError("agent home %s already has identity state", homeDir)
 		} else if err != nil && !os.IsNotExist(err) {
 			return err
@@ -370,7 +373,7 @@ func preflightEmptyAgentHome(homeDir string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return rejectSymlinkedExistingAgentDirs(homeDir, "agent home")
+	return nil
 }
 
 func rejectSymlinkedExistingAgentDirs(path, label string) error {
