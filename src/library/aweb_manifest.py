@@ -145,6 +145,29 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
+            "name": "update-from-source",
+            "description": "Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.",
+            "method": "POST",
+            "path": "/v1/profiles/{profile_ref}/update-from-source",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "profile_ref": {"type": "string"},
+                    "target_version": {"type": "string"},
+                    "source_profile_pack_version": {"type": "string"},
+                },
+                "required": ["profile_ref", "target_version"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "target_version", "in": "body"},
+                {"name": "source_profile_pack_version", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
             "name": "import-to-shelf",
             "description": "Copy a public-pack profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.",
             "method": "POST",

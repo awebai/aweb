@@ -17,9 +17,19 @@ import yaml
 from library.aweb_manifest import canonical_bytes
 from library.digest import PACK_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, payload_digest
 
-# Structured-field parts tracked for the per-part update-from-source merge (files
-# are tracked per-file). "instructions" lives in instructions.md (a file part).
-_BASELINE_FIELDS = ("mission", "accepted_work", "runtime_assumptions", "memory_policy")
+# Structured-field parts tracked for the per-part update-from-source merge — all the
+# behavior/expectation fields, so a profile pulls upstream improvements to any of them
+# when un-evolved. Files are tracked per-file ("instructions" lives in instructions.md,
+# a file part). name/id/version are never merged.
+_BASELINE_FIELDS = (
+    "mission",
+    "accepted_work",
+    "runtime_assumptions",
+    "memory_policy",
+    "expected_apps",
+    "event_subscriptions",
+    "approval_required",
+)
 
 
 @dataclass(frozen=True)
@@ -158,15 +168,103 @@ def parse_profile_payload(files: list[dict[str, str]]) -> ParsedProfile:
     )
 
 
+def _field_digest(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
 def part_baselines(profile: ParsedProfile) -> dict[str, str]:
     """Per-part content digests recorded at copy/sync, for the per-part 3-way merge.
     Parts = each file (its sha256) + each structured field (sha256 of its canonical
     bytes). Keys are namespaced ('file:<path>' / 'field:<name>')."""
     baselines = {f"file:{entry['path']}": entry["sha256"] for entry in profile.files}
     for field in _BASELINE_FIELDS:
-        value = getattr(profile, field)
-        baselines[f"field:{field}"] = "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
+        baselines[f"field:{field}"] = _field_digest(getattr(profile, field))
     return baselines
+
+
+@dataclass(frozen=True)
+class MergeResult:
+    files: list[dict[str, str]]  # merged PROFILE-relative files incl reconstructed profile.yaml
+    updated_parts: list[str]  # parts taken from theirs (upstream improvements pulled)
+    preserved_parts: list[str]  # parts kept as ours (locally evolved, upstream change declined)
+
+
+def _resource_entries(category: str, present_paths: set[str], *docs: dict[str, Any]) -> list[dict[str, str]]:
+    """Rebuild profile.yaml's skills/artifacts list from the merged file set, carrying
+    each entry's ``kind`` from whichever source profile declared it (ours first)."""
+    kinds: dict[str, Any] = {}
+    for doc in docs:
+        for entry in doc.get(category) or []:
+            kinds.setdefault(entry["path"], entry.get("kind"))
+    entries: list[dict[str, str]] = []
+    for path in sorted(p for p in present_paths if p.startswith(f"{category}/")):
+        out: dict[str, str] = {"path": path}
+        if kinds.get(path) is not None:
+            out["kind"] = kinds[path]
+        entries.append(out)
+    return entries
+
+
+def three_way_merge(
+    *,
+    ours_files: list[dict[str, str]],
+    theirs_files: list[dict[str, str]],
+    baselines: dict[str, str],
+    target_version: str,
+) -> MergeResult:
+    """Per-part 3-way merge of a shelf profile (ours) against a newer source-pack
+    version (theirs), given the per-part baselines recorded at last sync. For each
+    part (structured field or file), take theirs only where ours is un-evolved
+    (ours digest == baseline); otherwise keep ours. profile.yaml is reconstructed
+    from the merged fields (name/id always ours, version := target_version); its
+    skills/artifacts lists follow the merged file set."""
+    ours_by = {f["path"]: f for f in ours_files}
+    theirs_by = {f["path"]: f for f in theirs_files}
+    ours_doc = yaml.safe_load(ours_by["profile.yaml"]["content_utf8"]) or {}
+    theirs_doc = yaml.safe_load(theirs_by["profile.yaml"]["content_utf8"]) or {}
+
+    updated: list[str] = []
+    preserved: list[str] = []
+
+    merged_doc = dict(ours_doc)
+    for field in _BASELINE_FIELDS:
+        base_sha = baselines.get(f"field:{field}")
+        ours_sha = _field_digest(ours_doc.get(field))
+        theirs_sha = _field_digest(theirs_doc.get(field))
+        if theirs_sha == base_sha:
+            continue  # no upstream change to this field
+        if ours_sha == base_sha:
+            merged_doc[field] = theirs_doc.get(field)
+            updated.append(f"field:{field}")
+        else:
+            preserved.append(f"field:{field}")
+
+    merged_files_map: dict[str, dict[str, str]] = {}
+    for path in (set(ours_by) | set(theirs_by)) - {"profile.yaml"}:
+        base_file_sha = baselines.get(f"file:{path}")
+        ours_file_sha = ours_by[path]["sha256"] if path in ours_by else None
+        theirs_file_sha = theirs_by[path]["sha256"] if path in theirs_by else None
+        if theirs_file_sha == base_file_sha:
+            take_theirs = False  # no upstream change
+        elif ours_file_sha == base_file_sha:
+            updated.append(f"file:{path}")
+            take_theirs = True
+        else:
+            preserved.append(f"file:{path}")
+            take_theirs = False
+        source = theirs_by if take_theirs else ours_by
+        if path in source:
+            merged_files_map[path] = source[path]
+
+    merged_doc["version"] = target_version
+    merged_doc["skills"] = _resource_entries("skills", set(merged_files_map), ours_doc, theirs_doc)
+    merged_doc["artifacts"] = _resource_entries("artifacts", set(merged_files_map), ours_doc, theirs_doc)
+
+    profile_yaml = yaml.safe_dump(merged_doc, sort_keys=False, allow_unicode=True)
+    merged_files = [_payload_file("profile.yaml", profile_yaml)]
+    merged_files.extend(merged_files_map.values())
+    merged_files.sort(key=lambda entry: entry["path"])
+    return MergeResult(files=merged_files, updated_parts=sorted(updated), preserved_parts=sorted(preserved))
 
 
 def _payload_file(path: str, content_utf8: str) -> dict[str, str]:

@@ -33,7 +33,6 @@ pytestmark = pytest.mark.e2e
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
-_MANIFEST_SHA256 = "4b2782668ce8df97122cba58ff16540f14e00d8b55efb05b4c06f268bd549e46"
 
 
 def _load_json(path: Path) -> Any:
@@ -226,7 +225,20 @@ def _expected_home_entries(profile_ref: str, *, created: bool = False, pack: Par
     return entries
 
 
-def _pack_payload(*, pack_ref: str, pack_version: str = "0.1.0", mutate_developer: bool = False) -> dict[str, Any]:
+def _home_file(entries: list[dict[str, Any]], path: str) -> str:
+    entry = next(item for item in entries if item["path"] == path)
+    assert entry["kind"] == "file"
+    return entry["content_utf8"]
+
+
+def _pack_payload(
+    *,
+    pack_ref: str,
+    pack_version: str = "0.1.0",
+    mutate_developer: bool = False,
+    coordinator_mission: str | None = None,
+    coordinator_instructions_suffix: str | None = None,
+) -> dict[str, Any]:
     files = [dict(file) for file in _canonical_payload()["files"]]
     for file in files:
         if file["path"] == "pack.yaml":
@@ -235,6 +247,16 @@ def _pack_payload(*, pack_ref: str, pack_version: str = "0.1.0", mutate_develope
             doc["version"] = pack_version
             file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
             file["sha256"] = _sha(file["content_utf8"])
+        if file["path"] == "profiles/coordinator/profile.yaml":
+            doc = yaml.safe_load(file["content_utf8"])
+            doc["version"] = pack_version
+            if coordinator_mission is not None:
+                doc["mission"] = coordinator_mission
+            file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
+            file["sha256"] = _sha(file["content_utf8"])
+        if coordinator_instructions_suffix and file["path"] == "profiles/coordinator/instructions.md":
+            file["content_utf8"] += coordinator_instructions_suffix
+            file["sha256"] = _sha(file["content_utf8"])
         if mutate_developer and file["path"] == "profiles/developer/instructions.md":
             file["content_utf8"] += "\nAlways mention the updated pack version.\n"
             file["sha256"] = _sha(file["content_utf8"])
@@ -242,17 +264,36 @@ def _pack_payload(*, pack_ref: str, pack_version: str = "0.1.0", mutate_develope
     return {"files": files, "schema": PACK_PAYLOAD_SCHEMA}
 
 
-def _profile_files_with_version(profile_ref: str, version: str) -> list[dict[str, str]]:
+def _profile_files_with_changes(
+    profile_ref: str,
+    version: str,
+    *,
+    mission: str | None = None,
+    instructions_suffix: str | None = None,
+) -> list[dict[str, str]]:
     files = [dict(file) for file in _profile_payload_files(profile_ref)]
     for file in files:
         if file["path"] == "profile.yaml":
             doc = yaml.safe_load(file["content_utf8"])
             doc["version"] = version
-            doc["mission"] = f"{doc['mission']} Updated in a private shelf version."
+            if mission is not None:
+                doc["mission"] = mission
             file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
+            file["sha256"] = _sha(file["content_utf8"])
+        if instructions_suffix and file["path"] == "instructions.md":
+            file["content_utf8"] += instructions_suffix
             file["sha256"] = _sha(file["content_utf8"])
     files.sort(key=lambda entry: entry["path"])
     return files
+
+
+def _profile_files_with_version(profile_ref: str, version: str) -> list[dict[str, str]]:
+    base_doc = yaml.safe_load(next(file for file in _profile_payload_files(profile_ref) if file["path"] == "profile.yaml")["content_utf8"])
+    return _profile_files_with_changes(
+        profile_ref,
+        version,
+        mission=f"{base_doc['mission']} Updated in a private shelf version.",
+    )
 
 
 def _post_json(team: Any, url: str, payload: Any) -> subprocess.CompletedProcess[str]:
@@ -341,9 +382,15 @@ def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
+    # Drift test, not a pinned digest: the served manifest must equal the committed
+    # aweb-app.json byte-for-byte. This stays green across feature merges that add
+    # tools (each changes the digest) while still catching real serve/commit drift;
+    # the pinned-digest conformance lives at the unit level (test_app_manifest).
+    from library.aweb_manifest import read_manifest_bytes
+
     manifest = httpx.get(f"{library.origin}/aweb-app.json", timeout=10.0)
     assert manifest.status_code == 200, manifest.text
-    assert hashlib.sha256(manifest.content).hexdigest() == _MANIFEST_SHA256
+    assert manifest.content == read_manifest_bytes()
 
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
@@ -433,6 +480,135 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
         {"source_profile_pack_ref": other_pack.pack_ref, "profile_ref": "developer"},
     )
     _assert_aw_status(conflict, 409, context="different source same shelf ref")
+
+
+def test_update_from_source_merges_noops_and_rejects_collision(
+    library: RunningLibrary,
+    aw_workspace: AWWorkspace,
+) -> None:
+    team = _provision_team(aw_workspace)
+    unique = uuid.uuid4().hex[:8]
+    payload = _pack_payload(pack_ref=f"aweb.update-{unique}")
+    pack = _payload_pack(payload)
+    _publish_pack(team, library, payload)
+    base = _import_to_shelf(team, library, pack=pack, profile_ref="coordinator", tags=["Update"])
+    assert base["version"] == "0.1.0"
+
+    local_instructions = "\nLocal-only coordinator instruction: preserve team-specific triage notes.\n"
+    local_files = _profile_files_with_changes("coordinator", "0.1.1", instructions_suffix=local_instructions)
+    local_profile = parse_profile_payload(local_files)
+    local = _aw_json(
+        _post_json(team, f"{library.origin}/v1/profiles/coordinator/versions", {"files": local_files}),
+        context="create locally evolved coordinator version",
+    )
+    assert local["version"] == "0.1.1"
+    assert local["digest"] == local_profile.digest
+    assert local["source_profile_pack_version"] == "0.1.0"
+
+    upstream_mission = "Coordinate upstream work, keep blockers visible, and preserve crisp evidence."
+    upstream_instructions = "\nUpstream coordinator instruction: summarize reviewer handoffs explicitly.\n"
+    newer_payload = _pack_payload(
+        pack_ref=pack.pack_ref,
+        pack_version="0.2.0",
+        coordinator_mission=upstream_mission,
+        coordinator_instructions_suffix=upstream_instructions,
+    )
+    newer_pack = _payload_pack(newer_payload)
+    _publish_pack(team, library, newer_payload)
+
+    update = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/profiles/coordinator/update-from-source",
+            {"target_version": "0.2.0"},
+        ),
+        context="update coordinator from source",
+    )
+    assert update["profile_ref"] == "coordinator"
+    assert update["version"] == "0.2.0"
+    assert update["updated_parts"] == ["field:mission"]
+    assert update["preserved_parts"] == ["file:instructions.md"]
+    assert update["source_profile_pack_version"] == "0.2.0"
+    assert update["source_profile_pack_digest"] == newer_pack.digest
+
+    shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after update")
+    coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
+    assert coordinator["version"] == "0.2.0"
+    assert coordinator["digest"] == update["digest"]
+    assert coordinator["summary"] == upstream_mission
+    assert coordinator["tags"] == ["update"]
+    assert coordinator["source_profile_pack_ref"] == pack.pack_ref
+    assert coordinator["source_profile_pack_version"] == "0.2.0"
+    assert coordinator["source_profile_pack_digest"] == newer_pack.digest
+    assert coordinator["source_pack_latest_version"] == "0.2.0"
+    assert coordinator["update_available"] is False
+
+    materialized = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/materialize",
+            {"profile_ref": "coordinator", "runtime_kind": "claude-code", "target": "local"},
+        ),
+        context="materialize updated coordinator",
+    )
+    assert materialized["profile_version"] == "0.2.0"
+    assert materialized["profile_digest"] == update["digest"]
+    assert materialized["source_profile_pack_ref"] == pack.pack_ref
+    assert materialized["source_profile_pack_version"] == "0.2.0"
+    assert materialized["source_profile_pack_digest"] == newer_pack.digest
+    profile_yaml = yaml.safe_load(_home_file(materialized["home_files"], ".aw/profile/profile.yaml"))
+    assert profile_yaml["version"] == "0.2.0"
+    assert profile_yaml["mission"] == upstream_mission
+    instructions = _home_file(materialized["home_files"], ".aw/profile/instructions.md")
+    assert local_instructions.strip() in instructions
+    assert upstream_instructions.strip() not in instructions
+    ref = json.loads(_home_file(materialized["home_files"], ".aw/profile/ref.json"))
+    assert ref == {
+        "profile_ref": "coordinator",
+        "profile_version": "0.2.0",
+        "profile_digest": update["digest"],
+        "source_profile_pack_ref": pack.pack_ref,
+        "source_profile_pack_version": "0.2.0",
+        "source_profile_pack_digest": newer_pack.digest,
+    }
+
+    no_op = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/profiles/coordinator/update-from-source",
+            {"target_version": "0.2.1"},
+        ),
+        context="noop update coordinator from source",
+    )
+    assert no_op == {
+        "profile_ref": "coordinator",
+        "version": "0.2.0",
+        "digest": update["digest"],
+        "updated_parts": [],
+        "preserved_parts": [],
+        "source_profile_pack_version": "0.2.0",
+        "source_profile_pack_digest": newer_pack.digest,
+    }
+    missing_noop_version = _post_json(
+        team,
+        f"{library.origin}/v1/materialize",
+        {"profile_ref": "coordinator", "profile_version": "0.2.1", "runtime_kind": "claude-code", "target": "local"},
+    )
+    _assert_aw_status(missing_noop_version, 404, context="no-op does not mint target version")
+
+    collision_payload = _pack_payload(
+        pack_ref=pack.pack_ref,
+        pack_version="0.3.0",
+        coordinator_mission="Coordinate the latest upstream work without overwriting local instructions.",
+        coordinator_instructions_suffix=upstream_instructions,
+    )
+    _publish_pack(team, library, collision_payload)
+    collision = _post_json(
+        team,
+        f"{library.origin}/v1/profiles/coordinator/update-from-source",
+        {"target_version": "0.1.1"},
+    )
+    _assert_aw_status(collision, 409, context="update-from-source target version collision")
 
 
 def test_create_shelf_version_publish_profile_and_created_materialize(

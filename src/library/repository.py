@@ -14,6 +14,7 @@ from library.models import (
     ProfileBindingRequest,
     ProfilePublishRequest,
     ProposalCreateRequest,
+    UpdateFromSourceRequest,
 )
 from library.profile_pack import (
     ParsedPack,
@@ -24,6 +25,7 @@ from library.profile_pack import (
     parse_import_payload,
     parse_profile_payload,
     part_baselines,
+    three_way_merge,
 )
 
 
@@ -651,6 +653,100 @@ async def import_to_shelf(
         },
         created=True,
     )
+
+
+def _pack_profile_files(row: Any) -> list[dict[str, str]]:
+    return _json_value(row["files"]) or []
+
+
+async def update_from_source(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: UpdateFromSourceRequest
+) -> dict[str, Any]:
+    """Per-part 3-way merge of a shelf profile against a newer version of its source
+    pack: pull upstream improvements only into parts the team has not evolved, never
+    clobbering local edits. A real merge (some part pulled) mints a new version
+    (``target_version``) and advances the source pin + baselines to the synced
+    version; if nothing is pullable it is a pure no-op (no new version, pin
+    unchanged)."""
+    ours = await db.fetch_one(
+        "SELECT version, digest, tags, files, part_baselines, source_profile_pack_ref,"
+        " source_profile_pack_version, source_profile_pack_digest, source_profile_ref"
+        " FROM {{tables.shelf_profiles}}"
+        " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
+        principal.team_id,
+        profile_ref,
+    )
+    if ours is None:
+        raise HTTPException(status_code=404, detail="Shelf profile not found")
+    source_pack_ref = ours["source_profile_pack_ref"]
+    if not source_pack_ref:
+        raise HTTPException(status_code=422, detail="Shelf profile has no source pack to update from")
+
+    pack = await db.fetch_one(
+        "SELECT owner_team, version, digest FROM {{tables.profile_packs}}"
+        " WHERE pack_ref = $1 AND ($2::text IS NULL OR version = $2)"
+        " ORDER BY created_at DESC LIMIT 1",
+        source_pack_ref,
+        request.source_profile_pack_version,
+    )
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Source profile pack not found")
+    theirs_row = await db.fetch_one(
+        "SELECT files FROM {{tables.pack_profiles}}"
+        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
+        pack["owner_team"],
+        source_pack_ref,
+        pack["version"],
+        ours["source_profile_ref"] or profile_ref,
+    )
+    if theirs_row is None:
+        raise HTTPException(status_code=404, detail="Source profile not found in pack")
+
+    baselines = _json_value(ours["part_baselines"]) or {}
+    merge = three_way_merge(
+        ours_files=_json_value(ours["files"]) or [],
+        theirs_files=_pack_profile_files(theirs_row),
+        baselines=baselines,
+        target_version=request.target_version,
+    )
+
+    if not merge.updated_parts:
+        # Nothing pullable (no newer parts, or all newer parts are locally evolved):
+        # a pure no-op — no new version, the source pin is left untouched.
+        return {
+            "profile_ref": profile_ref,
+            "version": ours["version"],
+            "digest": ours["digest"],
+            "updated_parts": [],
+            "preserved_parts": merge.preserved_parts,
+            "source_profile_pack_version": ours["source_profile_pack_version"],
+            "source_profile_pack_digest": ours["source_profile_pack_digest"],
+        }
+
+    merged = parse_profile_payload(merge.files)
+    theirs = parse_profile_payload(_pack_profile_files(theirs_row))
+    await _upsert_shelf_profile(
+        db,
+        team_id=principal.team_id,
+        profile=merged,
+        tags=list(ours["tags"] or []),
+        source_profile_pack_ref=source_pack_ref,
+        source_profile_pack_version=pack["version"],
+        source_profile_pack_digest=pack["digest"],
+        source_profile_ref=ours["source_profile_ref"] or profile_ref,
+        source_profile_version=theirs.version,
+        source_profile_digest=theirs.digest,
+        part_baselines=part_baselines(theirs),
+    )
+    return {
+        "profile_ref": profile_ref,
+        "version": merged.version,
+        "digest": merged.digest,
+        "updated_parts": merge.updated_parts,
+        "preserved_parts": merge.preserved_parts,
+        "source_profile_pack_version": pack["version"],
+        "source_profile_pack_digest": pack["digest"],
+    }
 
 
 # --- Registration, bindings, materialize --------------------------------------

@@ -19,6 +19,7 @@ from library.models import (
     ProposalCreateRequest,
     SetTagsRequest,
     TeamRegisterRequest,
+    UpdateFromSourceRequest,
 )
 from library.repository import (
     approve_proposal,
@@ -41,6 +42,7 @@ from library.repository import (
     set_pack_tags,
     set_profile_binding,
     set_profile_tags,
+    update_from_source,
 )
 from library.surfaces import (
     llms_txt,
@@ -204,6 +206,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await create_shelf_version(
             database, principal=actor, profile_ref=profile_ref, files=body.get("files", [])
         )
+
+    # update-from-source: per-part 3-way merge of a shelf profile against a newer
+    # version of its source pack — pull upstream improvements into un-evolved parts,
+    # keep local edits. A real merge mints target_version; nothing pullable is a no-op.
+    @app.post("/v1/profiles/{profile_ref}/update-from-source")
+    async def update_from_source_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = UpdateFromSourceRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await update_from_source(database, principal=actor, profile_ref=profile_ref, request=payload)
 
     # publish-profile: a team publishes a private shelf profile into a PUBLIC pack
     # (new pack, or a new version of an owned pack). pack.yaml is library-generated
