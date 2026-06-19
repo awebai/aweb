@@ -66,6 +66,21 @@ def test_landing_page_is_served() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "library" in response.text
     assert "https://awid.ai" in response.text
+    # Styled with the shared aweb design system.
+    assert '<link rel="stylesheet" href="/css/aweb.css">' in response.text
+
+
+def test_aweb_css_served_verbatim() -> None:
+    import hashlib
+
+    response = TestClient(_app()).get("/css/aweb.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
+    # Byte-for-byte the vendored aweb design system (source sha recorded in surfaces).
+    assert (
+        hashlib.sha256(response.content).hexdigest()
+        == "6b2acef0d614c33508fe0f4e7270b4a2770ef18fb45d856c0d3e7862f85f2c19"
+    )
 
 
 def test_health_endpoints_are_public() -> None:

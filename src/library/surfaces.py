@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
 from html import escape
 from pathlib import Path
 
@@ -9,6 +10,17 @@ _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_DIR = _REPO_ROOT / "skills"
 _CONTAINER_SKILLS_DIR = Path("/app/skills")
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+# aweb design system, vendored verbatim from the awebai/ac repo
+# (site/static/css/aweb.css, sha256
+# 6b2acef0d614c33508fe0f4e7270b4a2770ef18fb45d856c0d3e7862f85f2c19) and served at
+# /css/aweb.css. The shared Paper/Clay foundation, byte-for-byte.
+
+
+@lru_cache(maxsize=1)
+def aweb_css() -> str:
+    return (_ASSETS_DIR / "aweb.css").read_text(encoding="utf-8")
 
 
 def _skills_dir() -> Path:
@@ -29,54 +41,134 @@ def render_landing_page(*, public_origin: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="library is the agent-first service for profile packs, agent profiles, bindings, and learning for AWID teams.">
+  <meta name="description" content="library is the agent-first service for public profile packs, private team shelves, bindings, materialization, and learning for AWID teams.">
+  <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a0705" media="(prefers-color-scheme: dark)">
   <title>library — agent profiles for AWID teams</title>
-  <style>
-    :root {{ color-scheme: light; --bg: #fffaf0; --panel: #ffffff; --ink: #17201a; --muted: #5f685f; --line: #ded6c4; --accent: #246b49; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: var(--bg); color: var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }}
-    a {{ color: var(--accent); text-underline-offset: .18em; }}
-    header, main, footer {{ max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
-    nav {{ display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }}
-    .brand {{ color: var(--ink); font-weight: 800; text-decoration: none; }}
-    .links {{ display: flex; gap: 1rem; flex-wrap: wrap; }}
-    .hero {{ padding: 5rem 0 3rem; }}
-    .eyebrow {{ color: var(--accent); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: .78rem; }}
-    h1 {{ font-size: clamp(2.6rem, 7vw, 5.8rem); line-height: .95; letter-spacing: -.06em; margin: .25rem 0 1rem; max-width: 58rem; }}
-    .lede {{ color: var(--muted); font-size: clamp(1.15rem, 2.4vw, 1.6rem); max-width: 54rem; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; margin: 2rem 0; }}
-    .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 1rem; padding: 1.1rem; }}
-    .card h2 {{ margin-top: 0; }}
-    footer {{ color: var(--muted); border-top: 1px solid var(--line); font-size: .92rem; }}
-  </style>
+  <script>
+    (function () {{
+      try {{
+        var t = localStorage.getItem('aweb-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      }} catch (e) {{}}
+    }})();
+  </script>
+  <link rel="stylesheet" href="/css/aweb.css">
 </head>
 <body>
-  <header>
-    <nav aria-label="Main navigation">
-      <a class="brand" href="/">library</a>
-      <div class="links">
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/"><span class="dot"></span>library</a>
+      <nav class="nav-links">
+        <a href="#model">Model</a>
         <a href="/llms.txt">llms.txt</a>
-        <a href="/skills/">agent skills</a>
-        <a href="https://aweb.ai">aweb.ai hub</a>
+        <a href="/skills/">Skills</a>
         <a href="https://awid.ai">AWID</a>
+      </nav>
+      <div class="header-right">
+        <button class="theme-toggle" type="button" aria-label="Toggle dark mode" onclick="awebToggleTheme()">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <a class="btn secondary" href="https://aweb.ai">aweb.ai</a>
+        <a class="btn primary" href="/llms.txt">Read llms.txt <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></a>
       </div>
-    </nav>
+    </div>
   </header>
   <main>
-    <section class="hero">
-      <p class="eyebrow">Agent profiles for AWID teams</p>
-      <h1>library is where teams learn how their agents should work.</h1>
-      <p class="lede">Reusable profile packs, individual agent profiles with versions and digests, agent-profile bindings, materialization payloads for local and custodial runtimes, and profile learning. Agents authenticate with an <a href="https://awid.ai">AWID team certificate</a>; there are no app accounts.</p>
+    <section class="hero-center">
+      <div class="wrap">
+        <p class="kicker">Agent profiles for AWID teams</p>
+        <h1>Where teams learn how their agents should work.</h1>
+        <p class="lede">Public profile packs are the catalog; your team's private shelf holds the copies you adopt, evolve, and bind agents to. Materialize a profile into a local <code>.aw</code> home or a custodial runtime, and agents propose improvements that mint new versions. Auth is an <a href="https://awid.ai">AWID team certificate</a> — there are no app accounts.</p>
+        <div class="cta-row">
+          <a class="btn primary btn--lg" href="/llms.txt">Read llms.txt</a>
+          <a class="btn secondary btn--lg" href="/aweb-app.json">App manifest</a>
+        </div>
+      </div>
     </section>
-    <section class="grid" aria-label="What library does">
-      <article class="card"><h2>Profile packs</h2><p>Public, first-party collections of agent profiles a team can discover and adopt.</p></article>
-      <article class="card"><h2>Bindings</h2><p>The team decides which profile an agent identity runs as; library owns that binding, not the dashboard.</p></article>
-      <article class="card"><h2>Materialization &amp; learning</h2><p>Profiles materialize into a local <code>.aw</code> home or a custodial runtime, and agents propose improvements back.</p></article>
+
+    <section class="section section--tint" id="model">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">The model</p>
+          <h2>Public packs, private shelves</h2>
+          <p>Visibility is structural, not a flag: packs are the public, versioned catalog; the shelf is your team's private working set.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+          <article class="card"><h3>Public packs</h3><p>First-party, versioned, digest-addressed collections of agent profiles any team can browse and adopt.</p></article>
+          <article class="card"><h3>Private shelves</h3><p>Your team's own copies — adopted from a pack or authored fresh — the working set you evolve and bind.</p></article>
+          <article class="card"><h3>Bindings</h3><p>The team decides which shelf profile an agent identity runs as; library owns that binding, not a dashboard.</p></article>
+          <article class="card"><h3>Materialize</h3><p>A bound profile becomes a runnable agent home: a composed AGENTS.md, installed skills, and the full evolvable profile under <code>.aw/profile/</code>.</p></article>
+          <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; on approval library mints it, immutably versioned by digest.</p></article>
+          <article class="card"><h3>Update from source</h3><p>Pull a newer pack version's improvements into the parts you have not evolved — a per-part merge that never clobbers local edits.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Use it</p>
+          <h2>Certificate in, profile out</h2>
+          <p>Public catalog reads need no auth; team operations authenticate with an AWID team certificate.</p>
+        </div>
+        <div class="cmd-panel">
+          <p class="cmd-label">Browse the public catalog (no auth)</p>
+          <div class="cmd-list">
+            <div class="cmd"><pre>aw id request GET {origin}/v1/profile-packs</pre></div>
+          </div>
+          <p class="cmd-label">Adopt a profile onto your team's shelf</p>
+          <div class="cmd-list">
+            <div class="cmd"><pre>aw id request POST {origin}/v1/shelf/import --team-auth --raw \\
+  --body '{{"source_profile_pack_ref":"aweb.engineering-pack","profile_ref":"coordinator"}}'</pre></div>
+          </div>
+          <p class="cmd-label">Materialize it into a local home</p>
+          <div class="cmd-list">
+            <div class="cmd"><pre>aw id request POST {origin}/v1/materialize --team-auth --raw \\
+  --body '{{"profile_ref":"coordinator","runtime_kind":"claude-code","target":"local"}}'</pre></div>
+          </div>
+        </div>
+        <p class="prose-outro">Agents read the whole surface in plain text at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">app manifest</a>.</p>
+      </div>
     </section>
   </main>
-  <footer>
-    <p>library is an aweb anapp on the <a href="https://aweb.ai">aweb.ai</a> hub. <a href="https://awid.ai">AWID</a> is the identity authority. Origin: {origin}</p>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-cols">
+        <div class="footer-brand">
+          <a class="brand" href="/"><span class="dot"></span>library</a>
+          <p>Public profile packs and private team shelves for AWID teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Agents</h4>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="/skills/">Skills</a>
+          <a href="/aweb-app.json">App manifest</a>
+        </div>
+        <div class="footer-col">
+          <h4>aweb</h4>
+          <a href="https://aweb.ai">aweb.ai</a>
+          <a href="https://awid.ai">AWID</a>
+        </div>
+      </div>
+      <div class="footer-bottom">library is an aweb anapp on the aweb.ai hub. AWID is the identity authority. Origin: {origin}</div>
+    </div>
   </footer>
+
+  <script>
+    function awebToggleTheme() {{
+      var el = document.documentElement;
+      var cur = el.getAttribute('data-theme');
+      if (!cur) {{
+        cur = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }}
+      var next = cur === 'dark' ? 'light' : 'dark';
+      el.setAttribute('data-theme', next);
+      try {{ localStorage.setItem('aweb-theme', next); }} catch (e) {{}}
+    }}
+  </script>
 </body>
 </html>"""
 
