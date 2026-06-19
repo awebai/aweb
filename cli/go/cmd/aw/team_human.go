@@ -199,6 +199,19 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
 	}
 	wd, _ := os.Getwd()
+	if selector != nil {
+		if sel, err := resolveSelectionForDir(wd); err == nil && strings.TrimSpace(sel.TeamID) != "" {
+			agentID := strings.TrimSpace(sel.Alias)
+			if agentID == "" {
+				agentID = strings.ToLower(teamName)
+			}
+			if _, _, err := applyLibraryProfileToHome(wd, agentID, *selector, true); err != nil {
+				return err
+			}
+			printOutput(teamHumanCreateOutput{Status: "created", TeamName: teamName, ProfileMode: "library", TeamID: sel.TeamID, Alias: sel.Alias, WorkspaceID: sel.WorkspaceID, AwebURL: sel.AwebURL, NoLibrary: false, NoProfile: false, IdentityOnly: false}, formatTeamHumanCreate)
+			return nil
+		}
+	}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
 		return err
@@ -226,7 +239,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		out := teamHumanCreateOutputFromConnect(teamName, result)
 		if selector != nil {
-			if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector); err != nil {
+			if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector, true); err != nil {
 				return err
 			}
 			out.ProfileMode = "library"
@@ -257,7 +270,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	out := teamHumanCreateOutputFromConnect(teamName, result)
 	if selector != nil {
-		if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector); err != nil {
+		if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector, true); err != nil {
 			return err
 		}
 		out.ProfileMode = "library"
@@ -362,6 +375,12 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		plans = append(plans, teamHumanAddedAgent{Name: name, HomeDir: filepath.Join(agentsRoot, name), ProfileMode: profileMode, Profile: selector})
 	}
 	for _, plan := range plans {
+		if plan.Profile != nil {
+			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
 			return err
 		}
@@ -373,19 +392,34 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		if teamHumanAddLayoutOnly {
 			continue
 		}
-		accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
-		if err != nil {
-			return err
+		if plans[i].Profile != nil {
+			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
+				plans[i].Alias = strings.TrimSpace(sel.Alias)
+				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
+			} else {
+				accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+				if err != nil {
+					return err
+				}
+				plans[i].Alias = accepted.Output.Alias
+				plans[i].TeamID = accepted.Output.TeamID
+				plans[i].CertPath = accepted.Output.CertPath
+			}
+		} else {
+			accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+			if err != nil {
+				return err
+			}
+			plans[i].Alias = accepted.Output.Alias
+			plans[i].TeamID = accepted.Output.TeamID
+			plans[i].CertPath = accepted.Output.CertPath
 		}
-		plans[i].Alias = accepted.Output.Alias
-		plans[i].TeamID = accepted.Output.TeamID
-		plans[i].CertPath = accepted.Output.CertPath
 		if plans[i].Profile != nil {
 			agentID := strings.TrimSpace(plans[i].Alias)
 			if agentID == "" {
 				agentID = plans[i].Name
 			}
-			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile); err != nil {
+			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
 				return err
 			}
 		}
@@ -431,6 +465,10 @@ func preflightEmptyAgentHome(homeDir string) error {
 		return err
 	}
 	return nil
+}
+
+func preflightProfileAgentHome(homeDir string) error {
+	return pathpreflight.PreflightDir(homeDir, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {

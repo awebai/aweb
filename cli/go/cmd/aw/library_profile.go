@@ -17,6 +17,10 @@ type libraryProfileSelector struct {
 	ProfileRef               string
 }
 
+type libraryProfileDetailResponse struct {
+	RuntimeAssumptions []string `json:"runtime_assumptions"`
+}
+
 type libraryImportToShelfResponse struct {
 	ProfileRef               string `json:"profile_ref"`
 	Version                  string `json:"version"`
@@ -88,13 +92,17 @@ func validateLibraryRef(field, value string, allowSlash bool) error {
 	return nil
 }
 
-func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector) (*libraryMaterializeResponse, []string, error) {
+func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*libraryMaterializeResponse, []string, error) {
 	if strings.TrimSpace(agentID) == "" {
 		return nil, nil, fmt.Errorf("agent id is required for Library binding")
 	}
 	var materialized *libraryMaterializeResponse
 	var written []string
 	err := withWorkingDir(homeDir, func() error {
+		runtimeKind, err := callLibraryProfileRuntimeKind(selector)
+		if err != nil {
+			return fmt.Errorf("library get-profile: %w", err)
+		}
 		imported, err := callLibraryImportToShelf(selector)
 		if err != nil {
 			return fmt.Errorf("library import-to-shelf: %w", err)
@@ -102,14 +110,14 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err := callLibraryBind(strings.TrimSpace(agentID), imported); err != nil {
 			return fmt.Errorf("library bind: %w", err)
 		}
-		materialized, err = callLibraryMaterialize(strings.TrimSpace(agentID))
+		materialized, err = callLibraryMaterialize(strings.TrimSpace(agentID), runtimeKind)
 		if err != nil {
 			return fmt.Errorf("library materialize: %w", err)
 		}
 		if err := validateLibraryMaterializeHome(materialized); err != nil {
 			return err
 		}
-		written, err = profilepack.WriteLibraryHomeFiles(homeDir, materialized.HomeFiles, false)
+		written, err = profilepack.WriteLibraryHomeFiles(homeDir, materialized.HomeFiles, force)
 		return err
 	})
 	if err != nil {
@@ -128,6 +136,37 @@ func withWorkingDir(dir string, fn func() error) error {
 	}
 	defer func() { _ = os.Chdir(cwd) }()
 	return fn()
+}
+
+func callLibraryProfileRuntimeKind(selector libraryProfileSelector) (string, error) {
+	body, err := executeLibraryToolBody([]string{"get-profile", "--pack_ref", selector.SourceProfilePackRef, "--profile_ref", selector.ProfileRef})
+	if err != nil {
+		return "", err
+	}
+	var out libraryProfileDetailResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("decode library get-profile response: %w", err)
+	}
+	return chooseLibraryRuntimeKind(out.RuntimeAssumptions), nil
+}
+
+func chooseLibraryRuntimeKind(assumptions []string) string {
+	allowed := map[string]bool{}
+	for _, assumption := range assumptions {
+		allowed[strings.ToLower(strings.TrimSpace(assumption))] = true
+	}
+	switch {
+	case allowed["claude-code"]:
+		return "claude-code"
+	case allowed["codex"]:
+		return "codex"
+	case allowed["pi"]:
+		return "pi"
+	case allowed["local shell"] || allowed["local-shell"]:
+		return "local-shell"
+	default:
+		return "claude-code"
+	}
 }
 
 func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {
@@ -167,8 +206,8 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) err
 	return err
 }
 
-func callLibraryMaterialize(agentID string) (*libraryMaterializeResponse, error) {
-	body, err := executeLibraryToolBody([]string{"materialize", "--agent_id", agentID, "--runtime_kind", "claude-code", "--target", "local"})
+func callLibraryMaterialize(agentID, runtimeKind string) (*libraryMaterializeResponse, error) {
+	body, err := executeLibraryToolBody([]string{"materialize", "--agent_id", agentID, "--runtime_kind", runtimeKind, "--target", "local"})
 	if err != nil {
 		return nil, err
 	}

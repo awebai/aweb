@@ -51,3 +51,20 @@ func TestWriteLibraryHomeFilesRejectsTraversal(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestWriteLibraryHomeFilesRejectsEscapingSymlinkTargetWithoutPartialWrite(t *testing.T) {
+	target := t.TempDir()
+	_, err := WriteLibraryHomeFiles(target, []LibraryHomeFile{
+		{Path: "AGENTS.md", Kind: "file", ContentUTF8: "# should not be written\n"},
+		{Path: "CLAUDE.md", Kind: "symlink", Target: "../escape"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "escapes target directory") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial file write occurred, stat err=%v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "CLAUDE.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial symlink write occurred, stat err=%v", statErr)
+	}
+}

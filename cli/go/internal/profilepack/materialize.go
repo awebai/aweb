@@ -368,12 +368,16 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 	if err := validateRelativePath("destination", rel); err != nil {
 		return err
 	}
+	path := filepath.Join(targetRoot, filepath.FromSlash(rel))
 	if op.Kind == opSymlink {
 		if op.LinkTarget == "" || filepath.IsAbs(op.LinkTarget) || strings.Contains(op.LinkTarget, "://") {
 			return fmt.Errorf("%s has invalid symlink target", rel)
 		}
+		targetPath := filepath.Clean(filepath.Join(filepath.Dir(path), filepath.FromSlash(op.LinkTarget)))
+		if !isWithin(targetRoot, targetPath) {
+			return fmt.Errorf("%s symlink target escapes target directory", rel)
+		}
 	}
-	path := filepath.Join(targetRoot, filepath.FromSlash(rel))
 	if !isWithin(targetRoot, path) {
 		return fmt.Errorf("destination %s escapes target directory", rel)
 	}
