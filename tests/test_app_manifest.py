@@ -17,6 +17,8 @@ _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _EXPECTED_TOOLS = {
     "publish-pack",
     "register",
+    "create-shelf-profile",
+    "shelf-version",
     "set-profile-tags",
     "set-pack-tags",
     "bind",
@@ -32,6 +34,8 @@ _EXPECTED_TOOLS = {
 _MUTATIONS = {
     "publish-pack": True,
     "register": True,
+    "create-shelf-profile": True,
+    "shelf-version": True,
     "set-profile-tags": True,
     "set-pack-tags": True,
     "bind": True,

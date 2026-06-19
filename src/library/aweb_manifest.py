@@ -70,6 +70,42 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
+            "name": "create-shelf-profile",
+            "description": "Create a private shelf profile from a profile payload.",
+            "method": "POST",
+            "path": "/v1/profiles",
+            "input_schema": {
+                "type": "object",
+                "properties": {"files": {"type": "array"}, "tags": {"type": "array"}},
+                "required": ["files"],
+            },
+            "params": [
+                {"name": "files", "in": "body"},
+                {"name": "tags", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "shelf-version",
+            "description": "Add a new content version of an owned shelf profile.",
+            "method": "POST",
+            "path": "/v1/profiles/{profile_ref}/versions",
+            "input_schema": {
+                "type": "object",
+                "properties": {"profile_ref": {"type": "string"}, "files": {"type": "array"}},
+                "required": ["profile_ref", "files"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "files", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
             "name": "set-profile-tags",
             "description": "Replace a profile's organizational tags.",
             "method": "PUT",

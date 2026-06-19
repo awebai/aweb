@@ -124,6 +124,34 @@ def parse_import_payload(payload: dict[str, Any]) -> ParsedPack:
     )
 
 
+def parse_profile_payload(files: list[dict[str, str]]) -> ParsedProfile:
+    """Parse a single profile's payload (profile-payload.v1, PROFILE-relative files)
+    into a ParsedProfile with its content digest. Used to create or version a shelf
+    profile directly from supplied content."""
+    if not isinstance(files, list) or not files:
+        raise ValueError("profile payload must contain files")
+    if not all(isinstance(f, dict) and {"content_utf8", "path", "sha256"} <= set(f) for f in files):
+        raise ValueError("profile payload files must have content_utf8, path, sha256")
+    by_path = {f["path"]: f for f in files}
+    if "profile.yaml" not in by_path:
+        raise ValueError("profile payload missing profile.yaml")
+    profile_yaml = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
+    return ParsedProfile(
+        profile_ref=str(profile_yaml["id"]),
+        version=str(profile_yaml["version"]),
+        digest=payload_digest(files, PROFILE_PAYLOAD_SCHEMA),
+        name=str(profile_yaml.get("name") or profile_yaml["id"]),
+        mission=profile_yaml.get("mission"),
+        accepted_work=_as_str_list(profile_yaml.get("accepted_work")),
+        runtime_assumptions=_as_str_list(profile_yaml.get("runtime_assumptions")),
+        memory_policy=profile_yaml.get("memory_policy"),
+        expected_apps=_as_str_list(profile_yaml.get("expected_apps")),
+        event_subscriptions=list(profile_yaml.get("event_subscriptions") or []),
+        approval_required=_as_str_list(profile_yaml.get("approval_required")),
+        files=sorted(files, key=lambda entry: entry["path"]),
+    )
+
+
 def import_return(pack: ParsedPack) -> dict[str, Any]:
     """The POST /v1/profile-packs/import response body."""
     return {

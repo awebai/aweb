@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from library.digest import PACK_PAYLOAD_SCHEMA, collect_files
-from library.profile_pack import import_return, materialize_home_files, parse_import_payload
+from library.profile_pack import (
+    import_return,
+    materialize_home_files,
+    parse_import_payload,
+    parse_profile_payload,
+)
 
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
@@ -62,6 +67,15 @@ def test_materialize_ref_json_carries_source_pack_provenance() -> None:
     assert ref["profile_ref"] == "coordinator"
     assert ref["profile_digest"] == pack.profiles[0].digest
     assert ref["source_profile_pack_digest"] == pack.digest
+
+
+def test_parse_profile_payload_reproduces_a_profile() -> None:
+    profile = parse_profile_payload(collect_files(_SOURCE / "profiles" / "coordinator"))
+    assert profile.profile_ref == "coordinator"
+    assert profile.version == "0.1.0"
+    assert profile.digest == "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619"
+    assert profile.mission.startswith("Coordinate")
+    assert "planning" in profile.accepted_work
 
 
 def test_parse_rejects_wrong_schema() -> None:

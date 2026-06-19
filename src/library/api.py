@@ -21,6 +21,8 @@ from library.models import (
 from library.repository import (
     approve_proposal,
     create_proposal,
+    create_shelf_profile,
+    create_shelf_version,
     get_profile_binding,
     get_profile_pack,
     get_shelf_profile,
@@ -167,6 +169,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         return await get_shelf_profile(database, principal=actor, profile_ref=profile_id)
+
+    @app.post("/v1/profiles")
+    async def create_shelf_profile_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        body = await request.json()
+        return await create_shelf_profile(
+            database, principal=actor, files=body.get("files", []), tags=body.get("tags", [])
+        )
+
+    @app.post("/v1/profiles/{profile_ref}/versions")
+    async def create_shelf_version_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        body = await request.json()
+        return await create_shelf_version(
+            database, principal=actor, profile_ref=profile_ref, files=body.get("files", [])
+        )
 
     # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a

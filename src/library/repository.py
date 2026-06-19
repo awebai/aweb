@@ -14,6 +14,7 @@ from library.profile_pack import (
     import_return,
     materialize_home_files,
     parse_import_payload,
+    parse_profile_payload,
 )
 
 
@@ -234,6 +235,97 @@ async def set_profile_tags(
     if not rows:
         raise HTTPException(status_code=404, detail="Shelf profile not found")
     return {"profile_ref": profile_ref, "tags": normalized}
+
+
+async def _upsert_shelf_profile(
+    db: AsyncDatabaseManager,
+    *,
+    team_id: str,
+    profile: ParsedProfile,
+    tags: list[str],
+    source_pack_ref: str | None,
+    source_pack_version: str | None,
+    source_pack_digest: str | None,
+    part_baselines: dict[str, str],
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO {{tables.shelf_profiles}}
+          (team_id, profile_ref, version, digest, tags, name, mission, accepted_work,
+           runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required,
+           files, source_pack_ref, source_pack_version, source_pack_digest, part_baselines)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14::jsonb,
+                $15, $16, $17, $18::jsonb)
+        ON CONFLICT (team_id, profile_ref, version) DO UPDATE SET
+            digest = EXCLUDED.digest, tags = EXCLUDED.tags, name = EXCLUDED.name,
+            mission = EXCLUDED.mission, accepted_work = EXCLUDED.accepted_work,
+            runtime_assumptions = EXCLUDED.runtime_assumptions, memory_policy = EXCLUDED.memory_policy,
+            expected_apps = EXCLUDED.expected_apps, event_subscriptions = EXCLUDED.event_subscriptions,
+            approval_required = EXCLUDED.approval_required, files = EXCLUDED.files,
+            source_pack_ref = EXCLUDED.source_pack_ref, source_pack_version = EXCLUDED.source_pack_version,
+            source_pack_digest = EXCLUDED.source_pack_digest, part_baselines = EXCLUDED.part_baselines
+        """,
+        team_id, profile.profile_ref, profile.version, profile.digest, tags, profile.name,
+        profile.mission, profile.accepted_work, profile.runtime_assumptions,
+        _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
+        profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
+        _dumps(profile.files), source_pack_ref, source_pack_version, source_pack_digest,
+        _dumps(part_baselines),
+    )
+
+
+async def create_shelf_profile(
+    db: AsyncDatabaseManager, *, principal: Principal, files: list[dict[str, str]], tags: list[Any]
+) -> dict[str, Any]:
+    """Create a directly-authored private shelf profile (no source pack)."""
+    try:
+        profile = parse_profile_payload(files)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid profile: {exc}") from exc
+    await _upsert_shelf_profile(
+        db,
+        team_id=principal.team_id,
+        profile=profile,
+        tags=normalize_tags(tags or []),
+        source_pack_ref=None,
+        source_pack_version=None,
+        source_pack_digest=None,
+        part_baselines={},
+    )
+    return await get_shelf_profile(db, principal=principal, profile_ref=profile.profile_ref)
+
+
+async def create_shelf_version(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, files: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Add a new content version of an owned shelf profile (the evolve path).
+    Source provenance, tags, and per-part baselines carry from the prior version."""
+    try:
+        profile = parse_profile_payload(files)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid profile: {exc}") from exc
+    if profile.profile_ref != profile_ref:
+        raise HTTPException(status_code=422, detail="profile.yaml id must match the path profile_ref")
+    prior = await db.fetch_one(
+        "SELECT tags, source_pack_ref, source_pack_version, source_pack_digest, part_baselines"
+        " FROM {{tables.shelf_profiles}} WHERE team_id = $1 AND profile_ref = $2"
+        " ORDER BY created_at DESC LIMIT 1",
+        principal.team_id,
+        profile_ref,
+    )
+    if prior is None:
+        raise HTTPException(status_code=404, detail="Shelf profile not found")
+    await _upsert_shelf_profile(
+        db,
+        team_id=principal.team_id,
+        profile=profile,
+        tags=list(prior["tags"] or []),
+        source_pack_ref=prior["source_pack_ref"],
+        source_pack_version=prior["source_pack_version"],
+        source_pack_digest=prior["source_pack_digest"],
+        part_baselines=_json_value(prior["part_baselines"]) or {},
+    )
+    return await get_shelf_profile(db, principal=principal, profile_ref=profile_ref)
 
 
 # --- Registration, bindings, materialize --------------------------------------
