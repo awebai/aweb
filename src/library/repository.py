@@ -308,19 +308,58 @@ _SHELF_SUMMARY_COLUMNS = (
 )
 
 
-async def list_shelf_profiles(
-    db: AsyncDatabaseManager, *, principal: Principal, tags: list[str] | None
-) -> list[dict[str, Any]]:
+async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[str, Any]:
+    """The team's shelf working set: the latest version of each shelf profile, each
+    carrying its source provenance and an ``update_available`` signal. The signal is
+    computed here — true when the entry came from a pack and that pack's latest
+    catalog version differs from the copy's pinned source version (the source
+    pack has moved on). The update-from-source ACT is chunk B; this is the SIGNAL."""
     rows = await db.fetch_all(
-        "SELECT DISTINCT ON (profile_ref) "
-        + _SHELF_SUMMARY_COLUMNS
-        + " FROM {{tables.shelf_profiles}}"
-        + " WHERE team_id = $1 AND ($2::text[] IS NULL OR tags && $2)"
-        + " ORDER BY profile_ref, created_at DESC",
+        "SELECT DISTINCT ON (profile_ref) profile_ref, version, digest, name, mission, tags,"
+        " source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,"
+        " source_profile_ref, source_profile_version"
+        " FROM {{tables.shelf_profiles}} WHERE team_id = $1"
+        " ORDER BY profile_ref, created_at DESC",
         principal.team_id,
-        tags,
     )
-    return [_shelf_summary(row) for row in rows]
+    pack_refs = sorted({r["source_profile_pack_ref"] for r in rows if r["source_profile_pack_ref"]})
+    latest: dict[str, str] = {}
+    if pack_refs:
+        latest_rows = await db.fetch_all(
+            "SELECT DISTINCT ON (pack_ref) pack_ref, version FROM {{tables.profile_packs}}"
+            " WHERE pack_ref = ANY($1::text[]) ORDER BY pack_ref, created_at DESC",
+            pack_refs,
+        )
+        latest = {r["pack_ref"]: r["version"] for r in latest_rows}
+
+    profiles: list[dict[str, Any]] = []
+    for row in rows:
+        data = dict(row)
+        source_pack_ref = data["source_profile_pack_ref"]
+        latest_version = latest.get(source_pack_ref) if source_pack_ref else None
+        update_available = bool(
+            source_pack_ref
+            and latest_version is not None
+            and latest_version != data["source_profile_pack_version"]
+        )
+        profiles.append(
+            {
+                "profile_ref": data["profile_ref"],
+                "version": data["version"],
+                "digest": data["digest"],
+                "name": data["name"],
+                "summary": data["mission"],
+                "tags": list(data["tags"] or []),
+                "source_profile_pack_ref": source_pack_ref,
+                "source_profile_pack_version": data["source_profile_pack_version"],
+                "source_profile_pack_digest": data["source_profile_pack_digest"],
+                "source_profile_ref": data["source_profile_ref"],
+                "source_profile_version": data["source_profile_version"],
+                "source_pack_latest_version": latest_version,
+                "update_available": update_available,
+            }
+        )
+    return {"profiles": profiles}
 
 
 async def get_shelf_profile(db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str) -> dict[str, Any]:

@@ -471,7 +471,7 @@ def test_public_pack_catalog_needs_no_auth(library: RunningLibrary) -> None:
 
 def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str) -> None:
     # The shelf is private: shelf reads + team writes require a certificate.
-    assert httpx.get(f"{library_origin}/v1/profiles", timeout=10.0).status_code == 401
+    assert httpx.get(f"{library_origin}/v1/shelf", timeout=10.0).status_code == 401
     assert httpx.get(f"{library_origin}/v1/proposals", timeout=10.0).status_code == 401
 
 

@@ -10,7 +10,7 @@ _TEAM_SCOPED = [
     ("POST", "/v1/profile-packs/import"),
     ("POST", "/v1/shelf/import"),
     ("POST", "/v1/profiles/coordinator/publish"),
-    ("GET", "/v1/profiles"),
+    ("GET", "/v1/shelf"),
     ("GET", "/v1/profiles/coordinator"),
     ("POST", "/v1/agents/agent-1/profile-binding"),
     ("GET", "/v1/agents/agent-1/profile-binding"),
@@ -76,7 +76,7 @@ def test_health_endpoints_are_public() -> None:
 
 
 def test_public_pack_catalog_is_unauthenticated() -> None:
-    # Packs are the public catalog (no cert). Shelf reads (/v1/profiles) are
+    # Packs are the public catalog (no cert). Shelf reads (/v1/shelf) are
     # private and cert-gated — covered by the team-scoped 401 cases above.
     app = _app()
     _override_infra_deps(app, db_value=_FakeDB())

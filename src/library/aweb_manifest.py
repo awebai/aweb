@@ -239,6 +239,16 @@ MANIFEST: dict[str, Any] = {
             "mutation": False,
         },
         {
+            "name": "shelf",
+            "description": "List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-pack version is available.",
+            "method": "GET",
+            "path": "/v1/shelf",
+            "input_schema": {"type": "object", "properties": {}},
+            "params": [],
+            "scopes": ["library:read"],
+            "mutation": False,
+        },
+        {
             "name": "materialize",
             "description": "Materialize a profile payload for a local or custodial runtime.",
             "method": "POST",

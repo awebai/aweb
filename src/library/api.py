@@ -31,7 +31,7 @@ from library.repository import (
     import_to_shelf,
     list_profile_packs,
     list_proposals,
-    list_shelf_profiles,
+    list_shelf,
     materialize,
     publish_pack,
     publish_profile,
@@ -158,13 +158,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
-    @app.get("/v1/profiles")
-    async def list_shelf_profiles_route(
+    @app.get("/v1/shelf")
+    async def list_shelf_route(
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
-        tags: Annotated[list[str] | None, Query()] = None,
-    ) -> list[dict]:
-        return await list_shelf_profiles(database, principal=actor, tags=tags)
+    ) -> dict:
+        return await list_shelf(database, principal=actor)
 
     @app.get("/v1/profiles/{profile_id}")
     async def get_shelf_profile_route(

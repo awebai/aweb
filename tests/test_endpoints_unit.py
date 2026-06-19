@@ -10,7 +10,13 @@ from fastapi import HTTPException
 from library.digest import collect_files
 from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest, PublishTarget
 from library.profile_pack import parse_profile_payload, part_baselines
-from library.repository import import_to_shelf, materialize, normalize_tags, publish_profile
+from library.repository import (
+    import_to_shelf,
+    list_shelf,
+    materialize,
+    normalize_tags,
+    publish_profile,
+)
 
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 
@@ -171,6 +177,63 @@ async def test_publish_profile_rejects_ambiguous_target() -> None:
     with pytest.raises(HTTPException) as excinfo:
         await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=neither)
     assert excinfo.value.status_code == 422
+
+
+class _ShelfListDB:
+    """Returns the shelf rows then the per-pack latest catalog versions, routed by
+    SQL fragment, so list_shelf can compute update_available."""
+
+    def __init__(self, shelf_rows: list[dict], latest_rows: list[dict]) -> None:
+        self._shelf_rows = shelf_rows
+        self._latest_rows = latest_rows
+
+    async def fetch_all(self, sql: str, *params):
+        if "FROM {{tables.shelf_profiles}}" in sql:
+            return self._shelf_rows
+        if "FROM {{tables.profile_packs}}" in sql:
+            return self._latest_rows
+        raise AssertionError(f"unexpected query: {sql}")
+
+
+def _shelf_row(profile_ref: str, *, source_pack=None, source_pack_version=None) -> dict:
+    return {
+        "profile_ref": profile_ref,
+        "version": "1",
+        "digest": "sha256:d",
+        "name": profile_ref.title(),
+        "mission": f"{profile_ref} mission",
+        "tags": ["coder"],
+        "source_profile_pack_ref": source_pack,
+        "source_profile_pack_version": source_pack_version,
+        "source_profile_pack_digest": "sha256:p" if source_pack else None,
+        "source_profile_ref": profile_ref if source_pack else None,
+        "source_profile_version": "0.1.0" if source_pack else None,
+    }
+
+
+async def test_list_shelf_flags_update_available_only_when_pack_moved_on() -> None:
+    shelf_rows = [
+        _shelf_row("coordinator", source_pack="aweb.eng", source_pack_version="0.1.0"),
+        _shelf_row("developer", source_pack="aweb.eng", source_pack_version="0.2.0"),
+        _shelf_row("home-grown"),  # created fresh, no source pack
+    ]
+    # The catalog's latest version of aweb.eng is 0.2.0.
+    db = _ShelfListDB(shelf_rows, [{"pack_ref": "aweb.eng", "version": "0.2.0"}])
+
+    result = await list_shelf(db, principal=SimpleNamespace(team_id="default:atext.aweb.ai"))
+    by_ref = {p["profile_ref"]: p for p in result["profiles"]}
+
+    # Pinned to 0.1.0 while latest is 0.2.0 -> update available, latest surfaced.
+    assert by_ref["coordinator"]["update_available"] is True
+    assert by_ref["coordinator"]["source_pack_latest_version"] == "0.2.0"
+    assert by_ref["coordinator"]["summary"] == "coordinator mission"
+    # Already on the latest -> no update.
+    assert by_ref["developer"]["update_available"] is False
+    assert by_ref["developer"]["source_pack_latest_version"] == "0.2.0"
+    # Created fresh -> source provenance null, never an update.
+    assert by_ref["home-grown"]["update_available"] is False
+    assert by_ref["home-grown"]["source_profile_pack_ref"] is None
+    assert by_ref["home-grown"]["source_pack_latest_version"] is None
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:
