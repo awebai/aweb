@@ -34,8 +34,18 @@ def _skills_dir() -> Path:
     return _SKILLS_DIR
 
 
+_COPY_BTN = (
+    '<button class="copy-btn" type="button" aria-label="Copy command">'
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
+    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>'
+)
+
+
 def render_landing_page(*, public_origin: str) -> str:
     origin = escape(public_origin.rstrip("/"), quote=True)
+    copy = _COPY_BTN
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -133,26 +143,25 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>Install aw, add library, adopt a profile</h2>
-          <p>You need <code>aw</code>, the aweb command-line tool — that is the only thing to install. library plugs into it. Browsing the catalog needs no identity; adopting a profile is signed by your AWID team certificate.</p>
+          <h2>Install aw, create a team, run agents from profiles</h2>
+          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; from step 4 on, each command is signed by the team certificate you create in that step.</p>
         </div>
         <div class="cmd-panel">
           <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
-          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre></div></div>
-          <p class="cmd-label">2 · Add library — its operations become native aw library verbs</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div></div>
+          <p class="cmd-label">2 · Add the library naapp — its operations become native aw library verbs</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
           <p class="cmd-label">3 · Browse the public catalog — no identity needed</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre></div></div>
-          <p class="cmd-label">4 · Adopt a profile onto your team's shelf</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --source_profile_pack_version 0.1.0 --profile_ref coordinator</pre></div></div>
-          <p class="cmd-label">5 · Review your shelf, and which profiles have upstream updates</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre>{copy}</div></div>
+          <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
+          <p class="cmd-label">5 · Add an agent from a profile — adopt, bind, and materialize in one <span class="pill wait">coming · aw .3.5</span></p>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add coordinator@aweb.engineering-pack/coordinator</pre>{copy}</div></div>
+          <p class="cmd-label">6 · Start it working <span class="pill wait">coming · aw .3.5</span></p>
+          <div class="cmd-list"><div class="cmd"><pre>aw agent start coordinator</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">Steps 4 and 5 sign with your team certificate. Versioning, proposals, and update-from-source are native <code>aw library</code> verbs too.</p>
-        <p class="prose-outro">Turning a shelf profile into a running agent — adopt, bind, and materialize in one command — is <strong>coming in aw .3.5</strong>:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw team add coordinator@aweb.engineering-pack/coordinator</pre></div></div>
-        </div>
+        <p class="prose-intro">Steps 1–4 are the working path; steps 5 and 6 — turning a profile into a running agent — are coming in aw .3.5.</p>
+        <p class="prose-outro">Under the hood, <code>aw team add</code> composes the raw library operations — adopt (<code>aw library import-to-shelf</code>), bind, and materialize. You can call each directly: every library operation is a native <code>aw library</code> verb, and <code>aw library shelf</code> shows your working set and which profiles have upstream updates.</p>
         <p class="prose-outro">Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
       </div>
     </section>
@@ -223,6 +232,16 @@ def render_landing_page(*, public_origin: str) -> str:
       el.setAttribute('data-theme', next);
       try {{ localStorage.setItem('aweb-theme', next); }} catch (e) {{}}
     }}
+    Array.prototype.forEach.call(document.querySelectorAll('.cmd .copy-btn'), function (button) {{
+      button.addEventListener('click', function () {{
+        var pre = button.parentElement.querySelector('pre');
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {{
+          button.classList.add('copied');
+          setTimeout(function () {{ button.classList.remove('copied'); }}, 1600);
+        }});
+      }});
+    }});
   </script>
 </body>
 </html>"""
