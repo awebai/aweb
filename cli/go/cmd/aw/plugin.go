@@ -763,64 +763,16 @@ func firstNonFlagArg(args []string) (string, int) {
 	return "", -1
 }
 
+type installedManifestToolResult struct {
+	Status int
+	Body   []byte
+}
+
 func dispatchInstalledManifestPlugin(name string, args []string) (int, bool) {
-	dir, err := pluginDir()
-	if err != nil {
-		debugLog("resolve plugin dir: %v", err)
+	result, exists, err := executeInstalledManifestTool(name, args)
+	if !exists {
 		return 0, false
 	}
-	manifestPath := manifestPluginManifestPath(dir, name)
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, false
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1, true
-	}
-	var manifest appmanifest.Manifest
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&manifest); err != nil {
-		fmt.Fprintf(os.Stderr, "decode manifest %s: %v\n", manifestPath, err)
-		return 1, true
-	}
-	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
-		fmt.Fprintf(os.Stderr, "missing verb for app %q\n", name)
-		return 1, true
-	}
-	verb := strings.TrimSpace(args[0])
-	parsedArgs, rawBody, err := parseManifestDispatchArgs(args[1:])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1, true
-	}
-	spec, err := appmanifest.Interpret(appmanifest.InterpretRequest{
-		Manifest:      manifest,
-		Verb:          verb,
-		Args:          parsedArgs,
-		RawBody:       rawBody,
-		ReservedNames: reservedRootCommandNames(),
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1, true
-	}
-	identity, err := resolveLocalSigningIdentity()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1, true
-	}
-	parsedURL, err := url.Parse(spec.URL)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1, true
-	}
-	headers := make(http.Header)
-	for key, value := range spec.Headers {
-		headers.Set(key, value)
-	}
-	result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
@@ -833,6 +785,63 @@ func dispatchInstalledManifestPlugin(name string, args []string) (int, bool) {
 		return 1, true
 	}
 	return 0, true
+}
+
+func executeInstalledManifestTool(name string, args []string) (*installedManifestToolResult, bool, error) {
+	dir, err := pluginDir()
+	if err != nil {
+		debugLog("resolve plugin dir: %v", err)
+		return nil, false, nil
+	}
+	manifestPath := manifestPluginManifestPath(dir, name)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, true, err
+	}
+	var manifest appmanifest.Manifest
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&manifest); err != nil {
+		return nil, true, fmt.Errorf("decode manifest %s: %w", manifestPath, err)
+	}
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return nil, true, fmt.Errorf("missing verb for app %q", name)
+	}
+	verb := strings.TrimSpace(args[0])
+	parsedArgs, rawBody, err := parseManifestDispatchArgs(args[1:])
+	if err != nil {
+		return nil, true, err
+	}
+	spec, err := appmanifest.Interpret(appmanifest.InterpretRequest{
+		Manifest:      manifest,
+		Verb:          verb,
+		Args:          parsedArgs,
+		RawBody:       rawBody,
+		ReservedNames: reservedRootCommandNames(),
+	})
+	if err != nil {
+		return nil, true, err
+	}
+	identity, err := resolveLocalSigningIdentity()
+	if err != nil {
+		return nil, true, err
+	}
+	parsedURL, err := url.Parse(spec.URL)
+	if err != nil {
+		return nil, true, err
+	}
+	headers := make(http.Header)
+	for key, value := range spec.Headers {
+		headers.Set(key, value)
+	}
+	result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
+	if err != nil {
+		return nil, true, err
+	}
+	return &installedManifestToolResult{Status: result.Status, Body: result.Body}, true, nil
 }
 
 func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {

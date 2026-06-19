@@ -208,6 +208,20 @@
           }
         }
       ]
+    },
+    {
+      "name": "library-main-2026-06-19",
+      "origin_url": "https://library.aweb.ai/.well-known/aweb-app.json",
+      "source_commit": "library@5125ab8:src/library/aweb-app.json",
+      "manifest_path": "library/aweb-app.json",
+      "sha256": "fe286edd11e449f4e242494ff049383081df6c98e7325ab818c2eb77857fedf5",
+      "reserved_names": [
+        "id",
+        "whoami",
+        "introspect",
+        "plugin"
+      ],
+      "interpretation_cases": []
     }
   ]
 }

@@ -14,11 +14,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/appmanifest"
 )
 
 func TestReservedAppIDsArtifactMatchesLiveCobraReservedNames(t *testing.T) {
@@ -583,6 +585,150 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 	if !sawSignedPayload {
 		t.Fatal("app endpoint was not called with signed payload")
 	}
+}
+
+func TestLibraryManifestFixtureConformsAndDeclaresExpectedTools(t *testing.T) {
+	data := readLibraryManifestFixtureForTest(t)
+	sum := sha256.Sum256(data)
+	if got, want := fmt.Sprintf("%x", sum), "fe286edd11e449f4e242494ff049383081df6c98e7325ab818c2eb77857fedf5"; got != want {
+		t.Fatalf("library manifest fixture sha256=%s want %s", got, want)
+	}
+	var manifest appmanifest.Manifest
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&manifest); err != nil {
+		t.Fatalf("decode library manifest fixture: %v", err)
+	}
+	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
+		t.Fatalf("library manifest does not validate: %v", err)
+	}
+	if manifest.App.ID != "library" || manifest.App.Origin != "https://library.aweb.ai" {
+		t.Fatalf("unexpected app identity: %#v", manifest.App)
+	}
+	got := make([]string, 0, len(manifest.Tools))
+	for _, tool := range manifest.Tools {
+		got = append(got, tool.Name)
+	}
+	sort.Strings(got)
+	want := []string{"approve", "bind", "create-shelf-profile", "get-binding", "get-pack", "get-profile", "import-to-shelf", "list-packs", "materialize", "proposals", "propose", "publish-pack", "publish-profile", "register", "reject", "set-pack-tags", "set-profile-tags", "shelf", "shelf-version", "update-from-source"}
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("library manifest tools got %v want %v", got, want)
+	}
+}
+
+func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+
+	manifestBytes := readLibraryManifestFixtureForTest(t)
+	var sawListPacks, sawImportToShelf bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/aweb-app.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(rewriteLibraryManifestOriginForTest(t, manifestBytes, serverOriginForTest(r)))
+		case "/v1/profile-packs":
+			if r.Method != http.MethodGet {
+				t.Fatalf("list-packs method=%s", r.Method)
+			}
+			sawListPacks = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"pack_ref":"aweb.engineering-pack","version":"0.1.0"}]`))
+		case "/v1/shelf/import":
+			if r.Method != http.MethodPost {
+				t.Fatalf("import-to-shelf method=%s", r.Method)
+			}
+			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWEB-Signed-Payload") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
+				t.Fatalf("missing team-auth headers for import-to-shelf: %#v", r.Header)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["source_profile_pack_ref"] != "aweb.engineering-pack" || body["profile_ref"] != "developer" {
+				t.Fatalf("unexpected import-to-shelf body: %#v", body)
+			}
+			sawImportToShelf = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"profile_ref":"developer","version":"0.1.0","digest":"sha256:dev","source_profile_pack_ref":"aweb.engineering-pack","source_profile_pack_version":"0.1.0","source_profile_pack_digest":"sha256:pack","created":true}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
+
+	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+	install.Dir = tmp
+	install.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("library plugin install failed: %v\n%s", err, string(out))
+	}
+
+	list := exec.CommandContext(ctx, bin, "library", "list-packs")
+	list.Dir = tmp
+	list.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	listOut, err := list.CombinedOutput()
+	if err != nil {
+		t.Fatalf("library list-packs failed: %v\n%s", err, string(listOut))
+	}
+	if !strings.Contains(string(listOut), "aweb.engineering-pack") {
+		t.Fatalf("list-packs output missing pack: %s", string(listOut))
+	}
+
+	adopt := exec.CommandContext(ctx, bin, "library", "import-to-shelf", "--source_profile_pack_ref", "aweb.engineering-pack", "--profile_ref", "developer")
+	adopt.Dir = tmp
+	adopt.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	adoptOut, err := adopt.CombinedOutput()
+	if err != nil {
+		t.Fatalf("library import-to-shelf failed: %v\n%s", err, string(adoptOut))
+	}
+	if !strings.Contains(string(adoptOut), `"profile_ref":"developer"`) {
+		t.Fatalf("import-to-shelf output missing profile: %s", string(adoptOut))
+	}
+	if !sawListPacks || !sawImportToShelf {
+		t.Fatalf("library fixture calls missing: list=%t import=%t", sawListPacks, sawImportToShelf)
+	}
+}
+
+func readLibraryManifestFixtureForTest(t *testing.T) []byte {
+	t.Helper()
+	path := filepath.Join(cmdMonorepoRootForTest(t), "test-vectors", "app-manifests", "library", "aweb-app.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func rewriteLibraryManifestOriginForTest(t *testing.T, data []byte, origin string) []byte {
+	t.Helper()
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	app, ok := manifest["app"].(map[string]any)
+	if !ok {
+		t.Fatal("library manifest app is not an object")
+	}
+	app["origin"] = origin
+	out, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) {
