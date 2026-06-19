@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from library.auth import Principal
+from library.digest import PROFILE_PAYLOAD_SCHEMA
 from library.models import (
     MaterializeRequest,
     ProfileBindingRequest,
@@ -788,6 +789,12 @@ async def materialize(
 # --- Proposals (lifecycle only; minting deferred) -----------------------------
 
 
+_PROPOSAL_COLUMNS = (
+    "proposal_id, target, profile_ref, profile_version, base_profile_version,"
+    " base_profile_digest, status, content, summary, rationale, created_by_alias, created_at"
+)
+
+
 def _proposal_row(row: Any) -> dict[str, Any]:
     data = dict(row)
     return {
@@ -795,8 +802,12 @@ def _proposal_row(row: Any) -> dict[str, Any]:
         "target": data["target"],
         "profile_ref": data.get("profile_ref"),
         "profile_version": data.get("profile_version"),
+        "base_profile_version": data.get("base_profile_version"),
+        "base_profile_digest": data.get("base_profile_digest"),
         "status": data["status"],
         "content": _json_value(data.get("content")) or {},
+        "summary": data.get("summary"),
+        "rationale": data.get("rationale"),
         "created_by_alias": data.get("created_by_alias"),
         "created_at": data.get("created_at"),
     }
@@ -804,8 +815,8 @@ def _proposal_row(row: Any) -> dict[str, Any]:
 
 async def _get_proposal(db: AsyncDatabaseManager, team_id: str, proposal_id: UUID) -> dict[str, Any]:
     row = await db.fetch_one(
-        "SELECT proposal_id, target, profile_ref, profile_version, status, content, created_by_alias, created_at"
-        " FROM {{tables.proposals}} WHERE team_id = $1 AND proposal_id = $2",
+        "SELECT " + _PROPOSAL_COLUMNS + " FROM {{tables.proposals}}"
+        " WHERE team_id = $1 AND proposal_id = $2",
         team_id,
         proposal_id,
     )
@@ -820,14 +831,19 @@ async def create_proposal(
     proposal_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.proposals}}"
-        " (proposal_id, team_id, target, profile_ref, profile_version, content, created_by_alias)"
-        " VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)",
+        " (proposal_id, team_id, target, profile_ref, profile_version, base_profile_version,"
+        "  base_profile_digest, content, summary, rationale, created_by_alias)"
+        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)",
         proposal_id,
         principal.team_id,
         request.target,
         request.profile_ref,
         request.profile_version,
+        request.base_profile_version,
+        request.base_profile_digest,
         _dumps(request.content),
+        request.summary,
+        request.rationale,
         principal.alias,
     )
     return await _get_proposal(db, principal.team_id, proposal_id)
@@ -835,8 +851,8 @@ async def create_proposal(
 
 async def list_proposals(db: AsyncDatabaseManager, *, principal: Principal) -> list[dict[str, Any]]:
     rows = await db.fetch_all(
-        "SELECT proposal_id, target, profile_ref, profile_version, status, content, created_by_alias, created_at"
-        " FROM {{tables.proposals}} WHERE team_id = $1 ORDER BY created_at DESC",
+        "SELECT " + _PROPOSAL_COLUMNS + " FROM {{tables.proposals}}"
+        " WHERE team_id = $1 ORDER BY created_at DESC",
         principal.team_id,
     )
     return [_proposal_row(row) for row in rows]
@@ -865,8 +881,80 @@ async def _set_proposal_status(
     return await _get_proposal(db, principal.team_id, pid)
 
 
+async def _mint_from_proposal(
+    db: AsyncDatabaseManager, *, principal: Principal, proposal: dict[str, Any]
+) -> dict[str, Any]:
+    """Mint a new shelf-profile version from an approved profile proposal. The
+    proposal's recorded base must still be the shelf profile's latest version
+    (reject-if-stale), guarding against minting from a raced base. The minted version
+    is local evolution, so the source-pack provenance and per-part baselines carry
+    from the base unchanged."""
+    profile_ref = proposal["profile_ref"]
+    if not profile_ref:
+        raise HTTPException(status_code=422, detail="profile proposal requires profile_ref")
+    content = proposal["content"]
+    if content.get("schema") not in (None, PROFILE_PAYLOAD_SCHEMA):
+        raise HTTPException(status_code=422, detail=f"proposal content schema must be {PROFILE_PAYLOAD_SCHEMA}")
+    try:
+        profile = parse_profile_payload(content.get("files") or [])
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid proposal content: {exc}") from exc
+    if profile.profile_ref != profile_ref:
+        raise HTTPException(status_code=422, detail="proposal content profile.yaml id must match profile_ref")
+
+    prior = await db.fetch_one(
+        "SELECT version, digest, tags, source_profile_pack_ref, source_profile_pack_version,"
+        " source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest,"
+        " part_baselines FROM {{tables.shelf_profiles}}"
+        " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
+        principal.team_id,
+        profile_ref,
+    )
+    if prior is None:
+        raise HTTPException(status_code=404, detail="Shelf profile not found")
+    if proposal["base_profile_digest"] != prior["digest"]:
+        raise HTTPException(
+            status_code=409, detail="Proposal base is stale; the shelf profile has a newer version"
+        )
+    if profile.version == prior["version"]:
+        raise HTTPException(status_code=422, detail="minted version must differ from the base version")
+
+    await _upsert_shelf_profile(
+        db,
+        team_id=principal.team_id,
+        profile=profile,
+        tags=list(prior["tags"] or []),
+        source_profile_pack_ref=prior["source_profile_pack_ref"],
+        source_profile_pack_version=prior["source_profile_pack_version"],
+        source_profile_pack_digest=prior["source_profile_pack_digest"],
+        source_profile_ref=prior["source_profile_ref"],
+        source_profile_version=prior["source_profile_version"],
+        source_profile_digest=prior["source_profile_digest"],
+        part_baselines=_json_value(prior["part_baselines"]) or {},
+    )
+    return {
+        "profile_ref": profile.profile_ref,
+        "version": profile.version,
+        "digest": profile.digest,
+        "supersedes_profile_version": prior["version"],
+        "supersedes_profile_digest": prior["digest"],
+    }
+
+
 async def approve_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:
-    return await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="approved")
+    pid = _parse_proposal_id(proposal_id)
+    proposal = await _get_proposal(db, principal.team_id, pid)
+    if proposal["status"] != "open":
+        raise HTTPException(status_code=409, detail=f"Proposal is already {proposal['status']}")
+    # A profile proposal carrying content mints a new shelf version on approval;
+    # other proposals (and content-less ones) are lifecycle-only.
+    minted = None
+    if proposal["target"] == "profile" and proposal["content"].get("files"):
+        minted = await _mint_from_proposal(db, principal=principal, proposal=proposal)
+    result = await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="approved")
+    if minted is not None:
+        result["minted"] = minted
+    return result
 
 
 async def reject_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:

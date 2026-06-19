@@ -637,8 +637,12 @@ def test_register_bind_materialize_pack_copy_and_proposals(
             "target",
             "profile_ref",
             "profile_version",
+            "base_profile_version",
+            "base_profile_digest",
             "status",
             "content",
+            "summary",
+            "rationale",
             "created_by_alias",
             "created_at",
         }
