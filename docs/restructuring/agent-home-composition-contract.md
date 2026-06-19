@@ -81,7 +81,9 @@ profile.) See §8.
 ## 4. `AGENTS.md` composition (exact)
 
 `AGENTS.md` is **constructed** from the profile in the fixed section order
-below. It is never a verbatim copy of `instructions.md`.
+below. It is never a verbatim copy of `instructions.md`. The source profile is
+the team's **private shelf** copy (the bound profile), not a public pack profile
+— pack profiles are public snapshots; the home is built from the shelf copy.
 
 Template (sections in this order):
 
@@ -138,7 +140,10 @@ Rendering rules (for byte-exactness; fixtures in §9 are the arbiter):
    Memory and learning. Optional sections (Apps you use, Actions requiring human
    approval, Skills) are **omitted entirely** (header included) when their source
    list is empty — no empty headers.
-6. The provenance line (`> Profile …`) is always present.
+6. The provenance line is always present, in one of two forms. Adopted from a
+   source pack: `> Profile {id} v{version} · pack {pack_id} v{pack_version}`.
+   Created directly on the shelf (no source pack — a created or forked variant):
+   `> Profile {id} v{version} · created`. The fixtures pin both forms.
 
 ## 5. Harness body file + symlink
 
@@ -202,8 +207,15 @@ Binding a profile later runs the full composition above. (Juan invariant.)
 Byte-exact `expected/materialized-home/<id>/` fixtures for the engineering pack
 (`coordinator`, `developer`, `reviewer`): the composed `AGENTS.md`, the
 `CLAUDE.md` symlink, the installed `skills/` and `artifacts/`, and the full
-`.aw/profile/`. Go materialize must reproduce these byte-for-byte. These
-fixtures, not this prose, are the final arbiter of the exact composition.
+`.aw/profile/`.
+
+These fixtures are the **shared cross-lane byte-parity vector**: both Library
+(Python, `POST /v1/materialize`) and aw (Go, local materialize) reproduce them
+byte-for-byte — the same discipline as the digest vector, one shared vector. The
+aw lane lands the updated materialized-home fixture **first**; both sides then
+reproduce it. This fixture **supersedes** the prior `.2.9` materialized-home
+(verbatim `instructions.md` + `ref.json` only). These fixtures, not this prose,
+are the final arbiter of the exact composition.
 
 ## 10. Tasks
 
