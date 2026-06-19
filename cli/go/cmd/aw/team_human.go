@@ -181,6 +181,9 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if teamHumanCreateHosted && teamHumanCreateSelfHost {
 		return usageError("--hosted and --self-host are mutually exclusive")
 	}
+	if !teamHumanCreateHosted && !teamHumanCreateSelfHost {
+		return usageError("one of --hosted or --self-host is required")
+	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("team create does not use --namespace or --registry unless --byot is set")
 	}
@@ -207,7 +210,8 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	var result connectOutput
 	mode := "new_local_team"
-	if apiKey := resolveInitAPIKey(); apiKey != "" {
+	if teamHumanCreateHosted {
+		apiKey := resolveInitAPIKey()
 		awebURL, err := resolveAPIKeyInitAwebURL()
 		if err != nil {
 			return err

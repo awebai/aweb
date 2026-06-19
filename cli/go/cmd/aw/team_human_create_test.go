@@ -45,6 +45,7 @@ func TestTeamCreateWithAPIKeyUsesExistingTeamAndRegistersWhenBound(t *testing.T)
 	resetTeamCreateTestState(t)
 	t.Setenv("AWEB_API_KEY", "test-key")
 	teamHumanCreateName = "eng"
+	teamHumanCreateHosted = true
 	teamHumanCreateProfiles = []string{"developer@0.1.0:2", "reviewer@0.1.0:1"}
 	var gotAPI *apiKeyInitRequest
 	teamHumanCreateAPIKeyInit = func(req apiKeyInitRequest) (connectOutput, error) {
@@ -72,6 +73,18 @@ func TestTeamCreateWithAPIKeyUsesExistingTeamAndRegistersWhenBound(t *testing.T)
 	}
 	if !strings.Contains(out.String(), "developer@0.1.0 x2") || !strings.Contains(out.String(), "Library registration: deferred_until_library_contract") {
 		t.Fatalf("output=%s", out.String())
+	}
+}
+
+func TestTeamCreateRequiresExplicitHostedOrSelfHost(t *testing.T) {
+	resetTeamCreateTestState(t)
+	teamHumanCreateName = "eng"
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	err := runTeamHumanCreate(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "one of --hosted or --self-host is required") {
+		t.Fatalf("error=%v", err)
 	}
 }
 
