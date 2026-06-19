@@ -104,6 +104,9 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err != nil {
 			return fmt.Errorf("library import-to-shelf: %w", err)
 		}
+		if err := validateFetchedProfileMatchesImport(selector, profile, imported); err != nil {
+			return err
+		}
 		if err := callLibraryBind(strings.TrimSpace(agentID), imported); err != nil {
 			return fmt.Errorf("library bind: %w", err)
 		}
@@ -162,6 +165,44 @@ func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDeta
 		out.PackVersion = selector.SourceProfilePackVersion
 	}
 	return &out, nil
+}
+
+func validateFetchedProfileMatchesImport(selector libraryProfileSelector, profile *libraryProfileDetailResponse, imported *libraryImportToShelfResponse) error {
+	if profile == nil || imported == nil {
+		return fmt.Errorf("library profile source and import result are required")
+	}
+	checks := []struct {
+		field string
+		got   string
+		want  string
+	}{
+		{field: "pack_ref", got: profile.PackRef, want: imported.SourceProfilePackRef},
+		{field: "profile_ref", got: profile.ProfileRef, want: imported.ProfileRef},
+		{field: "profile_version", got: profile.Version, want: imported.Version},
+		{field: "profile_digest", got: profile.Digest, want: imported.Digest},
+	}
+	if strings.TrimSpace(imported.SourceProfilePackVersion) != "" {
+		checks = append(checks, struct {
+			field string
+			got   string
+			want  string
+		}{field: "pack_version", got: profile.PackVersion, want: imported.SourceProfilePackVersion})
+	}
+	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
+		checks = append(checks, struct {
+			field string
+			got   string
+			want  string
+		}{field: "selector_pack_version", got: profile.PackVersion, want: selector.SourceProfilePackVersion})
+	}
+	for _, check := range checks {
+		got := strings.TrimSpace(check.got)
+		want := strings.TrimSpace(check.want)
+		if got == "" || want == "" || got != want {
+			return fmt.Errorf("library get-profile/import mismatch for %s: fetched %q, imported %q", check.field, got, want)
+		}
+	}
+	return nil
 }
 
 func chooseLibraryRuntimeKind(assumptions []string) string {

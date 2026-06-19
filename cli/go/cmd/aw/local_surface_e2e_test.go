@@ -106,6 +106,9 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("AW_CONFIG_PATH", "")
 
+	files := testLibraryProfilePayloadFiles()
+	profileDigest := testLibraryProfilePayloadDigest(t, files)
+
 	var importCalls, bindCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -144,19 +147,16 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				"pack_version":        "0.1.0",
 				"profile_ref":         "coordinator",
 				"version":             "0.1.0",
-				"digest":              "sha256:coord",
+				"digest":              profileDigest,
 				"runtime_assumptions": []string{"local shell"},
-				"files": []map[string]any{
-					{"path": "profile.yaml", "content_utf8": "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
-					{"path": "instructions.md", "content_utf8": "Coordinate.\n"},
-				},
+				"files":               files,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
 			importCalls++
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("import-to-shelf missing signed headers")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": "sha256:coord", "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": true})
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": true})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
 			bindCalls++
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {

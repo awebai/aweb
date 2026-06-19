@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/profilepack"
 )
 
 func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t *testing.T) {
@@ -24,6 +26,9 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
 	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
 
+	files := testLibraryProfilePayloadFiles()
+	profileDigest := testLibraryProfilePayloadDigest(t, files)
+
 	var importBody, bindBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -36,12 +41,9 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 				"pack_version":        "0.1.0",
 				"profile_ref":         "coordinator",
 				"version":             "0.1.0",
-				"digest":              "sha256:profile",
+				"digest":              profileDigest,
 				"runtime_assumptions": []string{"local shell"},
-				"files": []map[string]any{
-					{"path": "profile.yaml", "content_utf8": "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
-					{"path": "instructions.md", "content_utf8": "Coordinate.\n"},
-				},
+				"files":               files,
 			})
 		case "/v1/shelf/import":
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
@@ -53,7 +55,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"profile_ref":                 "coordinator",
 				"version":                     "0.1.0",
-				"digest":                      "sha256:profile",
+				"digest":                      profileDigest,
 				"source_profile_pack_ref":     "aweb.engineering-pack",
 				"source_profile_pack_version": "0.1.0",
 				"source_profile_pack_digest":  "sha256:pack",
@@ -66,7 +68,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 			if err := json.NewDecoder(r.Body).Decode(&bindBody); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "coordinator", "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": "sha256:profile"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "coordinator", "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": profileDigest})
 		case "/v1/materialize":
 			t.Fatalf("server materialize must not be called in local-compose flow")
 		default:
@@ -93,12 +95,97 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	if importBody["source_profile_pack_ref"] != "aweb.engineering-pack" || importBody["source_profile_pack_version"] != "0.1.0" || importBody["profile_ref"] != "coordinator" {
 		t.Fatalf("import body=%#v", importBody)
 	}
-	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.1.0" || bindBody["profile_digest"] != "sha256:profile" {
+	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.1.0" || bindBody["profile_digest"] != profileDigest {
 		t.Fatalf("bind body=%#v", bindBody)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".aw", "profile", "profile.yaml")); err != nil {
 		t.Fatalf("materialized .aw/profile/profile.yaml missing: %v", err)
 	}
+}
+
+func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+
+	var bindCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"pack_ref":            "aweb.engineering-pack",
+				"pack_version":        "0.2.0",
+				"profile_ref":         "coordinator",
+				"version":             "0.2.0",
+				"digest":              "sha256:latest",
+				"runtime_assumptions": []string{"local shell"},
+				"files":               testLibraryProfilePayloadFiles(),
+			})
+		case "/v1/shelf/import":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profile_ref":                 "coordinator",
+				"version":                     "0.1.0",
+				"digest":                      "sha256:pinned",
+				"source_profile_pack_ref":     "aweb.engineering-pack",
+				"source_profile_pack_version": "0.1.0",
+				"source_profile_pack_digest":  "sha256:pack",
+				"created":                     false,
+			})
+		case "/v1/agents/coordinator/profile-binding":
+			bindCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			t.Fatalf("unexpected library request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLibraryManifestPluginForTest(t, home, server.URL)
+
+	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator@0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+	if err == nil || !strings.Contains(err.Error(), "get-profile/import mismatch") {
+		t.Fatalf("error=%v", err)
+	}
+	if bindCalled {
+		t.Fatalf("bind called despite fetched/import mismatch")
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".aw", "profile", "profile.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("profile written despite fetched/import mismatch: %v", statErr)
+	}
+}
+
+func testLibraryProfilePayloadFiles() []profilepack.LibraryProfilePayloadFile {
+	return []profilepack.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
+	}
+}
+
+func testLibraryProfilePayloadDigest(t *testing.T, files []profilepack.LibraryProfilePayloadFile) string {
+	t.Helper()
+	result, err := profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      t.TempDir(),
+		PackRef:        "aweb.engineering-pack",
+		PackVersion:    "0.1.0",
+		ProfileRef:     "coordinator",
+		ProfileVersion: "0.1.0",
+		RuntimeKind:    "local-shell",
+		Files:          files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.ProfileDigest
 }
 
 func writeLibraryManifestPluginForTest(t *testing.T, home, origin string) {

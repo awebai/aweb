@@ -359,15 +359,17 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
+	profile, ok := findProfile(pack, opts.ProfileRef)
+	if !ok {
+		return nil, fmt.Errorf("profile %q not found in library payload", opts.ProfileRef)
+	}
+	if strings.TrimSpace(opts.ProfileDigest) != "" && strings.TrimSpace(opts.ProfileDigest) != profile.Digest {
+		return nil, fmt.Errorf("library profile payload digest mismatch: fetched files digest %s, expected %s", profile.Digest, strings.TrimSpace(opts.ProfileDigest))
+	}
 	pack.Source.Kind = "library_profile_payload"
 	pack.Source.DigestScope = DigestScopeLocalImportPayload
 	if strings.TrimSpace(opts.PackDigest) != "" {
 		pack.Source.Digest = strings.TrimSpace(opts.PackDigest)
-	}
-	for i := range pack.LoadedProfiles {
-		if pack.LoadedProfiles[i].ID == opts.ProfileRef && strings.TrimSpace(opts.ProfileDigest) != "" {
-			pack.LoadedProfiles[i].Digest = strings.TrimSpace(opts.ProfileDigest)
-		}
 	}
 	return materializeLoadedProfile(pack, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind)
 }
