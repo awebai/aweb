@@ -186,11 +186,11 @@ async def publish_profile(
     a library-generated pack.yaml and an accumulating profile set. The pack digest
     is the import-payload.v1 digest of the generated files; the published profile
     keeps the digest it had on the shelf."""
-    existing_pack_ref = request.target.existing_pack_ref
-    new_pack = request.target.new_pack
+    existing_pack_ref = request.target_pack_ref
+    new_pack = request.new_pack
     if bool(existing_pack_ref) == bool(new_pack):
         raise HTTPException(
-            status_code=422, detail="target must set exactly one of existing_pack_ref or new_pack"
+            status_code=422, detail="exactly one of target_pack_ref or new_pack is required"
         )
 
     version = request.profile_version

@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from library.digest import collect_files
-from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest, PublishTarget
+from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest
 from library.profile_pack import parse_profile_payload, part_baselines
 from library.repository import (
     import_to_shelf,
@@ -164,16 +164,14 @@ async def test_publish_profile_rejects_ambiguous_target() -> None:
     # any DB use, so the db is never touched.
     both = ProfilePublishRequest(
         pack_version="1.0.0",
-        target=PublishTarget(
-            existing_pack_ref="my-team.starter",
-            new_pack=NewPackTarget(pack_ref="my-team.starter", name="Starter"),
-        ),
+        target_pack_ref="my-team.starter",
+        new_pack=NewPackTarget(pack_ref="my-team.starter", name="Starter"),
     )
     with pytest.raises(HTTPException) as excinfo:
         await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=both)
     assert excinfo.value.status_code == 422
 
-    neither = ProfilePublishRequest(pack_version="1.0.0", target=PublishTarget())
+    neither = ProfilePublishRequest(pack_version="1.0.0")
     with pytest.raises(HTTPException) as excinfo:
         await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=neither)
     assert excinfo.value.status_code == 422

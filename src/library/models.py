@@ -58,19 +58,13 @@ class NewPackTarget(BaseModel):
     missions: list[str] = Field(default_factory=list)
 
 
-class PublishTarget(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    existing_pack_ref: str | None = Field(default=None, max_length=240)
-    new_pack: NewPackTarget | None = Field(default=None)
-
-
 class ProfilePublishRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     profile_version: str | None = Field(default=None, max_length=80)
     pack_version: str = Field(..., min_length=1, max_length=80)
-    target: PublishTarget
+    target_pack_ref: str | None = Field(default=None, max_length=240)
+    new_pack: NewPackTarget | None = Field(default=None)
 
 
 class ProposalCreateRequest(BaseModel):
