@@ -15,11 +15,9 @@ from library.config import Settings
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 _EXPECTED_TOOLS = {
-    "import",
+    "publish-pack",
     "register",
-    "set-profile-visibility",
     "set-profile-tags",
-    "set-pack-visibility",
     "set-pack-tags",
     "bind",
     "get-binding",
@@ -32,11 +30,9 @@ _EXPECTED_TOOLS = {
 
 # Mutation flag per SoT §9: true iff a successful call is a hosted state change.
 _MUTATIONS = {
-    "import": True,
+    "publish-pack": True,
     "register": True,
-    "set-profile-visibility": True,
     "set-profile-tags": True,
-    "set-pack-visibility": True,
     "set-pack-tags": True,
     "bind": True,
     "get-binding": False,

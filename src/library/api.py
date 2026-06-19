@@ -16,27 +16,24 @@ from library.models import (
     ProfileBindingRequest,
     ProposalCreateRequest,
     SetTagsRequest,
-    SetVisibilityRequest,
     TeamRegisterRequest,
 )
 from library.repository import (
     approve_proposal,
     create_proposal,
-    get_profile,
     get_profile_binding,
     get_profile_pack,
-    import_profile_pack,
+    get_shelf_profile,
     list_profile_packs,
-    list_profiles,
     list_proposals,
+    list_shelf_profiles,
     materialize,
+    publish_pack,
     register_team,
     reject_proposal,
     set_pack_tags,
-    set_pack_visibility,
     set_profile_binding,
     set_profile_tags,
-    set_profile_visibility,
 )
 from library.surfaces import (
     llms_txt,
@@ -85,21 +82,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cache: Annotated[AWIDTeamCache, Depends(team_cache)],
     ) -> Principal:
         return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
-
-    async def optional_principal(
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-        cache: Annotated[AWIDTeamCache, Depends(team_cache)],
-    ) -> Principal | None:
-        # Public catalog reads: no certificate -> public only; a presented (and
-        # valid) certificate adds the caller team's private records. An invalid
-        # certificate still fails closed.
-        if not (request.headers.get("Authorization") or request.headers.get("authorization")):
-            return None
-        return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
-
-    def _team_id(actor: Principal | None) -> str | None:
-        return actor.team_id if actor is not None else None
 
     # --- Public, no-auth surfaces -------------------------------------------------
 
@@ -152,40 +134,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "library"}
 
-    # --- Public catalog reads (public records always; caller team's private when
-    #     a certificate is presented; optional ?tags filter) -----------------------
+    # --- Public catalog: packs are always public; ?tags filter -------------------
 
     @app.get("/v1/profile-packs")
     async def list_profile_packs_route(
-        actor: Annotated[Principal | None, Depends(optional_principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
         tags: Annotated[list[str] | None, Query()] = None,
     ) -> list[dict]:
-        return await list_profile_packs(database, team_id=_team_id(actor), tags=tags)
+        return await list_profile_packs(database, tags=tags)
 
     @app.get("/v1/profile-packs/{pack_id}")
     async def get_profile_pack_route(
         pack_id: str,
-        actor: Annotated[Principal | None, Depends(optional_principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_profile_pack(database, team_id=_team_id(actor), pack_ref=pack_id)
+        return await get_profile_pack(database, pack_ref=pack_id)
+
+    # --- Team shelf reads (private; cert-gated) -----------------------------------
 
     @app.get("/v1/profiles")
-    async def list_profiles_route(
-        actor: Annotated[Principal | None, Depends(optional_principal)],
+    async def list_shelf_profiles_route(
+        actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
         tags: Annotated[list[str] | None, Query()] = None,
     ) -> list[dict]:
-        return await list_profiles(database, team_id=_team_id(actor), tags=tags)
+        return await list_shelf_profiles(database, principal=actor, tags=tags)
 
     @app.get("/v1/profiles/{profile_id}")
-    async def get_profile_route(
+    async def get_shelf_profile_route(
         profile_id: str,
-        actor: Annotated[Principal | None, Depends(optional_principal)],
+        actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_profile(database, team_id=_team_id(actor), profile_ref=profile_id)
+        return await get_shelf_profile(database, principal=actor, profile_ref=profile_id)
 
     # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a
@@ -201,13 +182,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
         return await register_team(database, principal=actor, owner=payload.owner, display_name=payload.display_name)
 
+    # publish-pack: a producer uploads/updates a PUBLIC pack (the former import,
+    # wire-unchanged: canonical import-payload -> import-return).
     @app.post("/v1/profile-packs/import")
-    async def import_profile_pack_route(
+    async def publish_pack_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await import_profile_pack(database, principal=actor, payload=await request.json())
+        return await publish_pack(database, principal=actor, payload=await request.json())
 
     @app.post("/v1/agents/{agent_id}/profile-binding")
     async def set_profile_binding_route(
@@ -236,19 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         materialize_request = MaterializeRequest.model_validate(await request.json())
         return await materialize(database, principal=actor, request=materialize_request)
 
-    # Mutable access/organization metadata (digest-unaffected).
-    @app.put("/v1/profiles/{profile_ref}/visibility")
-    async def set_profile_visibility_route(
-        profile_ref: str,
-        request: Request,
-        actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> dict:
-        payload = SetVisibilityRequest.model_validate(await request.json())
-        return await set_profile_visibility(
-            database, principal=actor, profile_ref=profile_ref, visibility=payload.visibility
-        )
-
+    # Mutable organizational tags (digest-unaffected); visibility is structural in v2.
     @app.put("/v1/profiles/{profile_ref}/tags")
     async def set_profile_tags_route(
         profile_ref: str,
@@ -258,18 +229,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
         return await set_profile_tags(database, principal=actor, profile_ref=profile_ref, tags=payload.tags)
-
-    @app.put("/v1/profile-packs/{pack_ref}/visibility")
-    async def set_pack_visibility_route(
-        pack_ref: str,
-        request: Request,
-        actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> dict:
-        payload = SetVisibilityRequest.model_validate(await request.json())
-        return await set_pack_visibility(
-            database, principal=actor, pack_ref=pack_ref, visibility=payload.visibility
-        )
 
     @app.put("/v1/profile-packs/{pack_ref}/tags")
     async def set_pack_tags_route(

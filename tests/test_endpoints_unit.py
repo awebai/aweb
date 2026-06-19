@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from library.models import MaterializeRequest
-from library.repository import materialize, normalize_tags, set_profile_visibility
+from library.repository import materialize, normalize_tags
 
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 
@@ -31,17 +31,6 @@ def test_normalize_tags_lowercases_trims_dedups_and_sorts() -> None:
         "github",
         "twitter",
     ]
-
-
-async def test_set_profile_visibility_rejects_invalid_value() -> None:
-    with pytest.raises(HTTPException) as excinfo:
-        await set_profile_visibility(
-            object(),  # never touched: validation fails first
-            principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
-            profile_ref="coordinator",
-            visibility="unlisted",
-        )
-    assert excinfo.value.status_code == 422
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:

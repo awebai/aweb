@@ -8,6 +8,8 @@ from library.config import Settings
 
 _TEAM_SCOPED = [
     ("POST", "/v1/profile-packs/import"),
+    ("GET", "/v1/profiles"),
+    ("GET", "/v1/profiles/coordinator"),
     ("POST", "/v1/agents/agent-1/profile-binding"),
     ("GET", "/v1/agents/agent-1/profile-binding"),
     ("POST", "/v1/materialize"),
@@ -71,15 +73,15 @@ def test_health_endpoints_are_public() -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_catalog_reads_are_unauthenticated() -> None:
+def test_public_pack_catalog_is_unauthenticated() -> None:
+    # Packs are the public catalog (no cert). Shelf reads (/v1/profiles) are
+    # private and cert-gated — covered by the team-scoped 401 cases above.
     app = _app()
     _override_infra_deps(app, db_value=_FakeDB())
     client = TestClient(app)
 
     assert client.get("/v1/profile-packs").json() == []
-    assert client.get("/v1/profiles").json() == []
     assert client.get("/v1/profile-packs/does-not-exist").status_code == 404
-    assert client.get("/v1/profiles/does-not-exist").status_code == 404
 
 
 @pytest.mark.parametrize("method,path", _TEAM_SCOPED)

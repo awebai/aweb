@@ -29,8 +29,8 @@ MANIFEST: dict[str, Any] = {
     },
     "tools": [
         {
-            "name": "import",
-            "description": "Import a profile pack. The body is the canonical import payload directly.",
+            "name": "publish-pack",
+            "description": "Publish or update a public profile pack. The body is the canonical import payload directly.",
             "method": "POST",
             "path": "/v1/profile-packs/import",
             "input_schema": {
@@ -70,27 +70,6 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
-            "name": "set-profile-visibility",
-            "description": "Set a profile's visibility (public or private).",
-            "method": "PUT",
-            "path": "/v1/profiles/{profile_ref}/visibility",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "profile_ref": {"type": "string"},
-                    "visibility": {"type": "string"},
-                },
-                "required": ["profile_ref", "visibility"],
-            },
-            "params": [
-                {"name": "profile_ref", "in": "path"},
-                {"name": "visibility", "in": "body"},
-            ],
-            "body": {"mode": "json"},
-            "scopes": ["library:write"],
-            "mutation": True,
-        },
-        {
             "name": "set-profile-tags",
             "description": "Replace a profile's organizational tags.",
             "method": "PUT",
@@ -106,27 +85,6 @@ MANIFEST: dict[str, Any] = {
             "params": [
                 {"name": "profile_ref", "in": "path"},
                 {"name": "tags", "in": "body"},
-            ],
-            "body": {"mode": "json"},
-            "scopes": ["library:write"],
-            "mutation": True,
-        },
-        {
-            "name": "set-pack-visibility",
-            "description": "Set a profile pack's visibility (public or private).",
-            "method": "PUT",
-            "path": "/v1/profile-packs/{pack_ref}/visibility",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "pack_ref": {"type": "string"},
-                    "visibility": {"type": "string"},
-                },
-                "required": ["pack_ref", "visibility"],
-            },
-            "params": [
-                {"name": "pack_ref", "in": "path"},
-                {"name": "visibility", "in": "body"},
             ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],

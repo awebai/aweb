@@ -31,12 +31,6 @@ class MaterializeRequest(BaseModel):
     target: str = Field(..., pattern=r"^(local|custodial-mcp)$")
 
 
-class SetVisibilityRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    visibility: str = Field(..., pattern=r"^(public|private)$")
-
-
 class SetTagsRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

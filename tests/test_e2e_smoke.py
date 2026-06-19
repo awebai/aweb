@@ -461,17 +461,18 @@ def test_health_endpoints_are_public(library: RunningLibrary) -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_catalog_reads_need_no_auth(library: RunningLibrary) -> None:
+def test_public_pack_catalog_needs_no_auth(library: RunningLibrary) -> None:
+    # Packs are the public catalog.
     packs = httpx.get(f"{library.origin}/v1/profile-packs", timeout=10.0)
     assert packs.status_code == 200, packs.text
     assert packs.json() == []
     assert httpx.get(f"{library.origin}/v1/profile-packs/none", timeout=10.0).status_code == 404
-    assert httpx.get(f"{library.origin}/v1/profiles/none", timeout=10.0).status_code == 404
 
 
-def test_team_scoped_route_without_envelope_fails_closed(library_origin: str) -> None:
-    response = httpx.get(f"{library_origin}/v1/proposals", timeout=10.0)
-    assert response.status_code == 401, response.text
+def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str) -> None:
+    # The shelf is private: shelf reads + team writes require a certificate.
+    assert httpx.get(f"{library_origin}/v1/profiles", timeout=10.0).status_code == 401
+    assert httpx.get(f"{library_origin}/v1/proposals", timeout=10.0).status_code == 401
 
 
 def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
