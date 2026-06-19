@@ -25,6 +25,7 @@ var (
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
 	teamHumanAddLayoutOnly     bool
+	teamHumanAddEmptyAgent     = createAndAcceptTeamInviteForEmptyAgent
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 )
@@ -324,7 +325,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		if teamHumanAddLayoutOnly {
 			continue
 		}
-		accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+		accepted, err := teamHumanAddEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
 		if err != nil {
 			return err
 		}
