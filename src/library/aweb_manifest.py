@@ -30,15 +30,125 @@ MANIFEST: dict[str, Any] = {
     "tools": [
         {
             "name": "import",
-            "description": "Import a local or git profile pack into the team's library.",
+            "description": "Import a profile pack. The body is the canonical import payload directly.",
             "method": "POST",
             "path": "/v1/profile-packs/import",
             "input_schema": {
                 "type": "object",
-                "properties": {"pack": {"type": "object"}},
-                "required": ["pack"],
+                "properties": {
+                    "files": {"type": "array"},
+                    "schema": {"type": "string"},
+                },
+                "required": ["files", "schema"],
             },
-            "params": [{"name": "pack", "in": "body"}],
+            "params": [
+                {"name": "files", "in": "body"},
+                {"name": "schema", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "register",
+            "description": "Register the team with library (idempotent; team identified from the cert).",
+            "method": "POST",
+            "path": "/v1/team/register",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "owner": {"type": "string"},
+                    "display_name": {"type": "string"},
+                },
+            },
+            "params": [
+                {"name": "owner", "in": "body"},
+                {"name": "display_name", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "set-profile-visibility",
+            "description": "Set a profile's visibility (public or private).",
+            "method": "PUT",
+            "path": "/v1/profiles/{profile_ref}/visibility",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "profile_ref": {"type": "string"},
+                    "visibility": {"type": "string"},
+                },
+                "required": ["profile_ref", "visibility"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "visibility", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "set-profile-tags",
+            "description": "Replace a profile's organizational tags.",
+            "method": "PUT",
+            "path": "/v1/profiles/{profile_ref}/tags",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "profile_ref": {"type": "string"},
+                    "tags": {"type": "array"},
+                },
+                "required": ["profile_ref", "tags"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "tags", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "set-pack-visibility",
+            "description": "Set a profile pack's visibility (public or private).",
+            "method": "PUT",
+            "path": "/v1/profile-packs/{pack_ref}/visibility",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pack_ref": {"type": "string"},
+                    "visibility": {"type": "string"},
+                },
+                "required": ["pack_ref", "visibility"],
+            },
+            "params": [
+                {"name": "pack_ref", "in": "path"},
+                {"name": "visibility", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "set-pack-tags",
+            "description": "Replace a profile pack's organizational tags.",
+            "method": "PUT",
+            "path": "/v1/profile-packs/{pack_ref}/tags",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pack_ref": {"type": "string"},
+                    "tags": {"type": "array"},
+                },
+                "required": ["pack_ref", "tags"],
+            },
+            "params": [
+                {"name": "pack_ref", "in": "path"},
+                {"name": "tags", "in": "body"},
+            ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],
             "mutation": True,
