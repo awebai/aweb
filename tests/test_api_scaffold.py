@@ -10,6 +10,7 @@ _TEAM_SCOPED = [
     ("POST", "/v1/profile-packs/import"),
     ("POST", "/v1/shelf/import"),
     ("POST", "/v1/profiles/coordinator/publish"),
+    ("POST", "/v1/profiles/coordinator/update-from-source"),
     ("GET", "/v1/shelf"),
     ("GET", "/v1/profiles/coordinator"),
     ("POST", "/v1/agents/agent-1/profile-binding"),

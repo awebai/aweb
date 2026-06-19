@@ -46,6 +46,13 @@ class ImportToShelfRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class UpdateFromSourceRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    target_version: str = Field(..., min_length=1, max_length=80)
+    source_profile_pack_version: str | None = Field(default=None, max_length=80)
+
+
 class NewPackTarget(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
