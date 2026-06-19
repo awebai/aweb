@@ -39,6 +39,7 @@ type Tool struct {
 	Params      []Param        `json:"params"`
 	Body        Body           `json:"body,omitempty"`
 	Scopes      []string       `json:"scopes,omitempty"`
+	Auth        string         `json:"auth,omitempty"`
 	Mutation    bool           `json:"mutation"`
 }
 
@@ -74,6 +75,7 @@ type InterpretedRequest struct {
 	Body       []byte            `json:"-"`
 	BodyString string            `json:"body"`
 	BodySHA256 string            `json:"body_sha256"`
+	Auth       string            `json:"auth,omitempty"`
 	Mutation   bool              `json:"mutation"`
 }
 
@@ -100,6 +102,20 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeToolAuth(tool Tool) (string, error) {
+	auth := strings.TrimSpace(tool.Auth)
+	if auth == "" {
+		return "team-cert", nil
+	}
+	if auth != "none" {
+		return "", fmt.Errorf("tool %q has unsupported auth %q", tool.Name, tool.Auth)
+	}
+	if tool.Mutation {
+		return "", fmt.Errorf("tool %q cannot use auth:none for a mutation", tool.Name)
+	}
+	return "none", nil
 }
 
 func validateEventEmitters(emitters []EventEmitter) error {
@@ -134,6 +150,9 @@ func validateTool(tool Tool, reservedNames map[string]bool) error {
 	method := strings.ToUpper(strings.TrimSpace(tool.Method))
 	if !validMethod(method) {
 		return fmt.Errorf("unsupported method %q", tool.Method)
+	}
+	if _, err := normalizeToolAuth(tool); err != nil {
+		return err
 	}
 	path, err := validateRelativePath(tool.Path)
 	if err != nil {
@@ -233,6 +252,10 @@ func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
 	if !validMethod(method) {
 		return nil, fmt.Errorf("unsupported method %q", tool.Method)
 	}
+	auth, err := normalizeToolAuth(*tool)
+	if err != nil {
+		return nil, err
+	}
 	path, err := validateRelativePath(tool.Path)
 	if err != nil {
 		return nil, err
@@ -270,6 +293,7 @@ func Interpret(req InterpretRequest) (*InterpretedRequest, error) {
 		Body:       body,
 		BodyString: string(body),
 		BodySHA256: hex.EncodeToString(sum[:]),
+		Auth:       auth,
 		Mutation:   tool.Mutation,
 	}, nil
 }

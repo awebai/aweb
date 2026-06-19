@@ -107,6 +107,52 @@ func TestValidateRejectsPathQueryAndFragment(t *testing.T) {
 	}
 }
 
+func TestValidateAuthNoneIsOptionalAndReadOnly(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "library", Version: "1.0.0", Origin: "https://library.example"},
+		Tools: []Tool{{
+			Name:        "list-packs",
+			Method:      "GET",
+			Path:        "/v1/profile-packs",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+			Params:      []Param{},
+			Auth:        "none",
+			Mutation:    false,
+		}},
+	}
+	if err := Validate(manifest, nil); err != nil {
+		t.Fatalf("Validate(auth:none read) error = %v", err)
+	}
+	got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "list-packs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Auth != "none" {
+		t.Fatalf("interpreted auth=%q want none", got.Auth)
+	}
+
+	manifest.Tools[0].Mutation = true
+	if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), "auth:none") {
+		t.Fatalf("Validate(auth:none mutation) error = %v, want auth:none rejection", err)
+	}
+
+	manifest.Tools[0].Mutation = false
+	manifest.Tools[0].Auth = "oauth"
+	if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), "unsupported auth") {
+		t.Fatalf("Validate(unsupported auth) error = %v, want unsupported auth", err)
+	}
+
+	manifest.Tools[0].Auth = ""
+	got, err = Interpret(InterpretRequest{Manifest: manifest, Verb: "list-packs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Auth != "team-cert" {
+		t.Fatalf("default auth=%q want team-cert", got.Auth)
+	}
+}
+
 func TestValidateRejectsUndeclaredSchemaPlacement(t *testing.T) {
 	manifest := Manifest{
 		ManifestVersion: 1,

@@ -608,6 +608,9 @@ func TestLibraryManifestFixtureConformsAndDeclaresExpectedTools(t *testing.T) {
 	got := make([]string, 0, len(manifest.Tools))
 	for _, tool := range manifest.Tools {
 		got = append(got, tool.Name)
+		if tool.Auth == "none" && tool.Mutation {
+			t.Fatalf("mutation tool %q must not be auth:none", tool.Name)
+		}
 	}
 	sort.Strings(got)
 	want := []string{"approve", "bind", "create-shelf-profile", "get-binding", "get-pack", "get-profile", "import-to-shelf", "list-packs", "materialize", "proposals", "propose", "publish-pack", "publish-profile", "register", "reject", "set-pack-tags", "set-profile-tags", "shelf", "shelf-version", "update-from-source"}
@@ -642,6 +645,9 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("list-packs method=%s", r.Method)
 			}
+			if r.Header.Get("Authorization") != "" || r.Header.Get("X-AWEB-Signed-Payload") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" {
+				t.Fatalf("auth:none list-packs should be unsigned, got headers: %#v", r.Header)
+			}
 			sawListPacks = true
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`[{"pack_ref":"aweb.engineering-pack","version":"0.1.0"}]`))
@@ -668,8 +674,6 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
-
 	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
 	install.Dir = tmp
 	install.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
@@ -682,12 +686,13 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 	list.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
 	listOut, err := list.CombinedOutput()
 	if err != nil {
-		t.Fatalf("library list-packs failed: %v\n%s", err, string(listOut))
+		t.Fatalf("library list-packs without identity failed: %v\n%s", err, string(listOut))
 	}
 	if !strings.Contains(string(listOut), "aweb.engineering-pack") {
 		t.Fatalf("list-packs output missing pack: %s", string(listOut))
 	}
 
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
 	adopt := exec.CommandContext(ctx, bin, "library", "import-to-shelf", "--source_profile_pack_ref", "aweb.engineering-pack", "--profile_ref", "developer")
 	adopt.Dir = tmp
 	adopt.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")

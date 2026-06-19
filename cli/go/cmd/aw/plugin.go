@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/spf13/cobra"
 )
@@ -825,10 +826,6 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	if err != nil {
 		return nil, true, err
 	}
-	identity, err := resolveLocalSigningIdentity()
-	if err != nil {
-		return nil, true, err
-	}
 	parsedURL, err := url.Parse(spec.URL)
 	if err != nil {
 		return nil, true, err
@@ -837,11 +834,49 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	for key, value := range spec.Headers {
 		headers.Set(key, value)
 	}
+	if spec.Auth == "none" {
+		result, err := executeUnsignedManifestRequest(spec.Method, parsedURL, spec.Body, headers)
+		if err != nil {
+			return nil, true, err
+		}
+		return result, true, nil
+	}
+	identity, err := resolveLocalSigningIdentity()
+	if err != nil {
+		return nil, true, err
+	}
 	result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
 	if err != nil {
 		return nil, true, err
 	}
 	return &installedManifestToolResult{Status: result.Status, Body: result.Body}, true, nil
+}
+
+func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes []byte, headers http.Header) (*installedManifestToolResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header = headers.Clone()
+	client := &http.Client{
+		Timeout:   awid.APITimeout(),
+		Transport: awid.NewAPITransport(),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return &installedManifestToolResult{Status: resp.StatusCode, Body: responseBody}, nil
 }
 
 func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {
