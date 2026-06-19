@@ -8,6 +8,12 @@ import pytest
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
+from test_e2e_smoke import (  # noqa: F401
+    aw_workspace,
+    aw_workspace_factory,
+    library,
+    library_origin,
+)
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migrations"
 
