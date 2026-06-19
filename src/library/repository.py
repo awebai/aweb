@@ -8,9 +8,16 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from library.auth import Principal
-from library.models import MaterializeRequest, ProfileBindingRequest, ProposalCreateRequest
+from library.models import (
+    MaterializeRequest,
+    ProfileBindingRequest,
+    ProfilePublishRequest,
+    ProposalCreateRequest,
+)
 from library.profile_pack import (
+    ParsedPack,
     ParsedProfile,
+    build_pack_payload,
     import_return,
     materialize_home_files,
     parse_import_payload,
@@ -51,6 +58,11 @@ async def publish_pack(
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid profile pack: {exc}") from exc
 
+    await _persist_pack(db, principal=principal, pack=pack)
+    return import_return(pack)
+
+
+async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack: ParsedPack) -> None:
     async with db.transaction() as tx:
         await tx.execute(
             """
@@ -92,7 +104,6 @@ async def publish_pack(
                 profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
                 _dumps(profile.files),
             )
-    return import_return(pack)
 
 
 def _pack_summary(row: Any) -> dict[str, Any]:
@@ -165,6 +176,104 @@ async def set_pack_tags(
     if not rows:
         raise HTTPException(status_code=404, detail="Profile pack not found")
     return {"pack_ref": pack_ref, "tags": normalized}
+
+
+async def publish_profile(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: ProfilePublishRequest
+) -> dict[str, Any]:
+    """Publish a private shelf profile into a public pack. The pack is created
+    (``new_pack``) or a new version of an owned pack (``existing_pack_ref``), with
+    a library-generated pack.yaml and an accumulating profile set. The pack digest
+    is the import-payload.v1 digest of the generated files; the published profile
+    keeps the digest it had on the shelf."""
+    existing_pack_ref = request.target.existing_pack_ref
+    new_pack = request.target.new_pack
+    if bool(existing_pack_ref) == bool(new_pack):
+        raise HTTPException(
+            status_code=422, detail="target must set exactly one of existing_pack_ref or new_pack"
+        )
+
+    version = request.profile_version
+    if version is None:
+        latest = await db.fetch_one(
+            "SELECT version FROM {{tables.shelf_profiles}}"
+            " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
+            principal.team_id,
+            profile_ref,
+        )
+        if latest is None:
+            raise HTTPException(status_code=404, detail="Shelf profile not found")
+        version = latest["version"]
+    row = await db.fetch_one(
+        "SELECT files FROM {{tables.shelf_profiles}}"
+        " WHERE team_id = $1 AND profile_ref = $2 AND version = $3",
+        principal.team_id,
+        profile_ref,
+        version,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Shelf profile not found")
+    profile_files = _json_value(row["files"]) or []
+
+    tags: list[str] | None = None
+    if existing_pack_ref is not None:
+        pack_row = await db.fetch_one(
+            "SELECT name, summary, description, first_mission_examples, payload"
+            " FROM {{tables.profile_packs}}"
+            " WHERE owner_team = $1 AND pack_ref = $2 ORDER BY created_at DESC LIMIT 1",
+            principal.team_id,
+            existing_pack_ref,
+        )
+        if pack_row is None:
+            raise HTTPException(status_code=404, detail="Profile pack not found")
+        pack_ref = existing_pack_ref
+        name = pack_row["name"]
+        summary = pack_row["summary"]
+        description = pack_row["description"]
+        first_mission_examples = list(pack_row["first_mission_examples"] or [])
+        prior_files = _json_value(pack_row["payload"]) or []
+        readme = None
+    else:
+        assert new_pack is not None
+        pack_ref = new_pack.pack_ref
+        name = new_pack.name
+        summary = new_pack.summary
+        description = new_pack.description
+        first_mission_examples = list(new_pack.missions)
+        prior_files = None
+        readme = new_pack.readme
+        tags = normalize_tags(new_pack.tags) or None
+
+    payload = build_pack_payload(
+        pack_ref=pack_ref,
+        pack_version=request.pack_version,
+        name=name,
+        summary=summary,
+        description=description,
+        first_mission_examples=first_mission_examples,
+        readme=readme,
+        prior_files=prior_files,
+        profile_ref=profile_ref,
+        profile_files=profile_files,
+    )
+    try:
+        pack = parse_import_payload(payload)
+    except (ValueError, KeyError) as exc:  # pragma: no cover - generated payload is well-formed
+        raise HTTPException(status_code=422, detail=f"Invalid generated pack: {exc}") from exc
+    published = next(p for p in pack.profiles if p.profile_ref == profile_ref)
+
+    await _persist_pack(db, principal=principal, pack=pack)
+    if tags:
+        await set_pack_tags(db, principal=principal, pack_ref=pack_ref, tags=tags)
+
+    return {
+        "pack_ref": pack.pack_ref,
+        "pack_version": pack.version,
+        "pack_digest": pack.digest,
+        "profile_ref": published.profile_ref,
+        "profile_version": published.version,
+        "profile_digest": published.digest,
+    }
 
 
 # --- Private shelf ------------------------------------------------------------

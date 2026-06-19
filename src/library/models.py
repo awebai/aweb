@@ -46,6 +46,33 @@ class ImportToShelfRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class NewPackTarget(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    pack_ref: str = Field(..., min_length=1, max_length=240)
+    name: str = Field(..., min_length=1, max_length=240)
+    summary: str | None = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None)
+    tags: list[str] = Field(default_factory=list)
+    readme: str | None = Field(default=None)
+    missions: list[str] = Field(default_factory=list)
+
+
+class PublishTarget(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    existing_pack_ref: str | None = Field(default=None, max_length=240)
+    new_pack: NewPackTarget | None = Field(default=None)
+
+
+class ProfilePublishRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    profile_version: str | None = Field(default=None, max_length=80)
+    pack_version: str = Field(..., min_length=1, max_length=80)
+    target: PublishTarget
+
+
 class ProposalCreateRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

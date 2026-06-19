@@ -169,6 +169,68 @@ def part_baselines(profile: ParsedProfile) -> dict[str, str]:
     return baselines
 
 
+def _payload_file(path: str, content_utf8: str) -> dict[str, str]:
+    return {
+        "content_utf8": content_utf8,
+        "path": path,
+        "sha256": "sha256:" + hashlib.sha256(content_utf8.encode("utf-8")).hexdigest(),
+    }
+
+
+def build_pack_payload(
+    *,
+    pack_ref: str,
+    pack_version: str,
+    name: str,
+    summary: str | None,
+    description: str | None,
+    first_mission_examples: list[str],
+    readme: str | None,
+    prior_files: list[dict[str, str]] | None,
+    profile_ref: str,
+    profile_files: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Assemble an import-payload.v1 that publishes a shelf profile into a pack.
+
+    The pack.yaml is library-generated and the profile set accumulates: the named
+    profile is added to (or replaces) any profiles carried from ``prior_files``.
+    Re-parsing the result through ``parse_import_payload`` reproduces every profile
+    digest (paths round-trip pack<->profile relative), so a published profile keeps
+    the digest it had on the shelf."""
+    prefix = f"profiles/{profile_ref}/"
+    carried = [
+        f
+        for f in (prior_files or [])
+        if f["path"] not in ("pack.yaml", "README.md") and not f["path"].startswith(prefix)
+    ]
+    published = [
+        {"content_utf8": f["content_utf8"], "path": prefix + f["path"], "sha256": f["sha256"]}
+        for f in profile_files
+    ]
+    content_files = carried + published
+
+    profile_ids = sorted(
+        f["path"][len("profiles/") : -len("/profile.yaml")]
+        for f in content_files
+        if f["path"].startswith("profiles/") and f["path"].endswith("/profile.yaml")
+    )
+    pack_doc: dict[str, Any] = {"id": pack_ref, "version": pack_version, "name": name}
+    if summary is not None:
+        pack_doc["summary"] = summary
+    if description is not None:
+        pack_doc["description"] = description
+    if first_mission_examples:
+        pack_doc["first_mission_examples"] = first_mission_examples
+    pack_doc["profiles"] = [{"id": pid} for pid in profile_ids]
+
+    files = [_payload_file("pack.yaml", yaml.safe_dump(pack_doc, sort_keys=False, allow_unicode=True))]
+    if readme is not None:
+        files.append(_payload_file("README.md", readme))
+    files.extend(content_files)
+    files.sort(key=lambda entry: entry["path"])
+    return {"files": files, "schema": PACK_PAYLOAD_SCHEMA}
+
+
 def import_return(pack: ParsedPack) -> dict[str, Any]:
     """The POST /v1/profile-packs/import response body."""
     return {

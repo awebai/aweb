@@ -131,6 +131,31 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
+            "name": "publish-profile",
+            "description": "Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.",
+            "method": "POST",
+            "path": "/v1/profiles/{profile_ref}/publish",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "profile_ref": {"type": "string"},
+                    "profile_version": {"type": "string"},
+                    "pack_version": {"type": "string"},
+                    "target": {"type": "object"},
+                },
+                "required": ["profile_ref", "pack_version", "target"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "profile_version", "in": "body"},
+                {"name": "pack_version", "in": "body"},
+                {"name": "target", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
             "name": "set-profile-tags",
             "description": "Replace a profile's organizational tags.",
             "method": "PUT",

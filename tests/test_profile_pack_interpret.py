@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from library.digest import PACK_PAYLOAD_SCHEMA, collect_files
+from library.digest import PACK_PAYLOAD_SCHEMA, collect_files, payload_digest
 from library.profile_pack import (
+    build_pack_payload,
     import_return,
     materialize_home_files,
     parse_import_payload,
@@ -76,6 +77,84 @@ def test_parse_profile_payload_reproduces_a_profile() -> None:
     assert profile.digest == "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619"
     assert profile.mission.startswith("Coordinate")
     assert "planning" in profile.accepted_work
+
+
+def test_publish_profile_round_trips_to_import_digest() -> None:
+    # The coordinator's round-trip invariant: a profile published into a pack, then
+    # imported back, keeps its shelf digest; the pack digest is the import-payload.v1
+    # digest of the generated files (publish == import-the-same-files).
+    profile_files = collect_files(_SOURCE / "profiles" / "coordinator")
+    shelf = parse_profile_payload(profile_files)
+
+    payload = build_pack_payload(
+        pack_ref="my-team.starter",
+        pack_version="1.0.0",
+        name="Starter",
+        summary=None,
+        description=None,
+        first_mission_examples=[],
+        readme=None,
+        prior_files=None,
+        profile_ref="coordinator",
+        profile_files=profile_files,
+    )
+    pack = parse_import_payload(payload)
+    assert pack.pack_ref == "my-team.starter"
+    assert pack.digest == payload_digest(payload["files"], PACK_PAYLOAD_SCHEMA)
+
+    published = next(p for p in pack.profiles if p.profile_ref == "coordinator")
+    assert published.digest == shelf.digest
+
+    # Building the same publish again is byte-stable (deterministic pack.yaml).
+    again = build_pack_payload(
+        pack_ref="my-team.starter",
+        pack_version="1.0.0",
+        name="Starter",
+        summary=None,
+        description=None,
+        first_mission_examples=[],
+        readme=None,
+        prior_files=None,
+        profile_ref="coordinator",
+        profile_files=profile_files,
+    )
+    assert again == payload
+
+
+def test_publish_profile_accumulates_onto_existing_pack() -> None:
+    # Publishing a second profile onto a pack's prior files keeps both profiles and
+    # leaves the first profile's digest untouched.
+    coordinator_files = collect_files(_SOURCE / "profiles" / "coordinator")
+    developer_files = collect_files(_SOURCE / "profiles" / "developer")
+
+    first = build_pack_payload(
+        pack_ref="my-team.starter",
+        pack_version="1.0.0",
+        name="Starter",
+        summary=None,
+        description=None,
+        first_mission_examples=[],
+        readme=None,
+        prior_files=None,
+        profile_ref="coordinator",
+        profile_files=coordinator_files,
+    )
+    second = build_pack_payload(
+        pack_ref="my-team.starter",
+        pack_version="1.1.0",
+        name="Starter",
+        summary=None,
+        description=None,
+        first_mission_examples=[],
+        readme=None,
+        prior_files=first["files"],
+        profile_ref="developer",
+        profile_files=developer_files,
+    )
+    pack = parse_import_payload(second)
+    assert [p.profile_ref for p in pack.profiles] == ["coordinator", "developer"]
+    coordinator = next(p for p in pack.profiles if p.profile_ref == "coordinator")
+    assert coordinator.digest == parse_profile_payload(coordinator_files).digest
 
 
 def test_parse_rejects_wrong_schema() -> None:

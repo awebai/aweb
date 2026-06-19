@@ -8,9 +8,9 @@ import pytest
 from fastapi import HTTPException
 
 from library.digest import collect_files
-from library.models import MaterializeRequest
+from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest, PublishTarget
 from library.profile_pack import parse_profile_payload, part_baselines
-from library.repository import import_to_shelf, materialize, normalize_tags
+from library.repository import import_to_shelf, materialize, normalize_tags, publish_profile
 
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 
@@ -151,6 +151,26 @@ async def test_import_to_shelf_conflicts_on_different_source() -> None:
         )
     assert excinfo.value.status_code == 409
     assert db.writes == []
+
+
+async def test_publish_profile_rejects_ambiguous_target() -> None:
+    # target must set exactly one of existing_pack_ref / new_pack — checked before
+    # any DB use, so the db is never touched.
+    both = ProfilePublishRequest(
+        pack_version="1.0.0",
+        target=PublishTarget(
+            existing_pack_ref="my-team.starter",
+            new_pack=NewPackTarget(pack_ref="my-team.starter", name="Starter"),
+        ),
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=both)
+    assert excinfo.value.status_code == 422
+
+    neither = ProfilePublishRequest(pack_version="1.0.0", target=PublishTarget())
+    with pytest.raises(HTTPException) as excinfo:
+        await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=neither)
+    assert excinfo.value.status_code == 422
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:

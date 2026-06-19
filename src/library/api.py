@@ -15,6 +15,7 @@ from library.models import (
     ImportToShelfRequest,
     MaterializeRequest,
     ProfileBindingRequest,
+    ProfilePublishRequest,
     ProposalCreateRequest,
     SetTagsRequest,
     TeamRegisterRequest,
@@ -33,6 +34,7 @@ from library.repository import (
     list_shelf_profiles,
     materialize,
     publish_pack,
+    publish_profile,
     register_team,
     reject_proposal,
     set_pack_tags,
@@ -194,6 +196,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await create_shelf_version(
             database, principal=actor, profile_ref=profile_ref, files=body.get("files", [])
         )
+
+    # publish-profile: a team publishes a private shelf profile into a PUBLIC pack
+    # (new pack, or a new version of an owned pack). pack.yaml is library-generated
+    # and the profile set accumulates.
+    @app.post("/v1/profiles/{profile_ref}/publish")
+    async def publish_profile_route(
+        profile_ref: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = ProfilePublishRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await publish_profile(database, principal=actor, profile_ref=profile_ref, request=payload)
 
     # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a

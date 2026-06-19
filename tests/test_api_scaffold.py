@@ -9,6 +9,7 @@ from library.config import Settings
 _TEAM_SCOPED = [
     ("POST", "/v1/profile-packs/import"),
     ("POST", "/v1/shelf/import"),
+    ("POST", "/v1/profiles/coordinator/publish"),
     ("GET", "/v1/profiles"),
     ("GET", "/v1/profiles/coordinator"),
     ("POST", "/v1/agents/agent-1/profile-binding"),
