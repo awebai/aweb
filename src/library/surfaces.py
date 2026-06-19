@@ -162,9 +162,9 @@ def render_landing_page(*, public_origin: str) -> str:
   --profile_ref coordinator</pre>{copy}</div></div>
           <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home, and prints the path</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">7 · Go to that home and start your harness — e.g. Claude Code</p>
+          <p class="cmd-label">7 · Go to that home and start your harness — e.g. Claude Code with the channel</p>
           <div class="cmd-list"><div class="cmd"><pre>cd agents/instances/alice
-claude --dangerously-skip-permissions</pre>{copy}</div></div>
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace</pre>{copy}</div></div>
         </div>
         <p class="prose-intro">That is the whole path — from an empty machine to an agent named <code>alice</code> running the coordinator profile.</p>
         <p class="prose-outro"><strong>Shortcut:</strong> name a pack profile directly and <code>aw team add</code> adopts and adds in one, skipping step 5:</p>
