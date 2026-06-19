@@ -54,3 +54,7 @@ site/.serve.pid
 site/.serve.log
 .api.pid
 .api.log
+
+# Vendored conformance fixtures keep their literal .aw layout
+!tests/vectors/**/.aw/
+!tests/vectors/**/.aw/**

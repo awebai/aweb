@@ -1,0 +1,8 @@
+{
+  "profile_digest": "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619",
+  "profile_ref": "coordinator",
+  "profile_version": "0.1.0",
+  "source_profile_pack_digest": "sha256:30159b1e8871832feaa5cdf9b9a125fd9386730311b9311ff70478eba082e252",
+  "source_profile_pack_ref": "aweb.engineering-pack",
+  "source_profile_pack_version": "0.1.0"
+}
