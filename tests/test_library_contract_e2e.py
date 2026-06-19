@@ -33,7 +33,6 @@ pytestmark = pytest.mark.e2e
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
-_MANIFEST_SHA256 = "4b2782668ce8df97122cba58ff16540f14e00d8b55efb05b4c06f268bd549e46"
 
 
 def _load_json(path: Path) -> Any:
@@ -341,9 +340,15 @@ def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
+    # Drift test, not a pinned digest: the served manifest must equal the committed
+    # aweb-app.json byte-for-byte. This stays green across feature merges that add
+    # tools (each changes the digest) while still catching real serve/commit drift;
+    # the pinned-digest conformance lives at the unit level (test_app_manifest).
+    from library.aweb_manifest import read_manifest_bytes
+
     manifest = httpx.get(f"{library.origin}/aweb-app.json", timeout=10.0)
     assert manifest.status_code == 200, manifest.text
-    assert hashlib.sha256(manifest.content).hexdigest() == _MANIFEST_SHA256
+    assert manifest.content == read_manifest_bytes()
 
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
