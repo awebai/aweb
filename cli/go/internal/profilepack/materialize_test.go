@@ -41,6 +41,38 @@ func TestMaterializeLocalProfileRejectsTargetSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestMaterializeLocalProfileRejectsSymlinkedTargetParent(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(base, "link", "agent")
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "agent")); !os.IsNotExist(err) {
+		t.Fatalf("materialize created target through symlinked parent, stat err=%v", err)
+	}
+}
+
+func TestMaterializeLocalProfileRejectsExistingDirectoryDestinationEvenWithForce(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	if err := os.Mkdir(filepath.Join(target, "instructions.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, Force: true})
+	if err == nil || !strings.Contains(err.Error(), "must be a regular file") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".aw", "profile", "ref.json")); !os.IsNotExist(err) {
+		t.Fatalf("preflight should prevent partial writes before directory destination failure, stat err=%v", err)
+	}
+}
+
 func TestMaterializeLocalProfileRequiresBoundProfileAndRefusesOverwrite(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()
