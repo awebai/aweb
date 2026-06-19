@@ -37,6 +37,16 @@ class SetTagsRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ImportToShelfRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source_profile_pack_ref: str = Field(..., min_length=1, max_length=240)
+    source_profile_pack_version: str | None = Field(default=None, max_length=80)
+    profile_ref: str = Field(..., min_length=1, max_length=240)
+    target_profile_ref: str | None = Field(default=None, max_length=240)
+    tags: list[str] = Field(default_factory=list)
+
+
 class ProposalCreateRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

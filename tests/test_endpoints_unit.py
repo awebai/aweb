@@ -7,8 +7,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from library.digest import collect_files
 from library.models import MaterializeRequest
-from library.repository import materialize, normalize_tags
+from library.profile_pack import parse_profile_payload, part_baselines
+from library.repository import import_to_shelf, materialize, normalize_tags
 
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 
@@ -31,6 +33,115 @@ def test_normalize_tags_lowercases_trims_dedups_and_sorts() -> None:
         "github",
         "twitter",
     ]
+
+
+class _ShelfImportDB:
+    """A stateful fake honoring the three reads and one write import_to_shelf makes.
+    Routes fetch_one by SQL fragment; stores the written shelf row so a re-import's
+    existence check sees it."""
+
+    def __init__(self, source) -> None:
+        self._source = source
+        self.shelf_row: dict | None = None
+        self.writes: list[tuple] = []
+
+    async def fetch_one(self, sql: str, *params):
+        if "FROM {{tables.shelf_profiles}}" in sql:
+            return self.shelf_row
+        if "FROM {{tables.profile_packs}}" in sql:
+            return {"owner_team": "default:atext.aweb.ai", "version": "0.1.0", "digest": "sha256:packdigest"}
+        if "FROM {{tables.pack_profiles}}" in sql:
+            s = self._source
+            return {
+                "profile_ref": s.profile_ref,
+                "profile_version": s.version,
+                "digest": s.digest,
+                "name": s.name,
+                "mission": s.mission,
+                "accepted_work": s.accepted_work,
+                "runtime_assumptions": s.runtime_assumptions,
+                "memory_policy": json.dumps(s.memory_policy) if s.memory_policy is not None else None,
+                "expected_apps": s.expected_apps,
+                "event_subscriptions": json.dumps(s.event_subscriptions),
+                "approval_required": s.approval_required,
+                "files": json.dumps(s.files),
+            }
+        raise AssertionError(f"unexpected query: {sql}")
+
+    async def execute(self, sql: str, *params) -> None:
+        self.writes.append(params)
+        # Mirror what was written so a subsequent existence check returns it.
+        self.shelf_row = {
+            "profile_ref": params[1],
+            "version": params[2],
+            "digest": params[3],
+            "source_profile_ref": params[17],
+            "source_profile_version": params[18],
+            "source_profile_digest": params[19],
+            "source_profile_pack_ref": params[14],
+            "source_profile_pack_version": params[15],
+            "source_profile_pack_digest": params[16],
+        }
+
+
+async def test_import_to_shelf_copies_then_is_idempotent() -> None:
+    source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / "coordinator"))
+    db = _ShelfImportDB(source)
+    principal = SimpleNamespace(team_id="default:atext.aweb.ai")
+
+    first = await import_to_shelf(
+        db,
+        principal=principal,
+        source_profile_pack_ref="aweb.engineering-pack",
+        source_profile_pack_version=None,
+        profile_ref="coordinator",
+        target_profile_ref=None,
+        tags=["Coder"],
+    )
+    assert first["created"] is True
+    assert first["profile_ref"] == "coordinator"
+    assert first["digest"] == source.digest
+    assert first["source_profile_ref"] == "coordinator"
+    assert first["source_profile_digest"] == source.digest
+    assert first["source_profile_pack_ref"] == "aweb.engineering-pack"
+    assert first["source_profile_pack_version"] == "0.1.0"
+    assert first["source_profile_pack_digest"] == "sha256:packdigest"
+    # Per-part baselines recorded as the canonical copy-time content digests.
+    written_baselines = json.loads(db.writes[0][20])
+    assert written_baselines == part_baselines(source)
+
+    # A re-import keyed by (team, source pack, source profile) is a pure no-op:
+    # created=False, no new write, returns the existing copy.
+    second = await import_to_shelf(
+        db,
+        principal=principal,
+        source_profile_pack_ref="aweb.engineering-pack",
+        source_profile_pack_version=None,
+        profile_ref="coordinator",
+        target_profile_ref=None,
+        tags=["Coder"],
+    )
+    assert second["created"] is False
+    assert second["digest"] == source.digest
+    assert len(db.writes) == 1
+
+
+async def test_import_to_shelf_honors_target_profile_ref() -> None:
+    source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / "coordinator"))
+    db = _ShelfImportDB(source)
+    result = await import_to_shelf(
+        db,
+        principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
+        source_profile_pack_ref="aweb.engineering-pack",
+        source_profile_pack_version="0.1.0",
+        profile_ref="coordinator",
+        target_profile_ref="my-coordinator",
+        tags=None,
+    )
+    assert result["profile_ref"] == "my-coordinator"
+    assert result["source_profile_ref"] == "coordinator"
+    # The shelf copy is stored under the target ref.
+    assert db.writes[0][1] == "my-coordinator"
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,6 +16,7 @@ from library.profile_pack import (
     materialize_home_files,
     parse_import_payload,
     parse_profile_payload,
+    part_baselines,
 )
 
 
@@ -182,15 +184,19 @@ def _shelf_summary(row: Any) -> dict[str, Any]:
         "runtime_assumptions": list(data.get("runtime_assumptions") or []),
         "memory_policy": _json_value(data.get("memory_policy")),
         "expected_apps": list(data.get("expected_apps") or []),
-        "source_pack_ref": data.get("source_pack_ref"),
-        "source_pack_version": data.get("source_pack_version"),
-        "source_pack_digest": data.get("source_pack_digest"),
+        "source_profile_pack_ref": data.get("source_profile_pack_ref"),
+        "source_profile_pack_version": data.get("source_profile_pack_version"),
+        "source_profile_pack_digest": data.get("source_profile_pack_digest"),
+        "source_profile_ref": data.get("source_profile_ref"),
+        "source_profile_version": data.get("source_profile_version"),
+        "source_profile_digest": data.get("source_profile_digest"),
     }
 
 
 _SHELF_SUMMARY_COLUMNS = (
     "profile_ref, version, digest, tags, name, mission, accepted_work, runtime_assumptions, "
-    "memory_policy, expected_apps, source_pack_ref, source_pack_version, source_pack_digest"
+    "memory_policy, expected_apps, source_profile_pack_ref, source_profile_pack_version, "
+    "source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest"
 )
 
 
@@ -243,9 +249,12 @@ async def _upsert_shelf_profile(
     team_id: str,
     profile: ParsedProfile,
     tags: list[str],
-    source_pack_ref: str | None,
-    source_pack_version: str | None,
-    source_pack_digest: str | None,
+    source_profile_pack_ref: str | None,
+    source_profile_pack_version: str | None,
+    source_profile_pack_digest: str | None,
+    source_profile_ref: str | None,
+    source_profile_version: str | None,
+    source_profile_digest: str | None,
     part_baselines: dict[str, str],
 ) -> None:
     await db.execute(
@@ -253,23 +262,30 @@ async def _upsert_shelf_profile(
         INSERT INTO {{tables.shelf_profiles}}
           (team_id, profile_ref, version, digest, tags, name, mission, accepted_work,
            runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required,
-           files, source_pack_ref, source_pack_version, source_pack_digest, part_baselines)
+           files, source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,
+           source_profile_ref, source_profile_version, source_profile_digest, part_baselines)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14::jsonb,
-                $15, $16, $17, $18::jsonb)
+                $15, $16, $17, $18, $19, $20, $21::jsonb)
         ON CONFLICT (team_id, profile_ref, version) DO UPDATE SET
             digest = EXCLUDED.digest, tags = EXCLUDED.tags, name = EXCLUDED.name,
             mission = EXCLUDED.mission, accepted_work = EXCLUDED.accepted_work,
             runtime_assumptions = EXCLUDED.runtime_assumptions, memory_policy = EXCLUDED.memory_policy,
             expected_apps = EXCLUDED.expected_apps, event_subscriptions = EXCLUDED.event_subscriptions,
             approval_required = EXCLUDED.approval_required, files = EXCLUDED.files,
-            source_pack_ref = EXCLUDED.source_pack_ref, source_pack_version = EXCLUDED.source_pack_version,
-            source_pack_digest = EXCLUDED.source_pack_digest, part_baselines = EXCLUDED.part_baselines
+            source_profile_pack_ref = EXCLUDED.source_profile_pack_ref,
+            source_profile_pack_version = EXCLUDED.source_profile_pack_version,
+            source_profile_pack_digest = EXCLUDED.source_profile_pack_digest,
+            source_profile_ref = EXCLUDED.source_profile_ref,
+            source_profile_version = EXCLUDED.source_profile_version,
+            source_profile_digest = EXCLUDED.source_profile_digest,
+            part_baselines = EXCLUDED.part_baselines
         """,
         team_id, profile.profile_ref, profile.version, profile.digest, tags, profile.name,
         profile.mission, profile.accepted_work, profile.runtime_assumptions,
         _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
         profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
-        _dumps(profile.files), source_pack_ref, source_pack_version, source_pack_digest,
+        _dumps(profile.files), source_profile_pack_ref, source_profile_pack_version,
+        source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest,
         _dumps(part_baselines),
     )
 
@@ -287,9 +303,12 @@ async def create_shelf_profile(
         team_id=principal.team_id,
         profile=profile,
         tags=normalize_tags(tags or []),
-        source_pack_ref=None,
-        source_pack_version=None,
-        source_pack_digest=None,
+        source_profile_pack_ref=None,
+        source_profile_pack_version=None,
+        source_profile_pack_digest=None,
+        source_profile_ref=None,
+        source_profile_version=None,
+        source_profile_digest=None,
         part_baselines={},
     )
     return await get_shelf_profile(db, principal=principal, profile_ref=profile.profile_ref)
@@ -307,7 +326,8 @@ async def create_shelf_version(
     if profile.profile_ref != profile_ref:
         raise HTTPException(status_code=422, detail="profile.yaml id must match the path profile_ref")
     prior = await db.fetch_one(
-        "SELECT tags, source_pack_ref, source_pack_version, source_pack_digest, part_baselines"
+        "SELECT tags, source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,"
+        " source_profile_ref, source_profile_version, source_profile_digest, part_baselines"
         " FROM {{tables.shelf_profiles}} WHERE team_id = $1 AND profile_ref = $2"
         " ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
@@ -320,12 +340,137 @@ async def create_shelf_version(
         team_id=principal.team_id,
         profile=profile,
         tags=list(prior["tags"] or []),
-        source_pack_ref=prior["source_pack_ref"],
-        source_pack_version=prior["source_pack_version"],
-        source_pack_digest=prior["source_pack_digest"],
+        source_profile_pack_ref=prior["source_profile_pack_ref"],
+        source_profile_pack_version=prior["source_profile_pack_version"],
+        source_profile_pack_digest=prior["source_profile_pack_digest"],
+        source_profile_ref=prior["source_profile_ref"],
+        source_profile_version=prior["source_profile_version"],
+        source_profile_digest=prior["source_profile_digest"],
         part_baselines=_json_value(prior["part_baselines"]) or {},
     )
     return await get_shelf_profile(db, principal=principal, profile_ref=profile_ref)
+
+
+def _import_response(*, target_ref: str, profile: ParsedProfile, pack_digest: str, source_pack_ref: str, source_pack_version: str, created: bool) -> dict[str, Any]:
+    return {
+        "profile_ref": target_ref,
+        "version": profile.version,
+        "digest": profile.digest,
+        "source_profile_ref": profile.profile_ref,
+        "source_profile_version": profile.version,
+        "source_profile_digest": profile.digest,
+        "source_profile_pack_ref": source_pack_ref,
+        "source_profile_pack_version": source_pack_version,
+        "source_profile_pack_digest": pack_digest,
+        "created": created,
+    }
+
+
+async def import_to_shelf(
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    source_profile_pack_ref: str,
+    source_profile_pack_version: str | None,
+    profile_ref: str,
+    target_profile_ref: str | None,
+    tags: list[Any] | None,
+) -> dict[str, Any]:
+    """Copy a public-pack profile onto the team's private shelf. Idempotent keyed
+    by (team, source pack, source profile): a re-import is a pure no-op returning
+    the existing shelf copy — it NEVER pulls a newer version (that is
+    update-from-source). First import records per-part baselines + provenance."""
+    target = target_profile_ref or profile_ref
+
+    existing = await db.fetch_one(
+        "SELECT profile_ref, version, digest, source_profile_ref, source_profile_version,"
+        " source_profile_digest, source_profile_pack_ref, source_profile_pack_version,"
+        " source_profile_pack_digest FROM {{tables.shelf_profiles}}"
+        " WHERE team_id = $1 AND profile_ref = $2 AND source_profile_pack_ref = $3"
+        " AND source_profile_ref = $4 ORDER BY created_at DESC LIMIT 1",
+        principal.team_id,
+        target,
+        source_profile_pack_ref,
+        profile_ref,
+    )
+    if existing is not None:
+        data = dict(existing)
+        return {
+            "profile_ref": data["profile_ref"],
+            "version": data["version"],
+            "digest": data["digest"],
+            "source_profile_ref": data["source_profile_ref"],
+            "source_profile_version": data["source_profile_version"],
+            "source_profile_digest": data["source_profile_digest"],
+            "source_profile_pack_ref": data["source_profile_pack_ref"],
+            "source_profile_pack_version": data["source_profile_pack_version"],
+            "source_profile_pack_digest": data["source_profile_pack_digest"],
+            "created": False,
+        }
+
+    pack = await db.fetch_one(
+        "SELECT owner_team, version, digest FROM {{tables.profile_packs}}"
+        " WHERE pack_ref = $1 AND ($2::text IS NULL OR version = $2)"
+        " ORDER BY created_at DESC LIMIT 1",
+        source_profile_pack_ref,
+        source_profile_pack_version,
+    )
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Source profile pack not found")
+    pack_version = pack["version"]
+    pack_digest = pack["digest"]
+
+    source = await db.fetch_one(
+        "SELECT profile_ref, profile_version, digest, name, mission, accepted_work,"
+        " runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required, files"
+        " FROM {{tables.pack_profiles}}"
+        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
+        pack["owner_team"],
+        source_profile_pack_ref,
+        pack_version,
+        profile_ref,
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source profile not found in pack")
+
+    source_profile = ParsedProfile(
+        profile_ref=source["profile_ref"],
+        version=source["profile_version"],
+        digest=source["digest"],
+        name=source["name"],
+        mission=source["mission"],
+        accepted_work=list(source["accepted_work"] or []),
+        runtime_assumptions=list(source["runtime_assumptions"] or []),
+        memory_policy=_json_value(source["memory_policy"]),
+        expected_apps=list(source["expected_apps"] or []),
+        event_subscriptions=_json_value(source["event_subscriptions"]) or [],
+        approval_required=list(source["approval_required"] or []),
+        files=_json_value(source["files"]) or [],
+    )
+    # The shelf copy takes the target ref; content (and thus digest) is identical
+    # to the source profile at copy time, so it is the per-part baseline.
+    shelf_profile = replace(source_profile, profile_ref=target)
+    await _upsert_shelf_profile(
+        db,
+        team_id=principal.team_id,
+        profile=shelf_profile,
+        tags=normalize_tags(tags or []),
+        source_profile_pack_ref=source_profile_pack_ref,
+        source_profile_pack_version=pack_version,
+        source_profile_pack_digest=pack_digest,
+        source_profile_ref=source_profile.profile_ref,
+        source_profile_version=source_profile.version,
+        source_profile_digest=source_profile.digest,
+        part_baselines=part_baselines(source_profile),
+    )
+    return _import_response(
+        target_ref=target,
+        profile=source_profile,
+        pack_digest=pack_digest,
+        source_pack_ref=source_profile_pack_ref,
+        source_pack_version=pack_version,
+        created=True,
+    )
 
 
 # --- Registration, bindings, materialize --------------------------------------
@@ -425,7 +570,7 @@ async def materialize(
 
     row = await db.fetch_one(
         "SELECT profile_ref, version, digest, runtime_assumptions, memory_policy, files,"
-        " source_pack_ref, source_pack_version, source_pack_digest"
+        " source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest"
         " FROM {{tables.shelf_profiles}} WHERE team_id = $1 AND profile_ref = $2 AND version = $3",
         principal.team_id,
         profile_ref,
@@ -444,17 +589,17 @@ async def materialize(
     )
     home_files = materialize_home_files(
         profile,
-        source_profile_pack_ref=row["source_pack_ref"] or "",
-        source_profile_pack_version=row["source_pack_version"] or "",
-        source_profile_pack_digest=row["source_pack_digest"] or "",
+        source_profile_pack_ref=row["source_profile_pack_ref"] or "",
+        source_profile_pack_version=row["source_profile_pack_version"] or "",
+        source_profile_pack_digest=row["source_profile_pack_digest"] or "",
     )
     return {
         "profile_ref": profile.profile_ref,
         "profile_version": profile.version,
         "profile_digest": profile.digest,
-        "source_profile_pack_ref": row["source_pack_ref"],
-        "source_profile_pack_version": row["source_pack_version"],
-        "source_profile_pack_digest": row["source_pack_digest"],
+        "source_profile_pack_ref": row["source_profile_pack_ref"],
+        "source_profile_pack_version": row["source_profile_pack_version"],
+        "source_profile_pack_digest": row["source_profile_pack_digest"],
         "runtime_assumptions": runtime_assumptions,
         "memory_policy": memory_policy,
         "home_files": home_files,

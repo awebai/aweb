@@ -12,6 +12,7 @@ from library.aweb_manifest import read_manifest_bytes
 from library.config import Settings, get_settings
 from library.db import LibraryDatabase
 from library.models import (
+    ImportToShelfRequest,
     MaterializeRequest,
     ProfileBindingRequest,
     ProposalCreateRequest,
@@ -26,6 +27,7 @@ from library.repository import (
     get_profile_binding,
     get_profile_pack,
     get_shelf_profile,
+    import_to_shelf,
     list_profile_packs,
     list_proposals,
     list_shelf_profiles,
@@ -216,6 +218,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         return await publish_pack(database, principal=actor, payload=await request.json())
+
+    # import-to-shelf: a team copies a public-pack profile onto its private shelf.
+    # Idempotent keyed by (team, source pack, source profile): re-import is a pure
+    # no-op returning the existing copy — never an update-from-source.
+    @app.post("/v1/shelf/import")
+    async def import_to_shelf_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = ImportToShelfRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await import_to_shelf(
+            database,
+            principal=actor,
+            source_profile_pack_ref=payload.source_profile_pack_ref,
+            source_profile_pack_version=payload.source_profile_pack_version,
+            profile_ref=payload.profile_ref,
+            target_profile_ref=payload.target_profile_ref,
+            tags=payload.tags,
+        )
 
     @app.post("/v1/agents/{agent_id}/profile-binding")
     async def set_profile_binding_route(

@@ -19,6 +19,7 @@ _EXPECTED_TOOLS = {
     "register",
     "create-shelf-profile",
     "shelf-version",
+    "import-to-shelf",
     "set-profile-tags",
     "set-pack-tags",
     "bind",
@@ -36,6 +37,7 @@ _MUTATIONS = {
     "register": True,
     "create-shelf-profile": True,
     "shelf-version": True,
+    "import-to-shelf": True,
     "set-profile-tags": True,
     "set-pack-tags": True,
     "bind": True,
@@ -237,6 +239,21 @@ def test_interpreted_spec_propose() -> None:
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/proposals"
     assert spec["body"] == b'{"profile_ref":"coordinator","target":"profile"}'
+    assert spec["mutation"] is True
+
+
+def test_interpreted_spec_import_to_shelf() -> None:
+    # The import-to-shelf body must match the implemented ImportToShelfRequest so a
+    # manifest-driven caller is accepted: source_profile_pack_ref + profile_ref
+    # required; version/target/tags optional.
+    spec = _interpret(
+        MANIFEST,
+        "import-to-shelf",
+        {"source_profile_pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"},
+    )
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/v1/shelf/import"
+    assert spec["body"] == b'{"profile_ref":"coordinator","source_profile_pack_ref":"aweb.engineering-pack"}'
     assert spec["mutation"] is True
 
 

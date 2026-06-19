@@ -75,13 +75,19 @@ CREATE TABLE IF NOT EXISTS {{tables.shelf_profiles}} (
     event_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb,
     approval_required TEXT[] NOT NULL DEFAULT '{}',
     files JSONB NOT NULL,
-    source_pack_ref TEXT,
-    source_pack_version TEXT,
-    source_pack_digest TEXT,
+    source_profile_pack_ref TEXT,
+    source_profile_pack_version TEXT,
+    source_profile_pack_digest TEXT,
+    source_profile_ref TEXT,
+    source_profile_version TEXT,
+    source_profile_digest TEXT,
     part_baselines JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (team_id, profile_ref, version)
 );
+
+CREATE INDEX IF NOT EXISTS idx_library_shelf_source
+    ON {{tables.shelf_profiles}}(team_id, source_profile_pack_ref, source_profile_ref);
 
 CREATE INDEX IF NOT EXISTS idx_library_shelf_tags
     ON {{tables.shelf_profiles}} USING GIN (tags);

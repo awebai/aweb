@@ -7,13 +7,19 @@ the materialize home layout. No I/O — the repository persists, the API wires.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
 
 import yaml
 
+from library.aweb_manifest import canonical_bytes
 from library.digest import PACK_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, payload_digest
+
+# Structured-field parts tracked for the per-part update-from-source merge (files
+# are tracked per-file). "instructions" lives in instructions.md (a file part).
+_BASELINE_FIELDS = ("mission", "accepted_work", "runtime_assumptions", "memory_policy")
 
 
 @dataclass(frozen=True)
@@ -150,6 +156,17 @@ def parse_profile_payload(files: list[dict[str, str]]) -> ParsedProfile:
         approval_required=_as_str_list(profile_yaml.get("approval_required")),
         files=sorted(files, key=lambda entry: entry["path"]),
     )
+
+
+def part_baselines(profile: ParsedProfile) -> dict[str, str]:
+    """Per-part content digests recorded at copy/sync, for the per-part 3-way merge.
+    Parts = each file (its sha256) + each structured field (sha256 of its canonical
+    bytes). Keys are namespaced ('file:<path>' / 'field:<name>')."""
+    baselines = {f"file:{entry['path']}": entry["sha256"] for entry in profile.files}
+    for field in _BASELINE_FIELDS:
+        value = getattr(profile, field)
+        baselines[f"field:{field}"] = "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
+    return baselines
 
 
 def import_return(pack: ParsedPack) -> dict[str, Any]:

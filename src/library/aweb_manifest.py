@@ -106,6 +106,33 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
+            "name": "import-to-shelf",
+            "description": "Copy a public-pack profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.",
+            "method": "POST",
+            "path": "/v1/shelf/import",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source_profile_pack_ref": {"type": "string"},
+                    "source_profile_pack_version": {"type": "string"},
+                    "profile_ref": {"type": "string"},
+                    "target_profile_ref": {"type": "string"},
+                    "tags": {"type": "array"},
+                },
+                "required": ["source_profile_pack_ref", "profile_ref"],
+            },
+            "params": [
+                {"name": "source_profile_pack_ref", "in": "body"},
+                {"name": "source_profile_pack_version", "in": "body"},
+                {"name": "profile_ref", "in": "body"},
+                {"name": "target_profile_ref", "in": "body"},
+                {"name": "tags", "in": "body"},
+            ],
+            "body": {"mode": "json"},
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
             "name": "set-profile-tags",
             "description": "Replace a profile's organizational tags.",
             "method": "PUT",
