@@ -22,6 +22,10 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "aw id request --team-auth" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
+    # Native Agentic App framing: canonical plugin install + native aw library verbs.
+    assert "Native Agentic App" in response.text
+    assert "aw plugin install" in response.text
+    assert "aw library" in response.text
 
 
 def test_skills_surface_serves_index_and_individual_skills() -> None:

@@ -78,58 +78,99 @@ def render_landing_page(*, public_origin: str) -> str:
   <main>
     <section class="hero-center">
       <div class="wrap">
-        <p class="kicker">Agent profiles for AWID teams</p>
-        <h1>Where teams learn how their agents should work.</h1>
-        <p class="lede">Public profile packs are the catalog; your team's private shelf holds the copies you adopt, evolve, and bind agents to. Materialize a profile into a local <code>.aw</code> home or a custodial runtime, and agents propose improvements that mint new versions. Auth is an <a href="https://awid.ai">AWID team certificate</a> — there are no app accounts.</p>
+        <p class="kicker">Native Agentic App · library.aweb.ai</p>
+        <h1>Where teams choose, keep, and improve the profiles their agents run.</h1>
+        <p class="lede">library.aweb.ai is the Native Agentic App for agent profiles: a public catalog of profile packs, a private team shelf of adopted profiles, and an approval loop that lets teams evolve how their agents work. A profile is an agent's job description — its mission, its instructions, the tools it may use, and what needs a human's sign-off.</p>
         <div class="cta-row">
-          <a class="btn primary btn--lg" href="/llms.txt">Read llms.txt</a>
-          <a class="btn secondary btn--lg" href="/aweb-app.json">App manifest</a>
+          <a class="btn primary btn--lg" href="#use">Get started</a>
+          <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
       </div>
     </section>
 
-    <section class="section section--tint" id="model">
+    <section class="section section--tint">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">What it is</p>
+          <h2>A Native Agentic App</h2>
+          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a signed manifest that turns its API into native <code>aw</code> verbs, can emit signed events that wake subscribed agents, and ships agent-readable llms.txt and skills.</p>
+        </div>
+        <p class="prose-intro">Install library once, and every operation becomes a native command — the same for a person at a terminal and an agent on a task:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list">
+            <div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="model">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">The model</p>
-          <h2>Public packs, private shelves</h2>
-          <p>Visibility is structural, not a flag: packs are the public, versioned catalog; the shelf is your team's private working set.</p>
+          <h2>A catalog, a shelf, and an approval loop</h2>
+          <p>Public packs are the versioned catalog anyone can adopt from; your shelf is your team's private working set. From there you bind profiles to agents, materialize them into runnable homes, and improve them under review.</p>
         </div>
         <div class="card-grid card-grid--auto">
-          <article class="card"><h3>Public packs</h3><p>First-party, versioned, digest-addressed collections of agent profiles any team can browse and adopt.</p></article>
-          <article class="card"><h3>Private shelves</h3><p>Your team's own copies — adopted from a pack or authored fresh — the working set you evolve and bind.</p></article>
-          <article class="card"><h3>Bindings</h3><p>The team decides which shelf profile an agent identity runs as; library owns that binding, not a dashboard.</p></article>
-          <article class="card"><h3>Materialize</h3><p>A bound profile becomes a runnable agent home: a composed AGENTS.md, installed skills, and the full evolvable profile under <code>.aw/profile/</code>.</p></article>
-          <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; on approval library mints it, immutably versioned by digest.</p></article>
-          <article class="card"><h3>Update from source</h3><p>Pull a newer pack version's improvements into the parts you have not evolved — a per-part merge that never clobbers local edits.</p></article>
+          <article class="card"><h3>Profiles</h3><p>An agent's job description as a file: mission, instructions, the tools it may use, the actions that need a human's sign-off, and its skills. Versioned by content digest.</p></article>
+          <article class="card"><h3>Public packs</h3><p>First-party, versioned collections of profiles any team can browse and adopt — proven roles like coordinator, developer, and reviewer.</p></article>
+          <article class="card"><h3>Private shelf</h3><p>Your team's own copies — adopted from a pack or authored fresh — the working set you edit and own.</p></article>
+          <article class="card"><h3>Bind &amp; materialize</h3><p>Assign a shelf profile to an agent identity, then materialize it: library writes the runnable home — a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
+          <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; a human approves, and library mints it — immutably versioned by digest, with the signer recorded.</p></article>
+          <article class="card"><h3>Update from source</h3><p>Pull a newer pack version's improvements into the parts you have not edited — a per-part merge that never clobbers local work.</p></article>
         </div>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section section--tint" id="use">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Use it</p>
-          <h2>Certificate in, profile out</h2>
-          <p>Public catalog reads need no auth; team operations authenticate with an AWID team certificate.</p>
+          <h2>Native aw commands, no dashboard</h2>
+          <p>Public catalog reads need no identity; team operations authenticate with your AWID team certificate. There is no web console — the same verbs serve people and agents.</p>
         </div>
         <div class="cmd-panel">
-          <p class="cmd-label">Browse the public catalog (no auth)</p>
-          <div class="cmd-list">
-            <div class="cmd"><pre>aw id request GET {origin}/v1/profile-packs</pre></div>
-          </div>
+          <p class="cmd-label">Browse the public catalog — no identity needed</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre></div></div>
           <p class="cmd-label">Adopt a profile onto your team's shelf</p>
-          <div class="cmd-list">
-            <div class="cmd"><pre>aw id request POST {origin}/v1/shelf/import --team-auth --raw \\
-  --body '{{"source_profile_pack_ref":"aweb.engineering-pack","profile_ref":"coordinator"}}'</pre></div>
-          </div>
-          <p class="cmd-label">Materialize it into a local home</p>
-          <div class="cmd-list">
-            <div class="cmd"><pre>aw id request POST {origin}/v1/materialize --team-auth --raw \\
-  --body '{{"profile_ref":"coordinator","runtime_kind":"claude-code","target":"local"}}'</pre></div>
-          </div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --profile_ref coordinator</pre></div></div>
+          <p class="cmd-label">See your shelf, and which profiles have upstream updates</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre></div></div>
+          <p class="cmd-label">Materialize a profile into a local agent home</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library materialize --profile_ref coordinator --runtime_kind claude-code --target local</pre></div></div>
         </div>
-        <p class="prose-outro">Agents read the whole surface in plain text at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">app manifest</a>.</p>
+        <p class="prose-outro">Every operation is a native <code>aw library</code> verb from the signed manifest — adopt, version, propose, update-from-source, publish. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">manifest</a>.</p>
+      </div>
+    </section>
+
+    <section class="section" id="engineers">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">For engineers</p>
+          <h2>What's actually real</h2>
+          <p>No magic words — concrete, versioned, signed behavior you can reproduce.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+          <article class="card"><h3>Immutable versions</h3><p>Every profile version is identified by a content digest. Reference a digest and you get exactly that content — there is no "latest" pointer that silently moves.</p></article>
+          <article class="card"><h3>Signed, no accounts</h3><p>There are no app accounts or API keys. Every write is a request signed by your team's AWID identity, and the signer is recorded with each change.</p></article>
+          <article class="card"><h3>Per-part updates</h3><p>update-from-source merges a newer pack version part by part: it takes upstream changes only where you have not edited, and an existing version is never overwritten.</p></article>
+          <article class="card"><h3>Reproducible homes</h3><p>Materializing a profile by digest writes the same files every time — an agent's starting behavior is set by the profile, not by hidden state.</p></article>
+          <article class="card"><h3>Honest boundary</h3><p>library defines how agents behave. It does not run them, route messages, or manage compute — those are separate aweb concerns. v0 has no dashboard and emits no events.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--tint">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">The bigger bet</p>
+          <h2>Agent behavior as a first-class artifact</h2>
+          <p>Today an agent's behavior is a pasted prompt: unversioned, unshared, no identity, no audit. library treats it the way software treats code — authored, versioned, shared, reviewed, and signed. The public catalog compounds as teams adopt and improve profiles; an agent that proposes a good change contributes it back.</p>
+        </div>
+        <div class="cta-row">
+          <a class="btn primary btn--lg" href="#use">Get started</a>
+          <a class="btn secondary btn--lg" href="/aweb-app.json">Read the manifest</a>
+        </div>
       </div>
     </section>
   </main>
@@ -153,7 +194,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <a href="https://awid.ai">AWID</a>
         </div>
       </div>
-      <div class="footer-bottom">library is an aweb anapp on the aweb.ai hub. AWID is the identity authority. Origin: {origin}</div>
+      <div class="footer-bottom">library is a Native Agentic App on the aweb.ai hub. AWID is the identity authority. Origin: {origin}</div>
     </div>
   </footer>
 
@@ -179,10 +220,11 @@ def llms_txt(*, public_origin: str) -> str:
 
 library is the app that owns agent profiles, profile packs, profile versions and
 digests, agent-profile bindings, materialization payloads, and profile learning.
-This is an aweb anapp: an agent-native app published by convention for the aweb.ai hub index.
-Agents authenticate with an AWID team certificate using aw id request --team-auth.
+This is a Native Agentic App (naapp): an aweb app agents operate directly via its signed
+manifest, published for the aweb.ai hub index. Install it with: aw plugin install {origin}/.well-known/aweb-app.json
+Then every operation is a native aw library verb. Agents authenticate with an AWID team certificate.
 AWID is the identity authority: https://awid.ai
-Aweb anapp hub: https://aweb.ai
+aweb hub: https://aweb.ai
 There are no app-local accounts, passwords, or OAuth sessions.
 
 Origin:
@@ -193,6 +235,13 @@ The model is structural: profile **packs** are the public, versioned catalog;
 a team's **shelf** holds its private working copies. A team adopts a pack profile
 onto its shelf, evolves it (new versions, proposals), binds agents to shelf
 profiles, and materializes them. "Public" is a publish, not a flag.
+
+How to call it: the canonical form is the native plugin verbs — after
+aw plugin install {origin}/.well-known/aweb-app.json, every operation below is
+aw library <verb> (e.g. aw library list-packs, aw library import-to-shelf,
+aw library shelf, aw library materialize). The HTTP endpoints below are the same
+surface; call them directly with aw id request --team-auth (the low-level escape
+hatch) if you are not using the plugin.
 
 Public endpoints (no auth):
 - GET / — human landing page
@@ -272,7 +321,7 @@ def skills_index() -> str:
     lines = [
         "# library agent skills",
         "",
-        "library is an aweb anapp: an agent-native app on the aweb.ai hub.",
+        "library is a Native Agentic App (naapp) on the aweb.ai hub.",
         "Agents should fetch the relevant skill before acting so requests match the library API contract.",
         "",
         "- aweb.ai hub: https://aweb.ai",
