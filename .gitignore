@@ -24,6 +24,11 @@ __pycache__/
 !.env.example
 !**/.env.example
 .emacs-bu/
+
+# Editor lock/autosave files (can mirror gitignored files like .env.*)
+.#*
+\#*\#
+*~
 *.emacs-bu*
 
 # server/
