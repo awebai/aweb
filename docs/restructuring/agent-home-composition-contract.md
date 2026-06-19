@@ -179,6 +179,18 @@ Library, reviews and mints it — the proposal/version-minting flow). `AGENTS.md
 and the installed `skills/`,`artifacts/` are **derived** from this source; the
 source under `.aw/profile/` is canonical for evolution.
 
+### Relationship to the team shelf
+
+The materialized `.aw/profile/` is the local manifestation of the team's
+**private shelf** profile — the copy the team owns and evolves. It is never a
+bare public-pack ref. In `ref.json`, `source_profile_pack_*` is **provenance**
+(where the shelf copy was adopted from), which enables `update-from-source`:
+pulling a newer pack version's improvements into only the parts the team has not
+evolved (per-part merge), without clobbering local learning. A shelf profile may
+also be created directly (no source pack), in which case the source provenance is
+empty. Adoption from a public pack is `import-to-shelf` (a copy); the home then
+materializes from that shelf copy, not from the public pack ref.
+
 ## 8. Empty profile
 
 No bound profile → identity-only home: the `.aw` identity/team material, no
