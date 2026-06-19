@@ -69,6 +69,47 @@ func TestWriteLibraryHomeFilesRejectsEscapingSymlinkTargetWithoutPartialWrite(t 
 	}
 }
 
+func TestMaterializeLibraryProfilePayloadRejectsTraversalWithoutTargetWrite(t *testing.T) {
+	target := t.TempDir()
+	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      target,
+		PackRef:        "aweb.engineering-pack",
+		PackVersion:    "0.1.0",
+		ProfileRef:     "coordinator",
+		ProfileVersion: "0.1.0",
+		Files: []LibraryProfilePayloadFile{
+			{Path: "profile.yaml", ContentUTF8: "id: coordinator\n"},
+			{Path: "../escape", ContentUTF8: "x"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "traversal") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial target write occurred, stat err=%v", statErr)
+	}
+}
+
+func TestMaterializeLibraryProfilePayloadRejectsHashMismatchWithoutTargetWrite(t *testing.T) {
+	target := t.TempDir()
+	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      target,
+		PackRef:        "aweb.engineering-pack",
+		PackVersion:    "0.1.0",
+		ProfileRef:     "coordinator",
+		ProfileVersion: "0.1.0",
+		Files: []LibraryProfilePayloadFile{
+			{Path: "profile.yaml", SHA256: "sha256:0000", ContentUTF8: "id: coordinator\n"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial target write occurred, stat err=%v", statErr)
+	}
+}
+
 func TestWriteLibraryHomeFilesRejectsSymlinkTargetThroughExistingSymlinkWithoutPartialWrite(t *testing.T) {
 	target := t.TempDir()
 	outside := t.TempDir()

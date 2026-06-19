@@ -2,6 +2,7 @@ package profilepack
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,19 +50,23 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if err != nil {
 		return nil, err
 	}
-	profile, ok := findProfile(pack, opts.ProfileID)
+	return materializeLoadedProfile(pack, opts.ProfileID, opts.TargetDir, opts.Force, "claude-code")
+}
+
+func materializeLoadedProfile(pack *Pack, profileID, targetDir string, force bool, runtimeKind string) (*MaterializeResult, error) {
+	profile, ok := findProfile(pack, profileID)
 	if !ok {
-		return nil, fmt.Errorf("profile %q not found in profile pack", opts.ProfileID)
+		return nil, fmt.Errorf("profile %q not found in profile pack", profileID)
 	}
-	absTarget, err := filepath.Abs(opts.TargetDir)
+	absTarget, err := filepath.Abs(targetDir)
 	if err != nil {
 		return nil, err
 	}
-	ops, err := materializeOps(pack, profile)
+	ops, err := materializeOps(pack, profile, runtimeKind)
 	if err != nil {
 		return nil, err
 	}
-	if err := preflightMaterializeWrites(absTarget, ops, opts.Force); err != nil {
+	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
 		return nil, err
 	}
 	written, err := writeMaterializedFiles(absTarget, ops)
@@ -80,7 +85,7 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	}, nil
 }
 
-func materializeOps(pack *Pack, profile Profile) ([]materializeWriteOp, error) {
+func materializeOps(pack *Pack, profile Profile, runtimeKind string) ([]materializeWriteOp, error) {
 	ref := materializedProfileRef{
 		ProfileDigest:            profile.Digest,
 		ProfileRef:               profile.ID,
@@ -104,8 +109,10 @@ func materializeOps(pack *Pack, profile Profile) ([]materializeWriteOp, error) {
 	}
 	ops := []materializeWriteOp{
 		{Kind: opFile, Rel: "AGENTS.md", Data: agents},
-		{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"},
 		{Kind: opFile, Rel: filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json")), Data: refBytes},
+	}
+	if isClaudeRuntimeKind(runtimeKind) {
+		ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"})
 	}
 	profileYAML, err := materializeCopyOp(pack.Source.Ref, filepath.ToSlash(filepath.Join(profile.Path, "profile.yaml")), filepath.ToSlash(filepath.Join(".aw", "profile", "profile.yaml")))
 	if err != nil {
@@ -138,7 +145,9 @@ func materializeOps(pack *Pack, profile Profile) ([]materializeWriteOp, error) {
 			return nil, err
 		}
 		ops = append(ops, op)
-		ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: filepath.ToSlash(filepath.Join(".claude", "skills", skillName, "SKILL.md")), LinkTarget: filepath.ToSlash(filepath.Join("..", "..", "..", "skills", skillName, "SKILL.md"))})
+		if isClaudeRuntimeKind(runtimeKind) {
+			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: filepath.ToSlash(filepath.Join(".claude", "skills", skillName, "SKILL.md")), LinkTarget: filepath.ToSlash(filepath.Join("..", "..", "..", "skills", skillName, "SKILL.md"))})
+		}
 	}
 	for _, artifact := range profile.Artifacts {
 		sourceRel, err := resourceSourceRel(profile.ID, "artifacts", artifact.Path)
@@ -159,6 +168,11 @@ func materializeOps(pack *Pack, profile Profile) ([]materializeWriteOp, error) {
 		ops = append(ops, op)
 	}
 	return ops, nil
+}
+
+func isClaudeRuntimeKind(runtimeKind string) bool {
+	kind := strings.ToLower(strings.TrimSpace(runtimeKind))
+	return kind == "" || kind == "claude-code"
 }
 
 func composeAgentsMarkdown(pack *Pack, profile Profile, instructions []byte) ([]byte, error) {
@@ -277,6 +291,133 @@ type LibraryHomeFile struct {
 	Kind        string `json:"kind"`
 	ContentUTF8 string `json:"content_utf8,omitempty"`
 	Target      string `json:"target,omitempty"`
+}
+
+type LibraryProfilePayloadFile struct {
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256,omitempty"`
+	ContentUTF8 string `json:"content_utf8,omitempty"`
+}
+
+type MaterializeLibraryProfilePayloadOptions struct {
+	TargetDir      string
+	PackRef        string
+	PackVersion    string
+	PackDigest     string
+	ProfileRef     string
+	ProfileVersion string
+	ProfileDigest  string
+	RuntimeKind    string
+	Files          []LibraryProfilePayloadFile
+	Force          bool
+}
+
+func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (*MaterializeResult, error) {
+	if strings.TrimSpace(opts.TargetDir) == "" {
+		return nil, fmt.Errorf("target directory is required")
+	}
+	if err := validateRefString("pack_ref", opts.PackRef); err != nil {
+		return nil, err
+	}
+	if err := validateRequiredString("pack_version", opts.PackVersion); err != nil {
+		return nil, err
+	}
+	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
+		return nil, err
+	}
+	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
+		return nil, err
+	}
+	tmp, err := os.MkdirTemp("", "aw-library-profile-payload-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	profileDir := filepath.Join(tmp, "profiles", opts.ProfileRef)
+	if err := validateAndWriteLibraryProfilePayload(tmp, profileDir, opts.Files); err != nil {
+		return nil, err
+	}
+	packYAML, err := json.MarshalIndent(map[string]any{
+		"schema_version": 1,
+		"id":             opts.PackRef,
+		"name":           opts.PackRef,
+		"version":        opts.PackVersion,
+		"summary":        "Fetched from Library",
+		"description":    "Profile source fetched from Library for local materialization.",
+		"profiles":       []map[string]any{{"id": opts.ProfileRef, "default_count": 1}},
+	}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "pack.yaml"), append(packYAML, '\n'), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# "+opts.PackRef+"\n"), 0o644); err != nil {
+		return nil, err
+	}
+	pack, err := LoadLocalDir(tmp)
+	if err != nil {
+		return nil, err
+	}
+	pack.Source.Kind = "library_profile_payload"
+	pack.Source.DigestScope = DigestScopeLocalImportPayload
+	if strings.TrimSpace(opts.PackDigest) != "" {
+		pack.Source.Digest = strings.TrimSpace(opts.PackDigest)
+	}
+	for i := range pack.LoadedProfiles {
+		if pack.LoadedProfiles[i].ID == opts.ProfileRef && strings.TrimSpace(opts.ProfileDigest) != "" {
+			pack.LoadedProfiles[i].Digest = strings.TrimSpace(opts.ProfileDigest)
+		}
+	}
+	return materializeLoadedProfile(pack, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind)
+}
+
+func validateAndWriteLibraryProfilePayload(root, profileDir string, files []LibraryProfilePayloadFile) error {
+	if len(files) == 0 {
+		return fmt.Errorf("library get-profile response missing files")
+	}
+	seen := map[string]bool{}
+	for _, file := range files {
+		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if seen[rel] {
+			return fmt.Errorf("duplicate library profile file %s", rel)
+		}
+		seen[rel] = true
+		if err := validateRelativePath("library profile file", rel); err != nil {
+			return err
+		}
+		if strings.TrimSpace(file.SHA256) != "" {
+			want := strings.TrimPrefix(strings.TrimSpace(file.SHA256), "sha256:")
+			got := fmt.Sprintf("%x", sha256.Sum256([]byte(file.ContentUTF8)))
+			if want != got {
+				return fmt.Errorf("library profile file %s sha256 mismatch", rel)
+			}
+		}
+		dest := filepath.Join(profileDir, filepath.FromSlash(rel))
+		if !isWithin(profileDir, dest) {
+			return fmt.Errorf("library profile file %s escapes profile directory", rel)
+		}
+	}
+	if !seen["profile.yaml"] {
+		return fmt.Errorf("library get-profile response missing profile.yaml")
+	}
+	for _, file := range files {
+		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		dest := filepath.Join(profileDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		if err := pathpreflight.PreflightFile(dest, "library profile file", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, []byte(file.ContentUTF8), 0o644); err != nil {
+			return err
+		}
+	}
+	if err := pathpreflight.PreflightDir(root, "library profile payload", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {

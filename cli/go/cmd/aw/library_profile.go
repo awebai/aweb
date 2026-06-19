@@ -18,7 +18,13 @@ type libraryProfileSelector struct {
 }
 
 type libraryProfileDetailResponse struct {
-	RuntimeAssumptions []string `json:"runtime_assumptions"`
+	PackRef            string                                  `json:"pack_ref"`
+	PackVersion        string                                  `json:"pack_version"`
+	ProfileRef         string                                  `json:"profile_ref"`
+	Version            string                                  `json:"version"`
+	Digest             string                                  `json:"digest"`
+	RuntimeAssumptions []string                                `json:"runtime_assumptions"`
+	Files              []profilepack.LibraryProfilePayloadFile `json:"files"`
 }
 
 type libraryImportToShelfResponse struct {
@@ -29,16 +35,6 @@ type libraryImportToShelfResponse struct {
 	SourceProfilePackVersion string `json:"source_profile_pack_version"`
 	SourceProfilePackDigest  string `json:"source_profile_pack_digest"`
 	Created                  bool   `json:"created"`
-}
-
-type libraryMaterializeResponse struct {
-	ProfileRef               string                        `json:"profile_ref"`
-	ProfileVersion           string                        `json:"profile_version"`
-	ProfileDigest            string                        `json:"profile_digest"`
-	SourceProfilePackRef     string                        `json:"source_profile_pack_ref"`
-	SourceProfilePackVersion string                        `json:"source_profile_pack_version"`
-	SourceProfilePackDigest  string                        `json:"source_profile_pack_digest"`
-	HomeFiles                []profilepack.LibraryHomeFile `json:"home_files"`
 }
 
 func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
@@ -92,17 +88,18 @@ func validateLibraryRef(field, value string, allowSlash bool) error {
 	return nil
 }
 
-func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*libraryMaterializeResponse, []string, error) {
+func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*profilepack.MaterializeResult, []string, error) {
 	if strings.TrimSpace(agentID) == "" {
 		return nil, nil, fmt.Errorf("agent id is required for Library binding")
 	}
-	var materialized *libraryMaterializeResponse
+	var materialized *profilepack.MaterializeResult
 	var written []string
 	err := withWorkingDir(homeDir, func() error {
-		runtimeKind, err := callLibraryProfileRuntimeKind(selector)
+		profile, err := callLibraryGetProfile(selector)
 		if err != nil {
 			return fmt.Errorf("library get-profile: %w", err)
 		}
+		runtimeKind := chooseLibraryRuntimeKind(profile.RuntimeAssumptions)
 		imported, err := callLibraryImportToShelf(selector)
 		if err != nil {
 			return fmt.Errorf("library import-to-shelf: %w", err)
@@ -110,15 +107,23 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err := callLibraryBind(strings.TrimSpace(agentID), imported); err != nil {
 			return fmt.Errorf("library bind: %w", err)
 		}
-		materialized, err = callLibraryMaterialize(strings.TrimSpace(agentID), runtimeKind)
+		materialized, err = profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
+			TargetDir:      homeDir,
+			PackRef:        imported.SourceProfilePackRef,
+			PackVersion:    firstNonEmptyLibraryValue(imported.SourceProfilePackVersion, profile.PackVersion, selector.SourceProfilePackVersion),
+			PackDigest:     imported.SourceProfilePackDigest,
+			ProfileRef:     imported.ProfileRef,
+			ProfileVersion: firstNonEmptyLibraryValue(imported.Version, profile.Version),
+			ProfileDigest:  firstNonEmptyLibraryValue(imported.Digest, profile.Digest),
+			RuntimeKind:    runtimeKind,
+			Files:          profile.Files,
+			Force:          force,
+		})
 		if err != nil {
-			return fmt.Errorf("library materialize: %w", err)
+			return fmt.Errorf("local profile materialize: %w", err)
 		}
-		if err := validateLibraryMaterializeHome(materialized); err != nil {
-			return err
-		}
-		written, err = profilepack.WriteLibraryHomeFiles(homeDir, materialized.HomeFiles, force)
-		return err
+		written = materialized.FilesWritten
+		return nil
 	})
 	if err != nil {
 		return nil, nil, err
@@ -138,16 +143,25 @@ func withWorkingDir(dir string, fn func() error) error {
 	return fn()
 }
 
-func callLibraryProfileRuntimeKind(selector libraryProfileSelector) (string, error) {
+func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
 	body, err := executeLibraryToolBody([]string{"get-profile", "--pack_ref", selector.SourceProfilePackRef, "--profile_ref", selector.ProfileRef})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var out libraryProfileDetailResponse
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("decode library get-profile response: %w", err)
+		return nil, fmt.Errorf("decode library get-profile response: %w", err)
 	}
-	return chooseLibraryRuntimeKind(out.RuntimeAssumptions), nil
+	if out.ProfileRef == "" {
+		out.ProfileRef = selector.ProfileRef
+	}
+	if out.PackRef == "" {
+		out.PackRef = selector.SourceProfilePackRef
+	}
+	if out.PackVersion == "" {
+		out.PackVersion = selector.SourceProfilePackVersion
+	}
+	return &out, nil
 }
 
 func chooseLibraryRuntimeKind(assumptions []string) string {
@@ -206,18 +220,6 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) err
 	return err
 }
 
-func callLibraryMaterialize(agentID, runtimeKind string) (*libraryMaterializeResponse, error) {
-	body, err := executeLibraryToolBody([]string{"materialize", "--agent_id", agentID, "--runtime_kind", runtimeKind, "--target", "local"})
-	if err != nil {
-		return nil, err
-	}
-	var out libraryMaterializeResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("decode library materialize response: %w", err)
-	}
-	return &out, nil
-}
-
 func executeLibraryToolBody(args []string) ([]byte, error) {
 	result, exists, err := executeInstalledManifestTool("library", args)
 	if !exists {
@@ -232,18 +234,11 @@ func executeLibraryToolBody(args []string) ([]byte, error) {
 	return result.Body, nil
 }
 
-func validateLibraryMaterializeHome(result *libraryMaterializeResponse) error {
-	if result == nil {
-		return fmt.Errorf("library materialize response is required")
-	}
-	seen := map[string]bool{}
-	for _, file := range result.HomeFiles {
-		seen[filepath.ToSlash(strings.TrimSpace(file.Path))] = true
-	}
-	for _, required := range []string{"AGENTS.md", "CLAUDE.md", ".aw/profile/ref.json", ".aw/profile/profile.yaml", ".aw/profile/instructions.md"} {
-		if !seen[required] {
-			return fmt.Errorf("library materialize response missing %s", required)
+func firstNonEmptyLibraryValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
 		}
 	}
-	return nil
+	return ""
 }
