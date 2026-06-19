@@ -485,16 +485,18 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
         assert response.content == committed
 
 
-def test_real_aw_team_auth_reaches_cert_gated_stub(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
     # Public catalog read with team auth still works.
     packs = _aw_request(team, "GET", f"{library.origin}/v1/profile-packs")
     assert _assert_aw_success(packs, context="list profile packs smoke").strip() == "[]"
-    # A valid certificate passes auth and reaches the scaffold stub (501), not 401.
+    # A valid certificate passes auth: get-binding for an unbound agent is a real
+    # 404 (not 401, not a 501 stub), proving auth + the live endpoint.
+    binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
+    _assert_aw_status(binding, 404, context="authenticated get-binding for unbound agent")
+    # proposals are still a scaffold stub in this chunk.
     proposals = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
     _assert_aw_status(proposals, 501, context="authenticated proposals stub")
-    binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
-    _assert_aw_status(binding, 501, context="authenticated binding stub")
 
 
 def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(

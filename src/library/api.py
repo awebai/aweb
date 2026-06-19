@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -10,6 +11,14 @@ from library.auth import AWIDTeamCache, Principal, authenticate_request
 from library.aweb_manifest import read_manifest_bytes
 from library.config import Settings, get_settings
 from library.db import LibraryDatabase
+from library.models import MaterializeRequest, ProfileBindingRequest, TeamRegisterRequest
+from library.repository import (
+    get_profile_binding,
+    import_profile_pack,
+    materialize,
+    register_team,
+    set_profile_binding,
+)
 from library.surfaces import (
     llms_txt,
     read_skill,
@@ -125,29 +134,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_profile_route(profile_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    # --- Team-scoped, cert-auth-gated write stubs ---------------------------------
+    # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a
-    # valid certificate). Real bodies arrive in later tasks; for now each verb is a
-    # 501 stub so the authenticated surface is present and testable.
+    # valid certificate) and keys all state by the verified team_id.
+
+    @app.post("/v1/team/register")
+    async def register_team_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        raw = await request.body()
+        payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
+        return await register_team(database, principal=actor, owner=payload.owner, display_name=payload.display_name)
 
     @app.post("/v1/profile-packs/import")
-    async def import_profile_pack_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def import_profile_pack_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await import_profile_pack(database, principal=actor, payload=await request.json())
 
     @app.post("/v1/agents/{agent_id}/profile-binding")
     async def set_profile_binding_route(
-        agent_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        agent_id: str,
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        binding = ProfileBindingRequest.model_validate(await request.json())
+        return await set_profile_binding(database, principal=actor, agent_id=agent_id, binding=binding)
 
     @app.get("/v1/agents/{agent_id}/profile-binding")
     async def get_profile_binding_route(
-        agent_id: str, actor: Annotated[Principal, Depends(principal)]
+        agent_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_profile_binding(database, principal=actor, agent_id=agent_id)
+
+    @app.post("/v1/materialize")
+    async def materialize_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        materialize_request = MaterializeRequest.model_validate(await request.json())
+        return await materialize(database, principal=actor, request=materialize_request)
+
+    # Mutable access/organization metadata + proposals land in the next chunk;
+    # the routes are present and cert-auth-gated so the surface is complete.
+    @app.put("/v1/profiles/{profile_ref}/visibility")
+    async def set_profile_visibility_route(
+        profile_ref: str, actor: Annotated[Principal, Depends(principal)]
     ) -> Response:
         raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
 
-    @app.post("/v1/materialize")
-    async def materialize_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
+    @app.put("/v1/profiles/{profile_ref}/tags")
+    async def set_profile_tags_route(
+        profile_ref: str, actor: Annotated[Principal, Depends(principal)]
+    ) -> Response:
+        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+
+    @app.put("/v1/profile-packs/{pack_ref}/visibility")
+    async def set_pack_visibility_route(
+        pack_ref: str, actor: Annotated[Principal, Depends(principal)]
+    ) -> Response:
+        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+
+    @app.put("/v1/profile-packs/{pack_ref}/tags")
+    async def set_pack_tags_route(
+        pack_ref: str, actor: Annotated[Principal, Depends(principal)]
+    ) -> Response:
         raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
 
     @app.post("/v1/proposals")
