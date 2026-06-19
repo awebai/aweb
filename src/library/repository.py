@@ -87,7 +87,7 @@ async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack:
                   (owner_team, pack_ref, pack_version, profile_ref, profile_version, digest, name,
                    mission, accepted_work, runtime_assumptions, memory_policy, expected_apps,
                    event_subscriptions, approval_required, files)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14::jsonb)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb)
                 ON CONFLICT (owner_team, pack_ref, pack_version, profile_ref) DO UPDATE SET
                     profile_version = EXCLUDED.profile_version, digest = EXCLUDED.digest,
                     name = EXCLUDED.name, mission = EXCLUDED.mission,
