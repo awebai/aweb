@@ -78,6 +78,13 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	return selector, nil
 }
 
+func rejectUnsupportedVersionedLibrarySelector(selector libraryProfileSelector) error {
+	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
+		return usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceProfilePackVersion)
+	}
+	return nil
+}
+
 func validateLibraryRef(field, value string, allowSlash bool) error {
 	if strings.TrimSpace(value) == "" {
 		return usageError("%s is required", field)
@@ -100,8 +107,8 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 	if strings.TrimSpace(agentID) == "" {
 		return nil, nil, fmt.Errorf("agent id is required for Library binding")
 	}
-	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
-		return nil, nil, usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceProfilePackVersion)
+	if err := rejectUnsupportedVersionedLibrarySelector(selector); err != nil {
+		return nil, nil, err
 	}
 	var materialized *profilepack.MaterializeResult
 	var written []string

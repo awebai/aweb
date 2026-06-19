@@ -181,6 +181,9 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
+			return err
+		}
 		selector = &parsed
 	}
 	if teamHumanCreateBYOT {
@@ -364,6 +367,9 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			}
 			parsed, err := parseLibraryProfileSelector(profileRef)
 			if err != nil {
+				return err
+			}
+			if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
 				return err
 			}
 			selector = &parsed

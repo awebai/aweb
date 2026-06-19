@@ -164,6 +164,46 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateRejectsVersionedLibraryProfileBeforeIdentity(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer@0.1.0"}
+	called := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		called = true
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
+		t.Fatalf("error=%v", err)
+	}
+	if called {
+		t.Fatal("versioned selector should fail before identity creation")
+	}
+	if _, statErr := os.Lstat(root + "/.aw"); !os.IsNotExist(statErr) {
+		t.Fatalf("identity state created despite unsupported selector, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanAddRejectsVersionedLibraryProfileBeforeHomeCreate(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer@0.1.0"})
+	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(root + "/agents"); !os.IsNotExist(statErr) {
+		t.Fatalf("agent home state created despite unsupported selector, stat err=%v", statErr)
+	}
+}
+
 func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
