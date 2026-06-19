@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -17,14 +18,19 @@ var (
 	teamHumanCreateDisplayName string
 	teamHumanCreateServiceURL  string
 	teamHumanCreateRegistryURL string
+	teamHumanCreateAlias       string
+	teamHumanCreateProfiles    []string
 	teamHumanInviteTeamID      string
+	teamHumanAddLocal          bool
+	teamHumanAddGlobal         bool
+	teamHumanAddLayoutOnly     bool
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 )
 
 var teamHumanCmd = &cobra.Command{
 	Use:   "team",
-	Short: "Everyday teams: create, invite, join, list, switch, leave, remove-agent",
+	Short: "Everyday teams: create, add, invite, join, list, switch, leave, remove-agent",
 	Long: "Everyday team membership commands.\n\n" +
 		"Use these commands for the normal hosted invite/join membership flow and for\n" +
 		"checking or switching this identity's installed team memberships. Protocol/admin\n" +
@@ -32,22 +38,31 @@ var teamHumanCmd = &cobra.Command{
 }
 
 var teamHumanCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a team or get the hosted create-team entrypoint",
-	Long: "Create a team or get the hosted create-team entrypoint.\n\n" +
-		"Hosted team creation is dashboard-first in this release because it depends on\n" +
-		"the signed-in human account and organization. Customer-controlled BYOT teams\n" +
-		"can be created from the CLI by passing --byot with --name and --namespace.",
-	Args: cobra.NoArgs,
+	Use:   "create <name>",
+	Short: "Create a local empty-profile team workspace",
+	Long: "Create a local empty-profile team workspace.\n\n" +
+		"This wraps aw init for the aw-local path. No --profile means no Library call\n" +
+		"and no profile materialization. Library-bound --profile creation is deferred\n" +
+		"behind the aw library plugin seam.",
+	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
+}
+
+var teamHumanAddCmd = &cobra.Command{
+	Use:   "add <name>[@<profile-ref>]...",
+	Short: "Add empty-profile agents to this team's agents/instances layout",
+	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. @<profile-ref> is deferred behind the aw library plugin seam.",
+	Args:  cobra.MinimumNArgs(1),
+	RunE:  runTeamHumanAdd,
 }
 
 var teamHumanInviteCmd = &cobra.Command{
 	Use:   "invite",
 	Short: "Invite an agent or workspace to the active team",
 	Long: "Invite an agent or workspace to the active team.\n\n" +
-		"This is the everyday add-agent entrypoint. It creates an invite token using\n" +
-		"the current team's authority, then the joining workspace runs `aw team join <token>`.",
+		"This creates an invite token using the current team's authority for a separate\n" +
+		"workspace or machine, then the joining workspace runs `aw team join <token>`.\n" +
+		"For local empty-profile homes under agents/instances/, use `aw team add`.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := applyHumanTeamIDToInvite(teamHumanInviteTeamID); err != nil {
@@ -108,7 +123,14 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateDisplayName, "display-name", "", "Team display name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile to adopt and materialize (deferred behind aw library seam)")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
+
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
+	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
@@ -128,45 +150,316 @@ func init() {
 	rootCmd.AddCommand(teamHumanCmd)
 }
 
+type teamHumanCreateOutput struct {
+	Status       string `json:"status"`
+	TeamName     string `json:"team_name"`
+	ProfileMode  string `json:"profile_mode"`
+	TeamID       string `json:"team_id,omitempty"`
+	Alias        string `json:"alias,omitempty"`
+	WorkspaceID  string `json:"workspace_id,omitempty"`
+	AwebURL      string `json:"aweb_url,omitempty"`
+	RegistryURL  string `json:"registry_url,omitempty"`
+	NoLibrary    bool   `json:"no_library"`
+	NoProfile    bool   `json:"no_profile"`
+	IdentityOnly bool   `json:"identity_only"`
+}
+
 func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
+	teamName := strings.TrimSpace(args[0])
+	if teamName == "" {
+		return usageError("team name is required")
+	}
+	if len(teamHumanCreateProfiles) > 0 {
+		return usageError("aw team create --profile requires aw library adoption; retry after the aw library plugin seam lands")
+	}
 	if teamHumanCreateBYOT {
 		teamCreateName = teamHumanCreateName
+		if strings.TrimSpace(teamCreateName) == "" {
+			teamCreateName = teamName
+		}
 		teamCreateNamespace = teamHumanCreateNamespace
 		teamCreateDisplayName = teamHumanCreateDisplayName
 		teamCreateRegistryURL = teamHumanCreateRegistryURL
 		return runTeamCreate(cmd, args)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
-		return usageError("hosted team creation does not use --namespace or --registry; pass --byot to create a customer-controlled AWID team")
+		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
 	}
-	urls, err := resolveOnboardingServiceURLs(teamHumanCreateServiceURL)
+	wd, _ := os.Getwd()
+	awebURL, err := resolveInitAwebURL()
 	if err != nil {
 		return err
 	}
-	serviceURL := strings.TrimSpace(urls.OnboardingURL)
-	if serviceURL == "" {
-		serviceURL = strings.TrimSpace(urls.AwebURL)
+	registryURL, err := resolveInitAWIDRegistryURL()
+	if err != nil {
+		return err
 	}
-	if serviceURL == "" {
-		serviceURL = DefaultAwebURL
+	alias := strings.TrimSpace(teamHumanCreateAlias)
+	if alias == "" {
+		alias = strings.ToLower(teamName)
 	}
-	if jsonFlag {
-		printOutput(map[string]any{
-			"status":        "dashboard_required",
-			"mode":          "hosted",
-			"dashboard_url": serviceURL,
-			"next_steps": []string{
-				"Create the hosted team in the dashboard",
-				"Run aw team invite from a team workspace or use the dashboard invite flow",
-			},
-		}, func(v any) string { return "" })
+	if apiKey := resolveInitAPIKey(); apiKey != "" {
+		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+			WorkingDir:  wd,
+			AwebURL:     awebURL,
+			RegistryURL: registryURL,
+			APIKey:      apiKey,
+			Alias:       alias,
+			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		})
+		if err != nil {
+			return err
+		}
+		printOutput(teamHumanCreateOutputFromConnect(teamName, result), formatTeamHumanCreate)
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Hosted team creation is dashboard-first in this release.\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "Open: %s\n\n", serviceURL)
-	fmt.Fprintf(cmd.OutOrStdout(), "After the team exists, invite agents with `aw team invite` or the dashboard invite flow.\n")
-	fmt.Fprintf(cmd.OutOrStdout(), "For customer-controlled BYOT teams, run `aw team create --byot --name <team> --namespace <domain>`.\n")
+	if !initShouldUseImplicitLocalFlow(registryURL) {
+		return usageError("aw team create without AWEB_API_KEY requires a local awid registry; use aw init for other identity flows")
+	}
+	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
+		WorkingDir:  wd,
+		AwebURL:     awebURL,
+		RegistryURL: registryURL,
+		Alias:       alias,
+		TeamName:    teamName,
+		HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+	})
+	if err != nil {
+		if isRegistryUnavailableError(err) {
+			return fmt.Errorf("local awid registry %s is not reachable; start the local stack and retry: %w", registryURL, err)
+		}
+		return err
+	}
+	printOutput(teamHumanCreateOutputFromConnect(teamName, result), formatTeamHumanCreate)
 	return nil
+}
+
+func teamHumanCreateOutputFromConnect(teamName string, result connectOutput) teamHumanCreateOutput {
+	return teamHumanCreateOutput{
+		Status:       "created",
+		TeamName:     strings.TrimSpace(teamName),
+		ProfileMode:  "empty",
+		TeamID:       strings.TrimSpace(result.TeamID),
+		Alias:        strings.TrimSpace(result.Alias),
+		WorkspaceID:  strings.TrimSpace(result.WorkspaceID),
+		AwebURL:      strings.TrimSpace(result.AwebURL),
+		NoLibrary:    true,
+		NoProfile:    true,
+		IdentityOnly: true,
+	}
+}
+
+func formatTeamHumanCreate(v any) string {
+	out := v.(teamHumanCreateOutput)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Created empty-profile team %s", out.TeamName)
+	if out.TeamID != "" {
+		fmt.Fprintf(&b, " (%s)", out.TeamID)
+	}
+	if out.Alias != "" {
+		fmt.Fprintf(&b, " as alias %s", out.Alias)
+	}
+	b.WriteString("\n")
+	b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
+	return b.String()
+}
+
+type teamHumanAddOutput struct {
+	Status     string                `json:"status"`
+	AgentsRoot string                `json:"agents_root"`
+	LayoutOnly bool                  `json:"layout_only"`
+	NoLibrary  bool                  `json:"no_library"`
+	NoProfile  bool                  `json:"no_profile"`
+	Agents     []teamHumanAddedAgent `json:"agents"`
+}
+
+type teamHumanAddedAgent struct {
+	Name        string `json:"name"`
+	HomeDir     string `json:"home_dir"`
+	ProfileMode string `json:"profile_mode"`
+	Alias       string `json:"alias,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+	CertPath    string `json:"cert_path,omitempty"`
+}
+
+func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
+	if teamHumanAddLocal && teamHumanAddGlobal {
+		return usageError("--local and --global cannot be used together")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repoRoot := resolveRepoRoot(wd)
+	agentsRoot := filepath.Join(repoRoot, "agents", "instances")
+	plans := make([]teamHumanAddedAgent, 0, len(args))
+	seen := map[string]bool{}
+	for _, raw := range args {
+		name, profileRef, err := parseTeamHumanAddSpec(raw)
+		if err != nil {
+			return err
+		}
+		if profileRef != "" {
+			return usageError("aw team add %s@%s requires aw library adoption; retry after the aw library plugin seam lands", name, profileRef)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return usageError("duplicate agent name %q", name)
+		}
+		seen[key] = true
+		plans = append(plans, teamHumanAddedAgent{Name: name, HomeDir: filepath.Join(agentsRoot, name), ProfileMode: "empty"})
+	}
+	for _, plan := range plans {
+		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
+			return err
+		}
+	}
+	for i := range plans {
+		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
+			return err
+		}
+		if teamHumanAddLayoutOnly {
+			continue
+		}
+		accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+		if err != nil {
+			return err
+		}
+		plans[i].Alias = accepted.Output.Alias
+		plans[i].TeamID = accepted.Output.TeamID
+		plans[i].CertPath = accepted.Output.CertPath
+	}
+	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: true, NoProfile: true, Agents: plans}, formatTeamHumanAdd)
+	return nil
+}
+
+func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
+	name = strings.TrimSpace(raw)
+	if before, after, ok := strings.Cut(name, "@"); ok {
+		name = strings.TrimSpace(before)
+		profileRef = strings.TrimSpace(after)
+		if profileRef == "" {
+			return "", "", usageError("profile ref is required after @")
+		}
+	}
+	if name == "" {
+		return "", "", usageError("agent name is required")
+	}
+	if !isValidWorkspaceAlias(name) {
+		return "", "", usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
+	}
+	return name, profileRef, nil
+}
+
+func preflightEmptyAgentHome(homeDir string) error {
+	if info, err := os.Lstat(homeDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("agent home %s must not be a symlink", homeDir)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("agent home %s must be a directory", homeDir)
+		}
+		if _, err := os.Stat(filepath.Join(homeDir, ".aw")); err == nil {
+			return usageError("agent home %s already has identity state", homeDir)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return rejectSymlinkedExistingAgentDirs(homeDir, "agent home")
+}
+
+func rejectSymlinkedExistingAgentDirs(path, label string) error {
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, volume)
+	current := volume
+	if filepath.IsAbs(clean) {
+		current += string(filepath.Separator)
+		rest = strings.TrimPrefix(rest, string(filepath.Separator))
+	}
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		if current == "" || current == string(filepath.Separator) || strings.HasSuffix(current, string(filepath.Separator)) {
+			current += part
+		} else {
+			current = filepath.Join(current, part)
+		}
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if isAllowedAmbientAgentSymlinkPrefix(current) {
+				continue
+			}
+			return fmt.Errorf("%s parent %s must not be a symlink", label, filepath.ToSlash(current))
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s parent %s must be a directory", label, filepath.ToSlash(current))
+		}
+	}
+	return nil
+}
+
+func isAllowedAmbientAgentSymlinkPrefix(path string) bool {
+	tempDir := filepath.Clean(os.TempDir())
+	rel, err := filepath.Rel(filepath.Clean(path), tempDir)
+	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))
+}
+
+func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
+	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
+	if err != nil {
+		return nil, err
+	}
+	localInvite := !global
+	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	if err != nil {
+		return nil, err
+	}
+	var token string
+	if hasTeamKey {
+		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+	} else if strings.TrimSpace(awebURL) != "" {
+		_, token, err = createHostedTeamInviteToken(anchorDir, awid.BuildTeamID(domain, team), localInvite)
+	} else {
+		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+	}
+	if err != nil {
+		return nil, err
+	}
+	accepted, err := acceptTeamInviteWithDetails(homeDir, token, alias, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := upsertAcceptedTeamMembershipState(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
+		return nil, err
+	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(homeDir); err != nil {
+		return nil, err
+	}
+	return accepted, nil
+}
+
+func formatTeamHumanAdd(v any) string {
+	out := v.(teamHumanAddOutput)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Added %d empty-profile agent(s) under %s\n", len(out.Agents), out.AgentsRoot)
+	for _, agent := range out.Agents {
+		fmt.Fprintf(&b, "- %s: %s\n", agent.Name, agent.HomeDir)
+	}
+	b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
+	return b.String()
 }
 
 func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {

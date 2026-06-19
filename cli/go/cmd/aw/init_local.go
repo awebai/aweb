@@ -17,9 +17,17 @@ type implicitLocalInitRequest struct {
 	AwebURL     string
 	RegistryURL string
 	Alias       string
+	TeamName    string
 	Role        string
 	HumanName   string
 	AgentType   string
+}
+
+func implicitLocalTeamNameValue(value string) string {
+	if team := strings.TrimSpace(value); team != "" {
+		return strings.ToLower(team)
+	}
+	return implicitLocalTeamName
 }
 
 func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
@@ -71,7 +79,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		registry,
 		prepared.Plan.RegistryURL,
 		prepared.Plan.Domain,
-		implicitLocalTeamName,
+		implicitLocalTeamNameValue(req.TeamName),
 		"",
 		prepared.ControllerKey,
 		prepared.IdentityKey,
