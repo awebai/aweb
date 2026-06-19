@@ -22,16 +22,30 @@ def _app():
     return library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
 
 
-def _override_infra_deps(app) -> None:
-    """Override the db/team_cache infra dependencies so the cert-auth path runs
-    (and rejects on the missing header) without a live database."""
+class _FakeDB:
+    async def fetch_all(self, *args, **kwargs):
+        return []
+
+    async def fetch_one(self, *args, **kwargs):
+        return None
+
+
+def _override_infra_deps(app, *, db_value=None) -> None:
+    """Override the db/team_cache infra dependencies so routes can run without a
+    live database — cert-auth paths reject on the missing header, and read paths
+    use the supplied fake db."""
+    db_obj = db_value if db_value is not None else object()
     seen: set[int] = set()
 
     def walk(dependant) -> None:
         for sub in dependant.dependencies:
             walk(sub)
         call = dependant.call
-        if getattr(call, "__name__", "") in {"db", "team_cache"} and id(call) not in seen:
+        name = getattr(call, "__name__", "")
+        if name == "db" and id(call) not in seen:
+            app.dependency_overrides[call] = lambda: db_obj
+            seen.add(id(call))
+        elif name == "team_cache" and id(call) not in seen:
             app.dependency_overrides[call] = lambda: object()
             seen.add(id(call))
 
@@ -57,13 +71,13 @@ def test_health_endpoints_are_public() -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_catalog_reads_are_unauthenticated_stubs() -> None:
-    client = TestClient(_app())
+def test_public_catalog_reads_are_unauthenticated() -> None:
+    app = _app()
+    _override_infra_deps(app, db_value=_FakeDB())
+    client = TestClient(app)
 
-    packs = client.get("/v1/profile-packs")
-    assert packs.status_code == 200
-    assert packs.json() == []
-
+    assert client.get("/v1/profile-packs").json() == []
+    assert client.get("/v1/profiles").json() == []
     assert client.get("/v1/profile-packs/does-not-exist").status_code == 404
     assert client.get("/v1/profiles/does-not-exist").status_code == 404
 

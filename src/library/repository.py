@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from library.auth import Principal
-from library.models import MaterializeRequest, ProfileBindingRequest
+from library.models import MaterializeRequest, ProfileBindingRequest, ProposalCreateRequest
 from library.profile_pack import (
     ParsedProfile,
     import_return,
@@ -172,6 +173,198 @@ async def get_profile_binding(
     if row is None:
         raise HTTPException(status_code=404, detail="No profile binding for agent")
     return dict(row)
+
+
+def _pack_summary(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "pack_ref": data["pack_ref"],
+        "version": data["version"],
+        "digest": data["digest"],
+        "visibility": data["visibility"],
+        "tags": list(data["tags"] or []),
+        "name": data["name"],
+        "summary": data.get("summary"),
+        "description": data.get("description"),
+        "recommendations": _json_value(data.get("recommendations")) or [],
+        "runtime_hints": list(data.get("runtime_hints") or []),
+        "expected_apps": list(data.get("expected_apps") or []),
+        "first_mission_examples": list(data.get("first_mission_examples") or []),
+    }
+
+
+def _profile_summary(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "profile_ref": data["profile_ref"],
+        "version": data["version"],
+        "digest": data["digest"],
+        "visibility": data["visibility"],
+        "tags": list(data["tags"] or []),
+        "name": data["name"],
+        "mission": data.get("mission"),
+        "accepted_work": list(data.get("accepted_work") or []),
+        "runtime_assumptions": list(data.get("runtime_assumptions") or []),
+        "memory_policy": _json_value(data.get("memory_policy")),
+        "expected_apps": list(data.get("expected_apps") or []),
+    }
+
+
+_PACK_COLUMNS = (
+    "pack_ref, version, digest, visibility, tags, name, summary, description, "
+    "recommendations, runtime_hints, expected_apps, first_mission_examples"
+)
+_PROFILE_COLUMNS = (
+    "profile_ref, version, digest, visibility, tags, name, mission, accepted_work, "
+    "runtime_assumptions, memory_policy, expected_apps"
+)
+
+
+async def list_profile_packs(
+    db: AsyncDatabaseManager, *, team_id: str | None, tags: list[str] | None
+) -> list[dict[str, Any]]:
+    # Public packs are visible to everyone; the caller's own private packs are
+    # added only when a team certificate is present (team_id is not None).
+    rows = await db.fetch_all(
+        "SELECT DISTINCT ON (owner_team, pack_ref) "
+        + _PACK_COLUMNS
+        + " FROM {{tables.profile_packs}}"
+        + " WHERE (visibility = 'public' OR owner_team = $1) AND ($2::text[] IS NULL OR tags && $2)"
+        + " ORDER BY owner_team, pack_ref, created_at DESC",
+        team_id,
+        tags,
+    )
+    return [_pack_summary(row) for row in rows]
+
+
+async def get_profile_pack(db: AsyncDatabaseManager, *, team_id: str | None, pack_ref: str) -> dict[str, Any]:
+    row = await db.fetch_one(
+        "SELECT "
+        + _PACK_COLUMNS
+        + " FROM {{tables.profile_packs}}"
+        + " WHERE pack_ref = $1 AND (visibility = 'public' OR owner_team = $2)"
+        + " ORDER BY created_at DESC LIMIT 1",
+        pack_ref,
+        team_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Profile pack not found")
+    return _pack_summary(row)
+
+
+async def list_profiles(
+    db: AsyncDatabaseManager, *, team_id: str | None, tags: list[str] | None
+) -> list[dict[str, Any]]:
+    rows = await db.fetch_all(
+        "SELECT DISTINCT ON (owner_team, profile_ref) "
+        + _PROFILE_COLUMNS
+        + " FROM {{tables.profiles}}"
+        + " WHERE (visibility = 'public' OR owner_team = $1) AND ($2::text[] IS NULL OR tags && $2)"
+        + " ORDER BY owner_team, profile_ref, created_at DESC",
+        team_id,
+        tags,
+    )
+    return [_profile_summary(row) for row in rows]
+
+
+async def get_profile(db: AsyncDatabaseManager, *, team_id: str | None, profile_ref: str) -> dict[str, Any]:
+    row = await db.fetch_one(
+        "SELECT "
+        + _PROFILE_COLUMNS
+        + " FROM {{tables.profiles}}"
+        + " WHERE profile_ref = $1 AND (visibility = 'public' OR owner_team = $2)"
+        + " ORDER BY created_at DESC LIMIT 1",
+        profile_ref,
+        team_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return _profile_summary(row)
+
+
+def _proposal_row(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "proposal_id": str(data["proposal_id"]),
+        "target": data["target"],
+        "profile_ref": data.get("profile_ref"),
+        "profile_version": data.get("profile_version"),
+        "status": data["status"],
+        "content": _json_value(data.get("content")) or {},
+        "created_by_alias": data.get("created_by_alias"),
+        "created_at": data.get("created_at"),
+    }
+
+
+async def _get_proposal(db: AsyncDatabaseManager, team_id: str, proposal_id: UUID) -> dict[str, Any]:
+    row = await db.fetch_one(
+        "SELECT proposal_id, target, profile_ref, profile_version, status, content, created_by_alias, created_at"
+        " FROM {{tables.proposals}} WHERE team_id = $1 AND proposal_id = $2",
+        team_id,
+        proposal_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return _proposal_row(row)
+
+
+async def create_proposal(
+    db: AsyncDatabaseManager, *, principal: Principal, request: ProposalCreateRequest
+) -> dict[str, Any]:
+    proposal_id = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.proposals}}"
+        " (proposal_id, team_id, target, profile_ref, profile_version, content, created_by_alias)"
+        " VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)",
+        proposal_id,
+        principal.team_id,
+        request.target,
+        request.profile_ref,
+        request.profile_version,
+        _dumps(request.content),
+        principal.alias,
+    )
+    return await _get_proposal(db, principal.team_id, proposal_id)
+
+
+async def list_proposals(db: AsyncDatabaseManager, *, principal: Principal) -> list[dict[str, Any]]:
+    rows = await db.fetch_all(
+        "SELECT proposal_id, target, profile_ref, profile_version, status, content, created_by_alias, created_at"
+        " FROM {{tables.proposals}} WHERE team_id = $1 ORDER BY created_at DESC",
+        principal.team_id,
+    )
+    return [_proposal_row(row) for row in rows]
+
+
+def _parse_proposal_id(proposal_id: str) -> UUID:
+    try:
+        return UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Proposal not found") from exc
+
+
+async def _set_proposal_status(
+    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str, status: str
+) -> dict[str, Any]:
+    pid = _parse_proposal_id(proposal_id)
+    rows = await db.fetch_all(
+        "UPDATE {{tables.proposals}} SET status = $3, updated_at = NOW()"
+        " WHERE team_id = $1 AND proposal_id = $2 RETURNING proposal_id",
+        principal.team_id,
+        pid,
+        status,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return await _get_proposal(db, principal.team_id, pid)
+
+
+async def approve_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:
+    return await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="approved")
+
+
+async def reject_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:
+    return await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="rejected")
 
 
 def normalize_tags(tags: list[Any]) -> list[str]:

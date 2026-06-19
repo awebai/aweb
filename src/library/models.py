@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -39,3 +41,12 @@ class SetTagsRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tags: list[str] = Field(default_factory=list)
+
+
+class ProposalCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    target: str = Field(..., pattern=r"^(profile|memory|skill|workflow)$")
+    profile_ref: str | None = Field(default=None, max_length=240)
+    profile_version: str | None = Field(default=None, max_length=80)
+    content: dict[str, Any] = Field(default_factory=dict)

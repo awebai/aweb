@@ -491,12 +491,12 @@ def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, a
     packs = _aw_request(team, "GET", f"{library.origin}/v1/profile-packs")
     assert _assert_aw_success(packs, context="list profile packs smoke").strip() == "[]"
     # A valid certificate passes auth: get-binding for an unbound agent is a real
-    # 404 (not 401, not a 501 stub), proving auth + the live endpoint.
+    # 404 (not 401), proving auth + the live endpoint.
     binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
     _assert_aw_status(binding, 404, context="authenticated get-binding for unbound agent")
-    # proposals are still a scaffold stub in this chunk.
+    # proposals list for a fresh team is an empty list (live, team-scoped).
     proposals = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
-    _assert_aw_status(proposals, 501, context="authenticated proposals stub")
+    assert _assert_aw_success(proposals, context="list proposals smoke").strip() == "[]"
 
 
 def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
@@ -504,12 +504,11 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    # Valid certificate authenticates (reaches the 501 stub).
-    _assert_aw_status(
+    # Valid certificate authenticates and reaches the live endpoint.
+    assert _assert_aw_success(
         _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
-        501,
-        context="valid certificate reaches stub",
-    )
+        context="valid certificate reaches proposals",
+    ).strip() == "[]"
 
     _run_aw(
         aw_workspace,

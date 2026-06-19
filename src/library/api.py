@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
 
@@ -14,15 +14,24 @@ from library.db import LibraryDatabase
 from library.models import (
     MaterializeRequest,
     ProfileBindingRequest,
+    ProposalCreateRequest,
     SetTagsRequest,
     SetVisibilityRequest,
     TeamRegisterRequest,
 )
 from library.repository import (
+    approve_proposal,
+    create_proposal,
+    get_profile,
     get_profile_binding,
+    get_profile_pack,
     import_profile_pack,
+    list_profile_packs,
+    list_profiles,
+    list_proposals,
     materialize,
     register_team,
+    reject_proposal,
     set_pack_tags,
     set_pack_visibility,
     set_profile_binding,
@@ -36,8 +45,6 @@ from library.surfaces import (
     robots_txt,
     skills_index,
 )
-
-_SCAFFOLD_DETAIL = "Not implemented in the library scaffold (default-aaas.14.1)"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -78,6 +85,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cache: Annotated[AWIDTeamCache, Depends(team_cache)],
     ) -> Principal:
         return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
+
+    async def optional_principal(
+        request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        cache: Annotated[AWIDTeamCache, Depends(team_cache)],
+    ) -> Principal | None:
+        # Public catalog reads: no certificate -> public only; a presented (and
+        # valid) certificate adds the caller team's private records. An invalid
+        # certificate still fails closed.
+        if not (request.headers.get("Authorization") or request.headers.get("authorization")):
+            return None
+        return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
+
+    def _team_id(actor: Principal | None) -> str | None:
+        return actor.team_id if actor is not None else None
 
     # --- Public, no-auth surfaces -------------------------------------------------
 
@@ -130,19 +152,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "library"}
 
-    # --- Public catalog reads (empty until the model task) ------------------------
+    # --- Public catalog reads (public records always; caller team's private when
+    #     a certificate is presented; optional ?tags filter) -----------------------
 
     @app.get("/v1/profile-packs")
-    async def list_profile_packs_route() -> list[dict]:
-        return []
+    async def list_profile_packs_route(
+        actor: Annotated[Principal | None, Depends(optional_principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        tags: Annotated[list[str] | None, Query()] = None,
+    ) -> list[dict]:
+        return await list_profile_packs(database, team_id=_team_id(actor), tags=tags)
 
     @app.get("/v1/profile-packs/{pack_id}")
-    async def get_profile_pack_route(pack_id: str) -> dict:
-        raise HTTPException(status_code=404, detail="Profile pack not found")
+    async def get_profile_pack_route(
+        pack_id: str,
+        actor: Annotated[Principal | None, Depends(optional_principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_profile_pack(database, team_id=_team_id(actor), pack_ref=pack_id)
+
+    @app.get("/v1/profiles")
+    async def list_profiles_route(
+        actor: Annotated[Principal | None, Depends(optional_principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        tags: Annotated[list[str] | None, Query()] = None,
+    ) -> list[dict]:
+        return await list_profiles(database, team_id=_team_id(actor), tags=tags)
 
     @app.get("/v1/profiles/{profile_id}")
-    async def get_profile_route(profile_id: str) -> dict:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    async def get_profile_route(
+        profile_id: str,
+        actor: Annotated[Principal | None, Depends(optional_principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await get_profile(database, team_id=_team_id(actor), profile_ref=profile_id)
 
     # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a
@@ -239,24 +282,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await set_pack_tags(database, principal=actor, pack_ref=pack_ref, tags=payload.tags)
 
     @app.post("/v1/proposals")
-    async def create_proposal_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def create_proposal_route(
+        request: Request,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        payload = ProposalCreateRequest.model_validate(await request.json())
+        return await create_proposal(database, principal=actor, request=payload)
 
     @app.get("/v1/proposals")
-    async def list_proposals_route(actor: Annotated[Principal, Depends(principal)]) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+    async def list_proposals_route(
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> list[dict]:
+        return await list_proposals(database, principal=actor)
 
     @app.post("/v1/proposals/{proposal_id}/approve")
     async def approve_proposal_route(
-        proposal_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        proposal_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await approve_proposal(database, principal=actor, proposal_id=proposal_id)
 
     @app.post("/v1/proposals/{proposal_id}/reject")
     async def reject_proposal_route(
-        proposal_id: str, actor: Annotated[Principal, Depends(principal)]
-    ) -> Response:
-        raise HTTPException(status_code=501, detail=_SCAFFOLD_DETAIL)
+        proposal_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await reject_proposal(database, principal=actor, proposal_id=proposal_id)
 
     return app
 
