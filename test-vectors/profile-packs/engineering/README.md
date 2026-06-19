@@ -95,19 +95,37 @@ binding remain valid.
 
 ## Expected materialized layout
 
-`expected/materialized-home/<profile-id>/` defines the local files that a later
-materialize step writes into an agent home:
+`expected/materialized-home/<profile-id>/` is the byte-exact composed agent-home
+fixture shared by aw and Library. It supersedes the earlier verbatim
+`instructions.md` materialized home. Each bound profile home contains:
 
 ```text
-.aw/profile/ref.json
-instructions.md
+AGENTS.md
+CLAUDE.md -> AGENTS.md
 skills/...
+.claude/skills/... -> skills/...
 artifacts/...
+.aw/profile/ref.json
+.aw/profile/profile.yaml
+.aw/profile/instructions.md
+.aw/profile/skills/...
+.aw/profile/artifacts/...
 ```
 
-`ref.json` contains `profile_ref`, `profile_version`, `profile_digest`,
-`source_profile_pack_ref`, `source_profile_pack_version`, and
-`source_profile_pack_digest`.
+`AGENTS.md` is composed from the profile fields per
+`docs/restructuring/agent-home-composition-contract.md`. `ref.json` contains
+`profile_ref`, `profile_version`, `profile_digest`, `source_profile_pack_ref`,
+`source_profile_pack_version`, and `source_profile_pack_digest` for profiles
+adopted from this pack.
+
+`expected/materialized-home-created/developer/` pins the no-source-pack
+provenance form for a shelf-created profile: the `AGENTS.md` provenance line is
+`created`, and `.aw/profile/ref.json` intentionally omits
+`source_profile_pack_*` fields.
+
+`expected/materialized-home-legacy/` preserves the previous .3.3 local CLI
+output until `default-aaas.3.8` reworks the Go materializer to reproduce the
+composed home byte-for-byte.
 
 ## Negative fixtures
 

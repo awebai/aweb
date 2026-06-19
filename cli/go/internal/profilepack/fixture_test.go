@@ -62,6 +62,37 @@ func TestEngineeringProfilePackDigestVectorPinsPathBases(t *testing.T) {
 	}
 }
 
+func TestEngineeringProfilePackAgentHomeCompositionFixtures(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	for _, id := range []string{"coordinator", "developer", "reviewer"} {
+		t.Run(id, func(t *testing.T) {
+			home := filepath.Join(fixture, "expected", "materialized-home", id)
+			agents := string(readFixtureFile(t, filepath.Join(home, "AGENTS.md")))
+			if !strings.Contains(agents, "> Profile "+id+" v0.1.0 · pack aweb.engineering-pack v0.1.0") {
+				t.Fatalf("AGENTS.md missing source-pack provenance:\n%s", agents)
+			}
+			if strings.Contains(agents, "## Runtime assumptions") || strings.Contains(agents, "## Event subscriptions") {
+				t.Fatalf("AGENTS.md rendered system config sections:\n%s", agents)
+			}
+			if link, err := os.Readlink(filepath.Join(home, "CLAUDE.md")); err != nil || link != "AGENTS.md" {
+				t.Fatalf("CLAUDE.md symlink=%q err=%v", link, err)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".aw", "profile", "profile.yaml")); err != nil {
+				t.Fatalf("missing full profile source: %v", err)
+			}
+		})
+	}
+	created := filepath.Join(fixture, "expected", "materialized-home-created", "developer")
+	createdAgents := string(readFixtureFile(t, filepath.Join(created, "AGENTS.md")))
+	if !strings.Contains(createdAgents, "> Profile developer v0.1.0 · created") {
+		t.Fatalf("created fixture missing no-source-pack provenance:\n%s", createdAgents)
+	}
+	createdRef := string(readFixtureFile(t, filepath.Join(created, ".aw", "profile", "ref.json")))
+	if strings.Contains(createdRef, "source_profile_pack") {
+		t.Fatalf("created fixture ref should not include source pack provenance:\n%s", createdRef)
+	}
+}
+
 func TestEngineeringProfilePackNegativeFixtures(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	cases := map[string]string{

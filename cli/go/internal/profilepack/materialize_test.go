@@ -19,7 +19,7 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	if result.ProfileRef != "developer" || result.ProfileVersion != "0.1.0" || !strings.HasPrefix(result.ProfileDigest, "sha256:") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
+	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home-legacy/developer"), target)
 }
 
 func TestMaterializeLocalProfileRejectsTargetSymlinkEscape(t *testing.T) {
