@@ -19,9 +19,9 @@ and hand off with files changed, evidence, and risks.
 
 ## Apps you use
 
-- audit
-- github
 - tasks
+- github
+- audit
 
 ## Actions requiring human approval
 

@@ -82,6 +82,10 @@ func TestEngineeringProfilePackAgentHomeCompositionFixtures(t *testing.T) {
 			}
 		})
 	}
+	assertInOrder(t, string(readFixtureFile(t, filepath.Join(fixture, "expected", "materialized-home", "coordinator", "AGENTS.md"))), []string{"- library", "- tasks", "- audit", "- secrets.read", "- github.merge_pr"})
+	assertInOrder(t, string(readFixtureFile(t, filepath.Join(fixture, "expected", "materialized-home", "developer", "AGENTS.md"))), []string{"- tasks", "- github", "- audit"})
+	assertInOrder(t, string(readFixtureFile(t, filepath.Join(fixture, "expected", "materialized-home", "reviewer", "AGENTS.md"))), []string{"- tasks", "- github", "- audit"})
+
 	created := filepath.Join(fixture, "expected", "materialized-home-created", "developer")
 	createdAgents := string(readFixtureFile(t, filepath.Join(created, "AGENTS.md")))
 	if !strings.Contains(createdAgents, "> Profile developer v0.1.0 · created") {
@@ -90,6 +94,18 @@ func TestEngineeringProfilePackAgentHomeCompositionFixtures(t *testing.T) {
 	createdRef := string(readFixtureFile(t, filepath.Join(created, ".aw", "profile", "ref.json")))
 	if strings.Contains(createdRef, "source_profile_pack") {
 		t.Fatalf("created fixture ref should not include source pack provenance:\n%s", createdRef)
+	}
+}
+
+func assertInOrder(t *testing.T, text string, needles []string) {
+	t.Helper()
+	pos := -1
+	for _, needle := range needles {
+		next := strings.Index(text[pos+1:], needle)
+		if next < 0 {
+			t.Fatalf("%q not found after byte %d in:\n%s", needle, pos, text)
+		}
+		pos += next + 1
 	}
 }
 

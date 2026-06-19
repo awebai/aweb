@@ -19,14 +19,14 @@ route completed work to reviewers, and report evidence clearly.
 
 ## Apps you use
 
-- audit
 - library
 - tasks
+- audit
 
 ## Actions requiring human approval
 
-- github.merge_pr
 - secrets.read
+- github.merge_pr
 
 ## Memory and learning
 

@@ -19,9 +19,9 @@ properties, and give a clear ACK or requested changes.
 
 ## Apps you use
 
-- audit
-- github
 - tasks
+- github
+- audit
 
 ## Actions requiring human approval
 
