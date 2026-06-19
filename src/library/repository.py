@@ -19,7 +19,7 @@ from library.profile_pack import (
     ParsedProfile,
     build_pack_payload,
     import_return,
-    materialize_home_files,
+    materialize_home,
     parse_import_payload,
     parse_profile_payload,
     part_baselines,
@@ -722,22 +722,19 @@ async def materialize(
 
     runtime_assumptions = list(row["runtime_assumptions"] or [])
     memory_policy = _json_value(row["memory_policy"])
-    profile = ParsedProfile(
-        profile_ref=row["profile_ref"], version=row["version"], digest=row["digest"], name="",
-        mission=None, accepted_work=[], runtime_assumptions=runtime_assumptions,
-        memory_policy=memory_policy, expected_apps=[], event_subscriptions=[], approval_required=[],
-        files=_json_value(row["files"]) or [],
-    )
-    home_files = materialize_home_files(
-        profile,
-        source_profile_pack_ref=row["source_profile_pack_ref"] or "",
-        source_profile_pack_version=row["source_profile_pack_version"] or "",
-        source_profile_pack_digest=row["source_profile_pack_digest"] or "",
+    home_files = materialize_home(
+        _json_value(row["files"]) or [],
+        profile_ref=row["profile_ref"],
+        profile_version=row["version"],
+        profile_digest=row["digest"],
+        source_profile_pack_ref=row["source_profile_pack_ref"],
+        source_profile_pack_version=row["source_profile_pack_version"],
+        source_profile_pack_digest=row["source_profile_pack_digest"],
     )
     return {
-        "profile_ref": profile.profile_ref,
-        "profile_version": profile.version,
-        "profile_digest": profile.digest,
+        "profile_ref": row["profile_ref"],
+        "profile_version": row["version"],
+        "profile_digest": row["digest"],
         "source_profile_pack_ref": row["source_profile_pack_ref"],
         "source_profile_pack_version": row["source_profile_pack_version"],
         "source_profile_pack_digest": row["source_profile_pack_digest"],

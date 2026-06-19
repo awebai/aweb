@@ -244,30 +244,128 @@ def import_return(pack: ParsedPack) -> dict[str, Any]:
     }
 
 
-def materialize_home_files(
-    profile: ParsedProfile,
+_MEMORY_BOILERPLATE = (
+    "Your full profile is kept under .aw/profile/. To change how you work, propose a\n"
+    "new profile version from there; library reviews and mints it."
+)
+_SKILLS_BOILERPLATE = "These skills are installed and discoverable by your harness:"
+
+
+def _bullets(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _skill_name(skill_path: str) -> str:
+    # skills/<name>/SKILL.md -> <name>
+    return skill_path.split("/")[1]
+
+
+def _compose_agents_md(doc: dict[str, Any], *, profile_ref: str, instructions: str, provenance: str) -> str:
+    """The composed AGENTS.md: a single human-readable rendering of the profile, in
+    source order. Empty components omit their whole section (title included)."""
+    name = str(doc.get("name") or profile_ref)
+    blocks = [f"# {name}\n\n> Profile {profile_ref} v{doc['version']} · {provenance}"]
+
+    mission = doc.get("mission")
+    if mission:
+        blocks.append(f"## Mission\n\n{mission}")
+    accepted_work = [str(item) for item in doc.get("accepted_work") or []]
+    if accepted_work:
+        blocks.append(f"## Work you take on\n\n{_bullets(accepted_work)}")
+    if instructions.strip():
+        blocks.append(f"## Instructions\n\n{instructions.rstrip(chr(10))}")
+    expected_apps = [str(item) for item in doc.get("expected_apps") or []]
+    if expected_apps:
+        blocks.append(f"## Apps you use\n\n{_bullets(expected_apps)}")
+    approval_required = [str(item) for item in doc.get("approval_required") or []]
+    if approval_required:
+        blocks.append(f"## Actions requiring human approval\n\n{_bullets(approval_required)}")
+    memory_policy = doc.get("memory_policy") or {}
+    if memory_policy:
+        mode = memory_policy.get("mode", "")
+        target = memory_policy.get("proposal_target", "")
+        blocks.append(
+            f"## Memory and learning\n\nMode: {mode}\nProposal target: {target}\n\n{_MEMORY_BOILERPLATE}"
+        )
+    skill_names = [_skill_name(str(skill["path"])) for skill in doc.get("skills") or []]
+    if skill_names:
+        blocks.append(f"## Skills\n\n{_SKILLS_BOILERPLATE}\n\n{_bullets(skill_names)}")
+
+    return "\n\n".join(blocks) + "\n"
+
+
+def materialize_home(
+    files: list[dict[str, str]],
     *,
-    source_profile_pack_ref: str,
-    source_profile_pack_version: str,
-    source_profile_pack_digest: str,
+    profile_ref: str,
+    profile_version: str,
+    profile_digest: str,
+    source_profile_pack_ref: str | None,
+    source_profile_pack_version: str | None,
+    source_profile_pack_digest: str | None,
 ) -> list[dict[str, str]]:
-    """The home layout a runtime materialization writes: the profile's content
-    files (minus profile.yaml metadata) plus .aw/profile/ref.json, home-relative."""
-    ref = {
-        "profile_ref": profile.profile_ref,
-        "profile_version": profile.version,
-        "profile_digest": profile.digest,
-        "source_profile_pack_ref": source_profile_pack_ref,
-        "source_profile_pack_version": source_profile_pack_version,
-        "source_profile_pack_digest": source_profile_pack_digest,
-    }
-    home_files = [
-        {"path": f["path"], "content_utf8": f["content_utf8"]}
-        for f in profile.files
-        if f["path"] != "profile.yaml"
-    ]
-    home_files.append(
-        {"path": ".aw/profile/ref.json", "content_utf8": json.dumps(ref, indent=2, sort_keys=True) + "\n"}
+    """The composed agent home a runtime materialization writes, as ``file`` and
+    ``symlink`` entries:
+
+    - ``AGENTS.md`` — the composed profile rendering; ``CLAUDE.md`` symlinks to it.
+    - ``skills/<name>/`` and ``artifacts/`` — the profile's resource files, plus
+      ``.claude/skills/<name>/`` symlinks back to the canonical ``skills/`` tree.
+    - ``.aw/profile/`` — the full profile payload, plus a ``ref.json`` recording
+      provenance (the source-pack triple for a pack copy; omitted for a profile
+      created fresh on the shelf, leaving just the profile triple).
+    """
+    by_path = {f["path"]: f for f in files}
+    doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
+    instructions_path = str(doc.get("instructions") or "instructions.md")
+    instructions = by_path[instructions_path]["content_utf8"] if instructions_path in by_path else ""
+    provenance = (
+        f"pack {source_profile_pack_ref} v{source_profile_pack_version}"
+        if source_profile_pack_ref
+        else "created"
     )
-    home_files.sort(key=lambda f: f["path"])
-    return home_files
+
+    ref: dict[str, str] = {
+        "profile_digest": profile_digest,
+        "profile_ref": profile_ref,
+        "profile_version": profile_version,
+    }
+    if source_profile_pack_ref:
+        ref["source_profile_pack_digest"] = source_profile_pack_digest or ""
+        ref["source_profile_pack_ref"] = source_profile_pack_ref
+        ref["source_profile_pack_version"] = source_profile_pack_version or ""
+
+    entries: list[dict[str, str]] = [
+        {
+            "path": "AGENTS.md",
+            "kind": "file",
+            "content_utf8": _compose_agents_md(
+                doc, profile_ref=profile_ref, instructions=instructions, provenance=provenance
+            ),
+        },
+        {"path": "CLAUDE.md", "kind": "symlink", "target": "AGENTS.md"},
+    ]
+
+    # Canonical resource files at the home root, plus per-harness skill symlinks.
+    resource_paths = [str(skill["path"]) for skill in doc.get("skills") or []]
+    resource_paths += [str(artifact["path"]) for artifact in doc.get("artifacts") or []]
+    for path in resource_paths:
+        entries.append({"path": path, "kind": "file", "content_utf8": by_path[path]["content_utf8"]})
+    for skill in doc.get("skills") or []:
+        skill_rel = str(skill["path"])
+        link_path = f".claude/{skill_rel}"
+        target = "../" * link_path.count("/") + skill_rel
+        entries.append({"path": link_path, "kind": "symlink", "target": target})
+
+    # The full profile payload under .aw/profile/, plus the provenance ref.json.
+    for f in files:
+        entries.append({"path": f".aw/profile/{f['path']}", "kind": "file", "content_utf8": f["content_utf8"]})
+    entries.append(
+        {
+            "path": ".aw/profile/ref.json",
+            "kind": "file",
+            "content_utf8": json.dumps(ref, indent=2, sort_keys=True) + "\n",
+        }
+    )
+
+    entries.sort(key=lambda entry: entry["path"])
+    return entries

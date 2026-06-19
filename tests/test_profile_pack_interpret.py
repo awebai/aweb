@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from library.digest import PACK_PAYLOAD_SCHEMA, collect_files, payload_digest
 from library.profile_pack import (
     build_pack_payload,
     import_return,
-    materialize_home_files,
+    materialize_home,
     parse_import_payload,
     parse_profile_payload,
 )
@@ -15,6 +16,7 @@ from library.profile_pack import (
 _FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _MATERIALIZED = _FIXTURE / "expected" / "materialized-home"
+_MATERIALIZED_CREATED = _FIXTURE / "expected" / "materialized-home-created"
 
 
 def _import_payload() -> dict:
@@ -38,36 +40,59 @@ def test_import_return_matches_fixture_exactly() -> None:
     assert import_return(parse_import_payload(_import_payload())) == expected
 
 
-def test_materialize_home_files_match_fixture_byte_exact() -> None:
+def _assert_home_matches(entries: list[dict], home_dir: Path) -> None:
+    """The composed home reproduces the fixture tree byte-exact: regular files by
+    content, symlinks by target, and the path set matches exactly."""
+    expected: dict[str, tuple[str, str]] = {}
+    for path in home_dir.rglob("*"):
+        rel = path.relative_to(home_dir).as_posix()
+        if path.is_symlink():
+            expected[rel] = ("symlink", os.readlink(path))
+        elif path.is_file():
+            expected[rel] = ("file", path.read_text(encoding="utf-8"))
+
+    produced = {entry["path"]: entry for entry in entries}
+    assert set(produced) == set(expected)
+    for rel, (kind, payload) in expected.items():
+        entry = produced[rel]
+        assert entry["kind"] == kind, rel
+        if kind == "file":
+            assert entry["content_utf8"] == payload, rel
+        else:
+            assert entry["target"] == payload, rel
+
+
+def test_materialize_home_pack_provenance_matches_fixture_byte_exact() -> None:
     pack = parse_import_payload(_import_payload())
     for profile in pack.profiles:
-        home_files = materialize_home_files(
-            profile,
+        entries = materialize_home(
+            collect_files(_SOURCE / "profiles" / profile.profile_ref),
+            profile_ref=profile.profile_ref,
+            profile_version=profile.version,
+            profile_digest=profile.digest,
             source_profile_pack_ref=pack.pack_ref,
             source_profile_pack_version=pack.version,
             source_profile_pack_digest=pack.digest,
         )
-        produced = {entry["path"]: entry["content_utf8"] for entry in home_files}
-        home_dir = _MATERIALIZED / profile.profile_ref
-        expected_paths = sorted(p.relative_to(home_dir).as_posix() for p in home_dir.rglob("*") if p.is_file())
-        assert sorted(produced) == expected_paths, profile.profile_ref
-        for rel, content in produced.items():
-            assert content == (home_dir / rel).read_text(encoding="utf-8"), (profile.profile_ref, rel)
+        _assert_home_matches(entries, _MATERIALIZED / profile.profile_ref)
 
 
-def test_materialize_ref_json_carries_source_pack_provenance() -> None:
-    pack = parse_import_payload(_import_payload())
-    home = materialize_home_files(
-        pack.profiles[0],
-        source_profile_pack_ref=pack.pack_ref,
-        source_profile_pack_version=pack.version,
-        source_profile_pack_digest=pack.digest,
+def test_materialize_home_created_provenance_matches_fixture_byte_exact() -> None:
+    files = collect_files(_SOURCE / "profiles" / "developer")
+    profile = parse_profile_payload(files)
+    entries = materialize_home(
+        files,
+        profile_ref="developer",
+        profile_version=profile.version,
+        profile_digest=profile.digest,
+        source_profile_pack_ref=None,
+        source_profile_pack_version=None,
+        source_profile_pack_digest=None,
     )
-    ref_entry = next(f for f in home if f["path"] == ".aw/profile/ref.json")
-    ref = json.loads(ref_entry["content_utf8"])
-    assert ref["profile_ref"] == "coordinator"
-    assert ref["profile_digest"] == pack.profiles[0].digest
-    assert ref["source_profile_pack_digest"] == pack.digest
+    _assert_home_matches(entries, _MATERIALIZED_CREATED / "developer")
+    # The created form drops all source-pack provenance, leaving just the profile.
+    ref = json.loads(next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"])
+    assert set(ref) == {"profile_digest", "profile_ref", "profile_version"}
 
 
 def test_parse_profile_payload_reproduces_a_profile() -> None:
@@ -155,6 +180,31 @@ def test_publish_profile_accumulates_onto_existing_pack() -> None:
     assert [p.profile_ref for p in pack.profiles] == ["coordinator", "developer"]
     coordinator = next(p for p in pack.profiles if p.profile_ref == "coordinator")
     assert coordinator.digest == parse_profile_payload(coordinator_files).digest
+
+
+def test_materialize_home_omits_empty_sections() -> None:
+    # A minimal profile renders only the sections it has — empty components omit
+    # their whole title, uniformly.
+    profile_yaml = "id: minimal\nname: Minimal\nversion: 0.1.0\nmission: Do one thing.\n"
+    files = [
+        {"content_utf8": profile_yaml, "path": "profile.yaml", "sha256": "sha256:x"},
+    ]
+    entries = materialize_home(
+        files,
+        profile_ref="minimal",
+        profile_version="0.1.0",
+        profile_digest="sha256:d",
+        source_profile_pack_ref=None,
+        source_profile_pack_version=None,
+        source_profile_pack_digest=None,
+    )
+    agents = next(e for e in entries if e["path"] == "AGENTS.md")["content_utf8"]
+    assert "## Mission" in agents
+    for absent in ("## Work you take on", "## Instructions", "## Apps you use",
+                   "## Actions requiring human approval", "## Memory and learning", "## Skills"):
+        assert absent not in agents, absent
+    # No skills/artifacts means no canonical resources and no .claude symlinks.
+    assert not any(e["path"].startswith(".claude/") for e in entries)
 
 
 def test_parse_rejects_wrong_schema() -> None:
