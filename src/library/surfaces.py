@@ -155,12 +155,12 @@ def render_landing_page(*, public_origin: str) -> str:
           <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre>{copy}</div></div>
           <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
-          <p class="cmd-label">5 · Add an agent from a profile — adopt, bind, and materialize in one <span class="pill wait">coming · aw .3.5</span></p>
+          <p class="cmd-label">5 · Add an agent from a profile — adopt, bind, and materialize in one</p>
           <div class="cmd-list"><div class="cmd"><pre>aw team add coordinator@aweb.engineering-pack/coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">6 · Start it working <span class="pill wait">coming · aw .3.5</span></p>
+          <p class="cmd-label">6 · Start it working</p>
           <div class="cmd-list"><div class="cmd"><pre>aw agent start coordinator</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">Steps 1–4 are the working path; steps 5 and 6 — turning a profile into a running agent — are coming in aw .3.5.</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to an agent running your chosen profile.</p>
         <p class="prose-outro">Under the hood, <code>aw team add</code> composes the raw library operations — adopt (<code>aw library import-to-shelf</code>), bind, and materialize. You can call each directly: every library operation is a native <code>aw library</code> verb, and <code>aw library shelf</code> shows your working set and which profiles have upstream updates.</p>
         <p class="prose-outro">Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">signed manifest</a>.</p>
       </div>
