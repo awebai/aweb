@@ -136,10 +136,11 @@ Rendering rules (for byte-exactness; fixtures in §9 are the arbiter):
 4. The instructions prose is embedded verbatim; its trailing whitespace is
    normalized to end with a single LF, then one blank line precedes the next
    section.
-5. Required sections always present: Mission, Work you take on, Instructions,
-   Memory and learning. Optional sections (Apps you use, Actions requiring human
-   approval, Skills) are **omitted entirely** (header included) when their source
-   list is empty — no empty headers.
+5. Any section whose source component is empty (empty string or empty list) is
+   **omitted entirely** — section title and body — no empty headers. This applies
+   uniformly to every composed section (Mission, Work you take on, Instructions,
+   Apps you use, Actions requiring human approval, Memory and learning, Skills).
+   Only the header line (`# {name}`) and the provenance line are always present.
 6. The provenance line is always present, in one of two forms. Adopted from a
    source pack: `> Profile {id} v{version} · pack {pack_id} v{pack_version}`.
    Created directly on the shelf (no source pack — a created or forked variant):
@@ -159,15 +160,19 @@ file is a **symlink** to it, selected by `runtime_assumptions`:
 
 Never duplicate the body; always symlink so evolution touches one file.
 
-## 6. Skills — installed and discoverable for all harnesses
+## 6. Skills — installed where harnesses expect them
 
-Skill content is installed once, under `<home>/skills/<skill-name>/`, and made
-discoverable by whatever harness is active — installation is harness-agnostic,
-discovery is wired per harness at materialize time. The body's §Skills lists the
-installed skills by name so the agent knows they exist; actual invocation is via
-the harness's native skill discovery. The exact per-harness discovery wiring is
-pinned per harness (claude-code first); the invariant is that an installed skill
-is discoverable regardless of which harness runs the home.
+Skill content is installed once, canonically, under `<home>/skills/<skill-name>/`
+— this directory holds the real files. Harnesses expect skills in specific
+standard locations; for each such standard location, materialize **creates that
+location and populates it with symlinks to the files under `skills/`**. So the
+content lives exactly once (in `skills/`) and is discoverable by every harness
+without duplication. (E.g. a harness that discovers skills under its own
+directory gets that directory created with symlinks into `skills/`.) The set of
+standard locations is pinned per harness (claude-code first); the invariant is
+that an installed skill is discoverable by whatever harness runs the home, with
+`skills/` as the single source of the files. The body's §Skills lists the
+installed skills by name so the agent knows they exist.
 
 ## 7. The evolvable profile (`.aw/profile/`)
 
