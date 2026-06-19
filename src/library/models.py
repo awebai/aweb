@@ -27,3 +27,15 @@ class MaterializeRequest(BaseModel):
     profile_version: str | None = Field(default=None, max_length=80)
     runtime_kind: str = Field(..., min_length=1, max_length=80)
     target: str = Field(..., pattern=r"^(local|custodial-mcp)$")
+
+
+class SetVisibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    visibility: str = Field(..., pattern=r"^(public|private)$")
+
+
+class SetTagsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tags: list[str] = Field(default_factory=list)

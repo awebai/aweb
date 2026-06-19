@@ -174,6 +174,70 @@ async def get_profile_binding(
     return dict(row)
 
 
+def normalize_tags(tags: list[Any]) -> list[str]:
+    """Owner-set free-form tags, normalized to deduped lowercase-trimmed strings."""
+    return sorted({str(tag).strip().lower() for tag in tags if str(tag).strip()})
+
+
+async def _set_record_field(
+    db: AsyncDatabaseManager, *, table: str, ref_column: str, ref: str, team_id: str, field: str, value: Any
+) -> None:
+    rows = await db.fetch_all(
+        f"UPDATE {table} SET {field} = $3 WHERE owner_team = $1 AND {ref_column} = $2 RETURNING version",
+        team_id,
+        ref,
+        value,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+async def set_profile_visibility(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, visibility: str
+) -> dict[str, Any]:
+    if visibility not in ("public", "private"):
+        raise HTTPException(status_code=422, detail="visibility must be 'public' or 'private'")
+    await _set_record_field(
+        db, table="{{tables.profiles}}", ref_column="profile_ref", ref=profile_ref,
+        team_id=principal.team_id, field="visibility", value=visibility,
+    )
+    return {"profile_ref": profile_ref, "visibility": visibility}
+
+
+async def set_profile_tags(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, tags: list[Any]
+) -> dict[str, Any]:
+    normalized = normalize_tags(tags)
+    await _set_record_field(
+        db, table="{{tables.profiles}}", ref_column="profile_ref", ref=profile_ref,
+        team_id=principal.team_id, field="tags", value=normalized,
+    )
+    return {"profile_ref": profile_ref, "tags": normalized}
+
+
+async def set_pack_visibility(
+    db: AsyncDatabaseManager, *, principal: Principal, pack_ref: str, visibility: str
+) -> dict[str, Any]:
+    if visibility not in ("public", "private"):
+        raise HTTPException(status_code=422, detail="visibility must be 'public' or 'private'")
+    await _set_record_field(
+        db, table="{{tables.profile_packs}}", ref_column="pack_ref", ref=pack_ref,
+        team_id=principal.team_id, field="visibility", value=visibility,
+    )
+    return {"pack_ref": pack_ref, "visibility": visibility}
+
+
+async def set_pack_tags(
+    db: AsyncDatabaseManager, *, principal: Principal, pack_ref: str, tags: list[Any]
+) -> dict[str, Any]:
+    normalized = normalize_tags(tags)
+    await _set_record_field(
+        db, table="{{tables.profile_packs}}", ref_column="pack_ref", ref=pack_ref,
+        team_id=principal.team_id, field="tags", value=normalized,
+    )
+    return {"pack_ref": pack_ref, "tags": normalized}
+
+
 async def materialize(
     db: AsyncDatabaseManager, *, principal: Principal, request: MaterializeRequest
 ) -> dict[str, Any]:
