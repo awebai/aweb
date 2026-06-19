@@ -97,21 +97,34 @@ Origin:
 - Production: {origin}
 - Local development: http://127.0.0.1:8765
 
+The model is structural: profile **packs** are the public, versioned catalog;
+a team's **shelf** holds its private working copies. A team adopts a pack profile
+onto its shelf, evolves it (new versions, proposals), binds agents to shelf
+profiles, and materializes them. "Public" is a publish, not a flag.
+
 Public endpoints (no auth):
 - GET / — human landing page
 - GET /llms.txt — this agent-readable entrypoint
 - GET /skills/ — skill index
 - GET /aweb-app.json and GET /.well-known/aweb-app.json — app manifest for aw/gateway dispatch
-- GET /v1/profile-packs — list first-party profile packs
-- GET /v1/profile-packs/{{pack_id}} — profile pack detail
-- GET /v1/profiles/{{profile_id}} — profile detail
+- GET /v1/profile-packs — browse the public profile-pack catalog (optional ?tags)
+- GET /v1/profile-packs/{{pack_id}} — pack detail + profile summaries
+- GET /v1/profile-packs/{{pack_id}}/profiles/{{profile_id}} — public profile detail
 
 Team-auth endpoints (AWID team certificate):
-- POST /v1/profile-packs/import — import a local/git profile pack
-- POST /v1/agents/{{agent_id}}/profile-binding — bind an agent identity to a profile
+- GET /v1/shelf — the team's shelf working set (with an update_available signal)
+- GET /v1/profiles/{{profile_id}} — a shelf profile
+- POST /v1/profiles — create a shelf profile
+- POST /v1/profiles/{{profile_ref}}/versions — add a new shelf-profile version
+- POST /v1/shelf/import — copy a public-pack profile onto the shelf
+- POST /v1/profiles/{{profile_ref}}/publish — publish a shelf profile into a public pack
+- POST /v1/profile-packs/import — publish or update a public pack
+- PUT /v1/profiles/{{profile_ref}}/tags and PUT /v1/profile-packs/{{pack_ref}}/tags — set tags
+- POST /v1/team/register — register the team
+- POST /v1/agents/{{agent_id}}/profile-binding — bind an agent identity to a shelf profile
 - GET /v1/agents/{{agent_id}}/profile-binding — read an agent's profile binding
 - POST /v1/materialize — materialize a profile for a local or custodial runtime
-- POST /v1/proposals — submit a learning proposal
+- POST /v1/proposals — submit a learning proposal (profile proposals carry content and mint on approve)
 - GET /v1/proposals — list the team's proposals
 - POST /v1/proposals/{{proposal_id}}/approve — approve a proposal
 - POST /v1/proposals/{{proposal_id}}/reject — reject a proposal
@@ -120,10 +133,8 @@ Important invariants:
 - AWID is authority for team keys, certificates, and revocation.
 - Every team-scoped read/write is keyed by the verified certificate team_id.
 - Public catalog reads are unauthenticated; profiles do not grant app access.
+- Shelf versions are immutable: a version's digest is its identity, never overwritten.
 - library owns its own binding, materialization, and proposal state. AC does not authorize library.
-
-Status: scaffold (default-aaas.14.1). Team-scoped write routes are present and
-cert-auth-gated but not yet implemented; the profile/pack model and real bodies arrive in later tasks.
 """
 
 

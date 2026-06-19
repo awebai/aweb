@@ -207,6 +207,29 @@ def test_materialize_home_omits_empty_sections() -> None:
     assert not any(e["path"].startswith(".claude/") for e in entries)
 
 
+def test_materialize_home_interpolates_proposal_target() -> None:
+    # The Memory section names the profile's own proposal_target (not a hardcoded
+    # "library"), per the composition contract.
+    profile_yaml = (
+        "id: minimal\nname: Minimal\nversion: 0.1.0\nmission: Do one thing.\n"
+        "memory_policy:\n  mode: reviewed-learning\n  proposal_target: my-team-curator\n"
+    )
+    files = [{"content_utf8": profile_yaml, "path": "profile.yaml", "sha256": "sha256:x"}]
+    entries = materialize_home(
+        files,
+        profile_ref="minimal",
+        profile_version="0.1.0",
+        profile_digest="sha256:d",
+        source_profile_pack_ref=None,
+        source_profile_pack_version=None,
+        source_profile_pack_digest=None,
+    )
+    agents = next(e for e in entries if e["path"] == "AGENTS.md")["content_utf8"]
+    assert "Proposal target: my-team-curator" in agents
+    assert "my-team-curator reviews and mints it." in agents
+    assert "library reviews and mints it." not in agents
+
+
 def test_parse_rejects_wrong_schema() -> None:
     import pytest
 
