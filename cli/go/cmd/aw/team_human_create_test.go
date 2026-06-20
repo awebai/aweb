@@ -617,6 +617,59 @@ func TestTeamHumanCreateRejectsVersionedLibraryProfileBeforeIdentity(t *testing.
 	}
 }
 
+func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(root)
+	memberPub, memberPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamPub)
+	var certCalls int
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": server.URL, "registry_url": server.URL})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "team_did_key": teamDID})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates":
+			certCalls++
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLocalTeamSignedRequestWorkspaceForTest(t, root, server.URL, "eng:local", "eng", memberDID, memberPriv)
+	if err := awconfig.SaveTeamKey("local", "eng", teamKey); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer"})
+	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
+		t.Fatalf("error=%v", err)
+	}
+	if certCalls != 1 {
+		t.Fatalf("cert calls=%d want 1 to prove identity was created before materialize failure", certCalls)
+	}
+	agentHome := filepath.Join(root, "agents", "instances", "developer")
+	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
+		t.Fatalf("failed profile add left agent home state at %s: %v", agentHome, statErr)
+	}
+}
+
 func TestTeamHumanAddRejectsVersionedLibraryProfileBeforeHomeCreate(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()

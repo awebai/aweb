@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -657,12 +658,21 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 	for i := range plans {
+		var rollback *agentHomeRollback
+		if plans[i].Profile != nil {
+			var err error
+			rollback, err = captureAgentHomeRollback(plans[i].HomeDir)
+			if err != nil {
+				return err
+			}
+		}
 		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
 			return err
 		}
 		if teamHumanAddLayoutOnly {
 			continue
 		}
+		createdProfileIdentity := false
 		if plans[i].Profile != nil {
 			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
@@ -670,8 +680,12 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			} else {
 				accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
 				if err != nil {
+					if rollback != nil {
+						_ = rollback.Rollback()
+					}
 					return err
 				}
+				createdProfileIdentity = true
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
@@ -691,6 +705,11 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				agentID = plans[i].Name
 			}
 			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+				if createdProfileIdentity && rollback != nil {
+					if rbErr := rollback.Rollback(); rbErr != nil {
+						return fmt.Errorf("%w; rollback failed: %v", err, rbErr)
+					}
+				}
 				return err
 			}
 		}
@@ -724,6 +743,77 @@ func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
 		return "", "", usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
 	}
 	return name, profileRef, nil
+}
+
+type agentHomeRollback struct {
+	home    string
+	existed bool
+	entries map[string]bool
+}
+
+func captureAgentHomeRollback(homeDir string) (*agentHomeRollback, error) {
+	home := filepath.Clean(homeDir)
+	info, err := os.Lstat(home)
+	if os.IsNotExist(err) {
+		return &agentHomeRollback{home: home, existed: false}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return &agentHomeRollback{home: home, existed: true, entries: map[string]bool{".": true}}, nil
+	}
+	entries := map[string]bool{}
+	if err := filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(home, path)
+		if err != nil {
+			return err
+		}
+		entries[filepath.ToSlash(rel)] = true
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &agentHomeRollback{home: home, existed: true, entries: entries}, nil
+}
+
+func (r *agentHomeRollback) Rollback() error {
+	if r == nil || strings.TrimSpace(r.home) == "" {
+		return nil
+	}
+	if !r.existed {
+		return os.RemoveAll(r.home)
+	}
+	var created []string
+	if err := filepath.WalkDir(r.home, func(path string, d os.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(r.home, path)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		if key != "." && !r.entries[key] {
+			created = append(created, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	sort.Slice(created, func(i, j int) bool { return len(created[i]) > len(created[j]) })
+	for _, path := range created {
+		if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func preflightEmptyAgentHome(homeDir string) error {
