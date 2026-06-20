@@ -178,6 +178,36 @@ func TestTeamHumanCreateHomeRequiresProfile(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanCreateHome = filepath.Join(root, "custom-home")
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer", "aweb.engineering-pack/coordinator"}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "--home") || !strings.Contains(err.Error(), "single") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "custom-home")); !os.IsNotExist(statErr) {
+		t.Fatalf("custom home created despite roster rejection, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances")); !os.IsNotExist(statErr) {
+		t.Fatalf("default homes created despite roster rejection, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateRosterRejectsDuplicateDerivedAgentNames(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	err := runTeamHumanCreateRosterAdd([]libraryProfileSelector{
+		{SourceProfilePackRef: "pack.one", ProfileRef: "alice"},
+		{SourceProfilePackRef: "pack.two", ProfileRef: "Alice"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTeamHumanAddRejectsExistingHomeThroughSymlinkedParent(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()

@@ -179,25 +179,33 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if teamName == "" {
 		return usageError("team name is required")
 	}
-	var selector *libraryProfileSelector
-	if len(teamHumanCreateProfiles) > 1 {
-		return usageError("aw team create supports one --profile selector for this local workspace")
-	}
-	if len(teamHumanCreateProfiles) == 1 {
-		parsed, err := parseLibraryProfileSelector(teamHumanCreateProfiles[0])
+	profileSelectors := make([]libraryProfileSelector, 0, len(teamHumanCreateProfiles))
+	for _, rawProfile := range teamHumanCreateProfiles {
+		parsed, err := parseLibraryProfileSelector(rawProfile)
 		if err != nil {
 			return err
 		}
 		if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
 			return err
 		}
-		selector = &parsed
+		profileSelectors = append(profileSelectors, parsed)
+	}
+	var selector *libraryProfileSelector
+	if len(profileSelectors) == 1 {
+		selector = &profileSelectors[0]
+	}
+	rosterSelectors := profileSelectors
+	if len(profileSelectors) <= 1 {
+		rosterSelectors = nil
 	}
 	wd, _ := os.Getwd()
 	createHomeOverride := ""
 	if strings.TrimSpace(teamHumanCreateHome) != "" {
-		if selector == nil {
+		if len(profileSelectors) == 0 {
 			return usageError("aw team create --home requires --profile")
+		}
+		if len(profileSelectors) > 1 {
+			return usageError("aw team create --home can only be used with a single --profile")
 		}
 		homeDir, err := filepath.Abs(strings.TrimSpace(teamHumanCreateHome))
 		if err != nil {
@@ -213,7 +221,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		alias = strings.ToLower(teamName)
 	}
 	if teamHumanCreateBYOT {
-		if selector != nil {
+		if len(profileSelectors) > 0 {
 			return usageError("aw team create --byot --profile is not supported yet; create the BYOT team, then use aw team add NAME@PACK_REF/PROFILE_REF")
 		}
 		name := strings.TrimSpace(teamHumanCreateName)
@@ -253,7 +261,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if identityExists {
-		return runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector)
+		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector); err != nil {
+			return err
+		}
+		return runTeamHumanCreateRosterAdd(rosterSelectors)
 	}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
@@ -287,10 +298,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			out.IdentityOnly = false
 		}
 		printOutput(out, formatTeamHumanCreate)
-		return nil
+		return runTeamHumanCreateRosterAdd(rosterSelectors)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		return runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector)
+		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector); err != nil {
+			return err
+		}
+		return runTeamHumanCreateRosterAdd(rosterSelectors)
 	}
 	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 		WorkingDir:  wd,
@@ -318,7 +332,42 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		out.IdentityOnly = false
 	}
 	printOutput(out, formatTeamHumanCreate)
-	return nil
+	return runTeamHumanCreateRosterAdd(rosterSelectors)
+}
+
+func runTeamHumanCreateRosterAdd(selectors []libraryProfileSelector) error {
+	if len(selectors) == 0 {
+		return nil
+	}
+	specs := make([]string, 0, len(selectors))
+	seen := map[string]bool{}
+	for _, selector := range selectors {
+		name := strings.TrimSpace(selector.ProfileRef)
+		if !isValidWorkspaceAlias(name) {
+			return usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@PACK_REF/PROFILE_REF", selector.ProfileRef)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return usageError("duplicate roster agent name %q from --profile selectors", name)
+		}
+		seen[key] = true
+		specs = append(specs, fmt.Sprintf("%s@%s/%s", name, selector.SourceProfilePackRef, selector.ProfileRef))
+	}
+	oldAddLocal := teamHumanAddLocal
+	oldAddGlobal := teamHumanAddGlobal
+	oldAddLayoutOnly := teamHumanAddLayoutOnly
+	oldAddHome := teamHumanAddHome
+	defer func() {
+		teamHumanAddLocal = oldAddLocal
+		teamHumanAddGlobal = oldAddGlobal
+		teamHumanAddLayoutOnly = oldAddLayoutOnly
+		teamHumanAddHome = oldAddHome
+	}()
+	teamHumanAddLocal = false
+	teamHumanAddGlobal = false
+	teamHumanAddLayoutOnly = false
+	teamHumanAddHome = ""
+	return runTeamHumanAdd(nil, specs)
 }
 
 func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {

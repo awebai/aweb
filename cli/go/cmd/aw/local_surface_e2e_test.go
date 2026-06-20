@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/internal/profilepack"
 )
 
 func TestLocalSurfaceE2EEmptyProfileCreateAddStartFailure(t *testing.T) {
@@ -106,8 +108,16 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("AW_CONFIG_PATH", "")
 
-	files := testLibraryProfilePayloadFiles()
-	profileDigest := testLibraryProfilePayloadDigest(t, files)
+	profileFiles := func(profileRef string) []profilepack.LibraryProfilePayloadFile {
+		return []profilepack.LibraryProfilePayloadFile{
+			{Path: "profile.yaml", ContentUTF8: "id: " + profileRef + "\nname: " + profileRef + "\nversion: 0.1.0\nmission: Work with the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+			{Path: "instructions.md", ContentUTF8: "Work together.\n"},
+		}
+	}
+	profileDigests := map[string]string{}
+	for _, profileRef := range []string{"coordinator", "alice"} {
+		profileDigests[profileRef] = testLibraryProfilePayloadDigestForProfile(t, profileRef, profileFiles(profileRef))
+	}
 
 	var importCalls, bindCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,29 +151,40 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent", "eng:local", "agent")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/profile-packs/aweb.engineering-pack/profiles/"):
+			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/profile-packs/aweb.engineering-pack/profiles/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"pack_ref":            "aweb.engineering-pack",
 				"pack_version":        "0.1.0",
-				"profile_ref":         "coordinator",
+				"profile_ref":         profileRef,
 				"version":             "0.1.0",
-				"digest":              profileDigest,
+				"digest":              profileDigests[profileRef],
 				"runtime_assumptions": []string{"local shell"},
 				"runtime_hints":       []string{"local-shell"},
-				"files":               files,
+				"files":               profileFiles(profileRef),
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
 			importCalls++
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("import-to-shelf missing signed headers")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": true})
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			profileRef, _ := body["profile_ref"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigests[profileRef], "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": true})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
 			bindCalls++
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("bind missing signed headers")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": profileDigest})
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			profileRef, _ := body["profile_ref"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": profileRef, "profile_version": "0.1.0", "profile_digest": profileDigests[profileRef]})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/materialize":
 			t.Fatalf("server materialize must not be called in local-compose flow")
 		default:
@@ -185,27 +206,24 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("install library manifest: %v", err)
 	}
 
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator"}
-	teamCreateHome := filepath.Join(root, "captain-home")
-	teamHumanCreateHome = teamCreateHome
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/alice", "aweb.engineering-pack/coordinator"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
-		t.Fatalf("team create --profile: %v", err)
+		t.Fatalf("team create roster --profile: %v", err)
 	}
-	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
-		t.Fatalf("rerun team create --profile: %v", err)
-	}
-	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
-		if _, err := os.Lstat(filepath.Join(teamCreateHome, filepath.FromSlash(rel))); err != nil {
-			t.Fatalf("profile-bound team home missing %s: %v", rel, err)
+	for _, agent := range []string{"alice", "coordinator"} {
+		agentHome := filepath.Join(root, "agents", "instances", agent)
+		for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
+			if _, err := os.Lstat(filepath.Join(agentHome, filepath.FromSlash(rel))); err != nil {
+				t.Fatalf("profile-bound roster home %s missing %s: %v", agent, rel, err)
+			}
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
-		t.Fatalf("team create --home wrote profile into cwd, stat err=%v", err)
+		t.Fatalf("team create roster materialized profile into cwd, stat err=%v", err)
 	}
 
 	teamHumanCreateProfiles = nil
-	teamHumanCreateHome = ""
-	if err := os.Chdir(teamCreateHome); err != nil {
+	if err := os.Chdir(filepath.Join(root, "agents", "instances", "alice")); err != nil {
 		t.Fatal(err)
 	}
 	teamHumanAddHome = filepath.Join(root, "reviewer-home")
@@ -228,6 +246,23 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	if importCalls != 4 || bindCalls != 4 {
 		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
 	}
+}
+
+func testLibraryProfilePayloadDigestForProfile(t *testing.T, profileRef string, files []profilepack.LibraryProfilePayloadFile) string {
+	t.Helper()
+	result, err := profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      t.TempDir(),
+		PackRef:        "aweb.engineering-pack",
+		PackVersion:    "0.1.0",
+		ProfileRef:     profileRef,
+		ProfileVersion: "0.1.0",
+		RuntimeKind:    "local-shell",
+		Files:          files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.ProfileDigest
 }
 
 func TestLocalSurfaceE2ELocalPackMaterializeStartStatusStop(t *testing.T) {
