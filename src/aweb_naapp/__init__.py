@@ -21,7 +21,7 @@ from aweb_naapp.chrome import (
     render_scripts,
 )
 from aweb_naapp.css import CSS_SHA256, aweb_css, aweb_css_sha256
-from aweb_naapp.reference import VECTOR_URL, render_reference
+from aweb_naapp.reference import VECTOR_URL, ReferenceCopy, render_reference
 
 __all__ = [
     "llms",
@@ -39,5 +39,6 @@ __all__ = [
     "aweb_css",
     "aweb_css_sha256",
     "VECTOR_URL",
+    "ReferenceCopy",
     "render_reference",
 ]

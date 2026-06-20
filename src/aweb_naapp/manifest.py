@@ -11,10 +11,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-# Live values that make the public catalog-read examples genuinely runnable.
-# Apps may override per call; these are the defaults the generators use.
-EXAMPLE_PATH_VALUES = {"pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"}
-
 
 def canonical_bytes(obj: Any) -> bytes:
     """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8.
@@ -57,10 +53,17 @@ def tool_params(tool: dict[str, Any]) -> tuple[list[str], list[str]]:
     return req, opt
 
 
-def example_path(tool: dict[str, Any], values: dict[str, str] | None = None) -> str:
-    """The path with placeholders replaced by live values, so a public read is a
-    genuinely runnable URL with no brace placeholder."""
+def example_path(tool: dict[str, Any], values: dict[str, str]) -> str:
+    """The path with placeholders replaced by app-supplied example values. Whatever
+    is not supplied stays a ``{brace}`` placeholder, so the caller can tell whether
+    the result is a genuinely runnable URL (see :func:`is_fully_substituted`)."""
     path = tool["path"]
-    for name, value in (values or EXAMPLE_PATH_VALUES).items():
+    for name, value in values.items():
         path = path.replace("{" + name + "}", value)
     return path
+
+
+def is_fully_substituted(tool: dict[str, Any], values: dict[str, str]) -> bool:
+    """True when every path placeholder has an app-supplied example value, so the
+    rendered URL is genuinely runnable (no leftover brace)."""
+    return "{" not in example_path(tool, values)

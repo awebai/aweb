@@ -32,12 +32,13 @@ def cert_operations(manifest: dict[str, Any], verb: str) -> str:
     return "\n\n".join(operation_block(t, verb) for t in cert_tools(manifest))
 
 
-def auth_section(manifest: dict[str, Any], origin: str) -> str:
+def auth_section(manifest: dict[str, Any], origin: str, *, reads_phrase: str = "reads") -> str:
     """The plain-text authentication section: public reads need nothing, everything
     else is signed; names the four headers and the v2 envelope, and points at the
-    /reference page and the conformance vector."""
+    /reference page and the conformance vector. ``reads_phrase`` names the public
+    reads in the app's own terms (e.g. "catalog reads")."""
     public_names = ", ".join(t["name"] for t in public_tools(manifest))
-    return f"""Public catalog reads ({public_names}) need no auth. Every other
+    return f"""Public {reads_phrase} ({public_names}) need no auth. Every other
 operation is team-scoped and authenticated with your AWID team certificate. When you
 call through the aw plugin verbs (or the low-level aw id request --team-auth), aw
 signs each request for you with your team member key — you never assemble auth

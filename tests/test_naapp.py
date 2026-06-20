@@ -93,7 +93,9 @@ def test_page_wraps_body_in_chrome() -> None:
 
 
 def test_reference_documents_every_operation_dual() -> None:
-    html = naapp.render_reference(_MANIFEST, _site(), verb="library")
+    html = naapp.render_reference(
+        _MANIFEST, _site(), verb="library", example_path_values={"pack_ref": "aweb.engineering-pack"}
+    )
     for tool in _MANIFEST["tools"]:
         assert f"aw library {tool['name']}" in html
         assert tool["path"] in html
@@ -120,3 +122,59 @@ def test_llms_blocks_render_from_manifest() -> None:
     assert "list-packs, get-pack" in auth
     assert "base64url WITHOUT padding" in auth
     assert "https://library.aweb.ai/reference" in auth
+
+
+# A non-Library manifest and a non-Library path-param name, to prove the seam is
+# reusable — not specialized to library's pack_ref/profile_ref and catalog nouns.
+_DOCS_MANIFEST = {
+    "tools": [
+        {
+            "name": "get-doc",
+            "description": "Get a documentation page.",
+            "method": "GET",
+            "path": "/v1/docs/{doc_id}",
+            "auth": "none",
+            "params": [{"name": "doc_id", "in": "path"}],
+            "input_schema": {"type": "object", "properties": {"doc_id": {"type": "string"}}},
+        },
+    ]
+}
+
+
+def _docs_site() -> naapp.SiteConfig:
+    return naapp.SiteConfig(
+        origin="https://docs.example.ai",
+        brand="docs",
+        title="docs — API reference",
+        description="desc",
+        nav_links=(naapp.NavLink("Reference", "/reference"),),
+        footer_blurb="blurb",
+        footer_columns=(),
+        footer_bottom="docs is a Native Agentic App.",
+    )
+
+
+def test_public_read_runnable_only_when_example_supplied() -> None:
+    # No example for doc_id: the curl keeps the brace and is NOT labelled runnable.
+    html_no = naapp.render_reference(_DOCS_MANIFEST, _docs_site(), verb="docs")
+    assert "/v1/docs/{doc_id}" in html_no
+    assert "On the wire — runnable" not in html_no
+    # Example supplied: a genuinely runnable curl, no brace placeholder anywhere
+    # labelled runnable.
+    html_yes = naapp.render_reference(
+        _DOCS_MANIFEST, _docs_site(), verb="docs", example_path_values={"doc_id": "getting-started"}
+    )
+    assert "curl -s https://docs.example.ai/v1/docs/getting-started" in html_yes
+    assert "On the wire — runnable" in html_yes
+    for line in html_yes.splitlines():
+        if "curl -s" in line:
+            assert "{" not in line and "}" not in line, line
+
+
+def test_reference_has_no_library_nouns_by_default() -> None:
+    # With default ReferenceCopy, a non-Library app gets no Library-specific nouns.
+    html = naapp.render_reference(
+        _DOCS_MANIFEST, _docs_site(), verb="docs", example_path_values={"doc_id": "getting-started"}
+    )
+    for noun in ("catalog", "profile-pack", "shelf", "Shelf", "Library", "library"):
+        assert noun not in html, noun
