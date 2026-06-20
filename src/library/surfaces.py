@@ -318,10 +318,21 @@ def render_landing_page(*, public_origin: str) -> str:
 </html>"""
 
 
+# Live values that make the public catalog-read examples genuinely runnable
+# against production (these resolve against the seeded engineering pack).
+_EXAMPLE_PATH_VALUES = {"pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"}
+
+
 def _tool_params(tool: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """A tool's (required, optional) parameter names, in manifest order."""
+    """A tool's (required, optional) parameter names, in manifest order.
+
+    Path params are required by construction — the route cannot match without
+    them — even when the manifest input_schema does not list them in `required`.
+    Treating them as required here (a rendering concern) keeps the served
+    manifest digest unchanged."""
     schema = tool.get("input_schema") or {}
-    required = list(schema.get("required") or [])
+    path_params = {p["name"] for p in tool.get("params", []) if p.get("in") == "path"}
+    required = set(schema.get("required") or []) | path_params
     order: list[str] = [p["name"] for p in tool.get("params", []) if "name" in p]
     for name in schema.get("properties") or {}:
         if name not in order:
@@ -329,6 +340,15 @@ def _tool_params(tool: dict[str, Any]) -> tuple[list[str], list[str]]:
     req = [n for n in order if n in required]
     opt = [n for n in order if n not in required]
     return req, opt
+
+
+def _example_path(tool: dict[str, Any]) -> str:
+    """The path with placeholders replaced by live values, so a public read is a
+    genuinely runnable URL with no brace placeholders."""
+    path = tool["path"]
+    for name, value in _EXAMPLE_PATH_VALUES.items():
+        path = path.replace("{" + name + "}", value)
+    return path
 
 
 def _public_tools() -> list[dict[str, Any]]:
@@ -413,12 +433,13 @@ signs each request for you with your team member key — you never assemble auth
 headers by hand.
 
 For raw HTTP without aw, every team-certificate request carries four headers:
-- Authorization: DIDKey <did:key> <signature> — Ed25519 signature over the signed payload
-- X-AWEB-Timestamp: <RFC3339 UTC> — must be within the server's clock skew
-- X-AWEB-Signed-Payload: <base64url canonical JSON envelope, v=2, fields body_sha256, method, path, team_id, timestamp, aud>
-- X-AWID-Team-Certificate: <base64 of the team certificate JSON>
+- Authorization: DIDKey <did:key> <signature> — base64 Ed25519 signature (standard alphabet, no padding) over the canonical payload bytes
+- X-AWEB-Timestamp: <RFC3339 UTC> — equals the envelope timestamp; 300s replay window
+- X-AWEB-Signed-Payload: base64url WITHOUT padding of the canonical JSON envelope — sorted keys, no whitespace; v=2; reserved fields aud, body_sha256, method, path, team_id, timestamp, v
+- X-AWID-Team-Certificate: standard base64 of the team certificate JSON
 
-The full signing recipe with per-operation curl is at {origin}/reference.
+This wire format tracks the aweb team-auth-envelope-v2 conformance vector. The full
+signing recipe with per-operation curl is at {origin}/reference.
 
 
 ## Operations
@@ -443,31 +464,42 @@ Team operations (AWID team certificate):
 
 
 _SIGNED_HEADERS = (
-    "Authorization: DIDKey <did:key> <signature>\n"
-    "X-AWEB-Timestamp: <RFC3339 UTC>\n"
-    "X-AWEB-Signed-Payload: <base64url of the canonical envelope>\n"
-    "X-AWID-Team-Certificate: <base64 of the team certificate JSON>"
+    "Authorization: DIDKey <did:key> <base64 Ed25519 signature, standard alphabet, no padding>\n"
+    "X-AWEB-Timestamp: <RFC3339 UTC, equal to the envelope timestamp field>\n"
+    "X-AWEB-Signed-Payload: <base64url WITHOUT padding of the canonical JSON payload bytes>\n"
+    "X-AWID-Team-Certificate: <standard base64 of the team certificate JSON>"
 )
 
-_ENVELOPE_SPEC = """{
-  "v": 2,
-  "body_sha256": "<hex sha256 of the exact request body>",
-  "method": "<HTTP method>",
-  "path": "<request path, including any query string>",
-  "team_id": "<your AWID team id>",
-  "timestamp": "<RFC3339 UTC, equal to X-AWEB-Timestamp>",
-  "aud": "<this server origin>"
-}"""
+
+def _envelope_spec(origin: str) -> str:
+    """The signed-payload envelope, shown with canonical (sorted) key order. The
+    bytes actually signed are canonical JSON — sorted keys, no insignificant
+    whitespace, UTF-8, no HTML escaping — so this pretty-printed form is for
+    reading; a signer must emit the compact canonical bytes."""
+    return (
+        "{\n"
+        f'  "aud": "{origin}",\n'
+        '  "body_sha256": "<lowercase hex sha256 of the exact request body bytes;'
+        ' empty body hashes the empty string>",\n'
+        '  "method": "<uppercase HTTP method, e.g. POST>",\n'
+        '  "path": "<escaped request target incl. query, e.g. /v1/shelf/import'
+        ' or /v1/profile-packs?tags=starter>",\n'
+        '  "team_id": "<your AWID team id>",\n'
+        '  "timestamp": "<RFC3339 UTC, equal to X-AWEB-Timestamp>",\n'
+        '  "v": 2\n'
+        "}"
+    )
 
 
 def _params_by_loc(tool: dict[str, Any]) -> dict[str, str]:
     return {p["name"]: p.get("in", "body") for p in tool.get("params", []) if "name" in p}
 
 
-def _aw_command(tool: dict[str, Any]) -> str:
+def _aw_command(tool: dict[str, Any], *, examples: dict[str, str] | None = None) -> str:
     req, _opt = _tool_params(tool)
+    examples = examples or {}
     parts = [f"aw library {tool['name']}"]
-    parts += [f"--{name} <{name}>" for name in req]
+    parts += [f"--{name} {examples.get(name, f'<{name}>')}" for name in req]
     return " ".join(parts)
 
 
@@ -484,7 +516,7 @@ def _aw_id_request(origin: str, tool: dict[str, Any]) -> str:
 
 def _wire_block(origin: str, tool: dict[str, Any]) -> str:
     if tool.get("auth") == "none":
-        return f"curl -s {origin}{tool['path']}"
+        return f"curl -s {origin}{_example_path(tool)}"
     locs = _params_by_loc(tool)
     req, opt = _tool_params(tool)
     lines = [f"{tool['method']} {tool['path']}", _SIGNED_HEADERS]
@@ -516,9 +548,10 @@ def _reference_operation(origin: str, tool: dict[str, Any]) -> str:
     if not is_public:
         signed = (
             '\n          <p class="cmd-label">Run it signed, without the plugin</p>'
-            f'\n          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_id_request(origin, tool))}</pre>{_COPY_BTN}</div></div>'
+            f'\n          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_id_request(origin, tool), quote=False)}</pre>{_COPY_BTN}</div></div>'
         )
     wire_label = "On the wire — runnable" if is_public else "On the wire — aw signs this for you"
+    aw_examples = _EXAMPLE_PATH_VALUES if is_public else None
 
     return f"""        <div class="cmd-panel op" id="op-{tool['name']}">
           <h3><code>aw library {tool['name']}</code> {pill}</h3>
@@ -526,14 +559,15 @@ def _reference_operation(origin: str, tool: dict[str, Any]) -> str:
           <p>{escape(tool['description'])}</p>
           {params_line}
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_command(tool))}</pre>{_COPY_BTN}</div></div>{signed}
+          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_command(tool, examples=aw_examples), quote=False)}</pre>{_COPY_BTN}</div></div>{signed}
           <p class="cmd-label">{wire_label}</p>
-          <div class="cmd-list"><div class="cmd"><pre>{escape(_wire_block(origin, tool))}</pre>{_COPY_BTN}</div></div>
+          <div class="cmd-list"><div class="cmd"><pre>{escape(_wire_block(origin, tool), quote=False)}</pre>{_COPY_BTN}</div></div>
         </div>"""
 
 
 def render_reference_page(*, public_origin: str) -> str:
-    origin = escape(public_origin.rstrip("/"), quote=True)
+    raw_origin = public_origin.rstrip("/")
+    origin = escape(raw_origin, quote=True)
     copy = _COPY_BTN
     head = _site_head(
         title="library — API reference",
@@ -542,8 +576,8 @@ def render_reference_page(*, public_origin: str) -> str:
             "raw HTTP wire format with AWID team-certificate signing."
         ),
     )
-    public_ops = "\n".join(_reference_operation(origin, t) for t in _public_tools())
-    team_ops = "\n".join(_reference_operation(origin, t) for t in _cert_tools())
+    public_ops = "\n".join(_reference_operation(raw_origin, t) for t in _public_tools())
+    team_ops = "\n".join(_reference_operation(raw_origin, t) for t in _cert_tools())
     return f"""<!doctype html>
 <html lang="en">
 {head}
@@ -569,11 +603,14 @@ def render_reference_page(*, public_origin: str) -> str:
           <h2>Public reads need nothing; everything else is signed</h2>
           <p>The three public catalog reads take no auth. Every other operation is team-scoped and authenticated with your AWID team certificate. Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), aw signs each request for you — you never assemble these headers by hand. Build your own client only if you are porting the signer to another language.</p>
         </div>
+        <p class="prose-intro">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector — the source of truth, at <code>aweb/cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code>. To port a signer to another language, match that vector byte for byte.</p>
         <p class="cmd-label">Every team-certificate request carries four headers</p>
-        <div class="cmd-list"><div class="cmd"><pre>{escape(_SIGNED_HEADERS)}</pre>{copy}</div></div>
-        <p class="prose-intro">The <code>Authorization</code> signature is an Ed25519 signature over the <strong>signed payload</strong>: a canonical-JSON envelope, base64url-encoded, carried in <code>X-AWEB-Signed-Payload</code>. The envelope is version 2 and binds the request to its method, path, body, team, time, and audience:</p>
-        <div class="cmd-list"><div class="cmd"><pre>{escape(_ENVELOPE_SPEC)}</pre>{copy}</div></div>
-        <p class="prose-outro">aw computes <code>body_sha256</code> over the exact body, sets <code>timestamp</code> to now (checked against clock skew), <code>aud</code> to this origin, and <code>team_id</code> from your certificate, then signs the canonical bytes. The server recomputes and verifies all of it before the call runs.</p>
+        <div class="cmd-list"><div class="cmd"><pre>{escape(_SIGNED_HEADERS, quote=False)}</pre>{copy}</div></div>
+        <p class="prose-intro">Mind the three encodings — do not mix them: the <code>Authorization</code> signature and the certificate use standard base64; the signed payload uses base64url <strong>without padding</strong> (Library rejects values containing <code>=</code>). The certificate's <code>member_did_key</code> must equal the <code>Authorization</code> did:key.</p>
+        <p class="cmd-label">The signed payload — a canonical-JSON envelope (version 2)</p>
+        <div class="cmd-list"><div class="cmd"><pre>{escape(_envelope_spec(raw_origin), quote=False)}</pre>{copy}</div></div>
+        <p class="prose-intro">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the same convention as awid <code>canonical_json_bytes</code>). The fields are shown above in sorted order; the pretty-printing is for reading only. The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
+        <p class="prose-outro">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives — the root-mounted <code>/v1/...</code> with its query string and no <code>/api</code> prefix — <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes (empty body hashes the empty string), <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a replay window of 300 seconds.</p>
       </div>
     </section>
 

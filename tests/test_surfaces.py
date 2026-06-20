@@ -56,6 +56,9 @@ def test_llms_txt_documents_every_manifest_operation() -> None:
     for tool in MANIFEST["tools"]:
         assert f"aw library {tool['name']}" in text, tool["name"]
         assert tool["path"] in text, tool["path"]
+    # Path params show as required in the operations list, not optional.
+    assert "required: pack_ref" in text
+    assert "required: pack_ref, profile_ref" in text
 
 
 def test_landing_offers_copiable_llms() -> None:
@@ -94,16 +97,42 @@ def test_reference_page_documents_signing_envelope_once() -> None:
     for field in ("body_sha256", "team_id", "aud"):
         assert field in text, field
     assert "aw id request --team-auth" in text
+    # Tracks the canonical conformance vector, with the easy-to-miss encodings spelled out.
+    assert "team-auth-envelope-v2" in text
+    assert "base64url" in text
+    assert "without padding" in text
+    # The envelope example must be in canonical (sorted) key order — a copied signer
+    # that follows v-first order would sign the wrong bytes.
+    assert text.index('"aud"') < text.index('"body_sha256"') < text.index('"v": 2')
 
 
-def test_reference_public_reads_have_literal_curl() -> None:
-    """The three auth:none reads are shown as literal, copy-paste-runnable curl
-    with no auth headers required."""
+def test_path_params_classified_required() -> None:
+    """Path params are required by construction even when the manifest input_schema
+    omits them from `required` — the route cannot match without them."""
+    for tool in MANIFEST["tools"]:
+        path_params = {p["name"] for p in tool.get("params", []) if p.get("in") == "path"}
+        req, opt = surfaces._tool_params(tool)
+        assert path_params <= set(req), tool["name"]
+        assert not (path_params & set(opt)), tool["name"]
+
+
+def test_reference_public_reads_have_literal_runnable_curl() -> None:
+    """The three auth:none reads are shown as literal, copy-paste-runnable curl with
+    live values — nothing labelled runnable may carry a brace placeholder."""
     text = _client().get("/reference").text
-    for tool in _PUBLIC_TOOLS:
-        assert f"curl https://library.aweb.ai{tool['path']}" in text or (
-            f"curl -s https://library.aweb.ai{tool['path']}" in text
-        ), tool["name"]
+    assert "curl -s https://library.aweb.ai/v1/profile-packs" in text
+    assert "curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack" in text
+    assert (
+        "curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack/profiles/coordinator"
+        in text
+    )
+    # get-pack / get-profile path params appear in the runnable verb examples.
+    assert "aw library get-pack --pack_ref aweb.engineering-pack" in text
+    assert "aw library get-profile --pack_ref aweb.engineering-pack --profile_ref coordinator" in text
+    # No runnable curl line carries a brace placeholder.
+    for line in text.splitlines():
+        if "curl -s" in line:
+            assert "{" not in line and "}" not in line, line
 
 
 def test_skills_surface_serves_index_and_individual_skills() -> None:
