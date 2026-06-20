@@ -131,8 +131,24 @@ then **namespace control** — never localhost.
 The localhost gate and the "requires a local awid registry" error are
 **removed**: they conflated registry location with namespace ownership.
 
-`--byot` / `--namespace` stays as the explicit model-A create for a domain you
-control. No `--profile` → empty-profile team (hard invariant, unchanged).
+`--byot` / `--namespace` is the explicit model-A create for a domain you
+control. Like every other `aw team create` branch, it **must yield a usable
+team, never a register-only half-create**:
+
+- **Local member identity present** (`.aw/identity.yaml` + `.aw/signing.key`) →
+  enroll the creator as the first member, exactly as the auto-detect model-A
+  path does (member cert + additive membership + active + binding). The
+  `--namespace` is taken explicitly instead of auto-detected from the address.
+- **No member identity, controller key only** (a pure operator minting a team
+  for a domain they control) → do **not** silently register-only. Fail closed
+  with a clear message: use `aw id team create` for a controller-only team, or
+  `aw init` / `aw id create` first to get a member identity.
+
+The register-only primitive is **`aw id team create`** (the protocol/admin
+controller surface), which intentionally stops at team registration with no
+member enrollment. The human `aw team create --byot` must not collapse into it.
+
+No `--profile` → empty-profile team (hard invariant, unchanged).
 
 ## 5. Populating a team — `aw team add` / `aw team invite`
 
