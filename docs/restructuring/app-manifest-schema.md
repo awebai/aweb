@@ -248,8 +248,35 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 
 - **A2A Agent Card / publication semantics** (SoT §3.2) — separate contract; no
   card skills, JSON-RPC bindings, or publication routes here.
-- **Auth method** — fixed: v2 team-auth (`aw id request --team-auth` for CLI;
-  gateway-signed for hosted MCP). Not a per-tool field.
+- **Auth method (default)** — fixed: v2 team-auth (`aw id request --team-auth`
+  for CLI; gateway-signed for hosted MCP). This is the default for every tool.
+  The one per-tool override is `auth` (below); there is no other per-tool auth
+  configuration.
+
+## Per-tool `auth` field
+
+Each `tools[]` entry MAY carry an optional `auth` field. It is the only per-tool
+auth control, and it has exactly two values:
+
+- **absent / `"team-cert"`** — the default: the request is signed with the
+  caller's v2 team-auth identity (as above).
+- **`"none"`** — a public tool: the request is sent **unsigned**, with no
+  signing identity resolved. This is what lets a zero-identity caller browse a
+  public catalog (e.g. `aw library list-packs`).
+
+Hard rules a consumer MUST enforce identically:
+
+- `auth: "none"` is only valid on a **non-mutation** tool. A mutation marked
+  `auth: "none"` is a manifest error and MUST be rejected at validation.
+- Any `auth` value other than `"none"` or `"team-cert"` is rejected.
+- A consumer interpreting the manifest MUST send `auth: "none"` tools unsigned
+  and all other tools signed. Treating an `auth: "none"` tool as signed (or
+  vice-versa) is a conformance divergence.
+
+aw implements this in `internal/appmanifest` (`normalizeToolAuth`) and the
+plugin dispatch (signed vs unsigned branch). The live `library` manifest uses
+it: `list-packs`, `get-pack`, `get-profile` are `auth: "none"`; every mutation
+omits `auth` and is signed.
 
 ## Future manifest versions (backlog — not v1)
 
