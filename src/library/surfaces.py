@@ -63,6 +63,25 @@ _FOOTER_COLUMNS = (
 _FOOTER_BOTTOM = (
     "library is a Native Agentic App on the aweb.ai hub. AWID is the identity authority."
 )
+# library's domain values for the shared docs generators: live path-param values
+# that make the public catalog reads genuinely runnable, the public-reads phrase,
+# and the /reference section copy in library's own nouns.
+_EXAMPLE_PATH_VALUES = {"pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"}
+_READS_PHRASE = "catalog reads"
+_REFERENCE_COPY = naapp.ReferenceCopy(
+    reads_phrase=_READS_PHRASE,
+    rejects_subject="Library",
+    envelope_path_example="/v1/shelf/import or /v1/profile-packs?tags=starter",
+    public_kicker="Public operations",
+    public_heading="Catalog reads — no auth",
+    public_blurb="Browse the public profile-pack catalog. These are literal and copy-paste-runnable.",
+    team_kicker="Team operations",
+    team_heading="Shelf, bindings, materialize, proposals — AWID team certificate",
+    team_blurb=(
+        "Each shows the canonical verb, the signed hand-runnable "
+        "<code>aw id request</code> form, and the raw wire format aw produces."
+    ),
+)
 
 
 def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
@@ -247,14 +266,20 @@ def render_reference_page(*, public_origin: str) -> str:
             "raw HTTP wire format with AWID team-certificate signing."
         ),
     )
-    return naapp.render_reference(MANIFEST, site, verb=_VERB)
+    return naapp.render_reference(
+        MANIFEST,
+        site,
+        verb=_VERB,
+        example_path_values=_EXAMPLE_PATH_VALUES,
+        copy=_REFERENCE_COPY,
+    )
 
 
 def llms_txt(*, public_origin: str) -> str:
     origin = public_origin.rstrip("/")
     public_ops = naapp.llms.public_operations(MANIFEST, _VERB)
     team_ops = naapp.llms.cert_operations(MANIFEST, _VERB)
-    auth = naapp.llms.auth_section(MANIFEST, origin)
+    auth = naapp.llms.auth_section(MANIFEST, origin, reads_phrase=_READS_PHRASE)
     return f"""# library — agent-first profiles for AWID teams
 
 library is the app that owns agent profiles, profile packs, profile versions and
