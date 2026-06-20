@@ -49,6 +49,7 @@ from library.surfaces import (
     llms_txt,
     read_skill,
     render_landing_page,
+    render_reference_page,
     robots_txt,
     skills_index,
 )
@@ -113,6 +114,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             llms_txt(public_origin=resolved.public_origin),
             headers={"X-Content-Type-Options": "nosniff"},
         )
+
+    @app.get("/reference", response_class=HTMLResponse)
+    async def reference_route() -> HTMLResponse:
+        return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
 
     @app.get("/robots.txt", response_class=PlainTextResponse)
     async def robots_route() -> PlainTextResponse:
