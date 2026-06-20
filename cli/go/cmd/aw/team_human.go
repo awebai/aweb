@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os"
@@ -398,14 +399,36 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector 
 			return err
 		}
 	}
+	memberKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(wd))
+	if err != nil {
+		return fmt.Errorf("load local signing key: %w", err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
+	if strings.TrimSpace(identity.DID) != "" && strings.TrimSpace(identity.DID) != memberDIDKey {
+		return fmt.Errorf("local signing key did %s does not match identity did %s", memberDIDKey, identity.DID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(teamHumanCreateDisplayName), controllerKey)
+	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(teamHumanCreateDisplayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, strings.TrimSpace(identity.Lifetime))
 	if err != nil {
 		return err
 	}
-	printOutput(teamCreateOutput{Status: "created", TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
-	_ = alias
+	certPath, err := awconfig.SaveTeamCertificateForTeam(wd, bootstrap.TeamID, bootstrap.Certificate)
+	if err != nil {
+		return err
+	}
+	accepted := &teamAcceptInviteOutput{Status: "accepted", TeamID: bootstrap.TeamID, Alias: alias, CertPath: certPath}
+	awebURL, err := resolveInitAwebURL()
+	if err != nil {
+		return err
+	}
+	if err := upsertAcceptedTeamMembershipState(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, true); err != nil {
+		return err
+	}
+	if err := ensureAcceptedTeamWorkspaceBinding(wd, accepted, bootstrap.Certificate, awebURL); err != nil {
+		return err
+	}
+	printOutput(teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
 	return nil
 }
 

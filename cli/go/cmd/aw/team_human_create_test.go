@@ -243,7 +243,15 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: "did:key:zSelf", StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	_, controllerKey, err := awid.GenerateKeypair()
@@ -254,6 +262,7 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	var gotTeam map[string]any
+	var gotCert map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
@@ -269,6 +278,11 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:acme.com", "domain": "acme.com", "name": gotTeam["name"], "team_did_key": gotTeam["team_did_key"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/eng/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&gotCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -284,6 +298,26 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".awid", "team-keys", "acme.com", "eng.key")); err != nil {
 		t.Fatalf("team key missing: %v", err)
+	}
+	if gotCert["certificate"] == "" || gotCert["certificate"] == nil {
+		t.Fatalf("certificate registration payload missing certificate: %#v", gotCert)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(root, "eng:acme.com")
+	if err != nil {
+		t.Fatalf("team certificate missing: %v", err)
+	}
+	if cert.Alias != "eng" || cert.MemberDIDKey != memberDID || cert.MemberAddress != "acme.com/alice" {
+		t.Fatalf("certificate fields: alias=%q did=%q address=%q", cert.Alias, cert.MemberDIDKey, cert.MemberAddress)
+	}
+	teamState, err := awconfig.LoadTeamState(root)
+	if err != nil {
+		t.Fatalf("team state missing: %v", err)
+	}
+	if teamState.ActiveTeam != "eng:acme.com" || teamState.Membership("eng:acme.com") == nil {
+		t.Fatalf("team state active=%q memberships=%v", teamState.ActiveTeam, teamState.Memberships)
+	}
+	if _, err := resolveSelectionForDir(root); err != nil {
+		t.Fatalf("active team should resolve after create: %v", err)
 	}
 }
 
