@@ -14,6 +14,26 @@ import (
 	"github.com/awebai/aw/internal/profilepack"
 )
 
+func TestChooseLibraryRuntimeKindUsesFirstSupportedRuntimeHint(t *testing.T) {
+	tests := []struct {
+		name  string
+		hints []string
+		want  string
+	}{
+		{name: "first supported pi beats later claude", hints: []string{"pi", "claude-code"}, want: "pi"},
+		{name: "skips unknown to later supported", hints: []string{"unknown", "codex"}, want: "codex"},
+		{name: "local shell alias", hints: []string{"local shell"}, want: "local-shell"},
+		{name: "absent defaults claude", hints: nil, want: "claude-code"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := chooseLibraryRuntimeKind(tc.hints); got != tc.want {
+				t.Fatalf("chooseLibraryRuntimeKind(%v)=%q want %q", tc.hints, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -250,23 +250,20 @@ func validateBindMatchesImport(bound *libraryBindResponse, imported *libraryImpo
 	return nil
 }
 
-func chooseLibraryRuntimeKind(assumptions []string) string {
-	allowed := map[string]bool{}
-	for _, assumption := range assumptions {
-		allowed[strings.ToLower(strings.TrimSpace(assumption))] = true
+func chooseLibraryRuntimeKind(hints []string) string {
+	for _, hint := range hints {
+		switch strings.ToLower(strings.TrimSpace(hint)) {
+		case "claude-code":
+			return "claude-code"
+		case "codex":
+			return "codex"
+		case "pi":
+			return "pi"
+		case "local shell", "local-shell":
+			return "local-shell"
+		}
 	}
-	switch {
-	case allowed["claude-code"]:
-		return "claude-code"
-	case allowed["codex"]:
-		return "codex"
-	case allowed["pi"]:
-		return "pi"
-	case allowed["local shell"] || allowed["local-shell"]:
-		return "local-shell"
-	default:
-		return "claude-code"
-	}
+	return "claude-code"
 }
 
 func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {

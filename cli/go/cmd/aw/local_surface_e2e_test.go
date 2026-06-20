@@ -115,8 +115,18 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		}
 	}
 	profileDigests := map[string]string{}
-	for _, profileRef := range []string{"coordinator", "alice"} {
+	for _, profileRef := range []string{"coordinator", "reviewer"} {
 		profileDigests[profileRef] = testLibraryProfilePayloadDigestForProfile(t, profileRef, profileFiles(profileRef))
+	}
+	runtimeHints := func(profileRef string) []string {
+		switch profileRef {
+		case "coordinator":
+			return []string{"claude-code"}
+		case "reviewer":
+			return []string{"pi", "claude-code"}
+		default:
+			return nil
+		}
 	}
 
 	var importCalls, bindCalls int
@@ -160,7 +170,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				"version":             "0.1.0",
 				"digest":              profileDigests[profileRef],
 				"runtime_assumptions": []string{"local shell"},
-				"runtime_hints":       []string{"local-shell"},
+				"runtime_hints":       runtimeHints(profileRef),
 				"files":               profileFiles(profileRef),
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
@@ -206,11 +216,11 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("install library manifest: %v", err)
 	}
 
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/alice", "aweb.engineering-pack/coordinator"}
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator", "aweb.engineering-pack/reviewer"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
 	}
-	for _, agent := range []string{"alice", "coordinator"} {
+	for _, agent := range []string{"coordinator", "reviewer"} {
 		agentHome := filepath.Join(root, "agents", "instances", agent)
 		for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
 			if _, err := os.Lstat(filepath.Join(agentHome, filepath.FromSlash(rel))); err != nil {
@@ -218,19 +228,25 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			}
 		}
 	}
+	if _, err := os.Readlink(filepath.Join(root, "agents", "instances", "coordinator", "CLAUDE.md")); err != nil {
+		t.Fatalf("coordinator claude-code home missing CLAUDE.md symlink: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "reviewer", "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("reviewer pi home unexpectedly has CLAUDE.md (first supported runtime_hints should choose pi), stat err=%v", err)
+	}
 	if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatalf("team create roster materialized profile into cwd, stat err=%v", err)
 	}
 
 	teamHumanCreateProfiles = nil
-	if err := os.Chdir(filepath.Join(root, "agents", "instances", "alice")); err != nil {
+	if err := os.Chdir(filepath.Join(root, "agents", "instances", "coordinator")); err != nil {
 		t.Fatal(err)
 	}
-	teamHumanAddHome = filepath.Join(root, "reviewer-home")
-	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
+	teamHumanAddHome = filepath.Join(root, "auditor-home")
+	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("team add profile: %v", err)
 	}
-	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
+	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("rerun team add profile: %v", err)
 	}
 	agentHome := teamHumanAddHome
@@ -239,7 +255,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "reviewer")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "auditor")); !os.IsNotExist(err) {
 		t.Fatalf("team add --home wrote default agent home, stat err=%v", err)
 	}
 	teamHumanAddHome = ""
