@@ -369,6 +369,9 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if strings.TrimSpace(explicitDomain) != "" {
+				return usageError("aw team create --byot requires a local member identity to enroll; use aw id team create for a controller-only team, or run aw init / aw id create first")
+			}
 			return usageError("current workspace has local signing state but no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
 		}
 		return err

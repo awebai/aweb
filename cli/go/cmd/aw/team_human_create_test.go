@@ -323,6 +323,44 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateBYOTWithoutIdentityFailsBeforeRegisterOnly(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	var calledRegistry bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledRegistry = true
+		t.Fatalf("registry should not be called for --byot without member identity: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	teamHumanCreateBYOT = true
+	teamHumanCreateNamespace = "acme.com"
+	teamHumanCreateRegistryURL = server.URL
+
+	err = runTeamHumanCreate(nil, []string{"Ops"})
+	if err == nil || !strings.Contains(err.Error(), "requires a local member identity") || !strings.Contains(err.Error(), "aw id team create") {
+		t.Fatalf("error=%v", err)
+	}
+	if calledRegistry {
+		t.Fatal("registry called despite fail-closed --byot without identity")
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".awid", "team-keys", "acme.com", "ops.key")); !os.IsNotExist(statErr) {
+		t.Fatalf("team key created despite fail-closed --byot without identity: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, ".aw", "teams.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("team state created despite fail-closed --byot without identity: %v", statErr)
+	}
+}
+
 func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
