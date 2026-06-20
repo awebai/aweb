@@ -107,12 +107,21 @@ then **namespace control** — never localhost.
 2. **Identity exists and controls a namespace** (model A — `.aw/identity.yaml`
    has an `address`, and a controller key exists for its domain) → mint a NEW
    team under that domain, signed, against the identity's registry — **no
-   re-signup.** The machinery already exists: `resolveLocalSigningIdentity`
-   (`cli/go/cmd/aw/id_request.go:251`) to detect the identity, then
-   `ensureLocalTeamRegistered` with the loaded controller key (`id_team.go`,
-   `runTeamCreate`). The gap is only wiring it into the human
-   `aw team create <name>` (auto-detect domain + controller key instead of
-   requiring `--namespace`).
+   re-signup.** Like the from-nothing path, create **enrolls the caller as the
+   first member** of the new team: a member certificate signed by the new team
+   key (e.g. `bootstrapLocalTeamMemberWithLifetime` with the existing identity's
+   signing key as the member key), persisted **additively** alongside existing
+   memberships (never clobber), with the new team set active. The machinery
+   exists: `resolveLocalSigningIdentity` (`cli/go/cmd/aw/id_request.go:251`) to
+   detect the identity + load its key, the loaded controller key, and the
+   team-member bootstrap. The wiring is into the human `aw team create <name>`
+   (auto-detect domain + controller key instead of requiring `--namespace`).
+
+   **Create must yield a usable team, not just a registered one.**
+   `ensureLocalTeamRegistered` alone registers the team but leaves no member
+   cert — the caller controls the namespace but cannot act in the team
+   (coordination needs a member cert). That silent half-create is a trap and is
+   not acceptable.
 3. **Identity exists but is hosted-managed** (model B — no controller key for its
    namespace) → route to the hosted "create another team" path on
    `app.aweb.ai`. Whether that endpoint exists is an open cross-lane item (§7);
