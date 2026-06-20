@@ -199,12 +199,70 @@ func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
 
 func TestTeamHumanCreateRosterRejectsDuplicateDerivedAgentNames(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
-	err := runTeamHumanCreateRosterAdd([]libraryProfileSelector{
+	_, err := teamHumanCreateRosterSpecs([]libraryProfileSelector{
 		{SourceProfilePackRef: "pack.one", ProfileRef: "alice"},
 		{SourceProfilePackRef: "pack.two", ProfileRef: "Alice"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTeamHumanCreateRosterDuplicateNamesFailBeforeInit(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/alice", "other-pack/Alice"}
+	initCalled := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		initCalled = true
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
+		t.Fatalf("error=%v", err)
+	}
+	if initCalled {
+		t.Fatal("init/create called despite duplicate roster names")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf(".aw created despite prevalidation failure, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances")); !os.IsNotExist(statErr) {
+		t.Fatalf("default homes created despite prevalidation failure, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateRosterInvalidNameFailsBeforeInit(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanCreateProfiles = []string{"aweb.engineering-pack/bad name", "aweb.engineering-pack/alice"}
+	initCalled := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		initCalled = true
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used as an agent name") {
+		t.Fatalf("error=%v", err)
+	}
+	if initCalled {
+		t.Fatal("init/create called despite invalid roster name")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf(".aw created despite prevalidation failure, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances")); !os.IsNotExist(statErr) {
+		t.Fatalf("default homes created despite prevalidation failure, stat err=%v", statErr)
 	}
 }
 

@@ -194,9 +194,9 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if len(profileSelectors) == 1 {
 		selector = &profileSelectors[0]
 	}
-	rosterSelectors := profileSelectors
-	if len(profileSelectors) <= 1 {
-		rosterSelectors = nil
+	rosterSpecs, err := teamHumanCreateRosterSpecs(profileSelectors)
+	if err != nil {
+		return err
 	}
 	wd, _ := os.Getwd()
 	createHomeOverride := ""
@@ -264,7 +264,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector); err != nil {
 			return err
 		}
-		return runTeamHumanCreateRosterAdd(rosterSelectors)
+		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
@@ -298,13 +298,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			out.IdentityOnly = false
 		}
 		printOutput(out, formatTeamHumanCreate)
-		return runTeamHumanCreateRosterAdd(rosterSelectors)
+		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
 		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector); err != nil {
 			return err
 		}
-		return runTeamHumanCreateRosterAdd(rosterSelectors)
+		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 		WorkingDir:  wd,
@@ -332,26 +332,33 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		out.IdentityOnly = false
 	}
 	printOutput(out, formatTeamHumanCreate)
-	return runTeamHumanCreateRosterAdd(rosterSelectors)
+	return runTeamHumanCreateRosterAdd(rosterSpecs)
 }
 
-func runTeamHumanCreateRosterAdd(selectors []libraryProfileSelector) error {
-	if len(selectors) == 0 {
-		return nil
+func teamHumanCreateRosterSpecs(selectors []libraryProfileSelector) ([]string, error) {
+	if len(selectors) <= 1 {
+		return nil, nil
 	}
 	specs := make([]string, 0, len(selectors))
 	seen := map[string]bool{}
 	for _, selector := range selectors {
 		name := strings.TrimSpace(selector.ProfileRef)
 		if !isValidWorkspaceAlias(name) {
-			return usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@PACK_REF/PROFILE_REF", selector.ProfileRef)
+			return nil, usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@PACK_REF/PROFILE_REF", selector.ProfileRef)
 		}
 		key := strings.ToLower(name)
 		if seen[key] {
-			return usageError("duplicate roster agent name %q from --profile selectors", name)
+			return nil, usageError("duplicate roster agent name %q from --profile selectors", name)
 		}
 		seen[key] = true
 		specs = append(specs, fmt.Sprintf("%s@%s/%s", name, selector.SourceProfilePackRef, selector.ProfileRef))
+	}
+	return specs, nil
+}
+
+func runTeamHumanCreateRosterAdd(specs []string) error {
+	if len(specs) == 0 {
+		return nil
 	}
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
