@@ -273,6 +273,8 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": body["controller_did"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "alice", "did_aw": "did:aw:zSelf", "current_did_key": memberDID})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
 			if err := json.NewDecoder(r.Body).Decode(&gotTeam); err != nil {
 				t.Fatal(err)
@@ -318,6 +320,93 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	}
 	if _, err := resolveSelectionForDir(root); err != nil {
 		t.Fatalf("active team should resolve after create: %v", err)
+	}
+}
+
+func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{ActiveTeam: "old:acme.com", Memberships: []awconfig.TeamMembership{{TeamID: "old:acme.com", Alias: "alice", CertPath: ".aw/team-certs/old_acme_com.json", JoinedAt: "2026-01-01T00:00:00Z"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	var certCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": body["controller_did"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "alice", "did_aw": "did:aw:zSelf", "current_did_key": memberDID})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "ops" {
+				t.Fatalf("team name=%v", body["name"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "ops:acme.com", "domain": "acme.com", "name": "ops", "team_did_key": body["team_did_key"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/ops/certificates":
+			certCalls++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	teamHumanCreateBYOT = true
+	teamHumanCreateNamespace = "acme.com"
+	teamHumanCreateRegistryURL = server.URL
+	teamHumanCreateAlias = "captain"
+
+	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
+	}
+	if certCalls != 1 {
+		t.Fatalf("cert calls=%d", certCalls)
+	}
+	state, err := awconfig.LoadTeamState(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ActiveTeam != "ops:acme.com" || state.Membership("ops:acme.com") == nil || state.Membership("old:acme.com") == nil {
+		t.Fatalf("team state active=%q memberships=%v", state.ActiveTeam, state.Memberships)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(root, "ops:acme.com")
+	if err != nil {
+		t.Fatalf("cert missing: %v", err)
+	}
+	if cert.Alias != "captain" || cert.MemberDIDKey != memberDID || cert.MemberAddress != "acme.com/alice" {
+		t.Fatalf("cert fields alias=%q did=%q address=%q", cert.Alias, cert.MemberDIDKey, cert.MemberAddress)
 	}
 }
 

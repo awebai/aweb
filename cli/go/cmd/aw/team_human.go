@@ -189,23 +189,28 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		selector = &parsed
 	}
+	wd, _ := os.Getwd()
+	alias := strings.TrimSpace(teamHumanCreateAlias)
+	if alias == "" {
+		alias = strings.ToLower(teamName)
+	}
 	if teamHumanCreateBYOT {
 		if selector != nil {
 			return usageError("aw team create --byot --profile is not supported yet; create the BYOT team, then use aw team add NAME@PACK_REF/PROFILE_REF")
 		}
-		teamCreateName = teamHumanCreateName
-		if strings.TrimSpace(teamCreateName) == "" {
-			teamCreateName = teamName
+		name := strings.TrimSpace(teamHumanCreateName)
+		if name == "" {
+			name = teamName
 		}
-		teamCreateNamespace = teamHumanCreateNamespace
-		teamCreateDisplayName = teamHumanCreateDisplayName
-		teamCreateRegistryURL = teamHumanCreateRegistryURL
-		return runTeamCreate(cmd, args)
+		domain := awconfig.NormalizeDomain(teamHumanCreateNamespace)
+		if domain == "" {
+			return usageError("aw team create --byot requires --namespace")
+		}
+		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), nil)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
 	}
-	wd, _ := os.Getwd()
 	if selector != nil {
 		if sel, err := resolveSelectionForDir(wd); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 			agentID := strings.TrimSpace(sel.Alias)
@@ -218,10 +223,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			printOutput(teamHumanCreateOutput{Status: "created", TeamName: teamName, ProfileMode: "library", TeamID: sel.TeamID, Alias: sel.Alias, WorkspaceID: sel.WorkspaceID, AwebURL: sel.AwebURL, HomeDir: wd, NoLibrary: false, NoProfile: false, IdentityOnly: false}, formatTeamHumanCreate)
 			return nil
 		}
-	}
-	alias := strings.TrimSpace(teamHumanCreateAlias)
-	if alias == "" {
-		alias = strings.ToLower(teamName)
 	}
 	identityExists, err := teamCreateHasIdentityMaterial(wd)
 	if err != nil {
@@ -358,6 +359,10 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 }
 
 func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector *libraryProfileSelector) error {
+	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), selector)
+}
+
+func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName string, selector *libraryProfileSelector) error {
 	if selector != nil {
 		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@PACK/PROFILE after creating the team")
 	}
@@ -368,9 +373,13 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector 
 		}
 		return err
 	}
-	domain, _, ok := awconfig.CutIdentityAddress(identity.Address)
+	identityDomain, _, ok := awconfig.CutIdentityAddress(identity.Address)
 	if !ok {
 		return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
+	}
+	domain := awconfig.NormalizeDomain(explicitDomain)
+	if domain == "" {
+		domain = identityDomain
 	}
 	exists, err := awconfig.ControllerKeyExists(domain)
 	if err != nil {
@@ -383,7 +392,10 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector 
 	if err != nil {
 		return fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
-	registryURL := strings.TrimSpace(identity.RegistryURL)
+	registryURL := strings.TrimSpace(explicitRegistryURL)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(identity.RegistryURL)
+	}
 	if registryURL == "" {
 		registryURL, err = resolveInitAWIDRegistryURL()
 		if err != nil {
@@ -409,7 +421,10 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(teamHumanCreateDisplayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, strings.TrimSpace(identity.Lifetime))
+	if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), strings.TrimSpace(identity.Address), strings.TrimSpace(identity.StableID), memberDIDKey, memberKey); err != nil {
+		return err
+	}
+	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, strings.TrimSpace(identity.Lifetime))
 	if err != nil {
 		return err
 	}
