@@ -62,6 +62,50 @@ func TestEngineeringProfilePackDigestVectorPinsPathBases(t *testing.T) {
 	}
 }
 
+func TestMaterializeCreatedProfilePayloadMatchesEngineeringFixture(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	profileRoot := filepath.Join(fixture, "source", "profiles", "developer")
+	var files []LibraryProfilePayloadFile
+	if err := filepath.WalkDir(profileRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(profileRoot, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, LibraryProfilePayloadFile{Path: filepath.ToSlash(rel), ContentUTF8: string(data)})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	result, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      target,
+		ProfileRef:     "developer",
+		ProfileVersion: "0.1.0",
+		RuntimeKind:    "claude-code",
+		Files:          files,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
+	}
+	if result.SourceProfilePackRef != "" || result.SourceProfilePackVersion != "" || result.SourceProfilePackDigest != "" {
+		t.Fatalf("created result included source pack provenance: %+v", result)
+	}
+	expected := filepath.Join(fixture, "expected", "materialized-home-created", "developer")
+	if err := compareMaterializedTrees(expected, target); err != nil {
+		t.Fatalf("created materialized tree mismatch: %v", err)
+	}
+}
+
 func TestEngineeringProfilePackAgentHomeCompositionFixtures(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	for _, id := range []string{"coordinator", "developer", "reviewer"} {

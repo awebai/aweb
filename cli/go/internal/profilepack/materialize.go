@@ -23,9 +23,9 @@ type MaterializeResult struct {
 	ProfileRef               string   `json:"profile_ref"`
 	ProfileVersion           string   `json:"profile_version"`
 	ProfileDigest            string   `json:"profile_digest"`
-	SourceProfilePackRef     string   `json:"source_profile_pack_ref"`
-	SourceProfilePackVersion string   `json:"source_profile_pack_version"`
-	SourceProfilePackDigest  string   `json:"source_profile_pack_digest"`
+	SourceProfilePackRef     string   `json:"source_profile_pack_ref,omitempty"`
+	SourceProfilePackVersion string   `json:"source_profile_pack_version,omitempty"`
+	SourceProfilePackDigest  string   `json:"source_profile_pack_digest,omitempty"`
 	TargetDir                string   `json:"target_dir"`
 	FilesWritten             []string `json:"files_written"`
 }
@@ -34,9 +34,13 @@ type materializedProfileRef struct {
 	ProfileDigest            string `json:"profile_digest"`
 	ProfileRef               string `json:"profile_ref"`
 	ProfileVersion           string `json:"profile_version"`
-	SourceProfilePackDigest  string `json:"source_profile_pack_digest"`
-	SourceProfilePackRef     string `json:"source_profile_pack_ref"`
-	SourceProfilePackVersion string `json:"source_profile_pack_version"`
+	SourceProfilePackDigest  string `json:"source_profile_pack_digest,omitempty"`
+	SourceProfilePackRef     string `json:"source_profile_pack_ref,omitempty"`
+	SourceProfilePackVersion string `json:"source_profile_pack_version,omitempty"`
+}
+
+type materializeProvenance struct {
+	SourcePack bool
 }
 
 func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error) {
@@ -50,10 +54,10 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if err != nil {
 		return nil, err
 	}
-	return materializeLoadedProfile(pack, opts.ProfileID, opts.TargetDir, opts.Force, "claude-code")
+	return materializeLoadedProfile(pack, opts.ProfileID, opts.TargetDir, opts.Force, "claude-code", materializeProvenance{SourcePack: true})
 }
 
-func materializeLoadedProfile(pack *Pack, profileID, targetDir string, force bool, runtimeKind string) (*MaterializeResult, error) {
+func materializeLoadedProfile(pack *Pack, profileID, targetDir string, force bool, runtimeKind string, provenance materializeProvenance) (*MaterializeResult, error) {
 	profile, ok := findProfile(pack, profileID)
 	if !ok {
 		return nil, fmt.Errorf("profile %q not found in profile pack", profileID)
@@ -62,7 +66,7 @@ func materializeLoadedProfile(pack *Pack, profileID, targetDir string, force boo
 	if err != nil {
 		return nil, err
 	}
-	ops, err := materializeOps(pack, profile, runtimeKind)
+	ops, err := materializeOps(pack, profile, runtimeKind, provenance)
 	if err != nil {
 		return nil, err
 	}
@@ -73,26 +77,31 @@ func materializeLoadedProfile(pack *Pack, profileID, targetDir string, force boo
 	if err != nil {
 		return nil, err
 	}
-	return &MaterializeResult{
-		ProfileRef:               profile.ID,
-		ProfileVersion:           profile.Version,
-		ProfileDigest:            profile.Digest,
-		SourceProfilePackRef:     pack.ID,
-		SourceProfilePackVersion: pack.Version,
-		SourceProfilePackDigest:  pack.Source.Digest,
-		TargetDir:                absTarget,
-		FilesWritten:             written,
-	}, nil
+	result := &MaterializeResult{
+		ProfileRef:     profile.ID,
+		ProfileVersion: profile.Version,
+		ProfileDigest:  profile.Digest,
+		TargetDir:      absTarget,
+		FilesWritten:   written,
+	}
+	if provenance.SourcePack {
+		result.SourceProfilePackRef = pack.ID
+		result.SourceProfilePackVersion = pack.Version
+		result.SourceProfilePackDigest = pack.Source.Digest
+	}
+	return result, nil
 }
 
-func materializeOps(pack *Pack, profile Profile, runtimeKind string) ([]materializeWriteOp, error) {
+func materializeOps(pack *Pack, profile Profile, runtimeKind string, provenance materializeProvenance) ([]materializeWriteOp, error) {
 	ref := materializedProfileRef{
-		ProfileDigest:            profile.Digest,
-		ProfileRef:               profile.ID,
-		ProfileVersion:           profile.Version,
-		SourceProfilePackDigest:  pack.Source.Digest,
-		SourceProfilePackRef:     pack.ID,
-		SourceProfilePackVersion: pack.Version,
+		ProfileDigest:  profile.Digest,
+		ProfileRef:     profile.ID,
+		ProfileVersion: profile.Version,
+	}
+	if provenance.SourcePack {
+		ref.SourceProfilePackDigest = pack.Source.Digest
+		ref.SourceProfilePackRef = pack.ID
+		ref.SourceProfilePackVersion = pack.Version
 	}
 	refBytes, err := json.MarshalIndent(ref, "", "  ")
 	if err != nil {
@@ -103,7 +112,7 @@ func materializeOps(pack *Pack, profile Profile, runtimeKind string) ([]material
 	if err != nil {
 		return nil, err
 	}
-	agents, err := composeAgentsMarkdown(pack, profile, instructions)
+	agents, err := composeAgentsMarkdown(pack, profile, instructions, provenance)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +184,7 @@ func isClaudeRuntimeKind(runtimeKind string) bool {
 	return kind == "" || kind == "claude-code"
 }
 
-func composeAgentsMarkdown(pack *Pack, profile Profile, instructions []byte) ([]byte, error) {
+func composeAgentsMarkdown(pack *Pack, profile Profile, instructions []byte, provenance materializeProvenance) ([]byte, error) {
 	var b strings.Builder
 	writeParagraph := func(title string, lines []string) {
 		if len(lines) == 0 {
@@ -199,10 +208,14 @@ func composeAgentsMarkdown(pack *Pack, profile Profile, instructions []byte) ([]
 	b.WriteString(profile.ID)
 	b.WriteString(" v")
 	b.WriteString(profile.Version)
-	b.WriteString(" · pack ")
-	b.WriteString(pack.ID)
-	b.WriteString(" v")
-	b.WriteString(pack.Version)
+	if provenance.SourcePack {
+		b.WriteString(" · pack ")
+		b.WriteString(pack.ID)
+		b.WriteString(" v")
+		b.WriteString(pack.Version)
+	} else {
+		b.WriteString(" · created")
+	}
 	b.WriteString("\n\n")
 	if strings.TrimSpace(profile.Mission) != "" {
 		writeParagraph("Mission", []string{profile.Mission})
@@ -316,11 +329,14 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if strings.TrimSpace(opts.TargetDir) == "" {
 		return nil, fmt.Errorf("target directory is required")
 	}
-	if err := validateRefString("pack_ref", opts.PackRef); err != nil {
-		return nil, err
-	}
-	if err := validateRequiredString("pack_version", opts.PackVersion); err != nil {
-		return nil, err
+	hasSourcePack := strings.TrimSpace(opts.PackRef) != "" || strings.TrimSpace(opts.PackVersion) != "" || strings.TrimSpace(opts.PackDigest) != ""
+	if hasSourcePack {
+		if err := validateRefString("pack_ref", opts.PackRef); err != nil {
+			return nil, err
+		}
+		if err := validateRequiredString("pack_version", opts.PackVersion); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
 		return nil, err
@@ -337,11 +353,17 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err := validateAndWriteLibraryProfilePayload(tmp, profileDir, opts.Files); err != nil {
 		return nil, err
 	}
+	packRef := strings.TrimSpace(opts.PackRef)
+	packVersion := strings.TrimSpace(opts.PackVersion)
+	if !hasSourcePack {
+		packRef = "created-profile-payload"
+		packVersion = "0.0.0"
+	}
 	packYAML, err := json.MarshalIndent(map[string]any{
 		"schema_version": 1,
-		"id":             opts.PackRef,
-		"name":           opts.PackRef,
-		"version":        opts.PackVersion,
+		"id":             packRef,
+		"name":           packRef,
+		"version":        packVersion,
 		"summary":        "Fetched from Library",
 		"description":    "Profile source fetched from Library for local materialization.",
 		"profiles":       []map[string]any{{"id": opts.ProfileRef, "default_count": 1}},
@@ -371,7 +393,7 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if strings.TrimSpace(opts.PackDigest) != "" {
 		pack.Source.Digest = strings.TrimSpace(opts.PackDigest)
 	}
-	return materializeLoadedProfile(pack, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind)
+	return materializeLoadedProfile(pack, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourcePack: hasSourcePack})
 }
 
 func validateAndWriteLibraryProfilePayload(root, profileDir string, files []LibraryProfilePayloadFile) error {
