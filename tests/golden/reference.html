@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Every library operation in parallel: the canonical aw library verb and the raw HTTP wire format with AWID team-certificate signing.">
+  <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a0705" media="(prefers-color-scheme: dark)">
+  <title>library — API reference</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('aweb-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/aweb.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/"><span class="dot"></span>library</a>
+      <nav class="nav-links">
+        <a href="/#model">Model</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="/reference">Reference</a>
+        <a href="/skills/">Skills</a>
+        <a href="https://awid.ai">AWID</a>
+      </nav>
+      <div class="header-right">
+        <button class="theme-toggle" type="button" aria-label="Toggle dark mode" onclick="awebToggleTheme()">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <a class="btn secondary" href="https://aweb.ai">aweb.ai</a>
+        <a class="btn primary" href="/llms.txt">Read llms.txt <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></a>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section class="hero-center">
+      <div class="wrap">
+        <p class="kicker">API reference · library.aweb.ai</p>
+        <h1>Every operation, two ways</h1>
+        <p class="lede">Each library operation is shown as the canonical <code>aw library</code> verb a person or agent runs, and as the raw HTTP wire format for anyone writing their own client. The verbs are the <a href="/aweb-app.json">canonical manifest</a>; this page is generated from it.</p>
+        <div class="cta-row">
+          <a class="btn primary btn--lg" href="/llms.txt">Read llms.txt</a>
+          <a class="btn secondary btn--lg" href="/#use">Getting started</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--tint" id="auth">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Authentication</p>
+          <h2>Public reads need nothing; everything else is signed</h2>
+          <p>The three public catalog reads take no auth. Every other operation is team-scoped and authenticated with your AWID team certificate. Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), aw signs each request for you — you never assemble these headers by hand. Build your own client only if you are porting the signer to another language.</p>
+        </div>
+        <p class="prose-intro">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector — the source of truth, at <a href="https://github.com/awebai/aweb/blob/main/cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"><code>cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code></a>. To port a signer to another language, match that vector byte for byte.</p>
+        <p class="cmd-label">Every team-certificate request carries four headers</p>
+        <div class="cmd-list"><div class="cmd"><pre>Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        <p class="prose-intro">Mind the three encodings — do not mix them: the <code>Authorization</code> signature and the certificate use standard base64; the signed payload uses base64url <strong>without padding</strong> (Library rejects values containing <code>=</code>). The certificate's <code>member_did_key</code> must equal the <code>Authorization</code> did:key.</p>
+        <p class="cmd-label">The signed payload — a canonical-JSON envelope (version 2)</p>
+        <div class="cmd-list"><div class="cmd"><pre>{
+  "aud": "https://library.aweb.ai",
+  "body_sha256": "&lt;lowercase hex sha256 of the exact request body bytes; empty body hashes the empty string&gt;",
+  "method": "&lt;uppercase HTTP method, e.g. POST&gt;",
+  "path": "&lt;escaped request target incl. query, e.g. /v1/shelf/import or /v1/profile-packs?tags=starter&gt;",
+  "team_id": "&lt;your AWID team id&gt;",
+  "timestamp": "&lt;RFC3339 UTC, equal to X-AWEB-Timestamp&gt;",
+  "v": 2
+}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        <p class="prose-intro">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the same convention as awid <code>canonical_json_bytes</code>). The fields are shown above in sorted order; the pretty-printing is for reading only. The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
+        <p class="prose-outro">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives — the root-mounted <code>/v1/...</code> with its query string and no <code>/api</code> prefix — <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes (empty body hashes the empty string), <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a replay window of 300 seconds.</p>
+      </div>
+    </section>
+
+    <section class="section" id="public">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Public operations</p>
+          <h2>Catalog reads — no auth</h2>
+          <p>Browse the public profile-pack catalog. These are literal and copy-paste-runnable.</p>
+        </div>
+        <div class="cmd-panel op" id="op-list-packs">
+          <h3><code>aw library list-packs</code> <span class="pill ok">public</span></h3>
+          <p class="op-meta"><code>GET /v1/profile-packs</code></p>
+          <p>Browse the public profile-pack catalog, optionally filtered by tag overlap.</p>
+          <p class="op-params">optional: tags</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — runnable</p>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-get-pack">
+          <h3><code>aw library get-pack</code> <span class="pill ok">public</span></h3>
+          <p class="op-meta"><code>GET /v1/profile-packs/{pack_ref}</code></p>
+          <p>Get a public profile pack and its profile summaries.</p>
+          <p class="op-params">required: pack_ref</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library get-pack --pack_ref aweb.engineering-pack</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — runnable</p>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-get-profile">
+          <h3><code>aw library get-profile</code> <span class="pill ok">public</span></h3>
+          <p class="op-meta"><code>GET /v1/profile-packs/{pack_ref}/profiles/{profile_ref}</code></p>
+          <p>Get a public profile&#x27;s full content from the latest version of a pack.</p>
+          <p class="op-params">required: pack_ref, profile_ref</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library get-profile --pack_ref aweb.engineering-pack --profile_ref coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — runnable</p>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack/profiles/coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--tint" id="team">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Team operations</p>
+          <h2>Shelf, bindings, materialize, proposals — AWID team certificate</h2>
+          <p>Each shows the canonical verb, the signed hand-runnable <code>aw id request</code> form, and the raw wire format aw produces.</p>
+        </div>
+        <div class="cmd-panel op" id="op-publish-pack">
+          <h3><code>aw library publish-pack</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/profile-packs/import</code></p>
+          <p>Publish or update a public profile pack. The body is the canonical import payload directly.</p>
+          <p class="op-params">required: files, schema</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library publish-pack --files &lt;files&gt; --schema &lt;schema&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profile-packs/import --body '{"files": "...", "schema": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profile-packs/import
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "...", "schema": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-register">
+          <h3><code>aw library register</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/team/register</code></p>
+          <p>Register the team with library (idempotent; team identified from the cert).</p>
+          <p class="op-params">optional: owner, display_name</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library register</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/team/register</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/team/register
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-create-shelf-profile">
+          <h3><code>aw library create-shelf-profile</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/profiles</code></p>
+          <p>Create a private shelf profile from a profile payload.</p>
+          <p class="op-params">required: files · optional: tags</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library create-shelf-profile --files &lt;files&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles --body '{"files": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profiles
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-shelf-version">
+          <h3><code>aw library shelf-version</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/profiles/{profile_ref}/versions</code></p>
+          <p>Add a new content version of an owned shelf profile.</p>
+          <p class="op-params">required: profile_ref, files</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library shelf-version --profile_ref &lt;profile_ref&gt; --files &lt;files&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/versions --body '{"files": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/versions
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-update-from-source">
+          <h3><code>aw library update-from-source</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/profiles/{profile_ref}/update-from-source</code></p>
+          <p>Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.</p>
+          <p class="op-params">required: profile_ref, target_version · optional: source_profile_pack_version</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library update-from-source --profile_ref &lt;profile_ref&gt; --target_version &lt;target_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/update-from-source --body '{"target_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/update-from-source
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"target_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-import-to-shelf">
+          <h3><code>aw library import-to-shelf</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/shelf/import</code></p>
+          <p>Copy a public-pack profile onto the team&#x27;s private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.</p>
+          <p class="op-params">required: source_profile_pack_ref, profile_ref · optional: source_profile_pack_version, tags</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref &lt;source_profile_pack_ref&gt; --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/shelf/import --body '{"source_profile_pack_ref": "...", "profile_ref": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/shelf/import
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"source_profile_pack_ref": "...", "profile_ref": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-publish-profile">
+          <h3><code>aw library publish-profile</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/profiles/{profile_ref}/publish</code></p>
+          <p>Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.</p>
+          <p class="op-params">required: profile_ref, pack_version · optional: profile_version, target_pack_ref, new_pack</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library publish-profile --profile_ref &lt;profile_ref&gt; --pack_version &lt;pack_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/publish --body '{"pack_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/publish
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"pack_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-set-profile-tags">
+          <h3><code>aw library set-profile-tags</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>PUT /v1/profiles/{profile_ref}/tags</code></p>
+          <p>Replace a profile&#x27;s organizational tags.</p>
+          <p class="op-params">required: profile_ref, tags</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library set-profile-tags --profile_ref &lt;profile_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/profiles/{profile_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>PUT /v1/profiles/{profile_ref}/tags
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"tags": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-set-pack-tags">
+          <h3><code>aw library set-pack-tags</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>PUT /v1/profile-packs/{pack_ref}/tags</code></p>
+          <p>Replace a profile pack&#x27;s organizational tags.</p>
+          <p class="op-params">required: pack_ref, tags</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library set-pack-tags --pack_ref &lt;pack_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/profile-packs/{pack_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>PUT /v1/profile-packs/{pack_ref}/tags
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"tags": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-bind">
+          <h3><code>aw library bind</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/agents/{agent_id}/profile-binding</code></p>
+          <p>Bind an agent identity to a profile ref/version/digest.</p>
+          <p class="op-params">required: agent_id, profile_ref, profile_version, profile_digest · optional: source_profile_pack_ref</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library bind --agent_id &lt;agent_id&gt; --profile_ref &lt;profile_ref&gt; --profile_version &lt;profile_version&gt; --profile_digest &lt;profile_digest&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/agents/{agent_id}/profile-binding --body '{"profile_ref": "...", "profile_version": "...", "profile_digest": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/agents/{agent_id}/profile-binding
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"profile_ref": "...", "profile_version": "...", "profile_digest": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-get-binding">
+          <h3><code>aw library get-binding</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>GET /v1/agents/{agent_id}/profile-binding</code></p>
+          <p>Get the profile binding for an agent identity.</p>
+          <p class="op-params">required: agent_id</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library get-binding --agent_id &lt;agent_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/agents/{agent_id}/profile-binding</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>GET /v1/agents/{agent_id}/profile-binding
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-shelf">
+          <h3><code>aw library shelf</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>GET /v1/shelf</code></p>
+          <p>List the team&#x27;s shelf working set: each profile&#x27;s latest version, source provenance, and whether a newer source-pack version is available.</p>
+          
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/shelf</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>GET /v1/shelf
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-materialize">
+          <h3><code>aw library materialize</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/materialize</code></p>
+          <p>Materialize a profile payload for a local or custodial runtime.</p>
+          <p class="op-params">required: runtime_kind, target · optional: agent_id, profile_ref</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library materialize --runtime_kind &lt;runtime_kind&gt; --target &lt;target&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/materialize --body '{"runtime_kind": "...", "target": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/materialize
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"runtime_kind": "...", "target": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-propose">
+          <h3><code>aw library propose</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/proposals</code></p>
+          <p>Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version&#x27;s content (profile-payload.v1); approve mints it.</p>
+          <p class="op-params">required: target · optional: profile_ref, profile_version, base_profile_version, base_profile_digest, content, summary, rationale</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library propose --target &lt;target&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals --body '{"target": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/proposals
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"target": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-proposals">
+          <h3><code>aw library proposals</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>GET /v1/proposals</code></p>
+          <p>List the team&#x27;s profile learning proposals.</p>
+          
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library proposals</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/proposals</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>GET /v1/proposals
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-approve">
+          <h3><code>aw library approve</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/proposals/{proposal_id}/approve</code></p>
+          <p>Approve a profile learning proposal.</p>
+          <p class="op-params">required: proposal_id</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library approve --proposal_id &lt;proposal_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals/{proposal_id}/approve</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/proposals/{proposal_id}/approve
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+        <div class="cmd-panel op" id="op-reject">
+          <h3><code>aw library reject</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/proposals/{proposal_id}/reject</code></p>
+          <p>Reject a profile learning proposal.</p>
+          <p class="op-params">required: proposal_id</p>
+          <p class="cmd-label">Run it</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw library reject --proposal_id &lt;proposal_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">Run it signed, without the plugin</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals/{proposal_id}/reject</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">On the wire — aw signs this for you</p>
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/proposals/{proposal_id}/reject
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-cols">
+        <div class="footer-brand">
+          <a class="brand" href="/"><span class="dot"></span>library</a>
+          <p>Public profile packs and private team shelves for AWID teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Agents</h4>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="/reference">API reference</a>
+          <a href="/skills/">Skills</a>
+          <a href="/aweb-app.json">App manifest</a>
+        </div>
+        <div class="footer-col">
+          <h4>aweb</h4>
+          <a href="https://aweb.ai">aweb.ai</a>
+          <a href="https://awid.ai">AWID</a>
+        </div>
+      </div>
+      <div class="footer-bottom">library is a Native Agentic App on the aweb.ai hub. AWID is the identity authority. Origin: https://library.aweb.ai</div>
+    </div>
+  </footer>
+  <script>
+    function awebToggleTheme() {
+      var el = document.documentElement;
+      var cur = el.getAttribute('data-theme');
+      if (!cur) {
+        cur = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      var next = cur === 'dark' ? 'light' : 'dark';
+      el.setAttribute('data-theme', next);
+      try { localStorage.setItem('aweb-theme', next); } catch (e) {}
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.cmd .copy-btn'), function (button) {
+      button.addEventListener('click', function () {
+        var pre = button.parentElement.querySelector('pre');
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          button.classList.add('copied');
+          setTimeout(function () { button.classList.remove('copied'); }, 1600);
+        });
+      });
+    });
+  </script>
+</body>
+</html>

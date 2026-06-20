@@ -118,6 +118,20 @@ wheels = [
 ]
 
 [[package]]
+name = "aweb-naapp"
+version = "0.1.0"
+source = { editable = "../aweb-naapp" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.18.0" },
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "ruff", specifier = ">=0.14.0" },
+]
+
+[[package]]
 name = "awid-service"
 version = "0.5.12"
 source = { git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=0de73deb73c133c7fb85ad3de3d5827616e19500#0de73deb73c133c7fb85ad3de3d5827616e19500" }
@@ -353,6 +367,7 @@ name = "library"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aweb-naapp" },
     { name = "awid-service" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -374,6 +389,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aweb-naapp", editable = "../aweb-naapp" },
     { name = "awid-service", git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=0de73deb73c133c7fb85ad3de3d5827616e19500" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "httpx", specifier = ">=0.28.1" },

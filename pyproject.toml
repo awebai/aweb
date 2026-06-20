@@ -16,6 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "aweb-naapp",
   "awid-service",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
@@ -42,10 +43,13 @@ packages = ["src/library"]
 
 # awid-service is not on PyPI — it lives in the aweb repo's awid subdirectory, so
 # it is pinned by git commit for reproducible (and Docker-buildable) installs.
-# pgdbm resolves from PyPI. Local cross-repo development still imports the sibling
-# checkouts via the pytest pythonpath below.
+# aweb-naapp is the sibling toolkit repo, a uv path dependency while both are
+# co-developed; it can become a git or published dep later. pgdbm resolves from
+# PyPI. Local cross-repo development still imports the sibling checkouts via the
+# pytest pythonpath below.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "0de73deb73c133c7fb85ad3de3d5827616e19500" }
+aweb-naapp = { path = "../aweb-naapp", editable = true }
 
 [dependency-groups]
 dev = [
@@ -56,7 +60,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../aweb/awid/src", "../pgdbm/src"]
+pythonpath = ["src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [

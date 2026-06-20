@@ -1,0 +1,165 @@
+# library — agent-first profiles for AWID teams
+
+library is the app that owns agent profiles, profile packs, profile versions and
+digests, agent-profile bindings, materialization payloads, and profile learning.
+This is a Native Agentic App (naapp): an aweb app agents operate directly via its
+canonical manifest (a public byte artifact identified by its digest), published for
+the aweb.ai hub index. There are no app-local accounts, passwords, or OAuth sessions.
+
+AWID is the identity authority: https://awid.ai
+aweb hub: https://aweb.ai
+
+Origin:
+- Production: https://library.aweb.ai
+- Local development: http://127.0.0.1:8765
+
+The model is structural: profile packs are the public, versioned catalog; a team's
+shelf holds its private working copies. A team adopts a pack profile onto its shelf,
+evolves it (new versions, proposals), binds agents to shelf profiles, and
+materializes them. "Public" is a publish, not a flag.
+
+
+## Getting started
+
+Install aw, install library, adopt a profile, add an agent. Each step is a real
+command; nothing here needs a browser or an account.
+
+1. npm install -g @awebai/aw
+2. aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
+3. aw library list-packs
+4. aw team create my-team
+5. aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --source_profile_pack_version 0.1.0 --profile_ref coordinator
+6. aw team add alice@coordinator
+
+Step 6 binds the profile, materializes the agent's home, and prints the home
+directory path it wrote. Shortcut: aw team add alice@aweb.engineering-pack/coordinator
+adopts the pack profile onto your shelf and adds the agent in one command.
+
+
+## How to call it
+
+The canonical form is the native plugin verbs: after
+aw plugin install https://library.aweb.ai/.well-known/aweb-app.json, every operation below is
+aw library <verb> (e.g. aw library list-packs, aw library import-to-shelf,
+aw library shelf, aw library materialize). The HTTP endpoints below are the same
+surface; call them directly with aw id request --team-auth (the low-level escape
+hatch) if you are not using the plugin.
+
+
+## Authentication
+
+Public catalog reads (list-packs, get-pack, get-profile) need no auth. Every other
+operation is team-scoped and authenticated with your AWID team certificate. When you
+call through the aw plugin verbs (or the low-level aw id request --team-auth), aw
+signs each request for you with your team member key — you never assemble auth
+headers by hand.
+
+For raw HTTP without aw, every team-certificate request carries four headers:
+- Authorization: DIDKey <did:key> <signature> — base64 Ed25519 signature (standard alphabet, no padding) over the canonical payload bytes
+- X-AWEB-Timestamp: <RFC3339 UTC> — equals the envelope timestamp; 300s replay window
+- X-AWEB-Signed-Payload: base64url WITHOUT padding of the canonical JSON envelope — sorted keys, no whitespace; v=2; reserved fields aud, body_sha256, method, path, team_id, timestamp, v
+- X-AWID-Team-Certificate: standard base64 of the team certificate JSON
+
+This wire format tracks the aweb team-auth-envelope-v2 conformance vector. The full
+signing recipe with per-operation curl is at https://library.aweb.ai/reference.
+
+
+## Operations
+
+Public operations (no auth):
+
+aw library list-packs  (GET /v1/profile-packs)
+    Browse the public profile-pack catalog, optionally filtered by tag overlap.
+    optional: tags
+
+aw library get-pack  (GET /v1/profile-packs/{pack_ref})
+    Get a public profile pack and its profile summaries.
+    required: pack_ref
+
+aw library get-profile  (GET /v1/profile-packs/{pack_ref}/profiles/{profile_ref})
+    Get a public profile's full content from the latest version of a pack.
+    required: pack_ref, profile_ref
+
+Team operations (AWID team certificate):
+
+aw library publish-pack  (POST /v1/profile-packs/import)
+    Publish or update a public profile pack. The body is the canonical import payload directly.
+    required: files, schema
+
+aw library register  (POST /v1/team/register)
+    Register the team with library (idempotent; team identified from the cert).
+    optional: owner, display_name
+
+aw library create-shelf-profile  (POST /v1/profiles)
+    Create a private shelf profile from a profile payload.
+    required: files
+    optional: tags
+
+aw library shelf-version  (POST /v1/profiles/{profile_ref}/versions)
+    Add a new content version of an owned shelf profile.
+    required: profile_ref, files
+
+aw library update-from-source  (POST /v1/profiles/{profile_ref}/update-from-source)
+    Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.
+    required: profile_ref, target_version
+    optional: source_profile_pack_version
+
+aw library import-to-shelf  (POST /v1/shelf/import)
+    Copy a public-pack profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.
+    required: source_profile_pack_ref, profile_ref
+    optional: source_profile_pack_version, tags
+
+aw library publish-profile  (POST /v1/profiles/{profile_ref}/publish)
+    Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.
+    required: profile_ref, pack_version
+    optional: profile_version, target_pack_ref, new_pack
+
+aw library set-profile-tags  (PUT /v1/profiles/{profile_ref}/tags)
+    Replace a profile's organizational tags.
+    required: profile_ref, tags
+
+aw library set-pack-tags  (PUT /v1/profile-packs/{pack_ref}/tags)
+    Replace a profile pack's organizational tags.
+    required: pack_ref, tags
+
+aw library bind  (POST /v1/agents/{agent_id}/profile-binding)
+    Bind an agent identity to a profile ref/version/digest.
+    required: agent_id, profile_ref, profile_version, profile_digest
+    optional: source_profile_pack_ref
+
+aw library get-binding  (GET /v1/agents/{agent_id}/profile-binding)
+    Get the profile binding for an agent identity.
+    required: agent_id
+
+aw library shelf  (GET /v1/shelf)
+    List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-pack version is available.
+
+aw library materialize  (POST /v1/materialize)
+    Materialize a profile payload for a local or custodial runtime.
+    required: runtime_kind, target
+    optional: agent_id, profile_ref
+
+aw library propose  (POST /v1/proposals)
+    Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version's content (profile-payload.v1); approve mints it.
+    required: target
+    optional: profile_ref, profile_version, base_profile_version, base_profile_digest, content, summary, rationale
+
+aw library proposals  (GET /v1/proposals)
+    List the team's profile learning proposals.
+
+aw library approve  (POST /v1/proposals/{proposal_id}/approve)
+    Approve a profile learning proposal.
+    required: proposal_id
+
+aw library reject  (POST /v1/proposals/{proposal_id}/reject)
+    Reject a profile learning proposal.
+    required: proposal_id
+
+
+## Invariants
+
+- AWID is authority for team keys, certificates, and revocation.
+- Every team-scoped read/write is keyed by the verified certificate team_id.
+- Public catalog reads are unauthenticated; profiles do not grant app access.
+- Shelf versions are immutable: a version's digest is its identity, never overwritten.
+- library owns its own binding, materialization, and proposal state.

@@ -9,8 +9,6 @@ import library.surfaces as surfaces
 from library.aweb_manifest import MANIFEST
 from library.config import Settings
 
-_PUBLIC_TOOLS = [t for t in MANIFEST["tools"] if t.get("auth") == "none"]
-
 
 def _client() -> TestClient:
     return TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai")))
@@ -109,16 +107,6 @@ def test_reference_page_documents_signing_envelope_once() -> None:
     # The envelope example must be in canonical (sorted) key order — a copied signer
     # that follows v-first order would sign the wrong bytes.
     assert text.index('"aud"') < text.index('"body_sha256"') < text.index('"v": 2')
-
-
-def test_path_params_classified_required() -> None:
-    """Path params are required by construction even when the manifest input_schema
-    omits them from `required` — the route cannot match without them."""
-    for tool in MANIFEST["tools"]:
-        path_params = {p["name"] for p in tool.get("params", []) if p.get("in") == "path"}
-        req, opt = surfaces._tool_params(tool)
-        assert path_params <= set(req), tool["name"]
-        assert not (path_params & set(opt)), tool["name"]
 
 
 def test_reference_public_reads_have_literal_runnable_curl() -> None:
