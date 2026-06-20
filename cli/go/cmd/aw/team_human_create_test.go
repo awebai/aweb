@@ -28,10 +28,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldServiceURL := teamHumanCreateServiceURL
 	oldRegistryURL := teamHumanCreateRegistryURL
 	oldAlias := teamHumanCreateAlias
+	oldCreateHome := teamHumanCreateHome
 	oldProfiles := teamHumanCreateProfiles
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
+	oldAddHome := teamHumanAddHome
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -45,10 +47,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateServiceURL = oldServiceURL
 		teamHumanCreateRegistryURL = oldRegistryURL
 		teamHumanCreateAlias = oldAlias
+		teamHumanCreateHome = oldCreateHome
 		teamHumanCreateProfiles = oldProfiles
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
+		teamHumanAddHome = oldAddHome
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
@@ -60,10 +64,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateServiceURL = ""
 	teamHumanCreateRegistryURL = ""
 	teamHumanCreateAlias = ""
+	teamHumanCreateHome = ""
 	teamHumanCreateProfiles = nil
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
+	teamHumanAddHome = ""
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
@@ -120,6 +126,55 @@ func TestTeamHumanAddLayoutOnlyCreatesEmptyIdentityOnlyHomes(t *testing.T) {
 				t.Fatalf("empty-profile layout-only home %s unexpectedly has %s (err=%v)", home, rel, err)
 			}
 		}
+	}
+}
+
+func TestTeamHumanAddHomeOverrideLayoutOnlyUsesExactPath(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	explicitHome := filepath.Join(root, "custom-home")
+	teamHumanAddLayoutOnly = true
+	teamHumanAddHome = explicitHome
+
+	if err := runTeamHumanAdd(nil, []string{"developer"}); err != nil {
+		t.Fatalf("runTeamHumanAdd: %v", err)
+	}
+	if info, err := os.Stat(explicitHome); err != nil || !info.IsDir() {
+		t.Fatalf("explicit home missing: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "developer")); !os.IsNotExist(err) {
+		t.Fatalf("default agent home created despite --home, err=%v", err)
+	}
+}
+
+func TestTeamHumanAddHomeOverrideRejectsRoster(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanAddLayoutOnly = true
+	teamHumanAddHome = filepath.Join(root, "custom-home")
+
+	err := runTeamHumanAdd(nil, []string{"developer", "reviewer"})
+	if err == nil || !strings.Contains(err.Error(), "--home") || !strings.Contains(err.Error(), "single") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "custom-home")); !os.IsNotExist(statErr) {
+		t.Fatalf("custom home created despite roster rejection, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances")); !os.IsNotExist(statErr) {
+		t.Fatalf("default homes created despite roster rejection, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateHomeRequiresProfile(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Chdir(t.TempDir())
+	teamHumanCreateHome = "."
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "--home requires --profile") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

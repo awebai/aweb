@@ -24,11 +24,13 @@ var (
 	teamHumanCreateServiceURL  string
 	teamHumanCreateRegistryURL string
 	teamHumanCreateAlias       string
+	teamHumanCreateHome        string
 	teamHumanCreateProfiles    []string
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
 	teamHumanAddLayoutOnly     bool
+	teamHumanAddHome           string
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 )
@@ -129,12 +131,14 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector PACK_REF/PROFILE_REF[@PACK_VERSION] to adopt and materialize")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
@@ -190,6 +194,20 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		selector = &parsed
 	}
 	wd, _ := os.Getwd()
+	createHomeOverride := ""
+	if strings.TrimSpace(teamHumanCreateHome) != "" {
+		if selector == nil {
+			return usageError("aw team create --home requires --profile")
+		}
+		homeDir, err := filepath.Abs(strings.TrimSpace(teamHumanCreateHome))
+		if err != nil {
+			return err
+		}
+		if err := preflightProfileAgentHome(homeDir); err != nil {
+			return err
+		}
+		createHomeOverride = homeDir
+	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
 	if alias == "" {
 		alias = strings.ToLower(teamName)
@@ -210,6 +228,12 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
+	}
+	if createHomeOverride != "" {
+		if err := os.MkdirAll(createHomeOverride, 0o755); err != nil {
+			return err
+		}
+		wd = createHomeOverride
 	}
 	if selector != nil {
 		if sel, err := resolveSelectionForDir(wd); err == nil && strings.TrimSpace(sel.TeamID) != "" {
@@ -489,12 +513,13 @@ func formatTeamHumanCreate(v any) string {
 }
 
 type teamHumanAddOutput struct {
-	Status     string                `json:"status"`
-	AgentsRoot string                `json:"agents_root"`
-	LayoutOnly bool                  `json:"layout_only"`
-	NoLibrary  bool                  `json:"no_library"`
-	NoProfile  bool                  `json:"no_profile"`
-	Agents     []teamHumanAddedAgent `json:"agents"`
+	Status       string                `json:"status"`
+	AgentsRoot   string                `json:"agents_root"`
+	HomeOverride bool                  `json:"home_override,omitempty"`
+	LayoutOnly   bool                  `json:"layout_only"`
+	NoLibrary    bool                  `json:"no_library"`
+	NoProfile    bool                  `json:"no_profile"`
+	Agents       []teamHumanAddedAgent `json:"agents"`
 }
 
 type teamHumanAddedAgent struct {
@@ -514,6 +539,17 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	homeOverride := strings.TrimSpace(teamHumanAddHome)
+	if homeOverride != "" && len(args) != 1 {
+		return usageError("aw team add --home can only be used with a single agent")
+	}
+	var explicitHome string
+	if homeOverride != "" {
+		explicitHome, err = filepath.Abs(homeOverride)
+		if err != nil {
+			return err
+		}
 	}
 	repoRoot := resolveRepoRoot(wd)
 	agentsRoot := filepath.Join(repoRoot, "agents", "instances")
@@ -547,7 +583,11 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		if selector != nil {
 			profileMode = "library"
 		}
-		plans = append(plans, teamHumanAddedAgent{Name: name, HomeDir: filepath.Join(agentsRoot, name), ProfileMode: profileMode, Profile: selector})
+		homeDir := filepath.Join(agentsRoot, name)
+		if explicitHome != "" {
+			homeDir = explicitHome
+		}
+		plans = append(plans, teamHumanAddedAgent{Name: name, HomeDir: homeDir, ProfileMode: profileMode, Profile: selector})
 	}
 	for _, plan := range plans {
 		if plan.Profile != nil {
@@ -608,7 +648,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
-	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
+	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
 }
 
@@ -710,7 +750,11 @@ func ensureAcceptedTeamWorkspaceBinding(homeDir string, output *teamAcceptInvite
 func formatTeamHumanAdd(v any) string {
 	out := v.(teamHumanAddOutput)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Added %d empty-profile agent(s) under %s\n", len(out.Agents), out.AgentsRoot)
+	if out.HomeOverride {
+		fmt.Fprintf(&b, "Added %d empty-profile agent(s) with explicit home\n", len(out.Agents))
+	} else {
+		fmt.Fprintf(&b, "Added %d empty-profile agent(s) under %s\n", len(out.Agents), out.AgentsRoot)
+	}
 	for _, agent := range out.Agents {
 		fmt.Fprintf(&b, "- %s: %s\n", agent.Name, agent.HomeDir)
 	}

@@ -186,6 +186,8 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 
 	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator"}
+	teamCreateHome := filepath.Join(root, "captain-home")
+	teamHumanCreateHome = teamCreateHome
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create --profile: %v", err)
 	}
@@ -193,24 +195,36 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("rerun team create --profile: %v", err)
 	}
 	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
-		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+		if _, err := os.Lstat(filepath.Join(teamCreateHome, filepath.FromSlash(rel))); err != nil {
 			t.Fatalf("profile-bound team home missing %s: %v", rel, err)
 		}
 	}
+	if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("team create --home wrote profile into cwd, stat err=%v", err)
+	}
 
 	teamHumanCreateProfiles = nil
+	teamHumanCreateHome = ""
+	if err := os.Chdir(teamCreateHome); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanAddHome = filepath.Join(root, "reviewer-home")
 	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("team add profile: %v", err)
 	}
 	if err := runTeamHumanAdd(nil, []string{"reviewer@aweb.engineering-pack/coordinator"}); err != nil {
 		t.Fatalf("rerun team add profile: %v", err)
 	}
-	agentHome := filepath.Join(root, "agents", "instances", "reviewer")
+	agentHome := teamHumanAddHome
 	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
 		if _, err := os.Lstat(filepath.Join(agentHome, filepath.FromSlash(rel))); err != nil {
 			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
 		}
 	}
+	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "reviewer")); !os.IsNotExist(err) {
+		t.Fatalf("team add --home wrote default agent home, stat err=%v", err)
+	}
+	teamHumanAddHome = ""
 	if importCalls != 4 || bindCalls != 4 {
 		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
 	}
