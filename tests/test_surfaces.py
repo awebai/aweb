@@ -101,6 +101,11 @@ def test_reference_page_documents_signing_envelope_once() -> None:
     assert "team-auth-envelope-v2" in text
     assert "base64url" in text
     assert "without padding" in text
+    # The SOT vector is a real hyperlink to the stable repo URL, not just a code span.
+    assert (
+        'href="https://github.com/awebai/aweb/blob/main/cli/go/internal/conformance/'
+        'vectors/team-auth-envelope-v2.json"'
+    ) in text
     # The envelope example must be in canonical (sorted) key order — a copied signer
     # that follows v-first order would sign the wrong bytes.
     assert text.index('"aud"') < text.index('"body_sha256"') < text.index('"v": 2')
