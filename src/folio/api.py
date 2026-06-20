@@ -165,13 +165,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Skill not found")
         return PlainTextResponse(skill, headers={"X-Content-Type-Options": "nosniff"})
 
-    @app.get("/.well-known/aweb-app.json")
-    async def aweb_app_manifest_route() -> Response:
+    async def _manifest_response() -> Response:
         return Response(
             content=read_manifest_bytes(),
             media_type="application/json",
             headers={"X-Content-Type-Options": "nosniff"},
         )
+
+    # Served at the RFC 8615 well-known path the dispatcher/gateway fetch, plus the
+    # bare path the docs surface links ("canonical manifest"). Both return the same
+    # raw committed bytes.
+    @app.get("/.well-known/aweb-app.json")
+    async def well_known_manifest_route() -> Response:
+        return await _manifest_response()
+
+    @app.get("/aweb-app.json")
+    async def aweb_app_manifest_route() -> Response:
+        return await _manifest_response()
 
     @app.get("/health")
     @app.get("/live")

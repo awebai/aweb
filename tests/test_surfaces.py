@@ -63,6 +63,25 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "https://github.com/awebai/folio" not in response.text
 
 
+def test_linked_manifest_paths_serve_committed_bytes() -> None:
+    from folio.aweb_manifest import read_manifest_bytes
+
+    client = _client()
+    committed = read_manifest_bytes()
+    # The docs surface links the canonical manifest at /aweb-app.json; the
+    # dispatcher fetches /.well-known/aweb-app.json. Both must serve the exact
+    # committed bytes — nothing the surface links may 404.
+    for path in ("/aweb-app.json", "/.well-known/aweb-app.json"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert "application/json" in response.headers["content-type"], path
+        assert response.headers.get("X-Content-Type-Options") == "nosniff", path
+        assert response.content == committed, path
+    # Guard against drift: the surfaces actually link /aweb-app.json.
+    assert "/aweb-app.json" in client.get("/reference").text
+    assert "/aweb-app.json" in client.get("/").text
+
+
 def test_skills_surface_serves_index_and_individual_skills() -> None:
     client = _client()
 
