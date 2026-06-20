@@ -318,14 +318,17 @@ type appManifestInterpretationVector struct {
 }
 
 type appManifestExpectedSpec struct {
-	Method        string                           `json:"method"`
-	URL           string                           `json:"url"`
-	PathQuery     string                           `json:"path_query"`
-	Headers       map[string]string                `json:"headers"`
-	Body          string                           `json:"body"`
-	BodySHA256    string                           `json:"body_sha256"`
-	Mutation      bool                             `json:"mutation"`
-	SignedPayload appManifestExpectedSignedPayload `json:"signed_payload"`
+	Method           string                           `json:"method"`
+	URL              string                           `json:"url"`
+	PathQuery        string                           `json:"path_query"`
+	Headers          map[string]string                `json:"headers"`
+	Body             string                           `json:"body"`
+	BodySHA256       string                           `json:"body_sha256"`
+	Auth             string                           `json:"auth"`
+	SigningDecision  string                           `json:"signing_decision"`
+	IdentityRequired *bool                            `json:"identity_required"`
+	Mutation         bool                             `json:"mutation"`
+	SignedPayload    appManifestExpectedSignedPayload `json:"signed_payload"`
 }
 
 type appManifestExpectedSignedPayload struct {
@@ -393,6 +396,7 @@ func TestAppManifestInterpretationVectors(t *testing.T) {
 			if got.BodySHA256 != v.Expected.BodySHA256 {
 				t.Fatalf("body_sha256 got %s want %s", got.BodySHA256, v.Expected.BodySHA256)
 			}
+			assertAppManifestAuthDecision(t, got, v.Expected)
 			if got.Mutation != v.Expected.Mutation {
 				t.Fatalf("mutation got %v want %v", got.Mutation, v.Expected.Mutation)
 			}
@@ -543,6 +547,34 @@ func monorepoRootForTest(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
 }
 
+func assertAppManifestAuthDecision(t *testing.T, got *appmanifest.InterpretedRequest, expected appManifestExpectedSpec) {
+	t.Helper()
+	if expected.Auth != "" && got.Auth != expected.Auth {
+		t.Fatalf("auth got %q want %q", got.Auth, expected.Auth)
+	}
+	if expected.SigningDecision != "" {
+		wantIdentity := expected.SigningDecision == "signed"
+		switch expected.SigningDecision {
+		case "signed":
+			if expected.SignedPayload.CanonicalPayload == "" {
+				t.Fatalf("signing_decision signed requires signed_payload vector")
+			}
+		case "unsigned":
+			if expected.SignedPayload.CanonicalPayload != "" {
+				t.Fatalf("signing_decision unsigned must not include signed_payload vector")
+			}
+		default:
+			t.Fatalf("unsupported signing_decision %q", expected.SigningDecision)
+		}
+		if expected.IdentityRequired == nil {
+			t.Fatalf("signing_decision %q requires identity_required", expected.SigningDecision)
+		}
+		if *expected.IdentityRequired != wantIdentity {
+			t.Fatalf("identity_required got %v want %v for signing_decision %q", *expected.IdentityRequired, wantIdentity, expected.SigningDecision)
+		}
+	}
+}
+
 func assertAppManifestExpectedSpec(t *testing.T, got *appmanifest.InterpretedRequest, expected appManifestExpectedSpec) {
 	t.Helper()
 	if got.Method != expected.Method {
@@ -563,6 +595,7 @@ func assertAppManifestExpectedSpec(t *testing.T, got *appmanifest.InterpretedReq
 	if got.BodySHA256 != expected.BodySHA256 {
 		t.Fatalf("body_sha256 got %s want %s", got.BodySHA256, expected.BodySHA256)
 	}
+	assertAppManifestAuthDecision(t, got, expected)
 	if got.Mutation != expected.Mutation {
 		t.Fatalf("mutation got %v want %v", got.Mutation, expected.Mutation)
 	}

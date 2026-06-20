@@ -81,7 +81,55 @@
           "timestamp": "2026-06-16T00:00:00Z",
           "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"d5f1d27b69f010a3b569fd4bbed7c28304c50de324cf03cd9f23c163d7403659\",\"method\":\"POST\",\"path\":\"/v1/present\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
           "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6ImQ1ZjFkMjdiNjlmMDEwYTNiNTY5ZmQ0YmJlZDdjMjgzMDRjNTBkZTMyNGNmMDNjZDlmMjNjMTYzZDc0MDM2NTkiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9wcmVzZW50IiwidGVhbV9pZCI6ImRlZmF1bHQ6ZXhhbXBsZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xNlQwMDowMDowMFoiLCJ2IjoyfQ"
-        }
+        },
+        "auth": "team-cert",
+        "signing_decision": "signed",
+        "identity_required": true
+      }
+    },
+    {
+      "name": "auth_none_public_read_unsigned",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "library",
+          "version": "1.0.0",
+          "origin": "https://library.example"
+        },
+        "tools": [
+          {
+            "name": "list-packs",
+            "auth": "none",
+            "method": "GET",
+            "path": "/v1/profile-packs",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [],
+            "scopes": [
+              "library:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "list-packs",
+      "args": {},
+      "expected": {
+        "method": "GET",
+        "url": "https://library.example/v1/profile-packs",
+        "path_query": "/v1/profile-packs",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "",
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "auth": "none",
+        "signing_decision": "unsigned",
+        "identity_required": false,
+        "mutation": false,
+        "signed_payload": {}
       }
     },
     {
@@ -1231,6 +1279,52 @@
         "value": "anything"
       },
       "expected_error_contains": "unsupported schema type"
+    },
+    {
+      "name": "auth_none_mutation_rejected",
+      "description": "auth:none is only valid for non-mutating tools; mutating tools must require signed team auth.",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "library",
+          "version": "1.0.0",
+          "origin": "https://library.example"
+        },
+        "tools": [
+          {
+            "name": "publish-pack",
+            "auth": "none",
+            "method": "POST",
+            "path": "/v1/profile-packs/import",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "type": "array"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "files",
+                "in": "body"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "library:write"
+            ],
+            "mutation": true
+          }
+        ]
+      },
+      "verb": "publish-pack",
+      "args": {
+        "files": []
+      },
+      "expected_error_contains": "auth:none"
     }
   ]
 }
