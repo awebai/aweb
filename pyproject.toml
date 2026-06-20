@@ -16,6 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "aweb-naapp",
   "awid-service",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
@@ -42,9 +43,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/folio"]
 
+# awid-service and aweb-naapp are not on PyPI — they live in sibling aweb repos and
+# are pinned by git commit so the Docker build (uv sync --frozen) fetches them
+# without auth (both repos are public). pgdbm resolves from PyPI. Local cross-repo
+# development still imports the sibling checkouts via the pytest pythonpath below.
 [tool.uv.sources]
-awid-service = { path = "../aweb/awid", editable = true }
-pgdbm = { path = "../pgdbm", editable = true }
+awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "d0baafa389b600c8b0a12525797d6e38726c5252" }
+aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "6eb953251fecff3263027d8f1ca4991a3011c27b" }
 
 [dependency-groups]
 dev = [
@@ -55,7 +60,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../aweb/awid/src", "../pgdbm/src"]
+pythonpath = ["src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [

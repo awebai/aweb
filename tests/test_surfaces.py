@@ -26,12 +26,16 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "private document and presentation service" in response.text
-    assert "AWID team certificate" in response.text
+    # Adopted the shared aweb design system and the Native Agentic App framing.
+    assert '<link rel="stylesheet" href="/css/aweb.css">' in response.text
+    assert "Native Agentic App" in response.text
+    assert "anapp" not in response.text
+    assert "documents and presentations" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
     assert "https://github.com/awebai/folio" not in response.text
     assert 'href="/llms.txt"' in response.text
+    assert 'href="/reference"' in response.text
     assert 'href="/skills/"' in response.text
 
 
@@ -40,20 +44,23 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert "folio — agent-first document and presentation service" in response.text
-    assert "GET /present/{token}" in response.text
-    assert "GET /skills/present-to-human/SKILL.md" in response.text
-    assert "GET /skills/create-from-template/SKILL.md" in response.text
-    assert "This is an aweb anapp" in response.text
-    assert "https://aweb.ai" in response.text
-    assert "https://awid.ai" in response.text
+    assert "folio — agent-first documents and presentations for AWID teams" in response.text
+    # Native Agentic App framing: canonical plugin install + native aw folio verbs.
+    assert "Native Agentic App" in response.text
+    assert "anapp" not in response.text
+    assert "aw plugin install" in response.text
+    assert "aw folio create" in response.text
+    assert "aw folio present" in response.text
+    # Events are documented (folio is the first naapp with events).
+    assert "folio/doc.changed" in response.text
+    # folio domain prose preserved.
     assert "Cloudflare Stream" in response.text
     assert "pitch slots: cover, metrics, sections, ask" in response.text
     assert "cover fields: title (required), subtitle, eyebrow" in response.text
     assert "metrics item fields: label (required), value (required), caption" in response.text
+    assert "https://aweb.ai" in response.text
+    assert "https://awid.ai" in response.text
     assert "https://github.com/awebai/folio" not in response.text
-    assert "folio create" not in response.text
-    assert "aw-folio" not in response.text
 
 
 def test_skills_surface_serves_index_and_individual_skills() -> None:
@@ -61,7 +68,7 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
     index = client.get("/skills/")
     assert index.status_code == 200
-    assert "folio is an aweb anapp" in index.text
+    assert "folio is a Native Agentic App (naapp)" in index.text
     assert "https://aweb.ai" in index.text
     assert "https://awid.ai" in index.text
     assert "fetch the relevant skill before acting" in index.text

@@ -5,12 +5,99 @@ import re
 from html import escape
 from pathlib import Path
 
+import aweb_naapp as naapp
+from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+
+from folio.aweb_manifest import MANIFEST
+
+__all__ = [
+    "USER_CONTENT_ROBOTS_HEADER",
+    "aweb_css",
+    "render_landing_page",
+    "render_reference_page",
+    "llms_txt",
+    "robots_txt",
+    "skills_index",
+    "read_skill",
+    "skill_names",
+]
+
 USER_CONTENT_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_DIR = _REPO_ROOT / "skills"
 _CONTAINER_SKILLS_DIR = Path("/app/skills")
+
+# folio's identity in the shared naapp chrome. The aweb design system, the chrome,
+# the manifest-driven llms.txt blocks, and the /reference page come from aweb_naapp;
+# folio supplies its manifest, this site config, and its own landing body and
+# llms.txt prose. folio has no public reads — every tool is team-cert — and it
+# emits events, so the toolkit omits the public section and renders an Events one.
+_VERB = "folio"
+_NAV_LINKS = (
+    NavLink("Model", "/#model"),
+    NavLink("llms.txt", "/llms.txt"),
+    NavLink("Reference", "/reference"),
+    NavLink("Skills", "/skills/"),
+    NavLink("AWID", "https://awid.ai"),
+)
+_FOOTER_BLURB = (
+    "Private, append-only documents and presentations for AWID teams — "
+    "authored by agents, branded with a team theme, shared by capability link."
+)
+_FOOTER_COLUMNS = (
+    FooterColumn(
+        "Agents",
+        (
+            NavLink("llms.txt", "/llms.txt"),
+            NavLink("API reference", "/reference"),
+            NavLink("Skills", "/skills/"),
+            NavLink("App manifest", "/aweb-app.json"),
+        ),
+    ),
+    FooterColumn(
+        "aweb",
+        (
+            NavLink("aweb.ai", "https://aweb.ai"),
+            NavLink("AWID", "https://awid.ai"),
+        ),
+    ),
+)
+_FOOTER_BOTTOM = (
+    "folio is a Native Agentic App on the aweb.ai hub. AWID is the identity authority. "
+    "Team documents, media assets, and present pages are not indexed."
+)
+_REFERENCE_COPY = naapp.ReferenceCopy(
+    rejects_subject="folio",
+    envelope_path_example="/v1/documents/pitch/versions or /v1/present",
+    team_kicker="Operations",
+    team_heading="Documents, presentations, media, themes — AWID team certificate",
+    team_blurb=(
+        "Each shows the canonical verb, the signed hand-runnable "
+        "<code>aw id request</code> form, and the raw wire format aw produces."
+    ),
+    events_kicker="Events",
+    events_heading="Events folio emits",
+    events_blurb=(
+        "Subscribe an agent to be woken when a document changes. The payload is "
+        "metadata only — never the document body — and each event is signed by the "
+        "emit key declared in the manifest."
+    ),
+)
+
+
+def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
+    return SiteConfig(
+        origin=public_origin.rstrip("/"),
+        brand="folio",
+        title=title,
+        description=description,
+        nav_links=_NAV_LINKS,
+        footer_blurb=_FOOTER_BLURB,
+        footer_columns=_FOOTER_COLUMNS,
+        footer_bottom=_FOOTER_BOTTOM,
+    )
 
 
 def _skills_dir() -> Path:
@@ -26,105 +113,192 @@ def _skills_dir() -> Path:
 
 def render_landing_page(*, public_origin: str) -> str:
     origin = escape(public_origin.rstrip("/"), quote=True)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="folio is a private, agent-first document and presentation service for AWID teams.">
-  <title>folio — agent-first documents and presentations</title>
-  <style>
-    :root {{ color-scheme: light; --bg: #fffaf0; --panel: #ffffff; --ink: #17201a; --muted: #5f685f; --line: #ded6c4; --accent: #246b49; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: var(--bg); color: var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }}
-    a {{ color: var(--accent); text-underline-offset: .18em; }}
-    header, main, footer {{ max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
-    nav {{ display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }}
-    .brand {{ color: var(--ink); font-weight: 800; text-decoration: none; }}
-    .links {{ display: flex; gap: 1rem; flex-wrap: wrap; }}
-    .hero {{ padding: 5rem 0 3rem; }}
-    .eyebrow {{ color: var(--accent); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: .78rem; }}
-    h1 {{ font-size: clamp(2.6rem, 7vw, 5.8rem); line-height: .95; letter-spacing: -.06em; margin: .25rem 0 1rem; max-width: 58rem; }}
-    .lede {{ color: var(--muted); font-size: clamp(1.15rem, 2.4vw, 1.6rem); max-width: 54rem; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; margin: 2rem 0; }}
-    .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 1rem; padding: 1.1rem; }}
-    .card h2 {{ margin-top: 0; }}
-    pre {{ overflow-x: auto; background: #122016; color: #eff9ef; border-radius: .8rem; padding: 1rem; }}
-    code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    footer {{ color: var(--muted); border-top: 1px solid var(--line); font-size: .92rem; }}
-  </style>
-</head>
-<body>
-  <header>
-    <nav aria-label="Main navigation">
-      <a class="brand" href="/">folio</a>
-      <div class="links">
-        <a href="/llms.txt">llms.txt</a>
-        <a href="/skills/">agent skills</a>
-        <a href="https://aweb.ai">aweb.ai hub</a>
-        <a href="https://awid.ai">AWID</a>
+    copy = naapp.COPY_BTN
+    site = _site(
+        public_origin=public_origin,
+        title="folio — agent documents and presentations for AWID teams",
+        description=(
+            "folio is the Native Agentic App for agent-authored documents and "
+            "presentations: append-only Markdown, team themes, safe media, and "
+            "no-login presentation links for AWID teams."
+        ),
+    )
+    body = f"""    <section class="hero-center">
+      <div class="wrap">
+        <p class="kicker">Native Agentic App · folio.aweb.ai</p>
+        <h1>Where agents write the documents and mint the links humans open.</h1>
+        <p class="lede">folio.aweb.ai is the Native Agentic App for documents and presentations: agents author append-only Markdown, brand it with a team theme, embed safe media, and mint revocable no-login links for the human moments. No app accounts — the team's AWID certificate is the login.</p>
+        <div class="cta-row">
+          <a class="btn primary btn--lg" href="#use">Get started</a>
+          <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
+        </div>
       </div>
-    </nav>
-  </header>
-  <main>
-    <section class="hero">
-      <p class="eyebrow">Private capability links for human browser moments</p>
-      <h1>folio is a private document and presentation service for AWID teams.</h1>
-      <p class="lede">Agents authenticate with an <a href="https://awid.ai">AWID team certificate</a>, write append-only Markdown documents, brand them with a team theme, embed safe media, and mint no-login presentation links for humans.</p>
     </section>
-    <section class="grid" aria-label="What folio does">
-      <article class="card"><h2>Agent-first API</h2><p>No app accounts, passwords, or OAuth. Use <code>aw id request --team-auth</code>; the certificate is the login.</p></article>
-      <article class="card"><h2>Presentation links</h2><p>Present links are opaque, revocable capability URLs. User content under <code>/present/</code> and <code>/assets/</code> is marked noindex.</p></article>
-      <article class="card"><h2>Media and themes</h2><p>Safe raster images and Cloudflare Stream video render inside themed presentation pages without accepting team-supplied HTML or JavaScript.</p></article>
+
+    <section class="section" id="llms">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">For LLMs and agents</p>
+          <h2>Point your agent at one file</h2>
+          <p>llms.txt is the complete, plain-text guide to operating folio: what it is, how to install it in <code>aw</code>, how team-certificate auth works, every operation with its parameters, the events it emits, and the getting-started journey. An agent that reads it can drive folio end to end.</p>
+        </div>
+        <div class="cmd-panel">
+          <p class="cmd-label">Copy the URL, or grab the whole file</p>
+          <div class="cmd-list"><div class="cmd"><pre>{origin}/llms.txt</pre>{copy}</div></div>
+          <div class="cta-row">
+            <button class="btn primary" type="button" id="copy-llms" data-llms-url="/llms.txt">Copy llms.txt contents</button>
+            <a class="btn secondary" href="/llms.txt">Open llms.txt</a>
+            <a class="btn secondary" href="/reference">API reference</a>
+          </div>
+        </div>
+      </div>
     </section>
-    <section class="card" aria-label="Quick start">
-      <h2>Quick start</h2>
-      <pre><code>export FOLIO_ORIGIN={origin}
-aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw \
-  --body '{{"slug":"pitch","title":"Pitch","body":"# Pitch\\n\\nInitial draft."}}'
-aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
-  --body '{{"slug":"pitch","ttl_seconds":86400}}'</code></pre>
-      <p>Agents can fetch <a href="/llms.txt">/llms.txt</a> and task-specific <a href="/skills/">skills</a> instead of browsing.</p>
+
+    <section class="section section--tint">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">What it is</p>
+          <h2>A Native Agentic App</h2>
+          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a canonical manifest that turns its API into native <code>aw</code> verbs, can declare event emitters that wake subscribed agents, and ships agent-readable llms.txt and skills. The manifest is public; what is signed is each verb call, with your team certificate.</p>
+        </div>
+        <p class="prose-outro">In practice: you do not write an integration or click around a console. You install folio into <code>aw</code> once (below), and from then on an agent runs the same <code>aw folio</code> commands — create a document, append a version, mint a present link — with no custom code.</p>
+      </div>
     </section>
-  </main>
-  <footer>
-    <p>folio is an aweb anapp on the <a href="https://aweb.ai">aweb.ai</a> hub. <a href="https://awid.ai">AWID</a> is the identity authority. Public docs are indexable; team documents, media assets, and present pages are not.</p>
-  </footer>
-</body>
-</html>"""
+
+    <section class="section" id="model">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">What folio does</p>
+          <h2>Documents, presentations, and the links between them</h2>
+          <p>Agents author content; folio versions it, renders it safely, and hands humans a link — without ever accepting team-supplied HTML or JavaScript.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+          <article class="card"><h3>Documents</h3><p>Create a document from raw Markdown or a declarative template. Each one is private to your team and addressed by a slug.</p></article>
+          <article class="card"><h3>Append-only versions</h3><p>Every edit is a new version; history is never rewritten. Present links pin a specific version.</p></article>
+          <article class="card"><h3>Declarative templates</h3><p>Schema-validated slots (pitch, memo, metrics) render to ordinary Markdown before storage — structure without hand-written HTML.</p></article>
+          <article class="card"><h3>Presentation links</h3><p>Mint opaque, revocable capability URLs for the human moment. Present pages and assets are <code>noindex</code> and need no login.</p></article>
+          <article class="card"><h3>Safe media</h3><p>Raster images and Cloudflare Stream video render inside themed pages; team-supplied HTML and scripts are stripped.</p></article>
+          <article class="card"><h3>Team themes</h3><p>Brand every presentation with the team's tokens, logo, header, and footer — set once, applied everywhere.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--tint" id="use">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">Get started</p>
+          <h2>Install aw, create a team, author a document, present it</h2>
+          <p><code>aw</code> is the only thing to install; folio plugs into it. Creating your team mints the certificate that every later command signs with.</p>
+        </div>
+        <div class="cmd-panel">
+          <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
+          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div></div>
+          <p class="cmd-label">2 · Add the folio naapp — its operations become native aw folio verbs</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
+          <p class="cmd-label">3 · Create your team — mints your identity and team certificate</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
+          <p class="cmd-label">4 · Author a document from Markdown</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw folio create --slug pitch --title "Pitch" --body "# Pitch"</pre>{copy}</div></div>
+          <p class="cmd-label">5 · Mint a no-login present link for a human</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw folio present --slug pitch --ttl_seconds 86400</pre>{copy}</div></div>
+        </div>
+        <p class="prose-outro">Every folio operation is a native <code>aw folio</code> verb. Agents read the whole surface at <a href="/llms.txt">llms.txt</a> and the per-operation <a href="/reference">reference</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
+      </div>
+    </section>
+
+    <section class="section" id="engineers">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">For engineers</p>
+          <h2>What's actually real</h2>
+          <p>No magic words — concrete, versioned, signed behavior you can reproduce.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+          <article class="card"><h3>Append-only history</h3><p>Versions are immutable and append-only; an edit creates a new version and a present link pins the one you chose.</p></article>
+          <article class="card"><h3>Signed, no accounts</h3><p>There are no app accounts or API keys. Every write is a request signed by your team's AWID identity, scoped to the verified team.</p></article>
+          <article class="card"><h3>Capability links</h3><p>Present links are opaque, revocable URLs. Present pages and assets are <code>noindex</code> and reachable only from a link you minted.</p></article>
+          <article class="card"><h3>No team HTML or JS</h3><p>Team Markdown is sanitized; raw iframes are stripped. Only the server generates Cloudflare Stream embeds for ready videos.</p></article>
+          <article class="card"><h3>Honest boundary</h3><p>folio stores server-readable text and media metadata — it is not end-to-end encrypted. It emits <code>folio/doc.changed</code> (metadata only) to wake subscribed agents.</p></article>
+        </div>
+      </div>
+    </section>"""
+    return naapp.page(site, body, include_copy_llms=True)
+
+
+def render_reference_page(*, public_origin: str) -> str:
+    site = _site(
+        public_origin=public_origin,
+        title="folio — API reference",
+        description=(
+            "Every folio operation in parallel: the canonical aw folio verb and the "
+            "raw HTTP wire format with AWID team-certificate signing."
+        ),
+    )
+    return naapp.render_reference(MANIFEST, site, verb=_VERB, copy=_REFERENCE_COPY)
 
 
 def llms_txt(*, public_origin: str) -> str:
     origin = public_origin.rstrip("/")
-    return f"""# folio — agent-first document and presentation service
+    operations = naapp.llms.cert_operations(MANIFEST, _VERB)
+    auth = naapp.llms.auth_section(MANIFEST, origin)
+    events = naapp.llms.events_section(MANIFEST)
+    return f"""# folio — agent-first documents and presentations for AWID teams
 
-folio is a private, agent-first document and presentation service for AWID teams.
-This is an aweb anapp: an agent-native app published by convention for the aweb.ai hub index.
-Agents authenticate with an AWID team certificate using aw id request --team-auth.
+folio is the app that owns agent-authored documents, their append-only versions,
+declarative templates, team themes, safe media assets, and revocable presentation
+links. This is a Native Agentic App (naapp): an aweb app agents operate directly
+via its canonical manifest, published for the aweb.ai hub index. There are no
+app-local accounts, passwords, OAuth sessions, public document listings, or
+user-content feeds.
+
 AWID is the identity authority: https://awid.ai
-Aweb anapp hub: https://aweb.ai
-There are no app-local accounts, passwords, OAuth sessions, public document listings, or user-content feeds.
+aweb hub: https://aweb.ai
 
 Origin:
 - Production: {origin}
 - Local development: http://127.0.0.1:8765
 
-Core commands use the aw-native signed request path:
-```bash
-export FOLIO_ORIGIN={origin}
-aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body '{{"slug":"pitch","title":"Pitch","body":"# Pitch"}}'
-aw id request POST "$FOLIO_ORIGIN/v1/documents" --team-auth --raw --body '{{"slug":"deck","title":"Deck","template":{{"name":"pitch","slots":{{"cover":{{"title":"Deck"}},"sections":[]}}}}}}'
-aw id request POST "$FOLIO_ORIGIN/v1/documents/pitch/versions" --team-auth --raw --body-file pitch-v2.md
-aw id request POST "$FOLIO_ORIGIN/v1/documents/deck/versions/template" --team-auth --raw --body '{{"name":"memo","slots":{{"cover":{{"title":"Deck v2"}},"sections":[]}}}}'
-aw id request POST "$FOLIO_ORIGIN/v1/assets" --team-auth --raw --body-file image-upload.json
-aw id request POST "$FOLIO_ORIGIN/v1/assets/video/direct-upload" --team-auth --raw --body '{{"content_type":"video/mp4","max_duration_seconds":600}}'
-aw id request PUT "$FOLIO_ORIGIN/v1/theme" --team-auth --raw --body-file theme.json
-aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw --body '{{"slug":"pitch","ttl_seconds":86400}}'
-aw id request POST "$FOLIO_ORIGIN/v1/present/<token>/revoke" --team-auth --raw
-```
 
-Declarative templates:
-- Template slots are schema-validated and rendered to ordinary Markdown before storage; presentation falls back to the same themed Markdown renderer.
+## Getting started
+
+Install aw, install folio, create a team, author a document, present it.
+
+1. npm install -g @awebai/aw
+2. aw plugin install {origin}/.well-known/aweb-app.json
+3. aw team create my-team
+4. aw folio create --slug pitch --title "Pitch" --body "# Pitch"
+5. aw folio present --slug pitch --ttl_seconds 86400
+
+
+## How to call it
+
+The canonical form is the native plugin verbs: after
+aw plugin install {origin}/.well-known/aweb-app.json, every operation below is
+aw folio <verb> (e.g. aw folio create, aw folio append, aw folio present). The
+HTTP endpoints below are the same surface; call them directly with
+aw id request --team-auth (the low-level escape hatch) if you are not using the
+plugin.
+
+
+## Authentication
+
+{auth}
+
+
+## Operations
+
+{operations}
+
+
+## Events
+
+{events}
+
+
+## Declarative templates
+
+Template slots are schema-validated and rendered to ordinary Markdown before
+storage; presentation falls back to the same themed Markdown renderer.
 - pitch slots: cover, metrics, sections, ask
 - memo slots: cover, sections
 - metrics slots: cover, metrics
@@ -132,54 +306,23 @@ Declarative templates:
 - metrics item fields: label (required), value (required), caption
 - sections item fields: heading (required), body
 - ask fields: headline, body, items (array of strings)
-- Create docs with JSON: {{"slug":"deck","title":"Deck","template":{{"name":"pitch","slots":{{"cover":{{"title":"Deck"}},"metrics":[{{"label":"Metric","value":"Value","caption":"Note"}}],"sections":[{{"heading":"Problem","body":"Markdown body"}}],"ask":{{"headline":"Ask","body":"Approve launch","items":["Ship"]}}}}}}}}
-- Append template versions with POST /v1/documents/{{slug}}/versions/template and body: {{"name":"memo","slots":{{"cover":{{"title":"Update"}},"sections":[{{"heading":"Status","body":"Markdown body"}}]}}}}
+- Append template versions with aw folio append-template --slug deck --name memo --slots '...'
 
-Team-auth endpoints:
-- POST /v1/documents — JSON {{slug,title,body}}
-- GET /v1/documents — list team documents
-- GET /v1/documents/{{slug}} — current version
-- GET /v1/documents/{{slug}}/versions — version metadata
-- POST /v1/documents/{{slug}}/versions — raw UTF-8 Markdown body
-- POST /v1/documents/{{slug}}/versions/template — JSON built-in template version body
-- POST /v1/assets — upload safe raster image bytes
-- POST /v1/assets/video/direct-upload — create Cloudflare Stream direct upload
-- GET /v1/assets/{{asset_id}} — poll team-scoped image/video asset metadata
-- GET /v1/theme, PUT /v1/theme — team presentation theme
-- POST /v1/present — mint read-only capability link
-- POST /v1/present/{{token}}/revoke — revoke a team-owned link
-- GET /v1/billing — current v1 caps and usage
 
-Public endpoints:
-- GET / — human landing page
-- GET /llms.txt — this agent-readable entrypoint
-- GET /skills/ — skill index
-- GET /skills/create-from-template/SKILL.md — create documents from built-in templates
-- GET /skills/present-to-human/SKILL.md — mint/open/revoke present links
-- GET /skills/set-theme/SKILL.md — brand presentation pages
-- GET /skills/team-cert-verification/SKILL.md — verifier checklist
-- GET /present/{{token}} — server-rendered capability page for a pinned version
-- GET /assets/{{asset_id}} — public media bytes reachable only from capability pages
-- GET /robots.txt — crawler policy for user-content paths
+## Privacy and noindex
 
-Privacy/noindex policy:
 - All user content is capability-link private and noindex: /present/* and /assets/* responses include X-Robots-Tag: noindex, nofollow, noarchive.
-- /present/* pages also include <meta name="robots" content="noindex,nofollow,noarchive">.
+- /present/* pages also include a robots noindex meta tag.
 - robots.txt disallows /present/ and /assets/.
 
-Important invariants:
+
+## Invariants
+
 - AWID is authority for team keys, certificates, and revocation.
 - Every document, asset, theme, and present-link mutation is scoped to the verified certificate team_id.
 - Versions are append-only; edits create new versions.
 - Team-supplied Markdown is sanitized. Raw iframes are stripped; Cloudflare Stream iframes are generated only by the server for ready video assets.
 - folio stores server-readable text and media metadata. Do not call it end-to-end encrypted.
-
-Source of truth:
-- docs/sot.md
-- README.md
-- docs/spine-sot.md
-- aweb.ai hub: https://aweb.ai
-- AWID identity authority: https://awid.ai
 """
 
 
@@ -225,7 +368,7 @@ def skills_index() -> str:
     lines = [
         "# folio agent skills",
         "",
-        "folio is an aweb anapp: an agent-native app on the aweb.ai hub.",
+        "folio is a Native Agentic App (naapp) on the aweb.ai hub.",
         "Agents should fetch the relevant skill before acting so requests match the folio API contract.",
         "",
         "- aweb.ai hub: https://aweb.ai",

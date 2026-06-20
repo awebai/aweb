@@ -64,9 +64,11 @@ from folio.repository import (
 )
 from folio.surfaces import (
     USER_CONTENT_ROBOTS_HEADER,
+    aweb_css,
     llms_txt,
     read_skill,
     render_landing_page,
+    render_reference_page,
     robots_txt,
     skills_index,
 )
@@ -122,6 +124,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def landing_route() -> HTMLResponse:
         return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
+
+    @app.get("/css/aweb.css")
+    async def aweb_css_route() -> Response:
+        return Response(
+            content=aweb_css(),
+            media_type="text/css",
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/reference", response_class=HTMLResponse)
+    async def reference_route() -> HTMLResponse:
+        return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
     async def llms_route() -> PlainTextResponse:
