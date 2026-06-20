@@ -28,12 +28,17 @@ These act locally (identity, certs, files); none of them is Library-specific.
 - **invite / accept-invite — the cross-machine join flow.** `aw team invite`
   generates a token; the joiner runs `aw team join` / `aw id team accept-invite`.
   First-class, kept.
-- **`aw team create <name> [--profile <ref>[:n]]…`** — create a team. Wraps
-  `aw init`: no `AWEB_API_KEY` → a new awid team via `init_local`; with a key →
-  the existing/hosted team. No `--profile` → an empty-profile team (hard
-  invariant). `--profile` composes a Library adopt + a local materialize (§3).
-  No `--hosted/--self-host` flag: create is the from-scratch path; the hosted
-  case is "AC creates the team, then `aw team add`."
+- **`aw team create <name> [--profile <ref>[:n]]…`** — create a team. Reuses
+  `aw init`'s full branching, keyed on **identity existence and namespace
+  control, not registry location**: no identity → `aw init`'s bundle (hosted
+  onboarding by default, local-implicit on a localhost stack); existing
+  self-custodial identity → mint a new team under its namespace, signed, no
+  re-signup; hosted-managed identity → the hosted create-team path. There is no
+  "requires a local awid registry" gate. See
+  `team-create-and-membership-model.md` for the full contract. No `--profile` →
+  an empty-profile team (hard invariant). `--profile` composes a Library adopt +
+  a local materialize (§3). `--byot`/`--namespace` is the explicit
+  self-custodial create for a domain you control.
 - **`aw team add <name>[@<ref>]…`** — product-grade add of agent(s) to an
   existing team, on the `agents/instances/<name>/` layout (reusing the proven
   add-agent internals: unique-alias naming, identity + team-cert,
