@@ -38,6 +38,12 @@ class ReferenceCopy:
         "Each shows the canonical verb, the signed hand-runnable "
         "<code>aw id request</code> form, and the raw wire format aw produces."
     )
+    events_kicker: str = "Events"
+    events_heading: str = "Events this app emits"
+    events_blurb: str = (
+        "Subscribed agents are woken when these events fire. Emitters are declared "
+        "in the manifest and each event is signed."
+    )
 
 
 VECTOR_URL = (
@@ -93,10 +99,13 @@ def _aw_id_request(origin: str, tool: dict[str, Any]) -> str:
     locs = params_by_loc(tool)
     req, _opt = tool_params(tool)
     cmd = f"aw id request --team-auth {tool['method']} {origin}{tool['path']}"
+    body = tool.get("body") or {}
+    if body.get("mode") == "raw":
+        return f"{cmd} --raw --body '<{body.get('raw_param', 'body')}>'"
     body_req = [n for n in req if locs.get(n) == "body"]
     if body_req:
-        body = "{" + ", ".join(f'"{n}": "..."' for n in body_req) + "}"
-        cmd += f" --body '{body}'"
+        body_json = "{" + ", ".join(f'"{n}": "..."' for n in body_req) + "}"
+        cmd += f" --body '{body_json}'"
     return cmd
 
 
@@ -106,6 +115,12 @@ def _wire_block(origin: str, tool: dict[str, Any], values: dict[str, str]) -> st
     locs = params_by_loc(tool)
     req, opt = tool_params(tool)
     lines = [f"{tool['method']} {tool['path']}", _SIGNED_HEADERS]
+    body = tool.get("body") or {}
+    if body.get("mode") == "raw":
+        lines.append(f"Content-Type: {body.get('content_type', 'application/octet-stream')}")
+        lines.append("")
+        lines.append(f"<{body.get('raw_param', 'body')}>")
+        return "\n".join(lines)
     body_req = [n for n in req if locs.get(n) == "body"]
     body_opt = [n for n in opt if locs.get(n) == "body"]
     if body_req or body_opt:
@@ -158,6 +173,35 @@ def _operation(origin: str, tool: dict[str, Any], verb: str, values: dict[str, s
         </div>"""
 
 
+_AUTH_TAIL = (
+    "Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), "
+    "aw signs each request for you — you never assemble these headers by hand. Build your "
+    "own client only if you are porting the signer to another language."
+)
+
+
+def _events_section(events: list[dict[str, Any]], text: ReferenceCopy) -> str:
+    if not events:
+        return ""
+    blocks = "\n".join(
+        f"""        <div class="cmd-panel op" id="event-{e["type"].replace("/", "-")}">
+          <h3><code>{escape(e["type"])}</code> <span class="pill run">{escape(str(e.get("default_delivery_intent", "wake")))}</span></h3>
+          <p>{escape(e.get("description", ""))}</p>
+        </div>"""
+        for e in events
+    )
+    return f"""    <section class="section" id="events">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">{text.events_kicker}</p>
+          <h2>{text.events_heading}</h2>
+          <p>{text.events_blurb}</p>
+        </div>
+{blocks}
+      </div>
+    </section>"""
+
+
 def render_reference(
     manifest: dict[str, Any],
     site: SiteConfig,
@@ -180,10 +224,25 @@ def render_reference(
     text = copy or ReferenceCopy()
     btn = COPY_BTN
     publics = public_tools(manifest)
-    public_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in publics)
-    team_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in cert_tools(manifest))
-    public_count = _count_word(len(publics))
-    body = f"""    <section class="hero-center">
+    certs = cert_tools(manifest)
+    events = manifest.get("events") or []
+    has_public = bool(publics)
+
+    if has_public:
+        auth_heading = "Public reads need nothing; everything else is signed"
+        auth_intro = (
+            f"The {_count_word(len(publics))} public {text.reads_phrase} take no auth. "
+            f"Every other operation is team-scoped and authenticated with your AWID team "
+            f"certificate. {_AUTH_TAIL}"
+        )
+    else:
+        auth_heading = "Every operation is signed"
+        auth_intro = (
+            f"Every operation is team-scoped and authenticated with your AWID team "
+            f"certificate. {_AUTH_TAIL}"
+        )
+
+    hero = f"""    <section class="hero-center">
       <div class="wrap">
         <p class="kicker">API reference · {host}</p>
         <h1>Every operation, two ways</h1>
@@ -193,14 +252,14 @@ def render_reference(
           <a class="btn secondary btn--lg" href="/#use">Getting started</a>
         </div>
       </div>
-    </section>
+    </section>"""
 
-    <section class="section section--tint" id="auth">
+    auth = f"""    <section class="section section--tint" id="auth">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Authentication</p>
-          <h2>Public reads need nothing; everything else is signed</h2>
-          <p>The {public_count} public {text.reads_phrase} take no auth. Every other operation is team-scoped and authenticated with your AWID team certificate. Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), aw signs each request for you — you never assemble these headers by hand. Build your own client only if you are porting the signer to another language.</p>
+          <h2>{auth_heading}</h2>
+          <p>{auth_intro}</p>
         </div>
         <p class="prose-intro">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector — the source of truth, at <a href="{VECTOR_URL}"><code>cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code></a>. To port a signer to another language, match that vector byte for byte.</p>
         <p class="cmd-label">Every team-certificate request carries four headers</p>
@@ -211,9 +270,12 @@ def render_reference(
         <p class="prose-intro">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the same convention as awid <code>canonical_json_bytes</code>). The fields are shown above in sorted order; the pretty-printing is for reading only. The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
         <p class="prose-outro">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives — the root-mounted <code>/v1/...</code> with its query string and no <code>/api</code> prefix — <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes (empty body hashes the empty string), <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a replay window of 300 seconds.</p>
       </div>
-    </section>
+    </section>"""
 
-    <section class="section" id="public">
+    public_section = ""
+    if has_public:
+        public_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in publics)
+        public_section = f"""    <section class="section" id="public">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">{text.public_kicker}</p>
@@ -222,9 +284,12 @@ def render_reference(
         </div>
 {public_ops}
       </div>
-    </section>
+    </section>"""
 
-    <section class="section section--tint" id="team">
+    team_section = ""
+    if certs:
+        team_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in certs)
+        team_section = f"""    <section class="section section--tint" id="team">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">{text.team_kicker}</p>
@@ -234,4 +299,8 @@ def render_reference(
 {team_ops}
       </div>
     </section>"""
+
+    events_section = _events_section(events, text)
+    sections = [hero, auth, public_section, team_section, events_section]
+    body = "\n\n".join(s for s in sections if s)
     return page(site, body)

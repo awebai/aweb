@@ -178,3 +178,77 @@ def test_reference_has_no_library_nouns_by_default() -> None:
     )
     for noun in ("catalog", "profile-pack", "shelf", "Shelf", "Library", "library"):
         assert noun not in html, noun
+
+
+# A cert-only app (no public reads) with a raw-body tool and events — the folio
+# shape, to exercise the three genericity extensions.
+_CERT_ONLY_MANIFEST = {
+    "tools": [
+        {
+            "name": "append",
+            "description": "Append a new version from raw markdown.",
+            "method": "POST",
+            "path": "/v1/documents/{slug}/versions",
+            "params": [{"name": "slug", "in": "path"}, {"name": "body", "in": "body"}],
+            "input_schema": {
+                "type": "object",
+                "properties": {"slug": {"type": "string"}, "body": {"type": "string"}},
+                "required": ["slug", "body"],
+            },
+            "body": {
+                "mode": "raw",
+                "raw_param": "body",
+                "content_type": "text/markdown; charset=utf-8",
+            },
+            "scopes": ["folio:write"],
+            "mutation": True,
+        },
+        {
+            "name": "list",
+            "description": "List the team's documents.",
+            "method": "GET",
+            "path": "/v1/documents",
+            "params": [],
+            "input_schema": {"type": "object", "properties": {}},
+            "scopes": ["folio:read"],
+            "mutation": False,
+        },
+    ],
+    "events": [
+        {
+            "type": "folio/doc.changed",
+            "default_delivery_intent": "wake",
+            "description": "A document gained a new version.",
+        }
+    ],
+}
+
+
+def test_no_public_tools_omits_public_section_and_words_auth_signed() -> None:
+    html = naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio")
+    assert 'id="public"' not in html
+    assert "Every operation is signed" in html
+    assert "take no auth" not in html
+    auth = llms.auth_section(_CERT_ONLY_MANIFEST, "https://folio.aweb.ai")
+    assert auth.startswith("Every operation is team-scoped")
+    assert "need no auth" not in auth
+
+
+def test_events_rendered_in_reference_and_llms() -> None:
+    html = naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio")
+    assert 'id="events"' in html
+    assert "folio/doc.changed" in html
+    ev = llms.events_section(_CERT_ONLY_MANIFEST)
+    assert "folio/doc.changed" in ev
+    assert "delivery: wake" in ev
+    # No events declared -> empty block.
+    assert llms.events_section({"tools": []}) == ""
+
+
+def test_raw_body_honored_in_wire_and_aw_id_request() -> None:
+    html = naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio")
+    assert "Content-Type: text/markdown; charset=utf-8" in html
+    assert (
+        "aw id request --team-auth POST https://docs.example.ai/v1/documents/{slug}/versions"
+        " --raw --body" in html
+    )

@@ -36,10 +36,17 @@ def auth_section(manifest: dict[str, Any], origin: str, *, reads_phrase: str = "
     """The plain-text authentication section: public reads need nothing, everything
     else is signed; names the four headers and the v2 envelope, and points at the
     /reference page and the conformance vector. ``reads_phrase`` names the public
-    reads in the app's own terms (e.g. "catalog reads")."""
-    public_names = ", ".join(t["name"] for t in public_tools(manifest))
-    return f"""Public {reads_phrase} ({public_names}) need no auth. Every other
-operation is team-scoped and authenticated with your AWID team certificate. When you
+    reads in the app's own terms (e.g. "catalog reads"). With no public reads the
+    section opens with everything-is-signed instead."""
+    publics = public_tools(manifest)
+    if publics:
+        public_names = ", ".join(t["name"] for t in publics)
+        head = f"""Public {reads_phrase} ({public_names}) need no auth. Every other
+operation is team-scoped and authenticated with your AWID team certificate. When you"""
+    else:
+        head = """Every operation is team-scoped and authenticated with your AWID team
+certificate. When you"""
+    return f"""{head}
 call through the aw plugin verbs (or the low-level aw id request --team-auth), aw
 signs each request for you with your team member key — you never assemble auth
 headers by hand.
@@ -52,3 +59,16 @@ For raw HTTP without aw, every team-certificate request carries four headers:
 
 This wire format tracks the aweb team-auth-envelope-v2 conformance vector. The full
 signing recipe with per-operation curl is at {origin}/reference."""
+
+
+def events_section(manifest: dict[str, Any]) -> str:
+    """The plain-text events block: one line per event the app can emit. Empty
+    string when the manifest declares no events."""
+    events = manifest.get("events") or []
+    if not events:
+        return ""
+    lines = []
+    for event in events:
+        intent = event.get("default_delivery_intent", "wake")
+        lines.append(f"- {event['type']} (delivery: {intent}) — {event.get('description', '')}")
+    return "\n".join(lines)
