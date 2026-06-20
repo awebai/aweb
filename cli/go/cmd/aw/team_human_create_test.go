@@ -1,14 +1,25 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func resetTeamHumanCreateGlobals(t *testing.T) {
 	t.Helper()
 	oldRunImplicit := initRunImplicitLocalFlow
+	oldWizard := guidedOnboardingWizard
+	oldPrintReady := initPrintGuidedOnboardingReady
+	oldIsTTY := initIsTTY
 	oldJSON := jsonFlag
 	oldBYOT := teamHumanCreateBYOT
 	oldName := teamHumanCreateName
@@ -23,6 +34,9 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
+		guidedOnboardingWizard = oldWizard
+		initPrintGuidedOnboardingReady = oldPrintReady
+		initIsTTY = oldIsTTY
 		jsonFlag = oldJSON
 		teamHumanCreateBYOT = oldBYOT
 		teamHumanCreateName = oldName
@@ -36,6 +50,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 	})
+	initIsTTY = func() bool { return false }
+	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
 	jsonFlag = false
 	teamHumanCreateBYOT = false
 	teamHumanCreateName = ""
@@ -161,6 +177,113 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	}
 	if _, statErr := os.Stat("agents/instances/developer"); !os.IsNotExist(statErr) {
 		t.Fatalf("profile-bound add must not create layout-only home, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "https://app.aweb.ai")
+	t.Setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+	root := t.TempDir()
+	t.Chdir(root)
+
+	var got guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		got = req
+		return &guidedOnboardingResult{}, nil
+	}
+	calledLocal := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		calledLocal = true
+		return connectOutput{}, nil
+	}
+
+	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
+	}
+	if calledLocal {
+		t.Fatal("hosted registry should not use implicit local flow")
+	}
+	if got.WorkingDir != root || got.BaseURL == "" || got.RegistryURL == "" {
+		t.Fatalf("guided request not populated: %+v", got)
+	}
+	if !got.NonInteractive {
+		t.Fatalf("expected non-interactive request when not TTY: %+v", got)
+	}
+	if got.Alias != "eng" {
+		t.Fatalf("alias=%q want eng", got.Alias)
+	}
+}
+
+func TestTeamHumanCreateExistingHostedManagedIdentityFailsClearly(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: "did:key:zHosted", StableID: "did:aw:zHosted", Address: "alice.aweb.ai/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: "https://api.awid.ai", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "hosted-managed") || strings.Contains(err.Error(), "local awid registry") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: "did:key:zSelf", StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	var gotTeam map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": body["controller_did"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			if err := json.NewDecoder(r.Body).Decode(&gotTeam); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:acme.com", "domain": "acme.com", "name": gotTeam["name"], "team_did_key": gotTeam["team_did_key"], "created_at": "2026-06-20T00:00:00Z"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
+	}
+	if gotTeam["name"] != "eng" {
+		t.Fatalf("team name=%v", gotTeam["name"])
+	}
+	if _, err := os.Stat(filepath.Join(home, ".awid", "team-keys", "acme.com", "eng.key")); err != nil {
+		t.Fatalf("team key missing: %v", err)
 	}
 }
 

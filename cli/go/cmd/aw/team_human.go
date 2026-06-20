@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -216,6 +218,17 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
+	alias := strings.TrimSpace(teamHumanCreateAlias)
+	if alias == "" {
+		alias = strings.ToLower(teamName)
+	}
+	identityExists, err := teamCreateHasIdentityMaterial(wd)
+	if err != nil {
+		return err
+	}
+	if identityExists {
+		return runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector)
+	}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
 		return err
@@ -223,10 +236,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	registryURL, err := resolveInitAWIDRegistryURL()
 	if err != nil {
 		return err
-	}
-	alias := strings.TrimSpace(teamHumanCreateAlias)
-	if alias == "" {
-		alias = strings.ToLower(teamName)
 	}
 	if apiKey := resolveInitAPIKey(); apiKey != "" {
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -255,7 +264,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		return usageError("aw team create without AWEB_API_KEY requires a local awid registry; use aw init for other identity flows")
+		return runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector)
 	}
 	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 		WorkingDir:  wd,
@@ -283,6 +292,120 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		out.IdentityOnly = false
 	}
 	printOutput(out, formatTeamHumanCreate)
+	return nil
+}
+
+func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
+	if _, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil {
+		return true, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if _, err := os.Stat(awconfig.WorktreeSigningKeyPath(workingDir)); err == nil {
+		return true, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return false, nil
+}
+
+func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, selector *libraryProfileSelector) error {
+	canPrompt := initIsTTY() && !jsonFlag
+	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
+	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
+		WorkingDir:         wd,
+		PromptIn:           os.Stdin,
+		PromptOut:          os.Stderr,
+		BaseURL:            awebURL,
+		RegistryURL:        registryURL,
+		ServerName:         serverFlag,
+		BYOD:               false,
+		Username:           strings.TrimSpace(initUsername),
+		Domain:             strings.TrimSpace(initDomain),
+		Alias:              alias,
+		Name:               strings.TrimSpace(initName),
+		HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
+		Persistent:         initPersistent,
+		InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
+		InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
+		DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
+		AskPostCreateSetup: askPostCreateSetup,
+		NonInteractive:     !canPrompt,
+	})
+	if err != nil {
+		return err
+	}
+	if selector != nil {
+		sel, err := resolveSelectionForDir(wd)
+		if err != nil {
+			return err
+		}
+		agentID := strings.TrimSpace(sel.Alias)
+		if agentID == "" {
+			agentID = alias
+		}
+		if _, _, err := applyLibraryProfileToHome(wd, agentID, *selector, true); err != nil {
+			return err
+		}
+	}
+	if !jsonFlag {
+		initPrintGuidedOnboardingReady(result)
+	}
+	return nil
+}
+
+func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector *libraryProfileSelector) error {
+	if selector != nil {
+		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@PACK/PROFILE after creating the team")
+	}
+	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(wd)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return usageError("current workspace has local signing state but no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
+		}
+		return err
+	}
+	domain, _, ok := awconfig.CutIdentityAddress(identity.Address)
+	if !ok {
+		return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
+	}
+	exists, err := awconfig.ControllerKeyExists(domain)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return usageError("current identity is hosted-managed for namespace %s; creating another hosted team is not supported yet (tracked in default-aaas.3.15)", domain)
+	}
+	controllerKey, err := awconfig.LoadControllerKey(domain)
+	if err != nil {
+		return fmt.Errorf("load controller key for %s: %w", domain, err)
+	}
+	registryURL := strings.TrimSpace(identity.RegistryURL)
+	if registryURL == "" {
+		registryURL, err = resolveInitAWIDRegistryURL()
+		if err != nil {
+			return err
+		}
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(registryURL) != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(teamHumanCreateDisplayName), controllerKey)
+	if err != nil {
+		return err
+	}
+	printOutput(teamCreateOutput{Status: "created", TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
+	_ = alias
 	return nil
 }
 
