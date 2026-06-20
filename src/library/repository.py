@@ -109,6 +109,23 @@ async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack:
             )
 
 
+def _profile_runtime_hints(recommendations: Any, profile_ref: str) -> list[str]:
+    """Structured harness hints are profile-specific pack recommendation metadata.
+
+    v0.2.0 stores these in pack.yaml's ``profiles`` entries, persisted as the
+    profile_packs.recommendations JSON. Public get-profile surfaces the matching
+    recommendation as a top-level field so callers do not need to parse pack.yaml.
+    """
+    for recommendation in _json_value(recommendations) or []:
+        if not isinstance(recommendation, dict):
+            continue
+        recommendation_ref = str(recommendation.get("id") or recommendation.get("profile_ref") or "")
+        if recommendation_ref == profile_ref:
+            value = recommendation.get("runtime_hints")
+            return [str(item) for item in value] if isinstance(value, list) else []
+    return []
+
+
 def _pack_summary(row: Any) -> dict[str, Any]:
     data = dict(row)
     return {
@@ -169,7 +186,7 @@ async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_r
     """A public profile snapshot from the latest version of a catalog pack — the
     full profile content, for previewing before import. No auth (public catalog)."""
     pack = await db.fetch_one(
-        "SELECT owner_team, version FROM {{tables.profile_packs}}"
+        "SELECT owner_team, version, recommendations FROM {{tables.profile_packs}}"
         " WHERE pack_ref = $1 ORDER BY created_at DESC LIMIT 1",
         pack_ref,
     )
@@ -198,6 +215,7 @@ async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_r
         "mission": data.get("mission"),
         "accepted_work": list(data.get("accepted_work") or []),
         "runtime_assumptions": list(data.get("runtime_assumptions") or []),
+        "runtime_hints": _profile_runtime_hints(pack["recommendations"], data["profile_ref"]),
         "memory_policy": _json_value(data.get("memory_policy")),
         "expected_apps": list(data.get("expected_apps") or []),
         "event_subscriptions": _json_value(data.get("event_subscriptions")) or [],

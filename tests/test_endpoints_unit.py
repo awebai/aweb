@@ -11,6 +11,7 @@ from library.digest import collect_files
 from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest
 from library.profile_pack import parse_profile_payload, part_baselines
 from library.repository import (
+    get_pack_profile,
     import_to_shelf,
     list_shelf,
     materialize,
@@ -127,6 +128,59 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
     assert second["created"] is False
     assert second["digest"] == source.digest
     assert len(db.writes) == 1
+
+
+class _PackProfileDB:
+    def __init__(self, source, recommendations: list[dict]) -> None:
+        self._source = source
+        self._recommendations = recommendations
+
+    async def fetch_one(self, sql: str, *params):
+        if "FROM {{tables.profile_packs}}" in sql:
+            return {
+                "owner_team": "default:atext.aweb.ai",
+                "version": "0.2.0",
+                "recommendations": json.dumps(self._recommendations),
+            }
+        if "FROM {{tables.pack_profiles}}" in sql:
+            s = self._source
+            return {
+                "profile_ref": s.profile_ref,
+                "profile_version": s.version,
+                "digest": s.digest,
+                "name": s.name,
+                "mission": s.mission,
+                "accepted_work": s.accepted_work,
+                "runtime_assumptions": s.runtime_assumptions,
+                "memory_policy": json.dumps(s.memory_policy) if s.memory_policy is not None else None,
+                "expected_apps": s.expected_apps,
+                "event_subscriptions": json.dumps(s.event_subscriptions),
+                "approval_required": s.approval_required,
+                "files": json.dumps(s.files),
+            }
+        raise AssertionError(f"unexpected query: {sql}")
+
+
+@pytest.mark.parametrize(
+    ("profile_ref", "runtime_hints"),
+    [("coordinator", ["claude-code"]), ("reviewer", ["pi", "claude-code"])],
+)
+async def test_get_pack_profile_surfaces_profile_runtime_hints_from_pack_recommendation(
+    profile_ref: str, runtime_hints: list[str]
+) -> None:
+    source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / profile_ref))
+    db = _PackProfileDB(
+        source,
+        [
+            {"id": "coordinator", "runtime_hints": ["claude-code"]},
+            {"id": "reviewer", "runtime_hints": ["pi", "claude-code"]},
+        ],
+    )
+
+    result = await get_pack_profile(db, pack_ref="aweb.engineering-pack", profile_ref=profile_ref)
+
+    assert result["profile_ref"] == profile_ref
+    assert result["runtime_hints"] == runtime_hints
 
 
 async def test_import_to_shelf_conflicts_on_different_source() -> None:

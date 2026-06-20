@@ -108,6 +108,14 @@ def _expected_pack_detail(pack: ParsedPack, *, tags: list[str]) -> dict[str, Any
     return detail
 
 
+def _runtime_hints_for_profile(pack: ParsedPack, profile_ref: str) -> list[str]:
+    for recommendation in pack.recommendations:
+        if recommendation.get("id") == profile_ref:
+            value = recommendation.get("runtime_hints")
+            return [str(item) for item in value] if isinstance(value, list) else []
+    return []
+
+
 def _expected_pack_profile(pack: ParsedPack, profile_ref: str) -> dict[str, Any]:
     profile = next(profile for profile in pack.profiles if profile.profile_ref == profile_ref)
     return {
@@ -120,6 +128,7 @@ def _expected_pack_profile(pack: ParsedPack, profile_ref: str) -> dict[str, Any]
         "mission": profile.mission,
         "accepted_work": profile.accepted_work,
         "runtime_assumptions": profile.runtime_assumptions,
+        "runtime_hints": _runtime_hints_for_profile(pack, profile_ref),
         "memory_policy": profile.memory_policy,
         "expected_apps": profile.expected_apps,
         "event_subscriptions": profile.event_subscriptions,
@@ -238,6 +247,7 @@ def _pack_payload(
     mutate_developer: bool = False,
     coordinator_mission: str | None = None,
     coordinator_instructions_suffix: str | None = None,
+    profile_runtime_hints: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     files = [dict(file) for file in _canonical_payload()["files"]]
     for file in files:
@@ -245,6 +255,11 @@ def _pack_payload(
             doc = yaml.safe_load(file["content_utf8"])
             doc["id"] = pack_ref
             doc["version"] = pack_version
+            if profile_runtime_hints is not None:
+                for recommendation in doc.get("profiles") or []:
+                    profile_id = str(recommendation.get("id") or "")
+                    if profile_id in profile_runtime_hints:
+                        recommendation["runtime_hints"] = profile_runtime_hints[profile_id]
             file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
             file["sha256"] = _sha(file["content_utf8"])
         if file["path"] == "profiles/coordinator/profile.yaml":
@@ -394,7 +409,8 @@ def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
 
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _pack_payload(pack_ref=f"aweb.e2e-{unique}-pack")
+    runtime_hints = {"coordinator": ["claude-code"], "reviewer": ["pi", "claude-code"]}
+    payload = _pack_payload(pack_ref=f"aweb.e2e-{unique}-pack", profile_runtime_hints=runtime_hints)
     pack = _payload_pack(payload)
     _publish_pack(team, library, payload)
 
@@ -423,6 +439,16 @@ def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
     preview = httpx.get(f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/developer", timeout=10.0)
     assert preview.status_code == 200, preview.text
     assert preview.json() == _expected_pack_profile(pack, "developer")
+
+    coordinator_preview = httpx.get(
+        f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/coordinator", timeout=10.0
+    )
+    assert coordinator_preview.status_code == 200, coordinator_preview.text
+    assert coordinator_preview.json()["runtime_hints"] == ["claude-code"]
+
+    reviewer_preview = httpx.get(f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/reviewer", timeout=10.0)
+    assert reviewer_preview.status_code == 200, reviewer_preview.text
+    assert reviewer_preview.json()["runtime_hints"] == ["pi", "claude-code"]
 
 
 def test_publish_pack_preserves_frozen_import_contract(
