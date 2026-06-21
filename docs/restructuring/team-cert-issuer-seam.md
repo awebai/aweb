@@ -48,19 +48,32 @@ aweb-coordinator).
 **authenticated** value (the inviter signs), never trusted from a request body
 (aweb-coordinator's hard requirement).
 
-- **Self-hosted**: the register is signed by the team key. To record an
-  *individual* issuer distinct from the team key, the inviting agent's own did
-  must be captured at **invite issuance** (in the `TeamInvite` record,
-  authenticated by the inviter signing the invite with their own key) and
-  carried to `register_certificate` as `issuer_did_key`, bound such that awid can
-  verify it (e.g. the inviter's signature over the invite, presented at
-  register).
-- **Hosted**: AC already authenticates the inviter at `/spawn/create-invite`
-  (team API key / session). AC threads that inviter identity through to
-  `mint_team_certificate` and records it as `issuer_did_key` on the minted cert.
-  The did is authenticated by AC's auth, not body-trusted.
+- **Self-hosted has TWO register entrypoints** (aweb-coordinator): (a)
+  invite/accept (same-machine), and (b) **`aw id team add-member`**
+  (`runTeamAddMember`, cross-machine BYOT) which also signs with the team key
+  (`SignTeamCertificate(teamKey)`) and calls `RegisterCertificate` directly.
+  Issuer-capture must cover **both**, not just the `TeamInvite` record. Both
+  write awid's `team_certificates`, so awid's `issuer_did_key` column (`.8`)
+  covers self-hosted.
+- **Hosted — the certs are NOT in awid** (verified): hosted local-scope member
+  certs are stored **only in AC's DB** — `agents.team_cert_blob` +
+  `aweb_cloud.cloud_agent_certificates` (`ac .../team_cert_mint.py:224-240`).
+  The CLI never calls awid `POST /certificates` for local-scope hosted members;
+  awid registration happens only on the global/persistent path. **awid's
+  `issuer_did_key` column therefore never sees hosted local-scope certs.** AC's
+  `cloud_agent_certificates` has **no issuer column today**
+  (`ac migrations/001_initial.sql:237`). AC *does* capture the inviter
+  (`created_by_agent_id`/`created_by_principal_id` on `spawn_invite_tokens`,
+  `migrations/001_initial.sql:1035`) but **drops it** before the cert
+  (`accept_invite` never threads it to the mint).
 
-Both paths populate the **same** nullable `issuer_did_key` column (awid `.8`).
+**Consequence**: a uniform issuer across both modes is NOT an awid-only change.
+Self-hosted is awid (`.8`). Hosted requires **AC-DB schema + plumbing**: a new
+issuer column on `cloud_agent_certificates` (and/or the cert blob shape in
+`team_cert_mint.py`), plus threading `created_by_*` from the invite row through
+`accept_invite → _bootstrap_identity_in_team → ensure_stored_agent_team_certificate`,
+and the issuer-or-holder revoke-auth on AC's revoke path. That is a separate
+AC-lane task, not aweb-coordinator's awid 008.
 
 ## 3. The latency point (aweb-coordinator)
 
@@ -86,10 +99,15 @@ a schema change.
 - **aw (`.7`, aw-coordinator)**: the team-add / who-signs-register path; capture
   + authenticate the inviter did for the self-hosted register; persist the
   generated key before calling AC (idempotency, see `.10`).
-- **AC (hosted mint + `.10`, ac-coordinator)**: thread the authenticated inviter
-  did through `mint_team_certificate` as `issuer_did_key`; fix the re-accept
-  stale-did idempotency bug (`.10`) — it must land or be scoped before `.8`,
-  because revoke-by-issuer assumes recorded dids are the real current ones.
+- **AC `.10` (ac-coordinator)** — the re-accept stale-did **idempotency fix
+  ONLY** (key-aware branch: presented==stored → idempotent re-mint; presented!=
+  stored → 409). Kept landable-first, NOT bundled with issuer work, so it ships
+  regardless of A/B. Must land before `.8`.
+- **AC hosted issuer-threading (separate task, ac-coordinator)** — a new issuer
+  column on `cloud_agent_certificates` + thread `created_by_*` through the mint +
+  issuer-or-holder revoke on AC's revoke path. Timing follows Juan's A/B (§5).
+  This is the AC-DB counterpart to awid `.8`; without it hosted certs have no
+  issuer.
 
 **Dependency**: `.8` depends on `.10` (stale dids would corrupt
 revoke-by-issuer/holder).
