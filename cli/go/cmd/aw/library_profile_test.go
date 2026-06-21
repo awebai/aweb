@@ -139,6 +139,108 @@ func TestApplyLibraryProfileToHomeRejectsVersionedSelectorUntilVersionedSourceFe
 	}
 }
 
+func TestApplyLibraryProfileToHomeRejectsMissingBlueprintSourceIdentityBeforeBindOrWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		getProfile    map[string]any
+		importResult  map[string]any
+		wantErrSubstr string
+	}{
+		{
+			name: "get-profile missing blueprint_ref",
+			getProfile: map[string]any{
+				"blueprint_version":   "0.1.0",
+				"profile_ref":         "coordinator",
+				"version":             "0.1.0",
+				"digest":              "DIGEST",
+				"runtime_assumptions": []string{"local shell"},
+				"files":               testLibraryProfilePayloadFiles(),
+			},
+			importResult: map[string]any{
+				"profile_ref":              "coordinator",
+				"version":                  "0.1.0",
+				"digest":                   "DIGEST",
+				"source_blueprint_ref":     "aweb.engineering",
+				"source_blueprint_version": "0.1.0",
+				"source_blueprint_digest":  "sha256:blueprint",
+			},
+			wantErrSubstr: "get-profile response missing blueprint_ref",
+		},
+		{
+			name: "import missing source_blueprint_ref",
+			getProfile: map[string]any{
+				"blueprint_ref":       "aweb.engineering",
+				"blueprint_version":   "0.1.0",
+				"profile_ref":         "coordinator",
+				"version":             "0.1.0",
+				"digest":              "DIGEST",
+				"runtime_assumptions": []string{"local shell"},
+				"files":               testLibraryProfilePayloadFiles(),
+			},
+			importResult: map[string]any{
+				"profile_ref":              "coordinator",
+				"version":                  "0.1.0",
+				"digest":                   "DIGEST",
+				"source_blueprint_version": "0.1.0",
+				"source_blueprint_digest":  "sha256:blueprint",
+			},
+			wantErrSubstr: "import-to-shelf response missing source_blueprint_ref",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("AW_CONFIG_PATH", "")
+
+			_, priv, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+			writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+			files := testLibraryProfilePayloadFiles()
+			profileDigest := testLibraryProfilePayloadDigest(t, files)
+			for _, response := range []map[string]any{tc.getProfile, tc.importResult} {
+				if response["digest"] == "DIGEST" {
+					response["digest"] = profileDigest
+				}
+			}
+
+			var bindCalled bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/blueprints/aweb.engineering/profiles/coordinator":
+					_ = json.NewEncoder(w).Encode(tc.getProfile)
+				case "/v1/shelf/import":
+					_ = json.NewEncoder(w).Encode(tc.importResult)
+				case "/v1/agents/coordinator/profile-binding":
+					bindCalled = true
+					_ = json.NewEncoder(w).Encode(map[string]any{})
+				default:
+					t.Fatalf("unexpected library request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			writeLibraryManifestPluginForTest(t, home, server.URL)
+
+			selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrSubstr) {
+				t.Fatalf("error=%v, want substring %q", err, tc.wantErrSubstr)
+			}
+			if bindCalled {
+				t.Fatalf("bind called despite missing source identity")
+			}
+			if _, statErr := os.Lstat(filepath.Join(home, ".aw", "profile", "profile.yaml")); !os.IsNotExist(statErr) {
+				t.Fatalf("profile written despite missing source identity: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestApplyLibraryProfileToHomeRejectsBindImportMismatchBeforeWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
