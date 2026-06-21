@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/internal/pathpreflight"
 )
 
 const (
@@ -25,6 +27,12 @@ type claudeHooksResult struct {
 func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	result := &claudeHooksResult{
 		FilePath: filepath.Join(repoRoot, ".claude", "settings.json"),
+	}
+
+	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
+		result.Skipped = true
+		return result
 	}
 
 	content, err := os.ReadFile(result.FilePath)
@@ -67,8 +75,19 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 		addNotifyHook(settings)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(result.FilePath), 0o755); err != nil {
-		result.Error = fmt.Errorf("creating %s: %w", filepath.Dir(result.FilePath), err)
+	settingsDir := filepath.Dir(result.FilePath)
+	if err := pathpreflight.PreflightDir(settingsDir, "Claude hook config directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
+		result.Skipped = true
+		return result
+	}
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		result.Error = fmt.Errorf("creating %s: %w", settingsDir, err)
+		result.Skipped = true
+		return result
+	}
+	if err := pathpreflight.PreflightDir(settingsDir, "Claude hook config directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
 		result.Skipped = true
 		return result
 	}
@@ -76,6 +95,11 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		result.Error = fmt.Errorf("marshaling settings: %w", err)
+		result.Skipped = true
+		return result
+	}
+	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
 		result.Skipped = true
 		return result
 	}

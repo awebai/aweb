@@ -156,6 +156,30 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 	return materialized, written, nil
 }
 
+func applyLibraryProfileToHomeAndConfigure(homeDir, agentID string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
+	materialized, written, err := applyLibraryProfileToHome(homeDir, agentID, selector, force)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := configureMaterializedAgentHome(homeDir); err != nil {
+		return nil, nil, err
+	}
+	return materialized, written, nil
+}
+
+func configureMaterializedAgentHome(homeDir string) error {
+	if result := InjectAgentDocs(homeDir); result != nil && len(result.Errors) > 0 {
+		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
+	}
+	if result := SetupChannelMCP(homeDir, false); result != nil && result.Error != nil {
+		return fmt.Errorf("set up channel MCP: %w", result.Error)
+	}
+	if result := SetupClaudeHooks(homeDir, false); result != nil && result.Error != nil {
+		return fmt.Errorf("set up Claude hooks: %w", result.Error)
+	}
+	return nil
+}
+
 func withWorkingDir(dir string, fn func() error) error {
 	cwd, err := os.Getwd()
 	if err != nil {

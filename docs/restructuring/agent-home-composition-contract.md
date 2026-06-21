@@ -18,7 +18,7 @@ The prior materialize behavior copied `instructions.md` verbatim and dropped
 `mission`, `accepted_work`, `memory_policy`, `expected_apps`, and
 `approval_required`. That home would not run as an agent and could not evolve.
 This contract replaces that behavior. It is byte-exact: the engineering
-fixtures (§9) are the final arbiter, the same discipline as the digest vectors.
+fixtures (§10) are the final arbiter, the same discipline as the digest vectors.
 
 ## 1. Input — the profile
 
@@ -48,8 +48,10 @@ A bound (non-empty) profile materializes to:
     <skill-name>/SKILL.md
   artifacts/                     # installed
     <artifact files>
+  .mcp.json                      # aweb channel MCP server config (§7)
+  .claude/settings.json          # aw notify PostToolUse hook (§7)
   .aw/
-    profile/                     # the evolvable profile (§7)
+    profile/                     # the evolvable profile (§8)
       ref.json                   # the pin (digest + version)
       profile.yaml               # the full profile spec
       instructions.md            # editable source prose
@@ -59,7 +61,7 @@ A bound (non-empty) profile materializes to:
 
 An empty (no profile bound) home is identity-only: no `AGENTS.md`, no
 `.aw/profile/`, no skills/artifacts. (Juan invariant — ids creatable without a
-profile.) See §8.
+profile.) See §9.
 
 ## 3. Field → destination (the whole profile, accounted for)
 
@@ -76,7 +78,7 @@ profile.) See §8.
 | `runtime_assumptions` | selects the harness body file + symlink (§5) and launch; not rendered into the body |
 | `event_subscriptions` | registered with core for the wake loop; not rendered into the body |
 | `id` / `version` + blueprint digests | `.aw/profile/ref.json` pin |
-| full profile + source | `.aw/profile/` (§7) |
+| full profile + source | `.aw/profile/` (§8) |
 
 ## 4. `AGENTS.md` composition (exact)
 
@@ -128,7 +130,7 @@ These skills are installed and discoverable by your harness:
 {skills as a "- {skill name}" list}
 ```
 
-Rendering rules (for byte-exactness; fixtures in §9 are the arbiter):
+Rendering rules (for byte-exactness; fixtures in §10 are the arbiter):
 
 1. UTF-8, LF line endings, exactly one trailing newline at end of file.
 2. Exactly one blank line between a header and its body, and between sections.
@@ -174,7 +176,22 @@ that an installed skill is discoverable by whatever harness runs the home, with
 `skills/` as the single source of the files. The body's §Skills lists the
 installed skills by name so the agent knows they exist.
 
-## 7. The evolvable profile (`.aw/profile/`)
+## 7. Team coordination block + wake-loop wiring
+
+A Library-bound `aw team create --profile ...` or `aw team add NAME@BLUEPRINT/PROFILE`
+materialization also converges the home with the normal `aw init` agent setup:
+
+- append/refresh the team's active aweb coordination instructions in `AGENTS.md`
+  between `<!-- AWEB:START -->` and `<!-- AWEB:END -->` markers;
+- create/update `.mcp.json` with the `aweb` channel MCP server;
+- create/update `.claude/settings.json` with the `aw notify` `PostToolUse` hook.
+
+The coordination block is not duplicated in public profiles or blueprints. It is
+loaded from the active team instructions document at materialization time, so
+team-local coordination policy remains a single source of truth. Empty-profile
+identity-only homes remain empty (§9) until a profile is bound.
+
+## 8. The evolvable profile (`.aw/profile/`)
 
 Materialize writes the **full** profile into `.aw/profile/`, not just the pin:
 
@@ -201,13 +218,13 @@ also be created directly (no source blueprint), in which case the source provena
 empty. Adoption from a public blueprint is `import-to-shelf` (a copy); the home then
 materializes from that shelf copy, not from the public blueprint ref.
 
-## 8. Empty profile
+## 9. Empty profile
 
 No bound profile → identity-only home: the `.aw` identity/team material, no
 `AGENTS.md`, no `.aw/profile/`, no skills/artifacts, no Library registration.
 Binding a profile later runs the full composition above. (Juan invariant.)
 
-## 9. Conformance
+## 10. Conformance
 
 Byte-exact `expected/materialized-home/<id>/` fixtures for the engineering blueprint
 (`coordinator`, `developer`, `reviewer`): the composed `AGENTS.md`, the
@@ -222,7 +239,7 @@ reproduce it. This fixture **supersedes** the prior `.2.9` materialized-home
 (verbatim `instructions.md` + `ref.json` only). These fixtures, not this prose,
 are the final arbiter of the exact composition.
 
-## 10. Tasks
+## 11. Tasks
 
 - `default-aaas.3.7` — this contract + the conformance fixtures.
 - `default-aaas.3.8` — rework materialize to emit this layout; supersedes the

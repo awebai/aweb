@@ -100,6 +100,30 @@ func TestSetupChannelMCPAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestSetupChannelMCPRejectsSymlinkedConfig(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tmp, ".mcp.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result := SetupChannelMCP(tmp, false)
+	if result.Error == nil {
+		t.Fatal("expected symlinked .mcp.json to be rejected")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"mcpServers":{}}` {
+		t.Fatalf("outside file mutated: %s", data)
+	}
+}
+
 func TestChannelMCPExistsEmpty(t *testing.T) {
 	t.Parallel()
 	if channelMCPExists(map[string]any{}) {

@@ -250,7 +250,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			if agentID == "" {
 				agentID = strings.ToLower(teamName)
 			}
-			if _, _, err := applyLibraryProfileToHome(wd, agentID, *selector, true); err != nil {
+			if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, agentID, *selector, true); err != nil {
 				return err
 			}
 			printOutput(teamHumanCreateOutput{Status: "created", TeamName: teamName, ProfileMode: "library", TeamID: sel.TeamID, Alias: sel.Alias, WorkspaceID: sel.WorkspaceID, AwebURL: sel.AwebURL, HomeDir: wd, NoLibrary: false, NoProfile: false, IdentityOnly: false}, formatTeamHumanCreate)
@@ -290,7 +290,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		out := teamHumanCreateOutputFromConnect(teamName, result, wd)
 		if selector != nil {
-			if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector, true); err != nil {
+			if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, result.Alias, *selector, true); err != nil {
 				return err
 			}
 			out.ProfileMode = "library"
@@ -324,7 +324,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	out := teamHumanCreateOutputFromConnect(teamName, result, wd)
 	if selector != nil {
-		if _, _, err := applyLibraryProfileToHome(wd, result.Alias, *selector, true); err != nil {
+		if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, result.Alias, *selector, true); err != nil {
 			return err
 		}
 		out.ProfileMode = "library"
@@ -429,7 +429,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 		if agentID == "" {
 			agentID = alias
 		}
-		if _, _, err := applyLibraryProfileToHome(wd, agentID, *selector, true); err != nil {
+		if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, agentID, *selector, true); err != nil {
 			return err
 		}
 	}
@@ -704,7 +704,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			if agentID == "" {
 				agentID = plans[i].Name
 			}
-			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+			if _, _, err := applyLibraryProfileToHomeAndConfigure(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
 				if createdProfileIdentity && rollback != nil {
 					if rbErr := rollback.Rollback(); rbErr != nil {
 						return fmt.Errorf("%w; rollback failed: %v", err, rbErr)

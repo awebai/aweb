@@ -105,6 +105,50 @@ func TestSetupClaudeHooksCreatesNew(t *testing.T) {
 	}
 }
 
+func TestSetupClaudeHooksRejectsSymlinkedClaudeDir(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(tmp, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	result := SetupClaudeHooks(tmp, false)
+	if result.Error == nil {
+		t.Fatal("expected symlinked .claude directory to be rejected")
+	}
+	if _, err := os.Lstat(filepath.Join(outsideDir, "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("outside settings created through symlinked .claude: %v", err)
+	}
+}
+
+func TestSetupClaudeHooksRejectsSymlinkedSettings(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(outside, []byte(`{"hooks":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tmp, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result := SetupClaudeHooks(tmp, false)
+	if result.Error == nil {
+		t.Fatal("expected symlinked settings.json to be rejected")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"hooks":{}}` {
+		t.Fatalf("outside settings mutated: %s", data)
+	}
+}
+
 func TestSetupClaudeHooksMigratesLegacyHook(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()

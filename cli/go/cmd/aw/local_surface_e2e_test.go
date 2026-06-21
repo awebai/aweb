@@ -227,6 +227,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				t.Fatalf("profile-bound roster home %s missing %s: %v", agent, rel, err)
 			}
 		}
+		assertMaterializedHomeHasAwebCoordination(t, agentHome)
 	}
 	if _, err := os.Readlink(filepath.Join(root, "agents", "instances", "coordinator", "CLAUDE.md")); err != nil {
 		t.Fatalf("coordinator claude-code home missing CLAUDE.md symlink: %v", err)
@@ -255,12 +256,119 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
 		}
 	}
+	assertMaterializedHomeHasAwebCoordination(t, agentHome)
 	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "auditor")); !os.IsNotExist(err) {
 		t.Fatalf("team add --home wrote default agent home, stat err=%v", err)
 	}
 	teamHumanAddHome = ""
 	if importCalls != 4 || bindCalls != 4 {
 		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
+	}
+
+	for _, tc := range []struct {
+		name        string
+		prepareHome func(t *testing.T, home string) (outsidePath string, wantContent string)
+	}{
+		{
+			name: "unsafemcp",
+			prepareHome: func(t *testing.T, home string) (string, string) {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), "outside-mcp.json")
+				want := `{"mcpServers":{}}`
+				if err := os.WriteFile(outside, []byte(want), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(home, ".mcp.json")); err != nil {
+					t.Fatal(err)
+				}
+				return outside, want
+			},
+		},
+		{
+			name: "unsafeclaudedir",
+			prepareHome: func(t *testing.T, home string) (string, string) {
+				t.Helper()
+				outsideDir := t.TempDir()
+				outside := filepath.Join(outsideDir, "settings.json")
+				if err := os.Symlink(outsideDir, filepath.Join(home, ".claude")); err != nil {
+					t.Fatal(err)
+				}
+				return outside, ""
+			},
+		},
+		{
+			name: "unsafeclaudesettings",
+			prepareHome: func(t *testing.T, home string) (string, string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				outside := filepath.Join(t.TempDir(), "settings.json")
+				want := `{"hooks":{}}`
+				if err := os.WriteFile(outside, []byte(want), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(home, ".claude", "settings.json")); err != nil {
+					t.Fatal(err)
+				}
+				return outside, want
+			},
+		},
+	} {
+		t.Run("unsafe coordination config "+tc.name, func(t *testing.T) {
+			unsafeHome := filepath.Join(root, tc.name+"-home")
+			if err := os.MkdirAll(unsafeHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outsidePath, wantContent := tc.prepareHome(t, unsafeHome)
+			teamHumanAddHome = unsafeHome
+			err := runTeamHumanAdd(nil, []string{tc.name + "@aweb.engineering/coordinator"})
+			teamHumanAddHome = ""
+			if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+				t.Fatalf("unsafe profile add error=%v", err)
+			}
+			data, readErr := os.ReadFile(outsidePath)
+			if wantContent == "" {
+				if !os.IsNotExist(readErr) {
+					t.Fatalf("outside settings created through symlink: data=%q err=%v", data, readErr)
+				}
+			} else if readErr != nil || string(data) != wantContent {
+				t.Fatalf("outside file mutated: data=%q err=%v", data, readErr)
+			}
+		})
+	}
+}
+
+func assertMaterializedHomeHasAwebCoordination(t *testing.T, home string) {
+	t.Helper()
+	agents, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	text := string(agents)
+	for _, want := range []string{awDocsMarkerStart, "Use aw.", awDocsMarkerEnd} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AGENTS.md missing coordination block %q:\n%s", want, text)
+		}
+	}
+	mcpRaw, err := os.ReadFile(filepath.Join(home, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("materialized home missing channel MCP config: %v", err)
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal(mcpRaw, &mcp); err != nil {
+		t.Fatalf("invalid .mcp.json: %v", err)
+	}
+	servers, _ := mcp["mcpServers"].(map[string]any)
+	if _, ok := servers["aweb"]; !ok {
+		t.Fatalf(".mcp.json missing aweb server: %s", mcpRaw)
+	}
+	hooksRaw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("materialized home missing Claude hook config: %v", err)
+	}
+	if !strings.Contains(string(hooksRaw), notifyHookCommand) {
+		t.Fatalf("Claude settings missing notify hook: %s", hooksRaw)
 	}
 }
 

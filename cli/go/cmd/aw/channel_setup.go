@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/internal/pathpreflight"
 )
 
 func channelMCPExists(settings map[string]any) bool {
@@ -33,6 +35,12 @@ func addChannelMCP(settings map[string]any, cwd string) {
 func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	result := &claudeHooksResult{
 		FilePath: filepath.Join(repoRoot, ".mcp.json"),
+	}
+
+	if err := pathpreflight.PreflightFile(result.FilePath, "channel MCP config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
+		result.Skipped = true
+		return result
 	}
 
 	content, err := os.ReadFile(result.FilePath)
@@ -78,6 +86,11 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		result.Error = fmt.Errorf("marshaling settings: %w", err)
+		result.Skipped = true
+		return result
+	}
+	if err := pathpreflight.PreflightFile(result.FilePath, "channel MCP config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		result.Error = err
 		result.Skipped = true
 		return result
 	}
