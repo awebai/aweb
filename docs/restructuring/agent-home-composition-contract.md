@@ -28,7 +28,11 @@ The profile (see the profile schema) provides:
 - `mission` — what kind of coworker this is / what it is for
 - `accepted_work` — list of work it takes on
 - `instructions` — pointer to the prose behavioral file (e.g. `instructions.md`)
-- `runtime_assumptions` — list; selects the harness and launch, NOT body content
+- `runtime_assumptions`, `runtime_hints` — **advisory metadata only**; the
+  environment/harness a profile assumes or recommends. Queryable (`aw blueprint
+  inspect`, `library get-profile`) to *inform* the operator's choice; they do
+  NOT select the harness or launch, and are NOT body content. The runtime is
+  always the operator's explicit CLI choice (§5).
 - `memory_policy` — `{ mode, proposal_target }`
 - `expected_apps` — list of apps it expects to use
 - `event_subscriptions` — list of `{ app, event }`; registered with core, NOT body
@@ -75,7 +79,7 @@ profile.) See §9.
 | `memory_policy` | `AGENTS.md` §Memory and learning |
 | `skills` | installed under `skills/` + discoverable (§6); listed in `AGENTS.md` §Skills |
 | `artifacts` | installed under `artifacts/` |
-| `runtime_assumptions` | selects the harness body file + symlink (§5) and launch; not rendered into the body |
+| `runtime_assumptions`, `runtime_hints` | advisory metadata only; do NOT select the harness/symlink/launch and not rendered into the body. The harness entry-file symlink (§5) and launch follow the operator's explicit `--runtime` |
 | `event_subscriptions` | registered with core for the wake loop; not rendered into the body |
 | `id` / `version` + blueprint digests | `.aw/profile/ref.json` pin |
 | full profile + source | `.aw/profile/` (§8) |
@@ -151,14 +155,20 @@ Rendering rules (for byte-exactness; fixtures in §10 are the arbiter):
 ## 5. Harness body file + symlink
 
 `AGENTS.md` is the canonical body for every harness. The harness-specific entry
-file is a **symlink** to it, selected by `runtime_assumptions`:
+file is a **symlink** to it, selected by the **operator's explicit runtime
+choice** at materialize time (`aw team add/create --runtime <rt>` /
+`…/PROFILE=<rt>`), **never inferred** from the profile's `runtime_assumptions`
+or `runtime_hints`. When `--runtime` is omitted, materialize uses a CLI-policy
+default (`claude-code`) — a default defined by the CLI, not read from the
+profile. Likewise, launch (`aw agent start`) takes an explicit `--runtime`/
+`--command` and refuses if neither is given. A profile is untrusted online data;
+it must not decide which harness is composed or which process executes.
 
-- `claude-code` (and the default when no harness is declared):
-  `CLAUDE.md -> AGENTS.md`.
+- `claude-code` (the CLI-policy default): `CLAUDE.md -> AGENTS.md`.
 - `codex`: `AGENTS.md` is already the native file; no extra symlink.
-- other harnesses: same pattern — canonical `AGENTS.md` plus the harness's
-  expected entry file symlinked to it. Each harness mapping is pinned as it is
-  added; `claude-code` and default are normative now.
+- `pi`, `local-shell`, other harnesses: same pattern — canonical `AGENTS.md`
+  plus the harness's expected entry file symlinked to it. Each harness mapping is
+  pinned as it is added; `claude-code` and default are normative now.
 
 Never duplicate the body; always symlink so evolution touches one file.
 
