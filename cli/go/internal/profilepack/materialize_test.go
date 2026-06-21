@@ -22,6 +22,26 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
 }
 
+func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
+	target := t.TempDir()
+	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir:      target,
+		ProfileRef:     "reviewer",
+		ProfileVersion: "0.2.0",
+		RuntimeKind:    "claude-code",
+		Files: []LibraryProfilePayloadFile{
+			{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.2.0\nmission: >\n  Give independent, fresh-eyes review before merge,\n  with blocking and non-blocking findings.\naccepted_work:\n  - >\n    reviewing a developer diff\n    against acceptance criteria\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+			{Path: "instructions.md", ContentUTF8: "Review changes carefully.\n"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "AGENTS.md")); err != nil {
+		t.Fatalf("profile was not materialized: %v", err)
+	}
+}
+
 func TestMaterializeLocalProfileRejectsTargetSymlinkEscape(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()

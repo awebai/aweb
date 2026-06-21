@@ -333,7 +333,7 @@ func loadOptionalMissions(root string) (*Missions, error) {
 		if err := validateRequiredString(prefix+".title", mission.Title); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(mission.Summary) != "" && hasControl(mission.Summary) {
+		if strings.TrimSpace(mission.Summary) != "" && hasDisallowedTextControl(mission.Summary) {
 			return nil, fmt.Errorf("%s.summary: control characters are not allowed", prefix)
 		}
 	}
@@ -344,8 +344,13 @@ func validatePack(pack *Pack) error {
 	if pack.SchemaVersion != 0 && pack.SchemaVersion != 1 {
 		return fmt.Errorf("pack.yaml:schema_version: expected 1")
 	}
-	for field, value := range map[string]string{"id": pack.ID, "name": pack.Name, "version": pack.Version, "summary": pack.Summary, "description": pack.Description} {
+	for field, value := range map[string]string{"id": pack.ID, "name": pack.Name, "version": pack.Version} {
 		if err := validateRequiredString("pack.yaml:"+field, value); err != nil {
+			return err
+		}
+	}
+	for field, value := range map[string]string{"summary": pack.Summary, "description": pack.Description} {
+		if err := validateRequiredFreeTextString("pack.yaml:"+field, value); err != nil {
 			return err
 		}
 	}
@@ -385,7 +390,7 @@ func validatePack(pack *Pack) error {
 		}
 	}
 	for i, example := range pack.FirstMissionExamples {
-		if err := validateRequiredString(fmt.Sprintf("pack.yaml:first_mission_examples[%d]", i), example); err != nil {
+		if err := validateRequiredFreeTextString(fmt.Sprintf("pack.yaml:first_mission_examples[%d]", i), example); err != nil {
 			return err
 		}
 	}
@@ -401,10 +406,13 @@ func validateProfile(root, profileDir, profileRel string, entry PackProfileEntry
 	if profile.SchemaVersion != 0 && profile.SchemaVersion != 1 {
 		return fmt.Errorf("%s/profile.yaml:schema_version: expected 1", profileRel)
 	}
-	for field, value := range map[string]string{"id": profile.ID, "name": profile.Name, "version": profile.Version, "mission": profile.Mission, "instructions": profile.Instructions} {
+	for field, value := range map[string]string{"id": profile.ID, "name": profile.Name, "version": profile.Version, "instructions": profile.Instructions} {
 		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:%s", profileRel, field), value); err != nil {
 			return err
 		}
+	}
+	if err := validateRequiredFreeTextString(fmt.Sprintf("%s/profile.yaml:mission", profileRel), profile.Mission); err != nil {
+		return err
 	}
 	if profile.ID != entry.ID {
 		return fmt.Errorf("%s/profile.yaml:id: got %q, want pack profile id %q", profileRel, profile.ID, entry.ID)
@@ -413,7 +421,7 @@ func validateProfile(root, profileDir, profileRel string, entry PackProfileEntry
 		return fmt.Errorf("%s/profile.yaml:accepted_work: at least one item is required", profileRel)
 	}
 	for i, work := range profile.AcceptedWork {
-		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:accepted_work[%d]", profileRel, i), work); err != nil {
+		if err := validateRequiredFreeTextString(fmt.Sprintf("%s/profile.yaml:accepted_work[%d]", profileRel, i), work); err != nil {
 			return err
 		}
 	}
@@ -783,9 +791,28 @@ func validateRequiredString(field, value string) error {
 	return nil
 }
 
+func validateRequiredFreeTextString(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s: required", field)
+	}
+	if hasDisallowedTextControl(value) {
+		return fmt.Errorf("%s: control characters are not allowed", field)
+	}
+	return nil
+}
+
 func hasControl(value string) bool {
 	for _, r := range value {
 		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDisallowedTextControl(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return true
 		}
 	}

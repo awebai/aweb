@@ -68,6 +68,37 @@ skills:
 `)
 }
 
+func TestLoadLocalDirAllowsFoldedBlockFreeText(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	profilePath := filepath.Join(root, "profiles/coordinator/profile.yaml")
+	body := readFile(t, profilePath)
+	body = strings.Replace(body, "mission: Coordinate the agent team and keep delivery unblocked.", "mission: >\n  Coordinate the agent team across multiple lines\n  and keep delivery unblocked.", 1)
+	body = strings.Replace(body, "accepted_work: [planning, coordination]", "accepted_work:\n  - >\n    planning work across multiple lines\n    with a trailing folded newline\n  - coordination", 1)
+	writeFile(t, profilePath, body)
+
+	pack, err := LoadLocalDir(root)
+	if err != nil {
+		t.Fatalf("LoadLocalDir: %v", err)
+	}
+	if got := pack.LoadedProfiles[0].Mission; !strings.Contains(got, "multiple lines") || !strings.HasSuffix(got, "\n") {
+		t.Fatalf("mission=%q, want folded block scalar with trailing LF", got)
+	}
+}
+
+func TestLoadLocalDirRejectsGenuineControlsInFreeText(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	profilePath := filepath.Join(root, "profiles/coordinator/profile.yaml")
+	body := strings.Replace(readFile(t, profilePath), "mission: Coordinate the agent team and keep delivery unblocked.", `mission: "Coordinate \x80 team"`, 1)
+	writeFile(t, profilePath, body)
+
+	_, err := LoadLocalDir(root)
+	if err == nil || !strings.Contains(err.Error(), "profile.yaml:mission: control characters are not allowed") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestLoadLocalDirValidatesAndPlansProfilePack(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
