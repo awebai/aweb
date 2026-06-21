@@ -25,14 +25,16 @@ from library.blueprint import (
     import_return,
     parse_import_payload,
     parse_profile_payload,
+    profile_asset_digests,
 )
-from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
+from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, collect_files
 
 pytestmark = pytest.mark.e2e
 
 _FIXTURE = Path(__file__).parent / "vectors" / "blueprints" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
+_PROFILE_ASSET_CHANGESET_SCHEMA = "aweb.library.profile-asset-changeset.v1"
 
 
 def _load_json(path: Path) -> Any:
@@ -45,6 +47,10 @@ def _json_body(payload: Any) -> str:
 
 def _sha(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _asset_changeset(*assets: dict[str, Any]) -> dict[str, Any]:
+    return {"schema": _PROFILE_ASSET_CHANGESET_SCHEMA, "assets": list(assets)}
 
 
 def _canonical_payload() -> dict[str, Any]:
@@ -840,9 +846,6 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
             "proposal_id",
             "target",
             "profile_ref",
-            "profile_version",
-            "base_profile_version",
-            "base_profile_digest",
             "status",
             "content",
             "summary",
@@ -854,13 +857,10 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
             expected_keys.add("minted")
         assert set(proposal) == expected_keys
         assert isinstance(proposal["proposal_id"], str)
-        assert proposal["target"] == "profile"
-        assert proposal["profile_ref"] == "developer"
-        assert proposal["profile_version"] == "0.1.0"
+        assert proposal["target"] == "memory"
+        assert proposal["profile_ref"] is None
         assert proposal["status"] == status
         assert proposal["content"] == content
-        assert proposal["base_profile_version"] is None
-        assert proposal["base_profile_digest"] is None
         assert proposal["summary"] is None
         assert proposal["rationale"] is None
         assert proposal["created_by_alias"] == team.alias
@@ -870,22 +870,14 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         content = {
             "title": title,
             "summary": "Learned improvement from completed repo work.",
-            "changes": [
-                {
-                    "path": "instructions.md",
-                    "operation": "append",
-                    "content_utf8": "\n- Include concise test evidence in every handoff.\n",
-                }
-            ],
+            "changes": [{"path": "notes/lesson.md", "operation": "append"}],
         }
         proposal = _aw_json(
             _post_json(
                 team,
                 f"{library.origin}/v1/proposals",
                 {
-                    "target": "profile",
-                    "profile_ref": "developer",
-                    "profile_version": "0.1.0",
+                    "target": "memory",
                     "content": content,
                 },
             ),
@@ -924,7 +916,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
     assert rejected == {**reject_candidate, "status": "rejected"}
 
 
-def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
+def test_profile_proposal_approval_mints_and_rejects_stale_asset(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
@@ -935,6 +927,25 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
     _publish_blueprint(team, library, payload)
     base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator")
 
+    base_profile = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator"),
+        context="get coordinator profile for asset digests",
+    )
+    base_files = base_profile["files"]
+    base_asset_digests = profile_asset_digests(base_files)
+    base_mission = next(file for file in base_files if file["path"] == "profile.yaml")["content_utf8"]
+    base_mission = (yaml.safe_load(base_mission) or {})["mission"]
+    minted_mission = f"{base_mission} Updated in an asset-scoped proposal."
+    minted_files = _profile_files_with_changes("coordinator", "0.1.1", mission=minted_mission)
+    minted_profile = parse_profile_payload(minted_files)
+    minted_content = _asset_changeset(
+        {
+            "path": "profile.yaml#mission",
+            "content": minted_mission,
+            "base_asset_digest": base_asset_digests["field:mission"],
+        }
+    )
+
     def assert_profile_proposal_shape(
         proposal: dict[str, Any], *, status: str, content: dict[str, Any], minted: bool = False
     ) -> None:
@@ -942,9 +953,6 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
             "proposal_id",
             "target",
             "profile_ref",
-            "profile_version",
-            "base_profile_version",
-            "base_profile_digest",
             "status",
             "content",
             "summary",
@@ -958,16 +966,11 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
         assert isinstance(proposal["proposal_id"], str)
         assert proposal["target"] == "profile"
         assert proposal["profile_ref"] == "coordinator"
-        assert proposal["profile_version"] is None
-        assert proposal["base_profile_version"] == base["version"]
         assert proposal["content"] == content
         assert proposal["created_by_alias"] == team.alias
         assert isinstance(proposal["created_at"], str)
         assert proposal["status"] == status
 
-    minted_files = _profile_files_with_version("coordinator", "0.2.0")
-    minted_profile = parse_profile_payload(minted_files)
-    minted_content = {"schema": PROFILE_PAYLOAD_SCHEMA, "files": minted_files}
     proposal = _aw_json(
         _post_json(
             team,
@@ -975,8 +978,6 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
             {
                 "target": "profile",
                 "profile_ref": "coordinator",
-                "base_profile_version": base["version"],
-                "base_profile_digest": base["digest"],
                 "content": minted_content,
                 "summary": "Sharpen coordinator mission",
                 "rationale": "The team learned a better coordination habit.",
@@ -985,7 +986,6 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
         context="create minting proposal",
     )
     assert_profile_proposal_shape(proposal, status="open", content=minted_content)
-    assert proposal["base_profile_digest"] == base["digest"]
     assert proposal["summary"] == "Sharpen coordinator mission"
     assert proposal["rationale"] == "The team learned a better coordination habit."
 
@@ -996,7 +996,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
     assert_profile_proposal_shape(approved, status="approved", content=minted_content, minted=True)
     assert approved["minted"] == {
         "profile_ref": "coordinator",
-        "version": "0.2.0",
+        "version": "0.1.1",
         "digest": minted_profile.digest,
         "supersedes_profile_version": base["version"],
         "supersedes_profile_digest": base["digest"],
@@ -1004,11 +1004,36 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
 
     shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after mint")
     coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
-    assert coordinator["version"] == "0.2.0"
+    assert coordinator["version"] == "0.1.1"
     assert coordinator["digest"] == minted_profile.digest
     assert coordinator["source_blueprint_ref"] == blueprint.blueprint_ref
 
-    stale_files = _profile_files_with_version("coordinator", "0.3.0")
+    upstream_payload = _blueprint_payload(
+        blueprint_ref=blueprint.blueprint_ref,
+        blueprint_version="0.2.0",
+        coordinator_mission="Upstream blueprint mission should not overwrite the blessed team mission.",
+    )
+    _publish_blueprint(team, library, upstream_payload)
+    no_pull = _aw_json(
+        _post_json(
+            team,
+            f"{library.origin}/v1/profiles/coordinator/update-from-source",
+            {"target_version": "0.2.0"},
+        ),
+        context="update-from-source preserves blessed proposal asset",
+    )
+    assert no_pull["version"] == "0.1.1"
+    assert no_pull["digest"] == minted_profile.digest
+    assert no_pull["updated_parts"] == []
+    assert no_pull["preserved_parts"] == ["field:mission"]
+
+    stale_content = _asset_changeset(
+        {
+            "path": "profile.yaml#mission",
+            "content": "A stale edit based on the old mission.",
+            "base_asset_digest": base_asset_digests["field:mission"],
+        }
+    )
     stale_proposal = _aw_json(
         _post_json(
             team,
@@ -1016,41 +1041,17 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
             {
                 "target": "profile",
                 "profile_ref": "coordinator",
-                "base_profile_version": base["version"],
-                "base_profile_digest": base["digest"],
-                "content": {"schema": PROFILE_PAYLOAD_SCHEMA, "files": stale_files},
+                "content": stale_content,
             },
         ),
-        context="create stale-base proposal",
+        context="create stale-asset proposal",
     )
     stale_approve = _post_json(
         team,
         f"{library.origin}/v1/proposals/{stale_proposal['proposal_id']}/approve",
         {},
     )
-    _assert_aw_status(stale_approve, 409, context="approve stale-base proposal")
-
-    collision_files = _profile_files_with_version("coordinator", "0.1.0")
-    collision_proposal = _aw_json(
-        _post_json(
-            team,
-            f"{library.origin}/v1/proposals",
-            {
-                "target": "profile",
-                "profile_ref": "coordinator",
-                "base_profile_version": "0.2.0",
-                "base_profile_digest": minted_profile.digest,
-                "content": {"schema": PROFILE_PAYLOAD_SCHEMA, "files": collision_files},
-            },
-        ),
-        context="create version-collision proposal",
-    )
-    collision_approve = _post_json(
-        team,
-        f"{library.origin}/v1/proposals/{collision_proposal['proposal_id']}/approve",
-        {},
-    )
-    _assert_aw_status(collision_approve, 409, context="approve version-collision proposal")
+    _assert_aw_status(stale_approve, 409, context="approve stale-asset proposal")
 
 
 def test_empty_profile_invariant_never_requires_reachable_library(

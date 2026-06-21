@@ -254,8 +254,8 @@ def test_interpreted_spec_bind() -> None:
 
 def test_interpreted_spec_propose() -> None:
     # The propose body must match the implemented ProposalCreateRequest (target
-    # required; profile_ref/profile_version/content optional) so a manifest-driven
-    # caller is accepted, not 422'd.
+    # required; profile_ref/content optional) so a manifest-driven caller is
+    # accepted, not 422'd.
     spec = _interpret(MANIFEST, "propose", {"target": "profile", "profile_ref": "coordinator"})
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/proposals"

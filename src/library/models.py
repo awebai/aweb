@@ -79,9 +79,6 @@ class ProposalCreateRequest(BaseModel):
 
     target: str = Field(..., pattern=r"^(profile|memory|skill|workflow)$")
     profile_ref: str | None = Field(default=None, max_length=240)
-    profile_version: str | None = Field(default=None, max_length=80)
-    base_profile_version: str | None = Field(default=None, max_length=80)
-    base_profile_digest: str | None = Field(default=None, max_length=128)
     content: dict[str, Any] = Field(default_factory=dict)
     summary: str | None = Field(default=None, max_length=2000)
     rationale: str | None = Field(default=None)

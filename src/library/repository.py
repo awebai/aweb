@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 from uuid import UUID, uuid4
 
+import yaml
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from library.auth import Principal
 from library.blueprint import (
+    PROFILE_FIELD_ASSETS,
     ParsedBlueprint,
     ParsedProfile,
     build_blueprint_payload,
@@ -17,9 +20,9 @@ from library.blueprint import (
     parse_import_payload,
     parse_profile_payload,
     part_baselines,
+    profile_asset_digests,
     three_way_merge,
 )
-from library.digest import PROFILE_PAYLOAD_SCHEMA
 from library.models import (
     MaterializeRequest,
     ProfileBindingRequest,
@@ -897,12 +900,14 @@ async def materialize(
     }
 
 
-# --- Proposals (lifecycle only; minting deferred) -----------------------------
+# --- Proposals ---------------------------------------------------------------
 
+
+PROFILE_ASSET_CHANGESET_SCHEMA = "aweb.library.profile-asset-changeset.v1"
+_FIELD_ASSET_PREFIX = "profile.yaml#"
 
 _PROPOSAL_COLUMNS = (
-    "proposal_id, target, profile_ref, profile_version, base_profile_version,"
-    " base_profile_digest, status, content, summary, rationale, created_by_alias, created_at"
+    "proposal_id, target, profile_ref, status, content, summary, rationale, created_by_alias, created_at"
 )
 
 
@@ -912,9 +917,6 @@ def _proposal_row(row: Any) -> dict[str, Any]:
         "proposal_id": str(data["proposal_id"]),
         "target": data["target"],
         "profile_ref": data.get("profile_ref"),
-        "profile_version": data.get("profile_version"),
-        "base_profile_version": data.get("base_profile_version"),
-        "base_profile_digest": data.get("base_profile_digest"),
         "status": data["status"],
         "content": _json_value(data.get("content")) or {},
         "summary": data.get("summary"),
@@ -942,16 +944,12 @@ async def create_proposal(
     proposal_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.proposals}}"
-        " (proposal_id, team_id, target, profile_ref, profile_version, base_profile_version,"
-        "  base_profile_digest, content, summary, rationale, created_by_alias)"
-        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)",
+        " (proposal_id, team_id, target, profile_ref, content, summary, rationale, created_by_alias)"
+        " VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)",
         proposal_id,
         principal.team_id,
         request.target,
         request.profile_ref,
-        request.profile_version,
-        request.base_profile_version,
-        request.base_profile_digest,
         _dumps(request.content),
         request.summary,
         request.rationale,
@@ -992,43 +990,160 @@ async def _set_proposal_status(
     return await _get_proposal(db, principal.team_id, pid)
 
 
+def _payload_file(path: str, content_utf8: str) -> dict[str, str]:
+    return {
+        "content_utf8": content_utf8,
+        "path": path,
+        "sha256": "sha256:" + hashlib.sha256(content_utf8.encode("utf-8")).hexdigest(),
+    }
+
+
+def _asset_key(path: str) -> str:
+    if path.startswith(_FIELD_ASSET_PREFIX):
+        field = path[len(_FIELD_ASSET_PREFIX) :]
+        if field not in PROFILE_FIELD_ASSETS:
+            raise HTTPException(status_code=422, detail=f"Unsupported profile.yaml asset field '{field}'")
+        return f"field:{field}"
+    if path == "profile.yaml":
+        raise HTTPException(status_code=422, detail="profile.yaml must be changed by profile.yaml#<field> assets")
+    if path.startswith("/") or ".." in path.split("/"):
+        raise HTTPException(status_code=422, detail=f"Invalid asset path '{path}'")
+    return f"file:{path}"
+
+
+def _current_asset_digest(files: list[dict[str, str]], path: str) -> str | None:
+    key = _asset_key(path)
+    if path.startswith(_FIELD_ASSET_PREFIX):
+        field = path[len(_FIELD_ASSET_PREFIX) :]
+        by_path = {entry["path"]: entry for entry in files}
+        profile_doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
+        if field not in profile_doc:
+            return None
+    return profile_asset_digests(files).get(key)
+
+
+def _validate_asset_base(*, files: list[dict[str, str]], asset: dict[str, Any], path: str, deleting: bool) -> None:
+    current = _current_asset_digest(files, path)
+    base = asset.get("base_asset_digest")
+    if current is None:
+        if deleting:
+            raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale; it does not exist")
+        if base is not None:
+            raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale; it does not exist")
+        return
+    if base is None:
+        raise HTTPException(status_code=409, detail=f"Asset '{path}' already exists")
+    if base != current:
+        raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale")
+
+
+def _next_patch_version(version: str) -> str:
+    parts = version.split(".")
+    if parts and parts[-1].isdigit():
+        parts[-1] = str(int(parts[-1]) + 1)
+        return ".".join(parts)
+    return f"{version}.1"
+
+
+def _apply_asset_changeset(
+    *, prior_files: list[dict[str, str]], changeset: dict[str, Any], target_version: str
+) -> list[dict[str, str]]:
+    if changeset.get("schema") != PROFILE_ASSET_CHANGESET_SCHEMA:
+        raise HTTPException(
+            status_code=422, detail=f"proposal content schema must be {PROFILE_ASSET_CHANGESET_SCHEMA}"
+        )
+    assets = changeset.get("assets")
+    if not isinstance(assets, list) or not assets:
+        raise HTTPException(status_code=422, detail="proposal content assets must be a non-empty list")
+
+    files_by_path = {entry["path"]: dict(entry) for entry in prior_files}
+    profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
+
+    for raw_asset in assets:
+        if not isinstance(raw_asset, dict):
+            raise HTTPException(status_code=422, detail="proposal asset must be an object")
+        path = raw_asset.get("path")
+        if not isinstance(path, str) or not path:
+            raise HTTPException(status_code=422, detail="proposal asset path is required")
+        delete_value = raw_asset.get("delete", False)
+        if not isinstance(delete_value, bool):
+            raise HTTPException(status_code=422, detail=f"Asset '{path}' delete must be boolean")
+        deleting = delete_value
+        if deleting and ("content" in raw_asset or "content_utf8" in raw_asset):
+            raise HTTPException(status_code=422, detail=f"Asset '{path}' cannot include content and delete")
+        _validate_asset_base(files=list(files_by_path.values()), asset=raw_asset, path=path, deleting=deleting)
+
+        if path.startswith(_FIELD_ASSET_PREFIX):
+            field = path[len(_FIELD_ASSET_PREFIX) :]
+            if deleting:
+                profile_doc.pop(field, None)
+            elif "content" in raw_asset:
+                profile_doc[field] = raw_asset["content"]
+            else:
+                raise HTTPException(status_code=422, detail=f"Field asset '{path}' requires content")
+            profile_doc["version"] = target_version
+            files_by_path["profile.yaml"] = _payload_file(
+                "profile.yaml", yaml.safe_dump(profile_doc, sort_keys=False, allow_unicode=True)
+            )
+            continue
+
+        if deleting:
+            files_by_path.pop(path, None)
+        elif isinstance(raw_asset.get("content_utf8"), str):
+            files_by_path[path] = _payload_file(path, raw_asset["content_utf8"])
+        else:
+            raise HTTPException(status_code=422, detail=f"File asset '{path}' requires content_utf8")
+
+    profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
+    profile_doc["version"] = target_version
+    files_by_path["profile.yaml"] = _payload_file(
+        "profile.yaml", yaml.safe_dump(profile_doc, sort_keys=False, allow_unicode=True)
+    )
+    files = sorted(files_by_path.values(), key=lambda entry: entry["path"])
+    try:
+        parse_profile_payload(files)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid minted profile after changeset: {exc}") from exc
+    return files
+
+
 async def _mint_from_proposal(
     db: AsyncDatabaseManager, *, principal: Principal, proposal: dict[str, Any]
 ) -> dict[str, Any]:
-    """Mint a new shelf-profile version from an approved profile proposal. The
-    proposal's recorded base must still be the shelf profile's latest version
-    (reject-if-stale), guarding against minting from a raced base. The minted version
-    is local evolution, so the source-blueprint provenance and per-part baselines carry
-    from the base unchanged."""
+    """Mint a new shelf-profile version from an approved asset changeset.
+
+    The stale guard is per asset: each proposed asset's base digest must match the
+    current shelf profile asset digest. Non-overlapping proposals therefore compose.
+    """
     profile_ref = proposal["profile_ref"]
     if not profile_ref:
         raise HTTPException(status_code=422, detail="profile proposal requires profile_ref")
-    content = proposal["content"]
-    if content.get("schema") not in (None, PROFILE_PAYLOAD_SCHEMA):
-        raise HTTPException(status_code=422, detail=f"proposal content schema must be {PROFILE_PAYLOAD_SCHEMA}")
-    try:
-        profile = parse_profile_payload(content.get("files") or [])
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid proposal content: {exc}") from exc
-    if profile.profile_ref != profile_ref:
-        raise HTTPException(status_code=422, detail="proposal content profile.yaml id must match profile_ref")
-
     prior = await db.fetch_one(
-        "SELECT version, digest, tags, source_blueprint_ref, source_blueprint_version,"
-        " source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest,"
-        " part_baselines FROM {{tables.shelf_profiles}}"
+        "SELECT version, digest, tags, files, part_baselines, source_blueprint_ref, source_blueprint_version,"
+        " source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest"
+        " FROM {{tables.shelf_profiles}}"
         " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
         profile_ref,
     )
     if prior is None:
         raise HTTPException(status_code=404, detail="Shelf profile not found")
-    if proposal["base_profile_digest"] != prior["digest"]:
-        raise HTTPException(
-            status_code=409, detail="Proposal base is stale; the shelf profile has a newer version"
-        )
-    # A minted version that already exists for this profile is a 409 (the immutable-
-    # version guard in _upsert_shelf_profile), not a silent overwrite.
+    target_version = _next_patch_version(str(prior["version"]))
+
+    minted_files = _apply_asset_changeset(
+        prior_files=_json_value(prior["files"]) or [],
+        changeset=proposal["content"],
+        target_version=target_version,
+    )
+    try:
+        profile = parse_profile_payload(minted_files)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid minted profile: {exc}") from exc
+    if profile.profile_ref != profile_ref:
+        raise HTTPException(status_code=422, detail="minted profile.yaml id must match profile_ref")
+    if profile.version != target_version:
+        raise HTTPException(status_code=422, detail="minted profile.yaml version must match auto-incremented version")
+
     await _upsert_shelf_profile(
         db,
         team_id=principal.team_id,
@@ -1056,10 +1171,8 @@ async def approve_proposal(db: AsyncDatabaseManager, *, principal: Principal, pr
     proposal = await _get_proposal(db, principal.team_id, pid)
     if proposal["status"] != "open":
         raise HTTPException(status_code=409, detail=f"Proposal is already {proposal['status']}")
-    # A profile proposal carrying content mints a new shelf version on approval;
-    # other proposals (and content-less ones) are lifecycle-only.
     minted = None
-    if proposal["target"] == "profile" and proposal["content"].get("files"):
+    if proposal["target"] == "profile":
         minted = await _mint_from_proposal(db, principal=principal, proposal=proposal)
     result = await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="approved")
     if minted is not None:

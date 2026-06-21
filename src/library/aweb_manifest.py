@@ -339,7 +339,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "propose",
-            "description": "Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version's content (profile-payload.v1); approve mints it.",
+            "description": "Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.",
             "method": "POST",
             "path": "/v1/proposals",
             "input_schema": {
@@ -347,9 +347,6 @@ MANIFEST: dict[str, Any] = {
                 "properties": {
                     "target": {"type": "string"},
                     "profile_ref": {"type": "string"},
-                    "profile_version": {"type": "string"},
-                    "base_profile_version": {"type": "string"},
-                    "base_profile_digest": {"type": "string"},
                     "content": {"type": "object"},
                     "summary": {"type": "string"},
                     "rationale": {"type": "string"},
@@ -359,9 +356,6 @@ MANIFEST: dict[str, Any] = {
             "params": [
                 {"name": "target", "in": "body"},
                 {"name": "profile_ref", "in": "body"},
-                {"name": "profile_version", "in": "body"},
-                {"name": "base_profile_version", "in": "body"},
-                {"name": "base_profile_digest", "in": "body"},
                 {"name": "content", "in": "body"},
                 {"name": "summary", "in": "body"},
                 {"name": "rationale", "in": "body"},
