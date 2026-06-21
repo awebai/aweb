@@ -112,9 +112,9 @@ func TestValidateAuthNoneIsOptionalAndReadOnly(t *testing.T) {
 		ManifestVersion: 1,
 		App:             App{ID: "library", Version: "1.0.0", Origin: "https://library.example"},
 		Tools: []Tool{{
-			Name:        "list-packs",
+			Name:        "list-blueprints",
 			Method:      "GET",
-			Path:        "/v1/profile-packs",
+			Path:        "/v1/blueprints",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 			Params:      []Param{},
 			Auth:        "none",
@@ -124,7 +124,7 @@ func TestValidateAuthNoneIsOptionalAndReadOnly(t *testing.T) {
 	if err := Validate(manifest, nil); err != nil {
 		t.Fatalf("Validate(auth:none read) error = %v", err)
 	}
-	got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "list-packs"})
+	got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "list-blueprints"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestValidateAuthNoneIsOptionalAndReadOnly(t *testing.T) {
 	}
 
 	manifest.Tools[0].Auth = ""
-	got, err = Interpret(InterpretRequest{Manifest: manifest, Verb: "list-packs"})
+	got, err = Interpret(InterpretRequest{Manifest: manifest, Verb: "list-blueprints"})
 	if err != nil {
 		t.Fatal(err)
 	}

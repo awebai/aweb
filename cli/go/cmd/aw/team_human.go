@@ -50,7 +50,7 @@ var teamHumanCreateCmd = &cobra.Command{
 	Short: "Create a local empty-profile team workspace",
 	Long: "Create a local empty-profile team workspace.\n\n" +
 		"This wraps aw init for the aw-local path. No --profile means no Library call\n" +
-		"and no profile materialization. --profile PACK_REF/PROFILE_REF[@PACK_VERSION]\n" +
+		"and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]\n" +
 		"adopts from Library, binds the local identity, and materializes the home.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
@@ -59,7 +59,7 @@ var teamHumanCreateCmd = &cobra.Command{
 var teamHumanAddCmd = &cobra.Command{
 	Use:   "add <name>[@<profile-ref>]...",
 	Short: "Add empty-profile agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@PACK_REF/PROFILE_REF[@PACK_VERSION] adopts from Library, binds the new identity, and materializes the home.",
+	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanAdd,
 }
@@ -133,7 +133,7 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
-	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector PACK_REF/PROFILE_REF[@PACK_VERSION] to adopt and materialize")
+	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] to adopt and materialize")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
@@ -223,7 +223,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if teamHumanCreateBYOT {
 		if len(profileSelectors) > 0 {
-			return usageError("aw team create --byot --profile is not supported yet; create the BYOT team, then use aw team add NAME@PACK_REF/PROFILE_REF")
+			return usageError("aw team create --byot --profile is not supported yet; create the BYOT team, then use aw team add NAME@BLUEPRINT_REF/PROFILE_REF")
 		}
 		name := strings.TrimSpace(teamHumanCreateName)
 		if name == "" {
@@ -345,14 +345,14 @@ func teamHumanCreateRosterSpecs(selectors []libraryProfileSelector) ([]string, e
 	for _, selector := range selectors {
 		name := strings.TrimSpace(selector.ProfileRef)
 		if !isValidWorkspaceAlias(name) {
-			return nil, usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@PACK_REF/PROFILE_REF", selector.ProfileRef)
+			return nil, usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@BLUEPRINT_REF/PROFILE_REF", selector.ProfileRef)
 		}
 		key := strings.ToLower(name)
 		if seen[key] {
 			return nil, usageError("duplicate roster agent name %q from --profile selectors", name)
 		}
 		seen[key] = true
-		specs = append(specs, fmt.Sprintf("%s@%s/%s", name, selector.SourceProfilePackRef, selector.ProfileRef))
+		specs = append(specs, fmt.Sprintf("%s@%s/%s", name, selector.SourceBlueprintRef, selector.ProfileRef))
 	}
 	return specs, nil
 }
@@ -445,7 +445,7 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector 
 
 func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName string, selector *libraryProfileSelector) error {
 	if selector != nil {
-		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@PACK/PROFILE after creating the team")
+		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
 	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if err != nil {

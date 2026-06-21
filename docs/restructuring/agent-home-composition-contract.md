@@ -2,7 +2,7 @@
 
 Status: draft v1 (2026-06-19), owned by the aw CLI lane (aw-coordinator),
 co-owned with the Library lane (coordinator) because the Library docs must
-describe the same composition. Pairs with the profile-pack digest/import/
+describe the same composition. Pairs with the blueprint digest/import/
 materialize contract and the team-builder ↔ Library contract.
 
 ## 0. Why this exists
@@ -17,7 +17,7 @@ A materialized agent home must be two things at once:
 The prior materialize behavior copied `instructions.md` verbatim and dropped
 `mission`, `accepted_work`, `memory_policy`, `expected_apps`, and
 `approval_required`. That home would not run as an agent and could not evolve.
-This contract replaces that behavior. It is byte-exact: the engineering-pack
+This contract replaces that behavior. It is byte-exact: the engineering
 fixtures (§9) are the final arbiter, the same discipline as the digest vectors.
 
 ## 1. Input — the profile
@@ -75,22 +75,22 @@ profile.) See §8.
 | `artifacts` | installed under `artifacts/` |
 | `runtime_assumptions` | selects the harness body file + symlink (§5) and launch; not rendered into the body |
 | `event_subscriptions` | registered with core for the wake loop; not rendered into the body |
-| `id` / `version` + pack digests | `.aw/profile/ref.json` pin |
+| `id` / `version` + blueprint digests | `.aw/profile/ref.json` pin |
 | full profile + source | `.aw/profile/` (§7) |
 
 ## 4. `AGENTS.md` composition (exact)
 
 `AGENTS.md` is **constructed** from the profile in the fixed section order
 below. It is never a verbatim copy of `instructions.md`. The source profile is
-the team's **private shelf** copy (the bound profile), not a public pack profile
-— pack profiles are public snapshots; the home is built from the shelf copy.
+the team's **private shelf** copy (the bound profile), not a public blueprint profile
+— blueprint profiles are public snapshots; the home is built from the shelf copy.
 
 Template (sections in this order):
 
 ```
 # {name}
 
-> Profile {id} v{version} · pack {pack_id} v{pack_version}
+> Profile {id} v{version} · blueprint {blueprint_id} v{blueprint_version}
 
 ## Mission
 
@@ -142,8 +142,8 @@ Rendering rules (for byte-exactness; fixtures in §9 are the arbiter):
    Apps you use, Actions requiring human approval, Memory and learning, Skills).
    Only the header line (`# {name}`) and the provenance line are always present.
 6. The provenance line is always present, in one of two forms. Adopted from a
-   source pack: `> Profile {id} v{version} · pack {pack_id} v{pack_version}`.
-   Created directly on the shelf (no source pack — a created or forked variant):
+   source blueprint: `> Profile {id} v{version} · blueprint {blueprint_id} v{blueprint_version}`.
+   Created directly on the shelf (no source blueprint — a created or forked variant):
    `> Profile {id} v{version} · created`. The fixtures pin both forms.
 
 ## 5. Harness body file + symlink
@@ -178,7 +178,7 @@ installed skills by name so the agent knows they exist.
 
 Materialize writes the **full** profile into `.aw/profile/`, not just the pin:
 
-- `ref.json` — the pin (profile digest + version, source pack digest + version).
+- `ref.json` — the pin (profile digest + version, source blueprint digest + version).
 - `profile.yaml` — the complete profile spec.
 - `instructions.md`, `skills/`, `artifacts/` — the editable source the agent
   evolves.
@@ -193,13 +193,13 @@ source under `.aw/profile/` is canonical for evolution.
 
 The materialized `.aw/profile/` is the local manifestation of the team's
 **private shelf** profile — the copy the team owns and evolves. It is never a
-bare public-pack ref. In `ref.json`, `source_profile_pack_*` is **provenance**
+bare public-blueprint ref. In `ref.json`, `source_blueprint_*` is **provenance**
 (where the shelf copy was adopted from), which enables `update-from-source`:
-pulling a newer pack version's improvements into only the parts the team has not
+pulling a newer blueprint version's improvements into only the parts the team has not
 evolved (per-part merge), without clobbering local learning. A shelf profile may
-also be created directly (no source pack), in which case the source provenance is
-empty. Adoption from a public pack is `import-to-shelf` (a copy); the home then
-materializes from that shelf copy, not from the public pack ref.
+also be created directly (no source blueprint), in which case the source provenance is
+empty. Adoption from a public blueprint is `import-to-shelf` (a copy); the home then
+materializes from that shelf copy, not from the public blueprint ref.
 
 ## 8. Empty profile
 
@@ -209,7 +209,7 @@ Binding a profile later runs the full composition above. (Juan invariant.)
 
 ## 9. Conformance
 
-Byte-exact `expected/materialized-home/<id>/` fixtures for the engineering pack
+Byte-exact `expected/materialized-home/<id>/` fixtures for the engineering blueprint
 (`coordinator`, `developer`, `reviewer`): the composed `AGENTS.md`, the
 `CLAUDE.md` symlink, the installed `skills/` and `artifacts/`, and the full
 `.aw/profile/`.

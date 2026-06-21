@@ -214,7 +214,7 @@
       "origin_url": "https://library.aweb.ai/.well-known/aweb-app.json",
       "source_commit": "library@5125ab8:src/library/aweb-app.json",
       "manifest_path": "library/aweb-app.json",
-      "sha256": "fe286edd11e449f4e242494ff049383081df6c98e7325ab818c2eb77857fedf5",
+      "sha256": "2eac1d5063e454f15db344e2dbfab619495f068eb7b0a94686fff3ae45f6df16",
       "reserved_names": [
         "id",
         "whoami",

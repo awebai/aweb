@@ -1,0 +1,246 @@
+{
+  "source": {
+    "kind": "local_dir",
+    "ref": "FIXTURE/source",
+    "digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "digest_scope": "local_import_payload"
+  },
+  "blueprint": {
+    "id": "aweb.engineering",
+    "name": "Engineering AI Team Starter Blueprint",
+    "version": "0.1.0",
+    "summary": "Coordinator, developer, and reviewer profiles for repo work.",
+    "description": "First-party starter blueprint for local engineering agent teams.",
+    "digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "expected_apps": [
+      "audit",
+      "github",
+      "library",
+      "secrets",
+      "tasks"
+    ],
+    "expected_apps_semantics": "setup_hints_not_grants",
+    "runtime_hints": [
+      "claude-code",
+      "codex",
+      "pi"
+    ],
+    "first_mission_examples": [
+      "Review this repo and propose a first implementation plan.",
+      "Implement a small issue and hand it to a reviewer."
+    ]
+  },
+  "profiles": [
+    {
+      "id": "coordinator",
+      "name": "Coordinator",
+      "version": "0.1.0",
+      "digest": "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0",
+      "default_count": 1,
+      "min": 1,
+      "max": 1,
+      "mission": "Coordinate the team, keep work unblocked, and maintain evidence.",
+      "accepted_work": [
+        "planning",
+        "coordination",
+        "review-routing"
+      ],
+      "runtime_assumptions": [
+        "local shell",
+        "git checkout",
+        "aw CLI"
+      ],
+      "memory_policy": {
+        "mode": "reviewed-learning",
+        "proposal_target": "library"
+      },
+      "expected_apps": [
+        "audit",
+        "library",
+        "tasks"
+      ],
+      "expected_apps_semantics": "setup_hints_not_grants",
+      "event_subscriptions": [
+        {
+          "app": "tasks",
+          "event": "task.assigned"
+        }
+      ],
+      "approval_required": [
+        "github.merge_pr",
+        "secrets.read"
+      ],
+      "materialization_preview": {
+        "instructions_path": "profiles/coordinator/instructions.md",
+        "skills": [
+          {
+            "path": "profiles/coordinator/skills/coordinate/SKILL.md",
+            "kind": "skill",
+            "profile_id": "coordinator"
+          }
+        ],
+        "artifacts": [
+          {
+            "path": "profiles/coordinator/artifacts/status-template.md",
+            "kind": "status_template",
+            "profile_id": "coordinator"
+          }
+        ]
+      }
+    },
+    {
+      "id": "developer",
+      "name": "Developer",
+      "version": "0.1.0",
+      "digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+      "default_count": 2,
+      "min": 1,
+      "max": 4,
+      "mission": "Implement scoped changes with tests and concise evidence.",
+      "accepted_work": [
+        "implementation",
+        "debugging",
+        "tests"
+      ],
+      "runtime_assumptions": [
+        "local shell",
+        "git checkout",
+        "language test tools"
+      ],
+      "memory_policy": {
+        "mode": "reviewed-learning",
+        "proposal_target": "library"
+      },
+      "expected_apps": [
+        "audit",
+        "github",
+        "tasks"
+      ],
+      "expected_apps_semantics": "setup_hints_not_grants",
+      "event_subscriptions": [
+        {
+          "app": "tasks",
+          "event": "task.ready"
+        }
+      ],
+      "approval_required": [
+        "secrets.read"
+      ],
+      "materialization_preview": {
+        "instructions_path": "profiles/developer/instructions.md",
+        "skills": [
+          {
+            "path": "profiles/developer/skills/implement/SKILL.md",
+            "kind": "skill",
+            "profile_id": "developer"
+          }
+        ],
+        "artifacts": [
+          {
+            "path": "profiles/developer/artifacts/handoff-template.md",
+            "kind": "handoff_template",
+            "profile_id": "developer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "reviewer",
+      "name": "Reviewer",
+      "version": "0.1.0",
+      "digest": "sha256:1ea7930bbb43c956133d9f277a24e777e56e69efedab40cae128b6f7880c98c3",
+      "default_count": 1,
+      "min": 0,
+      "max": 2,
+      "mission": "Review changes for correctness, safety, tests, and contract fit.",
+      "accepted_work": [
+        "code-review",
+        "security-review",
+        "test-review"
+      ],
+      "runtime_assumptions": [
+        "local shell",
+        "git checkout",
+        "test tools"
+      ],
+      "memory_policy": {
+        "mode": "reviewed-learning",
+        "proposal_target": "library"
+      },
+      "expected_apps": [
+        "audit",
+        "github",
+        "tasks"
+      ],
+      "expected_apps_semantics": "setup_hints_not_grants",
+      "event_subscriptions": [
+        {
+          "app": "tasks",
+          "event": "review.requested"
+        }
+      ],
+      "approval_required": [
+        "github.merge_pr"
+      ],
+      "materialization_preview": {
+        "instructions_path": "profiles/reviewer/instructions.md",
+        "skills": [
+          {
+            "path": "profiles/reviewer/skills/review/SKILL.md",
+            "kind": "skill",
+            "profile_id": "reviewer"
+          }
+        ],
+        "artifacts": [
+          {
+            "path": "profiles/reviewer/artifacts/review-template.md",
+            "kind": "review_template",
+            "profile_id": "reviewer"
+          }
+        ]
+      }
+    }
+  ],
+  "import_preview": {
+    "optional_layer": true,
+    "requires_library_subscription": true,
+    "separate_future_step": true,
+    "library_endpoint": "POST /v1/blueprints/import",
+    "would_upload_on_import": true,
+    "payload_digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "payload_files": [
+      "README.md",
+      "blueprint.yaml",
+      "missions.yaml",
+      "profiles/coordinator/artifacts/status-template.md",
+      "profiles/coordinator/instructions.md",
+      "profiles/coordinator/profile.yaml",
+      "profiles/coordinator/skills/coordinate/SKILL.md",
+      "profiles/developer/artifacts/handoff-template.md",
+      "profiles/developer/instructions.md",
+      "profiles/developer/profile.yaml",
+      "profiles/developer/skills/implement/SKILL.md",
+      "profiles/reviewer/artifacts/review-template.md",
+      "profiles/reviewer/instructions.md",
+      "profiles/reviewer/profile.yaml",
+      "profiles/reviewer/skills/review/SKILL.md"
+    ]
+  },
+  "materialization_preview": {
+    "optional_layer": true,
+    "target": "local_home",
+    "separate_future_step": true,
+    "would_record_aw_profile_refs_on_materialize": true,
+    "would_write_on_inspect": []
+  },
+  "files_would_write": [],
+  "commands_would_run": [],
+  "required_human_decisions": [],
+  "optional_next_steps": [
+    "continue with empty profiles (no Library subscription required)",
+    "select profiles/counts from this blueprint",
+    "optionally import blueprint to Library when the Library contract is available",
+    "optionally bind agent identities to Library profile refs",
+    "optionally materialize selected profiles into local homes"
+  ]
+}

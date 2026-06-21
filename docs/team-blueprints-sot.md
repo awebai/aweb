@@ -1,7 +1,7 @@
 ---
 title: "Team blueprints and agent profiles"
 kicker: "Product SOT"
-description: "How companies create and operate AI teams from blueprint repos, profile packs, app grants, runtime bindings, and signed audit trails."
+description: "How companies create and operate AI teams from blueprint repos, blueprints, app grants, runtime bindings, and signed audit trails."
 weight: 26
 ---
 
@@ -11,7 +11,7 @@ This is the source of truth for the product surface that lets a company start
 using aweb quickly:
 
 > A human points aweb at a blueprint repo or directory. Aweb inspects it, shows
-> the proposed AI team, copies profile packs into the customer's team/repo,
+> the proposed AI team, copies blueprints into the customer's team/repo,
 > connects agents to runtimes and apps, and opens a workroom where humans can
 > assign work, approve sensitive actions, watch progress, and keep a signed
 > audit trail.
@@ -21,7 +21,7 @@ The old mechanism is still useful: identity-free agent bodies are copied into
 the customer's repo and symlinked from runnable instance homes. The product
 vocabulary changes:
 
-- external/customer-facing: **agent profile** or **profile pack**;
+- external/customer-facing: **agent profile** or **blueprint**;
 - internal/legacy implementation: **soul** may remain as a directory name until
   migration is worth doing;
 - composition unit: **team blueprint**;
@@ -134,9 +134,9 @@ installed copy.
 
 An operating package for one kind of AI coworker.
 
-This is the same concept as a **profile pack**. Do not create separate schema or
-storage concepts for "agent profile", "profile pack", and library profile
-entries. A profile pack is the packaged form of an agent profile.
+This is the same concept as a **blueprint**. Do not create separate schema or
+storage concepts for "agent profile", "blueprint", and library profile
+entries. A blueprint is the packaged form of an agent profile.
 
 It can include:
 
@@ -313,9 +313,9 @@ Choose: approve grant / deny / require human approval
 This is the setup simplifier: the user does not have to invent the tool policy
 from scratch, but authority is still explicit.
 
-## 4. Profile pack contents
+## 4. Blueprint contents
 
-A profile pack is a directory. Recommended shape:
+A blueprint is a directory. Recommended shape:
 
 ```text
 profile.yaml
@@ -783,7 +783,7 @@ Agents may read and propose through these commands. Direct mutation of company
 library entries requires explicit human/coordinator authority.
 
 Profile and skill change proposals are later commands. V1 should not require
-automatic patch application to profile packs:
+automatic patch application to blueprints:
 
 ```bash
 aw library propose skill-change <skill> --patch-file <patch>

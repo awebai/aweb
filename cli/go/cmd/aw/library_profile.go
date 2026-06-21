@@ -8,34 +8,34 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/awebai/aw/internal/profilepack"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 type libraryProfileSelector struct {
-	SourceProfilePackRef     string
-	SourceProfilePackVersion string
-	ProfileRef               string
+	SourceBlueprintRef     string
+	SourceBlueprintVersion string
+	ProfileRef             string
 }
 
 type libraryProfileDetailResponse struct {
-	PackRef            string                                  `json:"pack_ref"`
-	PackVersion        string                                  `json:"pack_version"`
-	ProfileRef         string                                  `json:"profile_ref"`
-	Version            string                                  `json:"version"`
-	Digest             string                                  `json:"digest"`
-	RuntimeAssumptions []string                                `json:"runtime_assumptions"`
-	RuntimeHints       []string                                `json:"runtime_hints"`
-	Files              []profilepack.LibraryProfilePayloadFile `json:"files"`
+	BlueprintRef       string                                `json:"blueprint_ref"`
+	BlueprintVersion   string                                `json:"blueprint_version"`
+	ProfileRef         string                                `json:"profile_ref"`
+	Version            string                                `json:"version"`
+	Digest             string                                `json:"digest"`
+	RuntimeAssumptions []string                              `json:"runtime_assumptions"`
+	RuntimeHints       []string                              `json:"runtime_hints"`
+	Files              []blueprint.LibraryProfilePayloadFile `json:"files"`
 }
 
 type libraryImportToShelfResponse struct {
-	ProfileRef               string `json:"profile_ref"`
-	Version                  string `json:"version"`
-	Digest                   string `json:"digest"`
-	SourceProfilePackRef     string `json:"source_profile_pack_ref"`
-	SourceProfilePackVersion string `json:"source_profile_pack_version"`
-	SourceProfilePackDigest  string `json:"source_profile_pack_digest"`
-	Created                  bool   `json:"created"`
+	ProfileRef             string `json:"profile_ref"`
+	Version                string `json:"version"`
+	Digest                 string `json:"digest"`
+	SourceBlueprintRef     string `json:"source_blueprint_ref"`
+	SourceBlueprintVersion string `json:"source_blueprint_version"`
+	SourceBlueprintDigest  string `json:"source_blueprint_digest"`
+	Created                bool   `json:"created"`
 }
 
 type libraryBindResponse struct {
@@ -50,28 +50,28 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	if trimmed == "" {
 		return libraryProfileSelector{}, usageError("profile selector is required")
 	}
-	packAndProfile := trimmed
+	blueprintAndProfile := trimmed
 	version := ""
 	if before, after, ok := strings.Cut(trimmed, "@"); ok {
-		packAndProfile = strings.TrimSpace(before)
+		blueprintAndProfile = strings.TrimSpace(before)
 		version = strings.TrimSpace(after)
 		if version == "" {
-			return libraryProfileSelector{}, usageError("profile pack version is required after @")
+			return libraryProfileSelector{}, usageError("blueprint version is required after @")
 		}
 	}
-	packRef, profileRef, ok := strings.Cut(packAndProfile, "/")
+	blueprintRef, profileRef, ok := strings.Cut(blueprintAndProfile, "/")
 	if !ok {
-		return libraryProfileSelector{}, usageError("profile selector %q must be PACK_REF/PROFILE_REF[@PACK_VERSION]", raw)
+		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]", raw)
 	}
-	selector := libraryProfileSelector{SourceProfilePackRef: strings.TrimSpace(packRef), SourceProfilePackVersion: version, ProfileRef: strings.TrimSpace(profileRef)}
-	if err := validateLibraryRef("source profile pack ref", selector.SourceProfilePackRef, false); err != nil {
+	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), SourceBlueprintVersion: version, ProfileRef: strings.TrimSpace(profileRef)}
+	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
 	if err := validateLibraryRef("profile ref", selector.ProfileRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
-	if selector.SourceProfilePackVersion != "" {
-		if err := validateLibraryRef("source profile pack version", selector.SourceProfilePackVersion, true); err != nil {
+	if selector.SourceBlueprintVersion != "" {
+		if err := validateLibraryRef("source blueprint version", selector.SourceBlueprintVersion, true); err != nil {
 			return libraryProfileSelector{}, err
 		}
 	}
@@ -79,8 +79,8 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 }
 
 func rejectUnsupportedVersionedLibrarySelector(selector libraryProfileSelector) error {
-	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
-		return usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceProfilePackVersion)
+	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
+		return usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceBlueprintVersion)
 	}
 	return nil
 }
@@ -103,14 +103,14 @@ func validateLibraryRef(field, value string, allowSlash bool) error {
 	return nil
 }
 
-func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*profilepack.MaterializeResult, []string, error) {
+func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
 	if strings.TrimSpace(agentID) == "" {
 		return nil, nil, fmt.Errorf("agent id is required for Library binding")
 	}
 	if err := rejectUnsupportedVersionedLibrarySelector(selector); err != nil {
 		return nil, nil, err
 	}
-	var materialized *profilepack.MaterializeResult
+	var materialized *blueprint.MaterializeResult
 	var written []string
 	err := withWorkingDir(homeDir, func() error {
 		profile, err := callLibraryGetProfile(selector)
@@ -132,17 +132,17 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err := validateBindMatchesImport(bound, imported); err != nil {
 			return err
 		}
-		materialized, err = profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
-			TargetDir:      homeDir,
-			PackRef:        imported.SourceProfilePackRef,
-			PackVersion:    firstNonEmptyLibraryValue(imported.SourceProfilePackVersion, profile.PackVersion, selector.SourceProfilePackVersion),
-			PackDigest:     imported.SourceProfilePackDigest,
-			ProfileRef:     imported.ProfileRef,
-			ProfileVersion: firstNonEmptyLibraryValue(imported.Version, profile.Version),
-			ProfileDigest:  firstNonEmptyLibraryValue(imported.Digest, profile.Digest),
-			RuntimeKind:    runtimeKind,
-			Files:          profile.Files,
-			Force:          force,
+		materialized, err = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+			TargetDir:        homeDir,
+			BlueprintRef:     imported.SourceBlueprintRef,
+			BlueprintVersion: firstNonEmptyLibraryValue(imported.SourceBlueprintVersion, profile.BlueprintVersion, selector.SourceBlueprintVersion),
+			BlueprintDigest:  imported.SourceBlueprintDigest,
+			ProfileRef:       imported.ProfileRef,
+			ProfileVersion:   firstNonEmptyLibraryValue(imported.Version, profile.Version),
+			ProfileDigest:    firstNonEmptyLibraryValue(imported.Digest, profile.Digest),
+			RuntimeKind:      runtimeKind,
+			Files:            profile.Files,
+			Force:            force,
 		})
 		if err != nil {
 			return fmt.Errorf("local profile materialize: %w", err)
@@ -169,7 +169,7 @@ func withWorkingDir(dir string, fn func() error) error {
 }
 
 func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
-	body, err := executeLibraryToolBody([]string{"get-profile", "--pack_ref", selector.SourceProfilePackRef, "--profile_ref", selector.ProfileRef})
+	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef})
 	if err != nil {
 		return nil, err
 	}
@@ -180,11 +180,11 @@ func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDeta
 	if out.ProfileRef == "" {
 		out.ProfileRef = selector.ProfileRef
 	}
-	if out.PackRef == "" {
-		out.PackRef = selector.SourceProfilePackRef
+	if out.BlueprintRef == "" {
+		out.BlueprintRef = selector.SourceBlueprintRef
 	}
-	if out.PackVersion == "" {
-		out.PackVersion = selector.SourceProfilePackVersion
+	if out.BlueprintVersion == "" {
+		out.BlueprintVersion = selector.SourceBlueprintVersion
 	}
 	return &out, nil
 }
@@ -198,24 +198,24 @@ func validateFetchedProfileMatchesImport(selector libraryProfileSelector, profil
 		got   string
 		want  string
 	}{
-		{field: "pack_ref", got: profile.PackRef, want: imported.SourceProfilePackRef},
+		{field: "blueprint_ref", got: profile.BlueprintRef, want: imported.SourceBlueprintRef},
 		{field: "profile_ref", got: profile.ProfileRef, want: imported.ProfileRef},
 		{field: "profile_version", got: profile.Version, want: imported.Version},
 		{field: "profile_digest", got: profile.Digest, want: imported.Digest},
 	}
-	if strings.TrimSpace(imported.SourceProfilePackVersion) != "" {
+	if strings.TrimSpace(imported.SourceBlueprintVersion) != "" {
 		checks = append(checks, struct {
 			field string
 			got   string
 			want  string
-		}{field: "pack_version", got: profile.PackVersion, want: imported.SourceProfilePackVersion})
+		}{field: "blueprint_version", got: profile.BlueprintVersion, want: imported.SourceBlueprintVersion})
 	}
-	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
+	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
 		checks = append(checks, struct {
 			field string
 			got   string
 			want  string
-		}{field: "selector_pack_version", got: profile.PackVersion, want: selector.SourceProfilePackVersion})
+		}{field: "selector_blueprint_version", got: profile.BlueprintVersion, want: selector.SourceBlueprintVersion})
 	}
 	for _, check := range checks {
 		got := strings.TrimSpace(check.got)
@@ -267,9 +267,9 @@ func chooseLibraryRuntimeKind(hints []string) string {
 }
 
 func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {
-	args := []string{"import-to-shelf", "--source_profile_pack_ref", selector.SourceProfilePackRef, "--profile_ref", selector.ProfileRef}
-	if strings.TrimSpace(selector.SourceProfilePackVersion) != "" {
-		args = append(args, "--source_profile_pack_version", selector.SourceProfilePackVersion)
+	args := []string{"import-to-shelf", "--source_blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef}
+	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
+		args = append(args, "--source_blueprint_version", selector.SourceBlueprintVersion)
 	}
 	body, err := executeLibraryToolBody(args)
 	if err != nil {
@@ -282,8 +282,8 @@ func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportTo
 	if out.ProfileRef == "" || out.Version == "" || out.Digest == "" {
 		return nil, fmt.Errorf("library import-to-shelf response missing profile ref/version/digest")
 	}
-	if out.SourceProfilePackRef == "" {
-		out.SourceProfilePackRef = selector.SourceProfilePackRef
+	if out.SourceBlueprintRef == "" {
+		out.SourceBlueprintRef = selector.SourceBlueprintRef
 	}
 	return &out, nil
 }
@@ -298,7 +298,7 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 		"--profile_ref", imported.ProfileRef,
 		"--profile_version", imported.Version,
 		"--profile_digest", imported.Digest,
-		"--source_profile_pack_ref", imported.SourceProfilePackRef,
+		"--source_blueprint_ref", imported.SourceBlueprintRef,
 	})
 	if err != nil {
 		return nil, err

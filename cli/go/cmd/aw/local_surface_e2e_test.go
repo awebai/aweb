@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/internal/profilepack"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 func TestLocalSurfaceE2EEmptyProfileCreateAddStartFailure(t *testing.T) {
@@ -108,8 +108,8 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("AW_CONFIG_PATH", "")
 
-	profileFiles := func(profileRef string) []profilepack.LibraryProfilePayloadFile {
-		return []profilepack.LibraryProfilePayloadFile{
+	profileFiles := func(profileRef string) []blueprint.LibraryProfilePayloadFile {
+		return []blueprint.LibraryProfilePayloadFile{
 			{Path: "profile.yaml", ContentUTF8: "id: " + profileRef + "\nname: " + profileRef + "\nversion: 0.1.0\nmission: Work with the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 			{Path: "instructions.md", ContentUTF8: "Work together.\n"},
 		}
@@ -134,7 +134,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"library","version":"test","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"get-profile","auth":"none","method":"GET","path":"/v1/profile-packs/{pack_ref}/profiles/{profile_ref}","input_schema":{"type":"object","properties":{"pack_ref":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"pack_ref","in":"path"},{"name":"profile_ref","in":"path"}],"mutation":false},{"name":"import-to-shelf","method":"POST","path":"/v1/shelf/import","input_schema":{"type":"object","properties":{"source_profile_pack_ref":{"type":"string"},"source_profile_pack_version":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"source_profile_pack_ref","in":"body"},{"name":"source_profile_pack_version","in":"body"},{"name":"profile_ref","in":"body"}],"body":{"mode":"json"},"mutation":true},{"name":"bind","method":"POST","path":"/v1/agents/{agent_id}/profile-binding","input_schema":{"type":"object","properties":{"agent_id":{"type":"string"},"profile_ref":{"type":"string"},"profile_version":{"type":"string"},"profile_digest":{"type":"string"},"source_profile_pack_ref":{"type":"string"}}},"params":[{"name":"agent_id","in":"path"},{"name":"profile_ref","in":"body"},{"name":"profile_version","in":"body"},{"name":"profile_digest","in":"body"},{"name":"source_profile_pack_ref","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`))
+			_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"library","version":"test","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"get-profile","auth":"none","method":"GET","path":"/v1/blueprints/{blueprint_ref}/profiles/{profile_ref}","input_schema":{"type":"object","properties":{"blueprint_ref":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"blueprint_ref","in":"path"},{"name":"profile_ref","in":"path"}],"mutation":false},{"name":"import-to-shelf","method":"POST","path":"/v1/shelf/import","input_schema":{"type":"object","properties":{"source_blueprint_ref":{"type":"string"},"source_blueprint_version":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"source_blueprint_ref","in":"body"},{"name":"source_blueprint_version","in":"body"},{"name":"profile_ref","in":"body"}],"body":{"mode":"json"},"mutation":true},{"name":"bind","method":"POST","path":"/v1/agents/{agent_id}/profile-binding","input_schema":{"type":"object","properties":{"agent_id":{"type":"string"},"profile_ref":{"type":"string"},"profile_version":{"type":"string"},"profile_digest":{"type":"string"},"source_blueprint_ref":{"type":"string"}}},"params":[{"name":"agent_id","in":"path"},{"name":"profile_ref","in":"body"},{"name":"profile_version","in":"body"},{"name":"profile_digest","in":"body"},{"name":"source_blueprint_ref","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": "", "aweb_url": r.Host, "registry_url": r.Host})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
@@ -161,11 +161,11 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent", "eng:local", "agent")
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/profile-packs/aweb.engineering-pack/profiles/"):
-			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/profile-packs/aweb.engineering-pack/profiles/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/"):
+			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"pack_ref":            "aweb.engineering-pack",
-				"pack_version":        "0.1.0",
+				"blueprint_ref":       "aweb.engineering",
+				"blueprint_version":   "0.1.0",
 				"profile_ref":         profileRef,
 				"version":             "0.1.0",
 				"digest":              profileDigests[profileRef],
@@ -183,7 +183,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				t.Fatal(err)
 			}
 			profileRef, _ := body["profile_ref"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigests[profileRef], "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": true})
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigests[profileRef], "source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0", "source_blueprint_digest": "sha256:blueprint", "created": true})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
 			bindCalls++
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
@@ -216,7 +216,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("install library manifest: %v", err)
 	}
 
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/coordinator", "aweb.engineering-pack/reviewer"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/coordinator", "aweb.engineering/reviewer"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
 	}
@@ -243,10 +243,10 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 	teamHumanAddHome = filepath.Join(root, "auditor-home")
-	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering-pack/coordinator"}); err != nil {
+	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering/coordinator"}); err != nil {
 		t.Fatalf("team add profile: %v", err)
 	}
-	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering-pack/coordinator"}); err != nil {
+	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering/coordinator"}); err != nil {
 		t.Fatalf("rerun team add profile: %v", err)
 	}
 	agentHome := teamHumanAddHome
@@ -264,16 +264,16 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 }
 
-func testLibraryProfilePayloadDigestForProfile(t *testing.T, profileRef string, files []profilepack.LibraryProfilePayloadFile) string {
+func testLibraryProfilePayloadDigestForProfile(t *testing.T, profileRef string, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	result, err := profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:      t.TempDir(),
-		PackRef:        "aweb.engineering-pack",
-		PackVersion:    "0.1.0",
-		ProfileRef:     profileRef,
-		ProfileVersion: "0.1.0",
-		RuntimeKind:    "local-shell",
-		Files:          files,
+	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:        t.TempDir(),
+		BlueprintRef:     "aweb.engineering",
+		BlueprintVersion: "0.1.0",
+		ProfileRef:       profileRef,
+		ProfileVersion:   "0.1.0",
+		RuntimeKind:      "local-shell",
+		Files:            files,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -283,11 +283,11 @@ func testLibraryProfilePayloadDigestForProfile(t *testing.T, profileRef string, 
 
 func TestLocalSurfaceE2ELocalPackMaterializeStartStatusStop(t *testing.T) {
 	resetAgentRuntimeGlobals(t)
-	fixture := engineeringProfilePackFixtureRoot(t)
+	fixture := engineeringBlueprintFixtureRoot(t)
 	home := t.TempDir()
 	var materializeOut bytes.Buffer
-	if err := runProfilePackMaterialize(&materializeOut, filepath.Join(fixture, "source"), "developer", home, false, false); err != nil {
-		t.Fatalf("materialize local pack: %v", err)
+	if err := runBlueprintMaterialize(&materializeOut, filepath.Join(fixture, "source"), "developer", home, false, false); err != nil {
+		t.Fatalf("materialize local blueprint: %v", err)
 	}
 	for _, rel := range []string{"AGENTS.md", "CLAUDE.md", ".aw/profile/profile.yaml", "skills/implement/SKILL.md", "artifacts/handoff-template.md"} {
 		if _, err := os.Lstat(filepath.Join(home, filepath.FromSlash(rel))); err != nil {

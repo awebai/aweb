@@ -183,7 +183,7 @@ func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	teamHumanCreateHome = filepath.Join(root, "custom-home")
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer", "aweb.engineering-pack/coordinator"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/developer", "aweb.engineering/coordinator"}
 
 	err := runTeamHumanCreate(nil, []string{"eng"})
 	if err == nil || !strings.Contains(err.Error(), "--home") || !strings.Contains(err.Error(), "single") {
@@ -200,8 +200,8 @@ func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
 func TestTeamHumanCreateRosterRejectsDuplicateDerivedAgentNames(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	_, err := teamHumanCreateRosterSpecs([]libraryProfileSelector{
-		{SourceProfilePackRef: "pack.one", ProfileRef: "alice"},
-		{SourceProfilePackRef: "pack.two", ProfileRef: "Alice"},
+		{SourceBlueprintRef: "blueprint.one", ProfileRef: "alice"},
+		{SourceBlueprintRef: "blueprint.two", ProfileRef: "Alice"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
 		t.Fatalf("error=%v", err)
@@ -215,7 +215,7 @@ func TestTeamHumanCreateRosterDuplicateNamesFailBeforeInit(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/alice", "other-pack/Alice"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/alice", "other-blueprint/Alice"}
 	initCalled := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		initCalled = true
@@ -244,7 +244,7 @@ func TestTeamHumanCreateRosterInvalidNameFailsBeforeInit(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/bad name", "aweb.engineering-pack/alice"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/bad name", "aweb.engineering/alice"}
 	initCalled := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		initCalled = true
@@ -314,7 +314,7 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	teamHumanAddLayoutOnly = true
 
-	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer"})
+	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
 	if err == nil || !strings.Contains(err.Error(), "--layout-only") {
 		t.Fatalf("error=%v", err)
 	}
@@ -598,7 +598,7 @@ func TestTeamHumanCreateRejectsVersionedLibraryProfileBeforeIdentity(t *testing.
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer@0.1.0"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/developer@0.1.0"}
 	called := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		called = true
@@ -657,7 +657,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 		t.Fatal(err)
 	}
 
-	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer"})
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
 	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
 		t.Fatalf("error=%v", err)
 	}
@@ -675,7 +675,7 @@ func TestTeamHumanAddRejectsVersionedLibraryProfileBeforeHomeCreate(t *testing.T
 	root := t.TempDir()
 	t.Chdir(root)
 
-	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering-pack/developer@0.1.0"})
+	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer@0.1.0"})
 	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
 		t.Fatalf("error=%v", err)
 	}
@@ -692,7 +692,7 @@ func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AW_CONFIG_PATH", "")
 	t.Chdir(t.TempDir())
-	teamHumanCreateProfiles = []string{"aweb.engineering-pack/developer"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/developer"}
 	called := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		called = true

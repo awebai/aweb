@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/internal/profilepack"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 func TestChooseLibraryRuntimeKindUsesFirstSupportedRuntimeHint(t *testing.T) {
@@ -52,13 +52,13 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	var importBody, bindBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
+		case "/v1/blueprints/aweb.engineering/profiles/coordinator":
 			if r.Header.Get("Authorization") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" {
 				t.Fatalf("auth:none get-profile should be unsigned: %#v", r.Header)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"pack_ref":            "aweb.engineering-pack",
-				"pack_version":        "0.1.0",
+				"blueprint_ref":       "aweb.engineering",
+				"blueprint_version":   "0.1.0",
 				"profile_ref":         "coordinator",
 				"version":             "0.1.0",
 				"digest":              profileDigest,
@@ -74,13 +74,13 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"profile_ref":                 "coordinator",
-				"version":                     "0.1.0",
-				"digest":                      profileDigest,
-				"source_profile_pack_ref":     "aweb.engineering-pack",
-				"source_profile_pack_version": "0.1.0",
-				"source_profile_pack_digest":  "sha256:pack",
-				"created":                     true,
+				"profile_ref":              "coordinator",
+				"version":                  "0.1.0",
+				"digest":                   profileDigest,
+				"source_blueprint_ref":     "aweb.engineering",
+				"source_blueprint_version": "0.1.0",
+				"source_blueprint_digest":  "sha256:blueprint",
+				"created":                  true,
 			})
 		case "/v1/agents/coordinator/profile-binding":
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
@@ -99,7 +99,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
+	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	if _, err := os.Lstat(filepath.Join(home, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("local-shell profile unexpectedly wrote CLAUDE.md: %v", err)
 	}
-	if importBody["source_profile_pack_ref"] != "aweb.engineering-pack" || importBody["source_profile_pack_version"] != nil || importBody["profile_ref"] != "coordinator" {
+	if importBody["source_blueprint_ref"] != "aweb.engineering" || importBody["source_blueprint_version"] != nil || importBody["profile_ref"] != "coordinator" {
 		t.Fatalf("import body=%#v", importBody)
 	}
 	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.1.0" || bindBody["profile_digest"] != profileDigest {
@@ -126,7 +126,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 
 func TestApplyLibraryProfileToHomeRejectsVersionedSelectorUntilVersionedSourceFetch(t *testing.T) {
 	home := t.TempDir()
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator@0.1.0")
+	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator@0.1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +155,10 @@ func TestApplyLibraryProfileToHomeRejectsBindImportMismatchBeforeWrite(t *testin
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
-			_ = json.NewEncoder(w).Encode(map[string]any{"pack_ref": "aweb.engineering-pack", "pack_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "runtime_assumptions": []string{"local shell"}, "runtime_hints": []string{"local-shell"}, "files": files})
+		case "/v1/blueprints/aweb.engineering/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "runtime_assumptions": []string{"local shell"}, "runtime_hints": []string{"local-shell"}, "files": files})
 		case "/v1/shelf/import":
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "source_profile_pack_ref": "aweb.engineering-pack", "source_profile_pack_version": "0.1.0", "source_profile_pack_digest": "sha256:pack", "created": false})
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": "coordinator", "version": "0.1.0", "digest": profileDigest, "source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0", "source_blueprint_digest": "sha256:blueprint", "created": false})
 		case "/v1/agents/coordinator/profile-binding":
 			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "coordinator", "profile_ref": "coordinator", "profile_version": "0.1.0", "profile_digest": "sha256:other"})
 		default:
@@ -168,7 +168,7 @@ func TestApplyLibraryProfileToHomeRejectsBindImportMismatchBeforeWrite(t *testin
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
+	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,10 +196,10 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 	var bindCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/profile-packs/aweb.engineering-pack/profiles/coordinator":
+		case "/v1/blueprints/aweb.engineering/profiles/coordinator":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"pack_ref":            "aweb.engineering-pack",
-				"pack_version":        "0.2.0",
+				"blueprint_ref":       "aweb.engineering",
+				"blueprint_version":   "0.2.0",
 				"profile_ref":         "coordinator",
 				"version":             "0.2.0",
 				"digest":              "sha256:latest",
@@ -208,13 +208,13 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 			})
 		case "/v1/shelf/import":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"profile_ref":                 "coordinator",
-				"version":                     "0.1.0",
-				"digest":                      "sha256:pinned",
-				"source_profile_pack_ref":     "aweb.engineering-pack",
-				"source_profile_pack_version": "0.1.0",
-				"source_profile_pack_digest":  "sha256:pack",
-				"created":                     false,
+				"profile_ref":              "coordinator",
+				"version":                  "0.1.0",
+				"digest":                   "sha256:pinned",
+				"source_blueprint_ref":     "aweb.engineering",
+				"source_blueprint_version": "0.1.0",
+				"source_blueprint_digest":  "sha256:blueprint",
+				"created":                  false,
 			})
 		case "/v1/agents/coordinator/profile-binding":
 			bindCalled = true
@@ -226,7 +226,7 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering-pack/coordinator")
+	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,23 +242,23 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 	}
 }
 
-func testLibraryProfilePayloadFiles() []profilepack.LibraryProfilePayloadFile {
-	return []profilepack.LibraryProfilePayloadFile{
+func testLibraryProfilePayloadFiles() []blueprint.LibraryProfilePayloadFile {
+	return []blueprint.LibraryProfilePayloadFile{
 		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
 	}
 }
 
-func testLibraryProfilePayloadDigest(t *testing.T, files []profilepack.LibraryProfilePayloadFile) string {
+func testLibraryProfilePayloadDigest(t *testing.T, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	result, err := profilepack.MaterializeLibraryProfilePayload(profilepack.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:      t.TempDir(),
-		PackRef:        "aweb.engineering-pack",
-		PackVersion:    "0.1.0",
-		ProfileRef:     "coordinator",
-		ProfileVersion: "0.1.0",
-		RuntimeKind:    "local-shell",
-		Files:          files,
+	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:        t.TempDir(),
+		BlueprintRef:     "aweb.engineering",
+		BlueprintVersion: "0.1.0",
+		ProfileRef:       "coordinator",
+		ProfileVersion:   "0.1.0",
+		RuntimeKind:      "local-shell",
+		Files:            files,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +272,7 @@ func writeLibraryManifestPluginForTest(t *testing.T, home, origin string) {
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"manifest_version":1,"app":{"id":"library","version":"test","origin":"` + origin + `"},"tools":[{"name":"get-profile","auth":"none","method":"GET","path":"/v1/profile-packs/{pack_ref}/profiles/{profile_ref}","input_schema":{"type":"object","properties":{"pack_ref":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"pack_ref","in":"path"},{"name":"profile_ref","in":"path"}],"mutation":false},{"name":"import-to-shelf","method":"POST","path":"/v1/shelf/import","input_schema":{"type":"object","properties":{"source_profile_pack_ref":{"type":"string"},"source_profile_pack_version":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"source_profile_pack_ref","in":"body"},{"name":"source_profile_pack_version","in":"body"},{"name":"profile_ref","in":"body"}],"body":{"mode":"json"},"mutation":true},{"name":"bind","method":"POST","path":"/v1/agents/{agent_id}/profile-binding","input_schema":{"type":"object","properties":{"agent_id":{"type":"string"},"profile_ref":{"type":"string"},"profile_version":{"type":"string"},"profile_digest":{"type":"string"},"source_profile_pack_ref":{"type":"string"}}},"params":[{"name":"agent_id","in":"path"},{"name":"profile_ref","in":"body"},{"name":"profile_version","in":"body"},{"name":"profile_digest","in":"body"},{"name":"source_profile_pack_ref","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`
+	manifest := `{"manifest_version":1,"app":{"id":"library","version":"test","origin":"` + origin + `"},"tools":[{"name":"get-profile","auth":"none","method":"GET","path":"/v1/blueprints/{blueprint_ref}/profiles/{profile_ref}","input_schema":{"type":"object","properties":{"blueprint_ref":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"blueprint_ref","in":"path"},{"name":"profile_ref","in":"path"}],"mutation":false},{"name":"import-to-shelf","method":"POST","path":"/v1/shelf/import","input_schema":{"type":"object","properties":{"source_blueprint_ref":{"type":"string"},"source_blueprint_version":{"type":"string"},"profile_ref":{"type":"string"}}},"params":[{"name":"source_blueprint_ref","in":"body"},{"name":"source_blueprint_version","in":"body"},{"name":"profile_ref","in":"body"}],"body":{"mode":"json"},"mutation":true},{"name":"bind","method":"POST","path":"/v1/agents/{agent_id}/profile-binding","input_schema":{"type":"object","properties":{"agent_id":{"type":"string"},"profile_ref":{"type":"string"},"profile_version":{"type":"string"},"profile_digest":{"type":"string"},"source_blueprint_ref":{"type":"string"}}},"params":[{"name":"agent_id","in":"path"},{"name":"profile_ref","in":"body"},{"name":"profile_version","in":"body"},{"name":"profile_digest","in":"body"},{"name":"source_blueprint_ref","in":"body"}],"body":{"mode":"json"},"mutation":true}]}`
 	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ These documents define the system:
   the `aw` team/identity/setup command taxonomy: everyday intents, agent
   primitives, protocol/admin primitives, and obsolete/legacy compatibility
 - [team-blueprints-sot.md](team-blueprints-sot.md): product SOT for creating
-  AI teams from blueprint repos/directories, profile packs, runtime bindings,
+  AI teams from blueprint repos/directories, profiles, runtime bindings,
   team-owned app grants, subscriptions, and signed audit trails
 - [launch-readiness-sot.md](launch-readiness-sot.md): product SOT for the
   launch/VC-readiness wedge: first-party engineering blueprint, native `aw`

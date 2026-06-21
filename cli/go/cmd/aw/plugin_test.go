@@ -590,7 +590,7 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 func TestLibraryManifestFixtureConformsAndDeclaresExpectedTools(t *testing.T) {
 	data := readLibraryManifestFixtureForTest(t)
 	sum := sha256.Sum256(data)
-	if got, want := fmt.Sprintf("%x", sum), "fe286edd11e449f4e242494ff049383081df6c98e7325ab818c2eb77857fedf5"; got != want {
+	if got, want := fmt.Sprintf("%x", sum), "2eac1d5063e454f15db344e2dbfab619495f068eb7b0a94686fff3ae45f6df16"; got != want {
 		t.Fatalf("library manifest fixture sha256=%s want %s", got, want)
 	}
 	var manifest appmanifest.Manifest
@@ -613,7 +613,7 @@ func TestLibraryManifestFixtureConformsAndDeclaresExpectedTools(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"approve", "bind", "create-shelf-profile", "get-binding", "get-pack", "get-profile", "import-to-shelf", "list-packs", "materialize", "proposals", "propose", "publish-pack", "publish-profile", "register", "reject", "set-pack-tags", "set-profile-tags", "shelf", "shelf-version", "update-from-source"}
+	want := []string{"approve", "bind", "create-shelf-profile", "get-binding", "get-blueprint", "get-profile", "import-to-shelf", "list-blueprints", "materialize", "proposals", "propose", "publish-blueprint", "publish-profile", "register", "reject", "set-blueprint-tags", "set-profile-tags", "shelf", "shelf-version", "update-from-source"}
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("library manifest tools got %v want %v", got, want)
@@ -641,16 +641,16 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 		case "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(rewriteLibraryManifestOriginForTest(t, manifestBytes, serverOriginForTest(r)))
-		case "/v1/profile-packs":
+		case "/v1/blueprints":
 			if r.Method != http.MethodGet {
-				t.Fatalf("list-packs method=%s", r.Method)
+				t.Fatalf("list-blueprints method=%s", r.Method)
 			}
 			if r.Header.Get("Authorization") != "" || r.Header.Get("X-AWEB-Signed-Payload") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" {
-				t.Fatalf("auth:none list-packs should be unsigned, got headers: %#v", r.Header)
+				t.Fatalf("auth:none list-blueprints should be unsigned, got headers: %#v", r.Header)
 			}
 			sawListPacks = true
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"pack_ref":"aweb.engineering-pack","version":"0.1.0"}]`))
+			_, _ = w.Write([]byte(`[{"blueprint_ref":"aweb.engineering","version":"0.1.0"}]`))
 		case "/v1/shelf/import":
 			if r.Method != http.MethodPost {
 				t.Fatalf("import-to-shelf method=%s", r.Method)
@@ -662,12 +662,12 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["source_profile_pack_ref"] != "aweb.engineering-pack" || body["profile_ref"] != "developer" {
+			if body["source_blueprint_ref"] != "aweb.engineering" || body["profile_ref"] != "developer" {
 				t.Fatalf("unexpected import-to-shelf body: %#v", body)
 			}
 			sawImportToShelf = true
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"profile_ref":"developer","version":"0.1.0","digest":"sha256:dev","source_profile_pack_ref":"aweb.engineering-pack","source_profile_pack_version":"0.1.0","source_profile_pack_digest":"sha256:pack","created":true}`))
+			_, _ = w.Write([]byte(`{"profile_ref":"developer","version":"0.1.0","digest":"sha256:dev","source_blueprint_ref":"aweb.engineering","source_blueprint_version":"0.1.0","source_blueprint_digest":"sha256:blueprint","created":true}`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -681,19 +681,19 @@ func TestLibraryManifestPluginInstallAndDispatch(t *testing.T) {
 		t.Fatalf("library plugin install failed: %v\n%s", err, string(out))
 	}
 
-	list := exec.CommandContext(ctx, bin, "library", "list-packs")
+	list := exec.CommandContext(ctx, bin, "library", "list-blueprints")
 	list.Dir = tmp
 	list.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
 	listOut, err := list.CombinedOutput()
 	if err != nil {
-		t.Fatalf("library list-packs without identity failed: %v\n%s", err, string(listOut))
+		t.Fatalf("library list-blueprints without identity failed: %v\n%s", err, string(listOut))
 	}
-	if !strings.Contains(string(listOut), "aweb.engineering-pack") {
-		t.Fatalf("list-packs output missing pack: %s", string(listOut))
+	if !strings.Contains(string(listOut), "aweb.engineering") {
+		t.Fatalf("list-blueprints output missing blueprint: %s", string(listOut))
 	}
 
 	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
-	adopt := exec.CommandContext(ctx, bin, "library", "import-to-shelf", "--source_profile_pack_ref", "aweb.engineering-pack", "--profile_ref", "developer")
+	adopt := exec.CommandContext(ctx, bin, "library", "import-to-shelf", "--source_blueprint_ref", "aweb.engineering", "--profile_ref", "developer")
 	adopt.Dir = tmp
 	adopt.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
 	adoptOut, err := adopt.CombinedOutput()

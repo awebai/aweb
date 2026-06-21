@@ -127,7 +127,7 @@ Outcome: a company can start from a high-quality AI dev team blueprint.
 Required:
 
 - `blueprint.yaml` for the engineering team;
-- coordinator, developer, and reviewer profile packs;
+- coordinator, developer, and reviewer blueprints;
 - each profile has mission, responsibilities, app requests, approval needs,
   runtime hints, and done criteria;
 - realistic defaults for tasks/messages/GitHub/dev;
@@ -141,7 +141,7 @@ Acceptance criteria:
 - applying the blueprint creates a pinned installed snapshot;
 - the first assigned engineering task does not require a long custom prompt to
   make the team useful;
-- profile/profile-pack/library-profile remain one concept.
+- profile/blueprint/library-profile remain one concept.
 
 ### L3. Native `aw` setup path
 
@@ -403,7 +403,7 @@ Acceptance criteria:
 ## 6. Suggested sequencing
 
 1. Freeze the launch demo narrative and exact first task.
-2. Build the engineering blueprint/profile packs to product quality.
+2. Build the engineering blueprint/blueprints to product quality.
 3. Implement `aw blueprint inspect/apply` for local dirs.
 4. Implement `aw team create --from` as a wrapper over existing primitives.
 5. Implement `aw agent add/start/status` for local runtime.

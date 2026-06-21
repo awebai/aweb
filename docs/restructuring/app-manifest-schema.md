@@ -262,7 +262,7 @@ auth control, and it has exactly two values:
   caller's v2 team-auth identity (as above).
 - **`"none"`** — a public tool: the request is sent **unsigned**, with no
   signing identity resolved. This is what lets a zero-identity caller browse a
-  public catalog (e.g. `aw library list-packs`).
+  public catalog (e.g. `aw library list-blueprints`).
 
 Hard rules a consumer MUST enforce identically:
 
@@ -275,7 +275,7 @@ Hard rules a consumer MUST enforce identically:
 
 aw implements this in `internal/appmanifest` (`normalizeToolAuth`) and the
 plugin dispatch (signed vs unsigned branch). The live `library` manifest uses
-it: `list-packs`, `get-pack`, `get-profile` are `auth: "none"`; every mutation
+it: `list-blueprints`, `get-blueprint`, `get-profile` are `auth: "none"`; every mutation
 omits `auth` and is signed.
 
 ## Future manifest versions (backlog — not v1)

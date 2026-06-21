@@ -101,7 +101,7 @@ manifest, task default-aaas.14.4):
 - team-cert auth must be expressible (the manifest tools are signed with the
   team cert, as today).
 - the finalized `import-to-shelf` (`POST /v1/shelf/import`, request
-  `{source_profile_pack_ref, source_profile_pack_version?, profile_ref, tags?}`)
+  `{source_blueprint_ref, source_blueprint_version?, profile_ref, tags?}`)
   maps to one tool.
 
 Any operation that does not fit v1 is a manifest-spec gap to close (coordinator +

@@ -1,0 +1,93 @@
+{
+  "blueprint_digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+  "blueprint_payload_fields": {
+    "files": [
+      {
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cblueprint-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
+      }
+    ],
+    "path_base": "blueprint-relative",
+    "schema": "aweb.blueprint.import-payload.v1"
+  },
+  "blueprint_payload_path_base": "blueprint-relative",
+  "blueprint_payload_path_base_description": "paths are POSIX paths relative to the blueprint root directory",
+  "blueprint_payload_schema": "aweb.blueprint.import-payload.v1",
+  "canonicalization": {
+    "go_encoder_set_escape_html": false,
+    "hash": "sha256 hex over UTF-8 canonical JSON bytes",
+    "json_ensure_ascii": false,
+    "json_separators": [
+      ",",
+      ":"
+    ],
+    "json_sort_keys": true
+  },
+  "excluded_from_payload": [
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".cache",
+    "dist",
+    "build",
+    "target",
+    "tmp",
+    "vendor",
+    "__pycache__"
+  ],
+  "forbidden_fail_closed": [
+    ".aw",
+    "private keys",
+    "certificates",
+    "tokens",
+    "secrets",
+    "generated worktrees",
+    "runtime state",
+    "symlinks",
+    "absolute/traversal/scheme/host paths"
+  ],
+  "payload_fields": {
+    "files": [
+      {
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cblueprint-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
+      }
+    ],
+    "schema": "aweb.blueprint.import-payload.v1"
+  },
+  "profile_digests": [
+    {
+      "digest": "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0",
+      "profile_ref": "coordinator",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+      "profile_ref": "developer",
+      "version": "0.1.0"
+    },
+    {
+      "digest": "sha256:1ea7930bbb43c956133d9f277a24e777e56e69efedab40cae128b6f7880c98c3",
+      "profile_ref": "reviewer",
+      "version": "0.1.0"
+    }
+  ],
+  "profile_payload_fields": {
+    "files": [
+      {
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cprofile-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
+      }
+    ],
+    "path_base": "profile-relative",
+    "schema": "aweb.blueprint.profile-payload.v1"
+  },
+  "profile_payload_path_base": "profile-relative",
+  "profile_payload_path_base_description": "paths are POSIX paths relative to profiles/\u003cprofile_ref\u003e/, not relative to the blueprint root",
+  "profile_payload_schema": "aweb.blueprint.profile-payload.v1",
+  "schema": "aweb.blueprint.digest-inputs.v1"
+}

@@ -1,0 +1,77 @@
+Blueprint: Engineering AI Team Starter Blueprint (aweb.engineering)
+Version: 0.1.0
+Source: local_dir FIXTURE/source
+Digest: sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b (local_import_payload)
+Summary: Coordinator, developer, and reviewer profiles for repo work.
+Description: First-party starter blueprint for local engineering agent teams.
+Expected apps (setup hints, not grants): audit, github, library, secrets, tasks
+Runtime hints: claude-code, codex, pi
+
+Profiles:
+  - coordinator: Coordinator@0.1.0, count 1 (range 1-1)
+    mission: Coordinate the team, keep work unblocked, and maintain evidence.
+    expected apps (setup hints, not grants): audit, library, tasks
+    runtime assumptions: local shell, git checkout, aw CLI
+    instructions: profiles/coordinator/instructions.md
+    skills:
+      - profiles/coordinator/skills/coordinate/SKILL.md
+    artifacts:
+      - profiles/coordinator/artifacts/status-template.md (status_template)
+  - developer: Developer@0.1.0, count 2 (range 1-4)
+    mission: Implement scoped changes with tests and concise evidence.
+    expected apps (setup hints, not grants): audit, github, tasks
+    runtime assumptions: local shell, git checkout, language test tools
+    instructions: profiles/developer/instructions.md
+    skills:
+      - profiles/developer/skills/implement/SKILL.md
+    artifacts:
+      - profiles/developer/artifacts/handoff-template.md (handoff_template)
+  - reviewer: Reviewer@0.1.0, count 1 (range 0-2)
+    mission: Review changes for correctness, safety, tests, and contract fit.
+    expected apps (setup hints, not grants): audit, github, tasks
+    runtime assumptions: local shell, git checkout, test tools
+    instructions: profiles/reviewer/instructions.md
+    skills:
+      - profiles/reviewer/skills/review/SKILL.md
+    artifacts:
+      - profiles/reviewer/artifacts/review-template.md (review_template)
+
+Optional Library import preview (separate future step; inspect uploads nothing):
+  optional layer: true
+  requires Library subscription: true
+  endpoint: POST /v1/blueprints/import
+  would upload on import: true
+  payload digest: sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b
+  payload files:
+    - README.md
+    - blueprint.yaml
+    - missions.yaml
+    - profiles/coordinator/artifacts/status-template.md
+    - profiles/coordinator/instructions.md
+    - profiles/coordinator/profile.yaml
+    - profiles/coordinator/skills/coordinate/SKILL.md
+    - profiles/developer/artifacts/handoff-template.md
+    - profiles/developer/instructions.md
+    - profiles/developer/profile.yaml
+    - profiles/developer/skills/implement/SKILL.md
+    - profiles/reviewer/artifacts/review-template.md
+    - profiles/reviewer/instructions.md
+    - profiles/reviewer/profile.yaml
+    - profiles/reviewer/skills/review/SKILL.md
+
+Optional materialization preview (separate future step; inspect writes nothing):
+  optional layer: true
+  target: local_home
+  would record .aw profile refs on materialize: true
+
+Files that would be written by inspect: none
+Commands that would run: none
+
+Required human decisions for inspect: none
+
+Optional next steps:
+  - continue with empty profiles (no Library subscription required)
+  - select profiles/counts from this blueprint
+  - optionally import blueprint to Library when the Library contract is available
+  - optionally bind agent identities to Library profile refs
+  - optionally materialize selected profiles into local homes
