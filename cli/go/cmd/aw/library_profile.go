@@ -11,10 +11,13 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 )
 
+const defaultMaterializeRuntimeKind = "claude-code"
+
 type libraryProfileSelector struct {
 	SourceBlueprintRef     string
 	SourceBlueprintVersion string
 	ProfileRef             string
+	RuntimeKind            string
 }
 
 type libraryProfileDetailResponse struct {
@@ -50,9 +53,23 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	if trimmed == "" {
 		return libraryProfileSelector{}, usageError("profile selector is required")
 	}
-	blueprintAndProfile := trimmed
+	runtimeKind := ""
+	blueprintProfileVersion := trimmed
+	if before, after, ok := strings.Cut(trimmed, "="); ok {
+		blueprintProfileVersion = strings.TrimSpace(before)
+		runtimeKind = strings.TrimSpace(after)
+		if runtimeKind == "" {
+			return libraryProfileSelector{}, usageError("runtime is required after =")
+		}
+		var err error
+		runtimeKind, err = normalizeMaterializeRuntimeKind(runtimeKind)
+		if err != nil {
+			return libraryProfileSelector{}, err
+		}
+	}
+	blueprintAndProfile := blueprintProfileVersion
 	version := ""
-	if before, after, ok := strings.Cut(trimmed, "@"); ok {
+	if before, after, ok := strings.Cut(blueprintProfileVersion, "@"); ok {
 		blueprintAndProfile = strings.TrimSpace(before)
 		version = strings.TrimSpace(after)
 		if version == "" {
@@ -63,7 +80,7 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	if !ok {
 		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]", raw)
 	}
-	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), SourceBlueprintVersion: version, ProfileRef: strings.TrimSpace(profileRef)}
+	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), SourceBlueprintVersion: version, ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind}
 	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
@@ -83,6 +100,23 @@ func rejectUnsupportedVersionedLibrarySelector(selector libraryProfileSelector) 
 		return usageError("versioned Library profile selectors are not supported until get-profile exposes versioned source; omit @%s", selector.SourceBlueprintVersion)
 	}
 	return nil
+}
+
+func applyMaterializeRuntimePolicy(selector libraryProfileSelector, runtimeFlag string) (libraryProfileSelector, error) {
+	flagRuntime := strings.TrimSpace(runtimeFlag)
+	if flagRuntime != "" {
+		normalized, err := normalizeMaterializeRuntimeKind(flagRuntime)
+		if err != nil {
+			return libraryProfileSelector{}, err
+		}
+		if strings.TrimSpace(selector.RuntimeKind) == "" {
+			selector.RuntimeKind = normalized
+		}
+	}
+	if strings.TrimSpace(selector.RuntimeKind) == "" {
+		selector.RuntimeKind = defaultMaterializeRuntimeKind
+	}
+	return selector, nil
 }
 
 func validateLibraryRef(field, value string, allowSlash bool) error {
@@ -117,7 +151,10 @@ func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileS
 		if err != nil {
 			return fmt.Errorf("library get-profile: %w", err)
 		}
-		runtimeKind := chooseLibraryRuntimeKind(profile.RuntimeHints)
+		runtimeKind, err := materializeRuntimeKindForSelector(selector)
+		if err != nil {
+			return err
+		}
 		imported, err := callLibraryImportToShelf(selector)
 		if err != nil {
 			return fmt.Errorf("library import-to-shelf: %w", err)
@@ -268,20 +305,26 @@ func validateBindMatchesImport(bound *libraryBindResponse, imported *libraryImpo
 	return nil
 }
 
-func chooseLibraryRuntimeKind(hints []string) string {
-	for _, hint := range hints {
-		switch strings.ToLower(strings.TrimSpace(hint)) {
-		case "claude-code":
-			return "claude-code"
-		case "codex":
-			return "codex"
-		case "pi":
-			return "pi"
-		case "local shell", "local-shell":
-			return "local-shell"
-		}
+func materializeRuntimeKindForSelector(selector libraryProfileSelector) (string, error) {
+	if strings.TrimSpace(selector.RuntimeKind) == "" {
+		return defaultMaterializeRuntimeKind, nil
 	}
-	return "claude-code"
+	return normalizeMaterializeRuntimeKind(selector.RuntimeKind)
+}
+
+func normalizeMaterializeRuntimeKind(runtimeKind string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(runtimeKind)) {
+	case "claude-code":
+		return "claude-code", nil
+	case "codex":
+		return "codex", nil
+	case "pi":
+		return "pi", nil
+	case "local-shell", "local shell":
+		return "local-shell", nil
+	default:
+		return "", usageError("runtime %q is not supported for materialization; supported runtimes: claude-code|codex|pi|local-shell", runtimeKind)
+	}
 }
 
 func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {

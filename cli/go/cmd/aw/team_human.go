@@ -26,12 +26,14 @@ var (
 	teamHumanCreateRegistryURL string
 	teamHumanCreateAlias       string
 	teamHumanCreateHome        string
+	teamHumanCreateRuntime     string
 	teamHumanCreateProfiles    []string
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
 	teamHumanAddLayoutOnly     bool
 	teamHumanAddHome           string
+	teamHumanAddRuntime        string
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 )
@@ -50,8 +52,9 @@ var teamHumanCreateCmd = &cobra.Command{
 	Short: "Create a local empty-profile team workspace",
 	Long: "Create a local empty-profile team workspace.\n\n" +
 		"This wraps aw init for the aw-local path. No --profile means no Library call\n" +
-		"and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]\n" +
-		"adopts from Library, binds the local identity, and materializes the home.",
+		"and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME]\n" +
+		"adopts from Library, binds the local identity, and materializes the home.\n" +
+		"The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix, or default claude-code.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -59,7 +62,7 @@ var teamHumanCreateCmd = &cobra.Command{
 var teamHumanAddCmd = &cobra.Command{
 	Use:   "add <name>[@<profile-ref>]...",
 	Short: "Add empty-profile agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home.",
+	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home. Use --runtime to choose the materialization runtime; omitted --runtime defaults to claude-code.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanAdd,
 }
@@ -133,13 +136,15 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
-	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] to adopt and materialize")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for --profile homes (claude-code|codex|pi|local-shell; default claude-code)")
+	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME] to adopt and materialize")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
@@ -187,6 +192,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
+			return err
+		}
+		parsed, err = applyMaterializeRuntimePolicy(parsed, teamHumanCreateRuntime)
+		if err != nil {
 			return err
 		}
 		profileSelectors = append(profileSelectors, parsed)
@@ -352,7 +361,11 @@ func teamHumanCreateRosterSpecs(selectors []libraryProfileSelector) ([]string, e
 			return nil, usageError("duplicate roster agent name %q from --profile selectors", name)
 		}
 		seen[key] = true
-		specs = append(specs, fmt.Sprintf("%s@%s/%s", name, selector.SourceBlueprintRef, selector.ProfileRef))
+		spec := fmt.Sprintf("%s@%s/%s", name, selector.SourceBlueprintRef, selector.ProfileRef)
+		if strings.TrimSpace(selector.RuntimeKind) != "" {
+			spec += "=" + strings.TrimSpace(selector.RuntimeKind)
+		}
+		specs = append(specs, spec)
 	}
 	return specs, nil
 }
@@ -627,6 +640,10 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
+				return err
+			}
+			parsed, err = applyMaterializeRuntimePolicy(parsed, teamHumanAddRuntime)
+			if err != nil {
 				return err
 			}
 			selector = &parsed

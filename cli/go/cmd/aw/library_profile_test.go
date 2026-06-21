@@ -14,23 +14,49 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 )
 
-func TestChooseLibraryRuntimeKindUsesFirstSupportedRuntimeHint(t *testing.T) {
-	tests := []struct {
-		name  string
-		hints []string
-		want  string
-	}{
-		{name: "first supported pi beats later claude", hints: []string{"pi", "claude-code"}, want: "pi"},
-		{name: "skips unknown to later supported", hints: []string{"unknown", "codex"}, want: "codex"},
-		{name: "local shell alias", hints: []string{"local shell"}, want: "local-shell"},
-		{name: "absent defaults claude", hints: nil, want: "claude-code"},
+func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
+	selector, err := parseLibraryProfileSelector("aweb.engineering/reviewer=pi")
+	if err != nil {
+		t.Fatalf("parse selector: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := chooseLibraryRuntimeKind(tc.hints); got != tc.want {
-				t.Fatalf("chooseLibraryRuntimeKind(%v)=%q want %q", tc.hints, got, tc.want)
-			}
-		})
+	if selector.SourceBlueprintRef != "aweb.engineering" || selector.ProfileRef != "reviewer" || selector.RuntimeKind != "pi" {
+		t.Fatalf("selector=%+v", selector)
+	}
+	versioned, err := parseLibraryProfileSelector("aweb.engineering/reviewer@0.2.0=local-shell")
+	if err != nil {
+		t.Fatalf("parse versioned selector: %v", err)
+	}
+	if versioned.SourceBlueprintVersion != "0.2.0" || versioned.RuntimeKind != "local-shell" {
+		t.Fatalf("versioned selector=%+v", versioned)
+	}
+	if _, err := parseLibraryProfileSelector("aweb.engineering/reviewer=python"); err == nil || !strings.Contains(err.Error(), "supported runtimes") {
+		t.Fatalf("bad runtime error=%v", err)
+	}
+}
+
+func TestApplyMaterializeRuntimePolicyDefaultsAndHonorsFlag(t *testing.T) {
+	selector := libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator"}
+	got, err := applyMaterializeRuntimePolicy(selector, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RuntimeKind != defaultMaterializeRuntimeKind {
+		t.Fatalf("default runtime=%q", got.RuntimeKind)
+	}
+	got, err = applyMaterializeRuntimePolicy(selector, "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RuntimeKind != "pi" {
+		t.Fatalf("flag runtime=%q", got.RuntimeKind)
+	}
+	suffix := libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "codex"}
+	got, err = applyMaterializeRuntimePolicy(suffix, "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RuntimeKind != "codex" {
+		t.Fatalf("suffix runtime should win, got %q", got.RuntimeKind)
 	}
 }
 
@@ -63,7 +89,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 				"version":             "0.1.0",
 				"digest":              profileDigest,
 				"runtime_assumptions": []string{"local shell"},
-				"runtime_hints":       []string{"local-shell"},
+				"runtime_hints":       []string{"pi", "claude-code"},
 				"files":               files,
 			})
 		case "/v1/shelf/import":
@@ -99,7 +125,7 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	defer server.Close()
 	writeLibraryManifestPluginForTest(t, home, server.URL)
 
-	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator")
+	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator=local-shell")
 	if err != nil {
 		t.Fatal(err)
 	}

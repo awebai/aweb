@@ -29,11 +29,13 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldRegistryURL := teamHumanCreateRegistryURL
 	oldAlias := teamHumanCreateAlias
 	oldCreateHome := teamHumanCreateHome
+	oldCreateRuntime := teamHumanCreateRuntime
 	oldProfiles := teamHumanCreateProfiles
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	oldAddHome := teamHumanAddHome
+	oldAddRuntime := teamHumanAddRuntime
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -48,11 +50,13 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateRegistryURL = oldRegistryURL
 		teamHumanCreateAlias = oldAlias
 		teamHumanCreateHome = oldCreateHome
+		teamHumanCreateRuntime = oldCreateRuntime
 		teamHumanCreateProfiles = oldProfiles
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 		teamHumanAddHome = oldAddHome
+		teamHumanAddRuntime = oldAddRuntime
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
@@ -65,11 +69,13 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateRegistryURL = ""
 	teamHumanCreateAlias = ""
 	teamHumanCreateHome = ""
+	teamHumanCreateRuntime = ""
 	teamHumanCreateProfiles = nil
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
 	teamHumanAddHome = ""
+	teamHumanAddRuntime = ""
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
@@ -194,6 +200,21 @@ func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances")); !os.IsNotExist(statErr) {
 		t.Fatalf("default homes created despite roster rejection, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	specs, err := teamHumanCreateRosterSpecs([]libraryProfileSelector{
+		{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "claude-code"},
+		{SourceBlueprintRef: "aweb.engineering", ProfileRef: "reviewer", RuntimeKind: "pi"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"coordinator@aweb.engineering/coordinator=claude-code", "reviewer@aweb.engineering/reviewer=pi"}
+	if strings.Join(specs, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("specs=%v want %v", specs, want)
 	}
 }
 

@@ -216,7 +216,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatalf("install library manifest: %v", err)
 	}
 
-	teamHumanCreateProfiles = []string{"aweb.engineering/coordinator", "aweb.engineering/reviewer"}
+	teamHumanCreateProfiles = []string{"aweb.engineering/coordinator=claude-code", "aweb.engineering/reviewer=pi"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
 	}
@@ -244,6 +244,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 	teamHumanAddHome = filepath.Join(root, "auditor-home")
+	teamHumanAddRuntime = "local-shell"
 	if err := runTeamHumanAdd(nil, []string{"auditor@aweb.engineering/coordinator"}); err != nil {
 		t.Fatalf("team add profile: %v", err)
 	}
@@ -257,9 +258,13 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		}
 	}
 	assertMaterializedHomeHasAwebCoordination(t, agentHome)
+	if _, err := os.Lstat(filepath.Join(agentHome, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("auditor local-shell home unexpectedly has CLAUDE.md, stat err=%v", err)
+	}
 	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "auditor")); !os.IsNotExist(err) {
 		t.Fatalf("team add --home wrote default agent home, stat err=%v", err)
 	}
+	teamHumanAddRuntime = ""
 	teamHumanAddHome = ""
 	if importCalls != 4 || bindCalls != 4 {
 		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
