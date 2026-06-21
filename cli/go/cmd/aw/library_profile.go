@@ -177,14 +177,8 @@ func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDeta
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("decode library get-profile response: %w", err)
 	}
-	if out.ProfileRef == "" {
-		out.ProfileRef = selector.ProfileRef
-	}
-	if out.BlueprintRef == "" {
-		out.BlueprintRef = selector.SourceBlueprintRef
-	}
-	if out.BlueprintVersion == "" {
-		out.BlueprintVersion = selector.SourceBlueprintVersion
+	if out.BlueprintRef == "" || out.BlueprintVersion == "" || out.ProfileRef == "" || out.Version == "" || out.Digest == "" {
+		return nil, fmt.Errorf("library get-profile response missing blueprint_ref/blueprint_version/profile_ref/version/digest")
 	}
 	return &out, nil
 }
@@ -280,10 +274,10 @@ func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportTo
 		return nil, fmt.Errorf("decode library import-to-shelf response: %w", err)
 	}
 	if out.ProfileRef == "" || out.Version == "" || out.Digest == "" {
-		return nil, fmt.Errorf("library import-to-shelf response missing profile ref/version/digest")
+		return nil, fmt.Errorf("library import-to-shelf response missing profile_ref/version/digest")
 	}
-	if out.SourceBlueprintRef == "" {
-		out.SourceBlueprintRef = selector.SourceBlueprintRef
+	if out.SourceBlueprintRef == "" || out.SourceBlueprintVersion == "" || out.SourceBlueprintDigest == "" {
+		return nil, fmt.Errorf("library import-to-shelf response missing source_blueprint_ref/source_blueprint_version/source_blueprint_digest")
 	}
 	return &out, nil
 }
