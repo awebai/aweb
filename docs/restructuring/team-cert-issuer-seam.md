@@ -1,4 +1,17 @@
-# Team-Certificate Issuer Seam (3-lane design note)
+# Team-Certificate Issuer Seam (3-lane design note) — SUPERSEDED / SCRAPPED
+
+> **SUPERSEDED 2026-06-21 (Juan, YAGNI).** This design is NOT being built.
+> Decision: as long as only the team controller can add and revoke members
+> (member-mediated invites are out of scope), there is no distinct
+> revoke-by-issuer capability to enable, so recording an issuer and broadening
+> revoke buy nothing now. awid stays controller-only: no migration 008, no
+> `issuer_did_key`, no revoke-auth change. `aabq.8` is closed as superseded;
+> `aabq.7` folded into the materialize fixes; the hosted issuer-threading task
+> was never created. **What survives independently:** `aabq.10` (AC re-accept
+> stale-did idempotency → orphans) and `aabq.9` (orphan cleanup) are real bugs
+> regardless of the issuer feature and remain tracked under ac-coordinator.
+> Kept below for the record (the invite/accept flow trace in §1 is still accurate
+> and useful reference).
 
 Status: draft (2026-06-21), for review by aweb-coordinator (awid) + ac-coordinator
 (AC hosted). Owner of the note: aw-coordinator. Pairs with epic `default-aabq`
