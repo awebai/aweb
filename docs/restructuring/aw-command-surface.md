@@ -119,8 +119,8 @@ aw), not a reason to hand-code a CLI verb.
 
 - `default-aaas.3.4` — `aw team create` (retargeted to this SOT).
 - `default-aaas.3.5` — `aw team add` (retargeted; preserves id + invite/accept).
-- `default-aaas.3.6` — agent/team start + status (launch from
-  `runtime_assumptions`, reads the materialized home).
+- `default-aaas.3.6` — agent/team start + status (launch from explicit
+  operator CLI choice, not profile metadata; reads the materialized home).
 - `default-aaas.3.7` / `.3.8` — agent-home composition (in flight).
 - `default-aaas.3.9` — `aw library` plugin: validate manifest-v1 fit + that the
   Library manifest renders into `aw library` (mostly existing plugin mechanism).

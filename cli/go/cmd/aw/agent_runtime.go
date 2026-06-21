@@ -14,7 +14,6 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -70,19 +69,14 @@ func init() {
 	for _, cmd := range []*cobra.Command{agentStartCmd, agentStatusCmd, agentStopCmd, agentRestartCmd, agentLogsCmd} {
 		cmd.Flags().StringVar(&agentHomeFlag, "home", "", "Agent home directory override (default: agents/instances/<name>)")
 	}
-	agentStartCmd.Flags().StringVar(&agentRuntimeFlag, "runtime", "", "Runtime override; defaults to profile runtime_assumptions")
-	agentStartCmd.Flags().StringVar(&agentCommandFlag, "command", "", "Advanced: shell command to run for the selected runtime")
-	agentRestartCmd.Flags().StringVar(&agentRuntimeFlag, "runtime", "", "Runtime override; defaults to profile runtime_assumptions")
-	agentRestartCmd.Flags().StringVar(&agentCommandFlag, "command", "", "Advanced: shell command to run for the selected runtime")
+	agentStartCmd.Flags().StringVar(&agentRuntimeFlag, "runtime", "", "Runtime to start explicitly (claude-code|codex|pi|local-shell)")
+	agentStartCmd.Flags().StringVar(&agentCommandFlag, "command", "", "Advanced: explicit shell command to run instead of a named runtime")
+	agentRestartCmd.Flags().StringVar(&agentRuntimeFlag, "runtime", "", "Runtime to start explicitly (claude-code|codex|pi|local-shell)")
+	agentRestartCmd.Flags().StringVar(&agentCommandFlag, "command", "", "Advanced: explicit shell command to run instead of a named runtime")
 	agentRestartCmd.Flags().BoolVar(&agentRestartForce, "force", false, "Restart even when the recorded process is not running")
 	agentLogsCmd.Flags().BoolVar(&agentFollowLogs, "follow", false, "Follow logs until interrupted")
 	agentCmd.AddCommand(agentStartCmd, agentStatusCmd, agentStopCmd, agentRestartCmd, agentLogsCmd)
 	rootCmd.AddCommand(agentCmd)
-}
-
-type agentProfileRuntime struct {
-	ID                 string   `yaml:"id"`
-	RuntimeAssumptions []string `yaml:"runtime_assumptions"`
 }
 
 type agentRuntimeState struct {
@@ -233,11 +227,7 @@ func startAgentRuntime(name, home, runtimeOverride, commandOverride string) (*ag
 	if existing, err := loadAgentRuntimeState(home); err == nil && processAlive(existing.PID) {
 		return nil, usageError("agent %s is already running with pid %d", name, existing.PID)
 	}
-	profile, err := loadAgentProfileRuntime(home)
-	if err != nil {
-		return nil, err
-	}
-	runtime, argv, err := selectAgentRuntime(profile.RuntimeAssumptions, runtimeOverride, commandOverride)
+	runtime, argv, err := selectAgentRuntime(runtimeOverride, commandOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -309,47 +299,20 @@ func validateAgentHomeForStart(home string) error {
 func preflightAgentRuntimeDir(runtimeDir string) error {
 	return pathpreflight.PreflightDir(runtimeDir, "agent runtime directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
-func loadAgentProfileRuntime(home string) (*agentProfileRuntime, error) {
-	path := filepath.Join(home, ".aw", "profile", "profile.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read profile runtime assumptions: %w", err)
-	}
-	var profile agentProfileRuntime
-	if err := yaml.Unmarshal(data, &profile); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if len(profile.RuntimeAssumptions) == 0 {
-		return nil, fmt.Errorf("profile %s has no runtime_assumptions", path)
-	}
-	return &profile, nil
-}
 
-func selectAgentRuntime(assumptions []string, runtimeOverride, commandOverride string) (string, []string, error) {
+const supportedAgentRuntimes = "claude-code|codex|pi|local-shell"
+
+func selectAgentRuntime(runtimeOverride, commandOverride string) (string, []string, error) {
 	if commandOverride != "" {
-		runtime := runtimeOverride
+		runtime := strings.ToLower(strings.TrimSpace(runtimeOverride))
 		if runtime == "" {
 			runtime = "custom"
 		}
 		return runtime, []string{"sh", "-c", commandOverride}, nil
 	}
-	allowed := map[string]bool{}
-	for _, assumption := range assumptions {
-		key := strings.ToLower(strings.TrimSpace(assumption))
-		allowed[key] = true
-	}
 	chosen := strings.ToLower(strings.TrimSpace(runtimeOverride))
 	if chosen == "" {
-		switch {
-		case allowed["claude-code"]:
-			chosen = "claude-code"
-		case allowed["codex"]:
-			chosen = "codex"
-		case allowed["local shell"] || allowed["local-shell"]:
-			chosen = "local-shell"
-		default:
-			return "", nil, fmt.Errorf("no supported local runtime in runtime_assumptions %v", assumptions)
-		}
+		return "", nil, fmt.Errorf("runtime is required; pass --runtime (%s) or --command. Runtime hints and runtime_assumptions are advisory metadata only; inspect them with `aw blueprint inspect` or `aw library get-profile` before choosing", supportedAgentRuntimes)
 	}
 	switch chosen {
 	case "claude-code":
@@ -364,6 +327,12 @@ func selectAgentRuntime(assumptions []string, runtimeOverride, commandOverride s
 			return "", nil, fmt.Errorf("missing provider for runtime codex: codex executable not found")
 		}
 		return chosen, []string{path}, nil
+	case "pi":
+		path, err := exec.LookPath("pi")
+		if err != nil {
+			return "", nil, fmt.Errorf("missing provider for runtime pi: pi executable not found")
+		}
+		return chosen, []string{path}, nil
 	case "local-shell", "local shell":
 		path, err := exec.LookPath("sh")
 		if err != nil {
@@ -371,7 +340,7 @@ func selectAgentRuntime(assumptions []string, runtimeOverride, commandOverride s
 		}
 		return "local-shell", []string{path, "-c", "while :; do sleep 3600; done"}, nil
 	default:
-		return "", nil, fmt.Errorf("runtime %q is not supported by aw agent start", chosen)
+		return "", nil, fmt.Errorf("runtime %q is not supported by aw agent start; supported runtimes: %s", chosen, supportedAgentRuntimes)
 	}
 }
 

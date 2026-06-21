@@ -402,19 +402,11 @@ func TestLocalSurfaceE2ELocalPackMaterializeStartStatusStop(t *testing.T) {
 			t.Fatalf("materialized home missing %s: %v", rel, err)
 		}
 	}
-	profile, err := loadAgentProfileRuntime(home)
-	if err != nil {
-		t.Fatalf("load runtime assumptions: %v", err)
-	}
-	runtime, _, err := selectAgentRuntime(profile.RuntimeAssumptions, "", "")
-	if err != nil {
-		t.Fatalf("select runtime from assumptions %v: %v", profile.RuntimeAssumptions, err)
-	}
-	if runtime != "local-shell" {
-		t.Fatalf("runtime=%q, want local-shell", runtime)
-	}
-
 	agentHomeFlag = home
+	if err := runAgentStart(nil, []string{"developer"}); err == nil || !strings.Contains(err.Error(), "runtime is required") {
+		t.Fatalf("agent start without explicit runtime error=%v", err)
+	}
+	agentRuntimeFlag = "local-shell"
 	if err := runAgentStart(nil, []string{"developer"}); err != nil {
 		t.Fatalf("agent start: %v", err)
 	}

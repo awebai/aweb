@@ -118,8 +118,11 @@ func TestAgentStartFailuresAreExplicit(t *testing.T) {
 	}
 
 	home := writeAgentRuntimeHome(t, root, "[claude-code]")
+	if _, err := startAgentRuntime("developer", home, "", ""); err == nil || !strings.Contains(err.Error(), "runtime is required") || !strings.Contains(err.Error(), "claude-code|codex|pi|local-shell") {
+		t.Fatalf("missing explicit runtime error=%v", err)
+	}
 	t.Setenv("PATH", filepath.Join(root, "no-bin"))
-	if _, err := startAgentRuntime("developer", home, "", ""); err == nil || !strings.Contains(err.Error(), "missing provider") {
+	if _, err := startAgentRuntime("developer", home, "claude-code", ""); err == nil || !strings.Contains(err.Error(), "missing provider") {
 		t.Fatalf("missing provider error=%v", err)
 	}
 }
