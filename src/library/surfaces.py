@@ -212,14 +212,21 @@ def render_landing_page(*, public_origin: str) -> str:
   --source_blueprint_ref aweb.engineering \\
   --source_blueprint_version 0.1.0 \\
   --profile_ref coordinator</pre>{copy}</div></div>
-          <p class="cmd-label">6 · Add an agent from your shelf — binds it and materializes its home, and prints the path</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator</pre>{copy}</div></div>
+          <p class="cmd-label">6 · Add an agent from your shelf — bind it, choose its runtime, and materialize its home</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@coordinator --runtime claude-code</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the coordinator profile. The <code>aw team add</code> command prints the home directory it wrote, ready for you to launch your harness in.</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the coordinator profile. The runtime is your explicit choice: omitting <code>--runtime</code> defaults to <code>claude-code</code> (a CLI default, not read from the profile). The <code>aw team add</code> command prints the home directory it wrote.</p>
         <p class="prose-outro"><strong>Shortcut:</strong> name a blueprint profile directly and <code>aw team add</code> adopts and adds in one, skipping step 5:</p>
         <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering/coordinator</pre>{copy}</div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering/coordinator --runtime claude-code</pre>{copy}</div></div>
         </div>
+        <p class="prose-outro"><strong>Whole roster at once:</strong> create the team and its agents in one command, each profile's runtime after an <code>=</code>:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team \\
+  --profile aweb.engineering/coordinator=claude-code \\
+  --profile aweb.engineering/reviewer=pi</pre>{copy}</div></div>
+        </div>
+        <p class="prose-outro">A blueprint's <code>runtime_hints</code> and <code>runtime_assumptions</code> are advisory metadata you read to choose the runtime — query them with <code>aw blueprint inspect</code> or <code>aw library get-profile</code>; they are not auto-applied.</p>
         <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
     </section>
@@ -311,11 +318,19 @@ command; nothing here needs a browser or an account.
 3. aw library list-blueprints
 4. aw team create my-team
 5. aw library import-to-shelf --source_blueprint_ref aweb.engineering --source_blueprint_version 0.1.0 --profile_ref coordinator
-6. aw team add alice@coordinator
+6. aw team add alice@coordinator --runtime claude-code
 
-Step 6 binds the profile, materializes the agent's home, and prints the home
-directory path it wrote. Shortcut: aw team add alice@aweb.engineering/coordinator
-adopts the blueprint profile onto your shelf and adds the agent in one command.
+Step 6 binds the profile, chooses the agent's runtime, materializes the agent's
+home, and prints the home directory path it wrote. The runtime is an explicit
+choice: omitting --runtime defaults to claude-code (a CLI default, not read from
+the profile). Shortcut: aw team add alice@aweb.engineering/coordinator --runtime
+claude-code adopts the blueprint profile and adds the agent in one command. Whole
+roster at once, each profile's runtime after an =:
+aw team create my-team --profile aweb.engineering/coordinator=claude-code --profile aweb.engineering/reviewer=pi
+
+A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
+to choose the runtime (query them with aw blueprint inspect or aw library
+get-profile); they are not auto-applied.
 
 
 ## How to call it

@@ -29,11 +29,19 @@ command; nothing here needs a browser or an account.
 3. aw library list-blueprints
 4. aw team create my-team
 5. aw library import-to-shelf --source_blueprint_ref aweb.engineering --source_blueprint_version 0.1.0 --profile_ref coordinator
-6. aw team add alice@coordinator
+6. aw team add alice@coordinator --runtime claude-code
 
-Step 6 binds the profile, materializes the agent's home, and prints the home
-directory path it wrote. Shortcut: aw team add alice@aweb.engineering/coordinator
-adopts the blueprint profile onto your shelf and adds the agent in one command.
+Step 6 binds the profile, chooses the agent's runtime, materializes the agent's
+home, and prints the home directory path it wrote. The runtime is an explicit
+choice: omitting --runtime defaults to claude-code (a CLI default, not read from
+the profile). Shortcut: aw team add alice@aweb.engineering/coordinator --runtime
+claude-code adopts the blueprint profile and adds the agent in one command. Whole
+roster at once, each profile's runtime after an =:
+aw team create my-team --profile aweb.engineering/coordinator=claude-code --profile aweb.engineering/reviewer=pi
+
+A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
+to choose the runtime (query them with aw blueprint inspect or aw library
+get-profile); they are not auto-applied.
 
 
 ## How to call it
