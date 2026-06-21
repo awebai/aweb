@@ -3,7 +3,7 @@
 This is the Library lane's mirror of the shared **Agent Home Composition
 Contract** (SOT owned by the aw CLI lane, co-owned by Library). It describes what
 `POST /v1/materialize` produces and why. The cross-lane byte-exact fixtures —
-`tests/vectors/profile-packs/engineering/expected/materialized-home/<id>/` and
+`tests/vectors/blueprints/engineering/expected/materialized-home/<id>/` and
 `.../materialized-home-created/<id>/` — are the final arbiter; this prose
 describes them, it does not override them. Both lanes reproduce the same fixture
 byte-for-byte: Library in Python (`materialize_home`) and aw in Go (local
@@ -26,9 +26,9 @@ composition replaces it and supersedes the `.2.9` materialized-home.
 ## Source: the shelf profile
 
 The home is materialized from the team's **private shelf** copy of the profile
-(the bound profile), never from a public-pack ref directly. A shelf copy is
-adopted from a public pack via `import-to-shelf` (recording `source_profile_pack_*`
-provenance) or created directly (no source pack). Pack profiles are public
+(the bound profile), never from a public-blueprint ref directly. A shelf copy is
+adopted from a public blueprint via `import-to-shelf` (recording `source_blueprint_*`
+provenance) or created directly (no source blueprint). Blueprint profiles are public
 snapshots; the home is always built from the shelf copy the team owns and evolves.
 
 ## Home layout
@@ -43,7 +43,7 @@ A bound (non-empty) profile materializes to:
   artifacts/<files>              # installed artifact files
   .claude/skills/<skill-name>/SKILL.md -> ../../../skills/<skill-name>/SKILL.md
   .aw/profile/                   # the full, evolvable profile
-    ref.json                     # the pin (profile + source-pack digest/version)
+    ref.json                     # the pin (profile + source-blueprint digest/version)
     profile.yaml                 # the complete profile spec
     instructions.md              # editable source prose
     skills/<source skill files>
@@ -71,7 +71,7 @@ target}`).
 | `artifacts` | installed under `artifacts/` |
 | `runtime_assumptions` | selects the harness body file + symlink; not rendered into the body |
 | `event_subscriptions` | registered with core for the wake loop; not rendered into the body |
-| `id` / `version` + pack digests | `.aw/profile/ref.json` pin |
+| `id` / `version` + blueprint digests | `.aw/profile/ref.json` pin |
 | full profile + source | `.aw/profile/` |
 
 ## AGENTS.md composition
@@ -82,7 +82,7 @@ a verbatim copy of `instructions.md`:
 ```
 # {name}
 
-> Profile {id} v{version} · pack {pack_id} v{pack_version}
+> Profile {id} v{version} · blueprint {blueprint_id} v{blueprint_version}
 
 ## Mission
 
@@ -129,8 +129,8 @@ Rendering rules (the fixtures are the arbiter):
    single blank line precedes the next section.
 5. Any section whose source component is empty is **omitted entirely** — title and
    body. Only the `# {name}` header and the provenance line are always present.
-6. The provenance line has two forms, both pinned by fixtures: adopted from a pack
-   — `> Profile {id} v{version} · pack {pack_id} v{pack_version}`; created directly
+6. The provenance line has two forms, both pinned by fixtures: adopted from a blueprint
+   — `> Profile {id} v{version} · blueprint {blueprint_id} v{blueprint_version}`; created directly
    on the shelf — `> Profile {id} v{version} · created`.
 7. The Memory boilerplate names the profile's own `proposal_target` (e.g.
    `library`), not a hardcoded value.
@@ -160,8 +160,8 @@ a new version to its `memory_policy.proposal_target` (e.g. Library), which revie
 and mints it — the proposal/minting flow. `AGENTS.md` and the installed
 `skills/`/`artifacts/` are **derived** from this source.
 
-`ref.json` records `source_profile_pack_*` as **provenance** (where the shelf copy
-was adopted from) for a pack copy, and omits it for a profile created fresh on the
+`ref.json` records `source_blueprint_*` as **provenance** (where the shelf copy
+was adopted from) for a blueprint copy, and omits it for a profile created fresh on the
 shelf (the provenance line then reads `· created`). Provenance is what
-`update-from-source` uses to pull a newer pack version's improvements into only the
+`update-from-source` uses to pull a newer blueprint version's improvements into only the
 parts the team has not evolved (per-part merge), without clobbering local learning.

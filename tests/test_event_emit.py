@@ -27,13 +27,13 @@ def _emit_settings(**overrides) -> Settings:
 def test_app_event_body_is_canonical() -> None:
     body = app_event_body(
         event_type="library/example",
-        resource_ref="pack-1",
+        resource_ref="blueprint-1",
         delivery_intent="ambient",
         payload={"k": "v"},
     )
     assert json.loads(body) == {
         "type": "library/example",
-        "resource_ref": "pack-1",
+        "resource_ref": "blueprint-1",
         "delivery_intent": "ambient",
         "payload": {"k": "v"},
     }
@@ -44,7 +44,7 @@ def test_build_emit_request_signs_with_app_emit_credential() -> None:
         settings=_emit_settings(),
         team_id=_TEAM,
         event_type="library/example",
-        resource_ref="pack-1",
+        resource_ref="blueprint-1",
         delivery_intent="ambient",
         payload={"k": "v"},
         timestamp="2026-06-19T12:00:00Z",
@@ -68,7 +68,7 @@ def test_build_emit_request_returns_none_when_unconfigured() -> None:
             settings=Settings(),
             team_id=_TEAM,
             event_type="library/example",
-            resource_ref="pack-1",
+            resource_ref="blueprint-1",
             delivery_intent="ambient",
             payload={},
             timestamp="2026-06-19T12:00:00Z",
@@ -86,7 +86,7 @@ async def test_emit_app_event_noop_when_unconfigured(monkeypatch) -> None:
         settings=Settings(),
         team_id=_TEAM,
         event_type="library/example",
-        resource_ref="pack-1",
+        resource_ref="blueprint-1",
         delivery_intent="ambient",
         payload={},
     )
@@ -102,7 +102,7 @@ async def test_emit_app_event_swallows_transport_and_misconfig(monkeypatch) -> N
         settings=_emit_settings(),
         team_id=_TEAM,
         event_type="library/example",
-        resource_ref="pack-1",
+        resource_ref="blueprint-1",
         delivery_intent="ambient",
         payload={},
     )
@@ -111,7 +111,7 @@ async def test_emit_app_event_swallows_transport_and_misconfig(monkeypatch) -> N
         settings=_emit_settings(app_emit_key_seed_hex="nothex"),
         team_id=_TEAM,
         event_type="library/example",
-        resource_ref="pack-1",
+        resource_ref="blueprint-1",
         delivery_intent="ambient",
         payload={},
     )

@@ -1,0 +1,26 @@
+id: aweb.engineering
+name: Engineering AI Team
+version: 0.1.0
+summary: Coordinator, developer, and reviewer profiles for repo work.
+description: First-party starter blueprint for local engineering agent teams.
+profiles:
+  - id: coordinator
+    default_count: 1
+    min: 1
+    max: 1
+    runtime_hints: [claude-code]
+  - id: developer
+    default_count: 2
+    min: 1
+    max: 4
+    runtime_hints: [claude-code, codex]
+  - id: reviewer
+    default_count: 1
+    min: 0
+    max: 2
+    runtime_hints: [claude-code]
+runtime_hints: [claude-code, codex, pi]
+expected_apps: [library, tasks, audit, secrets, github]
+first_mission_examples:
+  - Review this repo and propose a first implementation plan.
+  - Implement a small issue and hand it to a reviewer.

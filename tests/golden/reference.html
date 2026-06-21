@@ -70,7 +70,7 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
   "aud": "https://library.aweb.ai",
   "body_sha256": "&lt;lowercase hex sha256 of the exact request body bytes; empty body hashes the empty string&gt;",
   "method": "&lt;uppercase HTTP method, e.g. POST&gt;",
-  "path": "&lt;escaped request target incl. query, e.g. /v1/shelf/import or /v1/profile-packs?tags=starter&gt;",
+  "path": "&lt;escaped request target incl. query, e.g. /v1/shelf/import or /v1/blueprints?tags=starter&gt;",
   "team_id": "&lt;your AWID team id&gt;",
   "timestamp": "&lt;RFC3339 UTC, equal to X-AWEB-Timestamp&gt;",
   "v": 2
@@ -85,37 +85,37 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
         <div class="section-head">
           <p class="kicker">Public operations</p>
           <h2>Catalog reads — no auth</h2>
-          <p>Browse the public profile-pack catalog. These are literal and copy-paste-runnable.</p>
+          <p>Browse the public blueprint catalog. These are literal and copy-paste-runnable.</p>
         </div>
-        <div class="cmd-panel op" id="op-list-packs">
-          <h3><code>aw library list-packs</code> <span class="pill ok">public</span></h3>
-          <p class="op-meta"><code>GET /v1/profile-packs</code></p>
-          <p>Browse the public profile-pack catalog, optionally filtered by tag overlap.</p>
+        <div class="cmd-panel op" id="op-list-blueprints">
+          <h3><code>aw library list-blueprints</code> <span class="pill ok">public</span></h3>
+          <p class="op-meta"><code>GET /v1/blueprints</code></p>
+          <p>Browse the public blueprint catalog, optionally filtered by tag overlap.</p>
           <p class="op-params">optional: tags</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library list-packs</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library list-blueprints</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — runnable</p>
-          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
-        <div class="cmd-panel op" id="op-get-pack">
-          <h3><code>aw library get-pack</code> <span class="pill ok">public</span></h3>
-          <p class="op-meta"><code>GET /v1/profile-packs/{pack_ref}</code></p>
-          <p>Get a public profile pack and its profile summaries.</p>
-          <p class="op-params">required: pack_ref</p>
+        <div class="cmd-panel op" id="op-get-blueprint">
+          <h3><code>aw library get-blueprint</code> <span class="pill ok">public</span></h3>
+          <p class="op-meta"><code>GET /v1/blueprints/{blueprint_ref}</code></p>
+          <p>Get a public blueprint and its profile summaries.</p>
+          <p class="op-params">required: blueprint_ref</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library get-pack --pack_ref aweb.engineering-pack</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library get-blueprint --blueprint_ref aweb.engineering</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — runnable</p>
-          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
         <div class="cmd-panel op" id="op-get-profile">
           <h3><code>aw library get-profile</code> <span class="pill ok">public</span></h3>
-          <p class="op-meta"><code>GET /v1/profile-packs/{pack_ref}/profiles/{profile_ref}</code></p>
-          <p>Get a public profile&#x27;s full content from the latest version of a pack.</p>
-          <p class="op-params">required: pack_ref, profile_ref</p>
+          <p class="op-meta"><code>GET /v1/blueprints/{blueprint_ref}/profiles/{profile_ref}</code></p>
+          <p>Get a public profile&#x27;s full content from the latest version of a blueprint.</p>
+          <p class="op-params">required: blueprint_ref, profile_ref</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library get-profile --pack_ref aweb.engineering-pack --profile_ref coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library get-profile --blueprint_ref aweb.engineering --profile_ref coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — runnable</p>
-          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack/profiles/coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering/profiles/coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
       </div>
     </section>
@@ -127,17 +127,17 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
           <h2>Shelf, bindings, materialize, proposals — AWID team certificate</h2>
           <p>Each shows the canonical verb, the signed hand-runnable <code>aw id request</code> form, and the raw wire format aw produces.</p>
         </div>
-        <div class="cmd-panel op" id="op-publish-pack">
-          <h3><code>aw library publish-pack</code> <span class="pill run">team cert</span></h3>
-          <p class="op-meta"><code>POST /v1/profile-packs/import</code></p>
-          <p>Publish or update a public profile pack. The body is the canonical import payload directly.</p>
+        <div class="cmd-panel op" id="op-publish-blueprint">
+          <h3><code>aw library publish-blueprint</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>POST /v1/blueprints/import</code></p>
+          <p>Publish or update a public blueprint. The body is the canonical import payload directly.</p>
           <p class="op-params">required: files, schema</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library publish-pack --files &lt;files&gt; --schema &lt;schema&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library publish-blueprint --files &lt;files&gt; --schema &lt;schema&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profile-packs/import --body '{"files": "...", "schema": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/blueprints/import --body '{"files": "...", "schema": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — aw signs this for you</p>
-          <div class="cmd-list"><div class="cmd"><pre>POST /v1/profile-packs/import
+          <div class="cmd-list"><div class="cmd"><pre>POST /v1/blueprints/import
 Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
 X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
 X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
@@ -206,8 +206,8 @@ Content-Type: application/json
         <div class="cmd-panel op" id="op-update-from-source">
           <h3><code>aw library update-from-source</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>POST /v1/profiles/{profile_ref}/update-from-source</code></p>
-          <p>Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.</p>
-          <p class="op-params">required: profile_ref, target_version · optional: source_profile_pack_version</p>
+          <p>Per-part 3-way merge of a shelf profile against a newer version of its source blueprint: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.</p>
+          <p class="op-params">required: profile_ref, target_version · optional: source_blueprint_version</p>
           <p class="cmd-label">Run it</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library update-from-source --profile_ref &lt;profile_ref&gt; --target_version &lt;target_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
@@ -225,12 +225,12 @@ Content-Type: application/json
         <div class="cmd-panel op" id="op-import-to-shelf">
           <h3><code>aw library import-to-shelf</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>POST /v1/shelf/import</code></p>
-          <p>Copy a public-pack profile onto the team&#x27;s private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.</p>
-          <p class="op-params">required: source_profile_pack_ref, profile_ref · optional: source_profile_pack_version, tags</p>
+          <p>Copy a public-blueprint profile onto the team&#x27;s private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.</p>
+          <p class="op-params">required: source_blueprint_ref, profile_ref · optional: source_blueprint_version, tags</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_profile_pack_ref &lt;source_profile_pack_ref&gt; --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf --source_blueprint_ref &lt;source_blueprint_ref&gt; --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/shelf/import --body '{"source_profile_pack_ref": "...", "profile_ref": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/shelf/import --body '{"source_blueprint_ref": "...", "profile_ref": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — aw signs this for you</p>
           <div class="cmd-list"><div class="cmd"><pre>POST /v1/shelf/import
 Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
@@ -239,17 +239,17 @@ X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON paylo
 X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
 Content-Type: application/json
 
-{"source_profile_pack_ref": "...", "profile_ref": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+{"source_blueprint_ref": "...", "profile_ref": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
         <div class="cmd-panel op" id="op-publish-profile">
           <h3><code>aw library publish-profile</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>POST /v1/profiles/{profile_ref}/publish</code></p>
-          <p>Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.</p>
-          <p class="op-params">required: profile_ref, pack_version · optional: profile_version, target_pack_ref, new_pack</p>
+          <p>Publish a private shelf profile into a public blueprint (new blueprint or a new version of an owned blueprint); blueprint.yaml is library-generated and the profile set accumulates.</p>
+          <p class="op-params">required: profile_ref, blueprint_version · optional: profile_version, target_blueprint_ref, new_blueprint</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library publish-profile --profile_ref &lt;profile_ref&gt; --pack_version &lt;pack_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library publish-profile --profile_ref &lt;profile_ref&gt; --blueprint_version &lt;blueprint_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/publish --body '{"pack_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/publish --body '{"blueprint_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — aw signs this for you</p>
           <div class="cmd-list"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/publish
 Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
@@ -258,7 +258,7 @@ X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON paylo
 X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
 Content-Type: application/json
 
-{"pack_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+{"blueprint_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
         <div class="cmd-panel op" id="op-set-profile-tags">
           <h3><code>aw library set-profile-tags</code> <span class="pill run">team cert</span></h3>
@@ -279,17 +279,17 @@ Content-Type: application/json
 
 {"tags": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
-        <div class="cmd-panel op" id="op-set-pack-tags">
-          <h3><code>aw library set-pack-tags</code> <span class="pill run">team cert</span></h3>
-          <p class="op-meta"><code>PUT /v1/profile-packs/{pack_ref}/tags</code></p>
-          <p>Replace a profile pack&#x27;s organizational tags.</p>
-          <p class="op-params">required: pack_ref, tags</p>
+        <div class="cmd-panel op" id="op-set-blueprint-tags">
+          <h3><code>aw library set-blueprint-tags</code> <span class="pill run">team cert</span></h3>
+          <p class="op-meta"><code>PUT /v1/blueprints/{blueprint_ref}/tags</code></p>
+          <p>Replace a blueprint&#x27;s organizational tags.</p>
+          <p class="op-params">required: blueprint_ref, tags</p>
           <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw library set-pack-tags --pack_ref &lt;pack_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw library set-blueprint-tags --blueprint_ref &lt;blueprint_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/profile-packs/{pack_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/blueprints/{blueprint_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">On the wire — aw signs this for you</p>
-          <div class="cmd-list"><div class="cmd"><pre>PUT /v1/profile-packs/{pack_ref}/tags
+          <div class="cmd-list"><div class="cmd"><pre>PUT /v1/blueprints/{blueprint_ref}/tags
 Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
 X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
 X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
@@ -302,7 +302,7 @@ Content-Type: application/json
           <h3><code>aw library bind</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>POST /v1/agents/{agent_id}/profile-binding</code></p>
           <p>Bind an agent identity to a profile ref/version/digest.</p>
-          <p class="op-params">required: agent_id, profile_ref, profile_version, profile_digest · optional: source_profile_pack_ref</p>
+          <p class="op-params">required: agent_id, profile_ref, profile_version, profile_digest · optional: source_blueprint_ref</p>
           <p class="cmd-label">Run it</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library bind --agent_id &lt;agent_id&gt; --profile_ref &lt;profile_ref&gt; --profile_version &lt;profile_version&gt; --profile_digest &lt;profile_digest&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>
@@ -336,7 +336,7 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
         <div class="cmd-panel op" id="op-shelf">
           <h3><code>aw library shelf</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>GET /v1/shelf</code></p>
-          <p>List the team&#x27;s shelf working set: each profile&#x27;s latest version, source provenance, and whether a newer source-pack version is available.</p>
+          <p>List the team&#x27;s shelf working set: each profile&#x27;s latest version, source provenance, and whether a newer source-blueprint version is available.</p>
           
           <p class="cmd-label">Run it</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library shelf</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
@@ -443,7 +443,7 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
       <div class="footer-cols">
         <div class="footer-brand">
           <a class="brand" href="/"><span class="dot"></span>library</a>
-          <p>Public profile packs and private team shelves for AWID teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
+          <p>Public blueprints and private team shelves for AWID teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
         </div>
         <div class="footer-col">
           <h4>Agents</h4>

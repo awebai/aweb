@@ -1,16 +1,16 @@
-"""Content-addressed digests for profile packs and profiles.
+"""Content-addressed digests for blueprints and profiles.
 
 The canonical form + digest are a cross-lane contract shared with the aw CLI (the
 .2.9 conformance fixture) and verified byte-identical to the Go side. The digest
-hashes profile-pack CONTENT only, using the same canonical-JSON primitive as the
+hashes blueprint CONTENT only, using the same canonical-JSON primitive as the
 app manifest (``aweb_manifest.canonical_bytes`` — no second canonicalization).
 
 Access-control attributes (visibility, owner_team) live on the Library record,
 NOT in the hashed payload, so flipping a profile public never changes its digest.
 
-- Pack payload (``aweb.profile-pack.import-payload.v1``): every pack file, paths
-  PACK-relative.
-- Profile payload (``aweb.profile-pack.profile-payload.v1``): one profile's files,
+- Blueprint payload (``aweb.blueprint.import-payload.v1``): every blueprint file, paths
+  blueprint-relative.
+- Profile payload (``aweb.blueprint.profile-payload.v1``): one profile's files,
   paths PROFILE-relative.
 Files are sorted by POSIX path; each entry is {content_utf8, path, sha256}.
 """
@@ -23,8 +23,8 @@ from typing import Any
 
 from library.aweb_manifest import canonical_bytes
 
-PACK_PAYLOAD_SCHEMA = "aweb.profile-pack.import-payload.v1"
-PROFILE_PAYLOAD_SCHEMA = "aweb.profile-pack.profile-payload.v1"
+BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
+PROFILE_PAYLOAD_SCHEMA = "aweb.blueprint.profile-payload.v1"
 
 # VCS, dependency, and build/cache directories never enter the hashed payload.
 EXCLUDED_DIRS = frozenset(
@@ -69,8 +69,8 @@ def payload_digest(files: list[dict[str, str]], schema: str) -> str:
     return _sha256_hex(canonical_bytes(payload(files, schema)))
 
 
-def pack_digest(pack_root: Path) -> str:
-    return payload_digest(collect_files(pack_root), PACK_PAYLOAD_SCHEMA)
+def blueprint_digest(blueprint_root: Path) -> str:
+    return payload_digest(collect_files(blueprint_root), BLUEPRINT_PAYLOAD_SCHEMA)
 
 
 def profile_digest(profile_root: Path) -> str:

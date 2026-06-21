@@ -14,22 +14,22 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from library.digest import PACK_PAYLOAD_SCHEMA, collect_files
+from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, collect_files
 from library.models import UpdateFromSourceRequest
 from library.repository import (
     create_shelf_version,
     import_to_shelf,
     list_shelf,
-    publish_pack,
+    publish_blueprint,
     update_from_source,
 )
 
-_SOURCE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering" / "source"
+_SOURCE = Path(__file__).parent / "vectors" / "blueprints" / "engineering" / "source"
 _TEAM = "default:atext.aweb.ai"
 _ORIGINAL_MISSION = "Coordinate the team, keep work unblocked, and maintain evidence."
 
 
-def _repack(entry: dict[str, str], content: str) -> dict[str, str]:
+def _reblueprint(entry: dict[str, str], content: str) -> dict[str, str]:
     return {
         "content_utf8": content,
         "path": entry["path"],
@@ -38,16 +38,16 @@ def _repack(entry: dict[str, str], content: str) -> dict[str, str]:
 
 
 def _v2_payload(new_mission: str) -> dict:
-    """The fixture pack at version 0.2.0 with the coordinator's mission changed."""
+    """The fixture blueprint at version 0.2.0 with the coordinator's mission changed."""
     out: list[dict[str, str]] = []
     for entry in collect_files(_SOURCE):
-        if entry["path"] == "pack.yaml":
-            out.append(_repack(entry, entry["content_utf8"].replace("version: 0.1.0", "version: 0.2.0")))
+        if entry["path"] == "blueprint.yaml":
+            out.append(_reblueprint(entry, entry["content_utf8"].replace("version: 0.1.0", "version: 0.2.0")))
         elif entry["path"] == "profiles/coordinator/profile.yaml":
-            out.append(_repack(entry, entry["content_utf8"].replace(_ORIGINAL_MISSION, new_mission)))
+            out.append(_reblueprint(entry, entry["content_utf8"].replace(_ORIGINAL_MISSION, new_mission)))
         else:
             out.append(entry)
-    return {"files": out, "schema": PACK_PAYLOAD_SCHEMA}
+    return {"files": out, "schema": BLUEPRINT_PAYLOAD_SCHEMA}
 
 
 async def _setup(db) -> SimpleNamespace:
@@ -58,14 +58,14 @@ async def _setup(db) -> SimpleNamespace:
         "did:key:zUpdateTest",
     )
     principal = SimpleNamespace(team_id=_TEAM, alias="dev")
-    await publish_pack(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": PACK_PAYLOAD_SCHEMA}
+    await publish_blueprint(
+        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
     )
     await import_to_shelf(
         db,
         principal=principal,
-        source_profile_pack_ref="aweb.engineering-pack",
-        source_profile_pack_version=None,
+        source_blueprint_ref="aweb.engineering",
+        source_blueprint_version=None,
         profile_ref="coordinator",
         tags=None,
     )
@@ -75,7 +75,7 @@ async def _setup(db) -> SimpleNamespace:
 async def test_update_from_source_mints_merged_version(migrated_db) -> None:
     db = migrated_db
     principal = await _setup(db)
-    await publish_pack(db, principal=principal, payload=_v2_payload("Coordinate sharply and keep evidence."))
+    await publish_blueprint(db, principal=principal, payload=_v2_payload("Coordinate sharply and keep evidence."))
 
     result = await update_from_source(
         db,
@@ -85,20 +85,20 @@ async def test_update_from_source_mints_merged_version(migrated_db) -> None:
     )
     assert "field:mission" in result["updated_parts"]
     assert result["version"] == "0.2.0"
-    assert result["source_profile_pack_version"] == "0.2.0"
+    assert result["source_blueprint_version"] == "0.2.0"
 
     shelf = await list_shelf(db, principal=principal)
     coordinator = next(p for p in shelf["profiles"] if p["profile_ref"] == "coordinator")
     assert coordinator["version"] == "0.2.0"
     assert coordinator["summary"] == "Coordinate sharply and keep evidence."  # mission pulled upstream
-    assert coordinator["source_profile_pack_version"] == "0.2.0"  # pin advanced
+    assert coordinator["source_blueprint_version"] == "0.2.0"  # pin advanced
     assert coordinator["update_available"] is False  # now current
 
 
 async def test_update_from_source_noop_when_nothing_newer(migrated_db) -> None:
     db = migrated_db
     principal = await _setup(db)
-    # No newer pack version published -> theirs == baseline -> pure no-op.
+    # No newer blueprint version published -> theirs == baseline -> pure no-op.
     result = await update_from_source(
         db,
         principal=principal,
@@ -107,7 +107,7 @@ async def test_update_from_source_noop_when_nothing_newer(migrated_db) -> None:
     )
     assert result["updated_parts"] == []
     assert result["version"] == "0.1.0"  # unchanged, no new version
-    assert result["source_profile_pack_version"] == "0.1.0"  # pin unchanged
+    assert result["source_blueprint_version"] == "0.1.0"  # pin unchanged
 
 
 async def test_writing_an_existing_version_is_409(migrated_db) -> None:

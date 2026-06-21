@@ -19,7 +19,7 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert "library — agent-first profiles for AWID teams" in response.text
-    assert "GET /v1/profile-packs" in response.text
+    assert "GET /v1/blueprints" in response.text
     assert "aw id request --team-auth" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
@@ -55,8 +55,8 @@ def test_llms_txt_documents_every_manifest_operation() -> None:
         assert f"aw library {tool['name']}" in text, tool["name"]
         assert tool["path"] in text, tool["path"]
     # Path params show as required in the operations list, not optional.
-    assert "required: pack_ref" in text
-    assert "required: pack_ref, profile_ref" in text
+    assert "required: blueprint_ref" in text
+    assert "required: blueprint_ref, profile_ref" in text
 
 
 def test_landing_offers_copiable_llms() -> None:
@@ -113,15 +113,15 @@ def test_reference_public_reads_have_literal_runnable_curl() -> None:
     """The three auth:none reads are shown as literal, copy-paste-runnable curl with
     live values — nothing labelled runnable may carry a brace placeholder."""
     text = _client().get("/reference").text
-    assert "curl -s https://library.aweb.ai/v1/profile-packs" in text
-    assert "curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack" in text
+    assert "curl -s https://library.aweb.ai/v1/blueprints" in text
+    assert "curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering" in text
     assert (
-        "curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack/profiles/coordinator"
+        "curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering/profiles/coordinator"
         in text
     )
-    # get-pack / get-profile path params appear in the runnable verb examples.
-    assert "aw library get-pack --pack_ref aweb.engineering-pack" in text
-    assert "aw library get-profile --pack_ref aweb.engineering-pack --profile_ref coordinator" in text
+    # get-blueprint / get-profile path params appear in the runnable verb examples.
+    assert "aw library get-blueprint --blueprint_ref aweb.engineering" in text
+    assert "aw library get-profile --blueprint_ref aweb.engineering --profile_ref coordinator" in text
     # No runnable curl line carries a brace placeholder.
     for line in text.splitlines():
         if "curl -s" in line:

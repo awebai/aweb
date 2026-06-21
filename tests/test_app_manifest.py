@@ -15,10 +15,10 @@ from library.config import Settings
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 _EXPECTED_TOOLS = {
-    "list-packs",
-    "get-pack",
+    "list-blueprints",
+    "get-blueprint",
     "get-profile",
-    "publish-pack",
+    "publish-blueprint",
     "register",
     "create-shelf-profile",
     "shelf-version",
@@ -26,7 +26,7 @@ _EXPECTED_TOOLS = {
     "import-to-shelf",
     "publish-profile",
     "set-profile-tags",
-    "set-pack-tags",
+    "set-blueprint-tags",
     "bind",
     "get-binding",
     "shelf",
@@ -39,10 +39,10 @@ _EXPECTED_TOOLS = {
 
 # Mutation flag per SoT §9: true iff a successful call is a hosted state change.
 _MUTATIONS = {
-    "list-packs": False,
-    "get-pack": False,
+    "list-blueprints": False,
+    "get-blueprint": False,
     "get-profile": False,
-    "publish-pack": True,
+    "publish-blueprint": True,
     "register": True,
     "create-shelf-profile": True,
     "shelf-version": True,
@@ -50,7 +50,7 @@ _MUTATIONS = {
     "import-to-shelf": True,
     "publish-profile": True,
     "set-profile-tags": True,
-    "set-pack-tags": True,
+    "set-blueprint-tags": True,
     "bind": True,
     "get-binding": False,
     "shelf": False,
@@ -217,7 +217,7 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
 
     # Public catalog reads are auth:'none'; every other tool is team-cert (default,
     # no marker).
-    public_reads = {"list-packs", "get-pack", "get-profile"}
+    public_reads = {"list-blueprints", "get-blueprint", "get-profile"}
     for tool in MANIFEST["tools"]:
         if tool["name"] in public_reads:
             assert tool.get("auth") == "none", tool["name"]
@@ -231,7 +231,7 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
 
 def test_conformance_validator_rejects_host_injecting_paths() -> None:
     protocol_relative = copy.deepcopy(MANIFEST)
-    protocol_relative["tools"][0]["path"] = "//evil.example.com/v1/profile-packs/import"
+    protocol_relative["tools"][0]["path"] = "//evil.example.com/v1/blueprints/import"
     assert any("scheme/host" in err for err in _manifest_errors(protocol_relative))
 
 
@@ -241,14 +241,14 @@ def test_interpreted_spec_bind() -> None:
         "bind",
         {
             "agent_id": "agent-1",
-            "profile_ref": "pack/dev@1",
+            "profile_ref": "blueprint/dev@1",
             "profile_version": "1",
             "profile_digest": "sha256:abc",
         },
     )
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/agents/agent-1/profile-binding"
-    assert spec["body"] == b'{"profile_digest":"sha256:abc","profile_ref":"pack/dev@1","profile_version":"1"}'
+    assert spec["body"] == b'{"profile_digest":"sha256:abc","profile_ref":"blueprint/dev@1","profile_version":"1"}'
     assert spec["mutation"] is True
 
 
@@ -265,16 +265,16 @@ def test_interpreted_spec_propose() -> None:
 
 def test_interpreted_spec_import_to_shelf() -> None:
     # The import-to-shelf body must match the implemented ImportToShelfRequest so a
-    # manifest-driven caller is accepted: source_profile_pack_ref + profile_ref
+    # manifest-driven caller is accepted: source_blueprint_ref + profile_ref
     # required; version/target/tags optional.
     spec = _interpret(
         MANIFEST,
         "import-to-shelf",
-        {"source_profile_pack_ref": "aweb.engineering-pack", "profile_ref": "coordinator"},
+        {"source_blueprint_ref": "aweb.engineering", "profile_ref": "coordinator"},
     )
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/shelf/import"
-    assert spec["body"] == b'{"profile_ref":"coordinator","source_profile_pack_ref":"aweb.engineering-pack"}'
+    assert spec["body"] == b'{"profile_ref":"coordinator","source_blueprint_ref":"aweb.engineering"}'
     assert spec["mutation"] is True
 
 

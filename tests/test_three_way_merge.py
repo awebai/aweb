@@ -6,7 +6,7 @@ import hashlib
 
 import yaml
 
-from library.profile_pack import parse_profile_payload, part_baselines, three_way_merge
+from library.blueprint import parse_profile_payload, part_baselines, three_way_merge
 
 
 def _file(path: str, content: str) -> dict[str, str]:
@@ -64,7 +64,7 @@ def test_no_op_when_upstream_unchanged() -> None:
     baseline = _profile(mission="A", instructions="base", apps=["x"])
     baselines = part_baselines(parse_profile_payload(baseline))
     ours = _profile(mission="A", instructions="local edit", apps=["x"])
-    theirs = baseline  # source pack did not change
+    theirs = baseline  # source blueprint did not change
 
     result = three_way_merge(ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0")
     assert result.updated_parts == []  # nothing pullable -> caller treats as no-op

@@ -15,20 +15,20 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from library.digest import PACK_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
+from library.blueprint import parse_profile_payload
+from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
 from library.models import ProposalCreateRequest
-from library.profile_pack import parse_profile_payload
 from library.repository import (
     approve_proposal,
     create_proposal,
     import_to_shelf,
     list_shelf,
-    publish_pack,
+    publish_blueprint,
 )
 
-_SOURCE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering" / "source"
+_SOURCE = Path(__file__).parent / "vectors" / "blueprints" / "engineering" / "source"
 _TEAM = "default:atext.aweb.ai"
-_BASE_DIGEST = "sha256:34d0305a43753bed042d7bfbdbdae77c19bdb89d4353ea103a9e1b0faa8be619"
+_BASE_DIGEST = "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0"
 
 
 def _bumped_coordinator_payload(new_version: str) -> list[dict[str, str]]:
@@ -59,14 +59,14 @@ async def _publish_and_import(db) -> None:
         "did:key:zMintTest",
     )
     principal = SimpleNamespace(team_id=_TEAM, alias="dev")
-    await publish_pack(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": PACK_PAYLOAD_SCHEMA}
+    await publish_blueprint(
+        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
     )
     await import_to_shelf(
         db,
         principal=principal,
-        source_profile_pack_ref="aweb.engineering-pack",
-        source_profile_pack_version=None,
+        source_blueprint_ref="aweb.engineering",
+        source_blueprint_version=None,
         profile_ref="coordinator",
         tags=None,
     )
@@ -108,7 +108,7 @@ async def test_approve_mints_new_shelf_version(migrated_db) -> None:
     coordinator = next(p for p in shelf["profiles"] if p["profile_ref"] == "coordinator")
     assert coordinator["version"] == "0.2.0"
     assert coordinator["digest"] == expected_digest
-    assert coordinator["source_profile_pack_ref"] == "aweb.engineering-pack"
+    assert coordinator["source_blueprint_ref"] == "aweb.engineering"
 
 
 async def test_approve_rejects_stale_base(migrated_db) -> None:

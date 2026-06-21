@@ -7,7 +7,7 @@ import library.api as library_api
 from library.config import Settings
 
 _TEAM_SCOPED = [
-    ("POST", "/v1/profile-packs/import"),
+    ("POST", "/v1/blueprints/import"),
     ("POST", "/v1/shelf/import"),
     ("POST", "/v1/profiles/coordinator/publish"),
     ("POST", "/v1/profiles/coordinator/update-from-source"),
@@ -91,17 +91,17 @@ def test_health_endpoints_are_public() -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_pack_catalog_is_unauthenticated() -> None:
-    # Packs are the public catalog (no cert). Shelf reads (/v1/shelf) are
+def test_public_blueprint_catalog_is_unauthenticated() -> None:
+    # Blueprints are the public catalog (no cert). Shelf reads (/v1/shelf) are
     # private and cert-gated — covered by the team-scoped 401 cases above.
     app = _app()
     _override_infra_deps(app, db_value=_FakeDB())
     client = TestClient(app)
 
-    assert client.get("/v1/profile-packs").json() == []
-    assert client.get("/v1/profile-packs/does-not-exist").status_code == 404
+    assert client.get("/v1/blueprints").json() == []
+    assert client.get("/v1/blueprints/does-not-exist").status_code == 404
     # A public profile read is also unauthenticated (404, not 401, without a cert).
-    assert client.get("/v1/profile-packs/none/profiles/none").status_code == 404
+    assert client.get("/v1/blueprints/none/profiles/none").status_code == 404
 
 
 @pytest.mark.parametrize("method,path", _TEAM_SCOPED)

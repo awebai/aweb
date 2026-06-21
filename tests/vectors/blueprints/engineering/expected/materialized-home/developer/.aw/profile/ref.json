@@ -1,0 +1,8 @@
+{
+  "profile_digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+  "profile_ref": "developer",
+  "profile_version": "0.1.0",
+  "source_blueprint_digest": "sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134",
+  "source_blueprint_ref": "aweb.engineering",
+  "source_blueprint_version": "0.1.0"
+}

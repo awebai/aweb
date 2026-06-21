@@ -1,7 +1,7 @@
 [project]
 name = "library"
 version = "0.1.0"
-description = "Agent profiles, profile packs, and bindings for AWID teams"
+description = "Agent profiles, blueprints, and bindings for AWID teams"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "aweb.ai", email = "hello@aweb.ai" }]

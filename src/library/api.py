@@ -26,20 +26,20 @@ from library.repository import (
     create_proposal,
     create_shelf_profile,
     create_shelf_version,
-    get_pack_profile,
+    get_blueprint,
+    get_blueprint_profile,
     get_profile_binding,
-    get_profile_pack,
     get_shelf_profile,
     import_to_shelf,
-    list_profile_packs,
+    list_blueprints,
     list_proposals,
     list_shelf,
     materialize,
-    publish_pack,
+    publish_blueprint,
     publish_profile,
     register_team,
     reject_proposal,
-    set_pack_tags,
+    set_blueprint_tags,
     set_profile_binding,
     set_profile_tags,
     update_from_source,
@@ -157,29 +157,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "library"}
 
-    # --- Public catalog: packs are always public; ?tags filter -------------------
+    # --- Public catalog: blueprints are always public; ?tags filter -------------------
 
-    @app.get("/v1/profile-packs")
-    async def list_profile_packs_route(
+    @app.get("/v1/blueprints")
+    async def list_blueprints_route(
         database: Annotated[AsyncDatabaseManager, Depends(db)],
         tags: Annotated[list[str] | None, Query()] = None,
     ) -> list[dict]:
-        return await list_profile_packs(database, tags=tags)
+        return await list_blueprints(database, tags=tags)
 
-    @app.get("/v1/profile-packs/{pack_id}")
-    async def get_profile_pack_route(
-        pack_id: str,
+    @app.get("/v1/blueprints/{blueprint_id}")
+    async def get_blueprint_route(
+        blueprint_id: str,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_profile_pack(database, pack_ref=pack_id)
+        return await get_blueprint(database, blueprint_ref=blueprint_id)
 
-    @app.get("/v1/profile-packs/{pack_id}/profiles/{profile_id}")
-    async def get_pack_profile_route(
-        pack_id: str,
+    @app.get("/v1/blueprints/{blueprint_id}/profiles/{profile_id}")
+    async def get_blueprint_profile_route(
+        blueprint_id: str,
         profile_id: str,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_pack_profile(database, pack_ref=pack_id, profile_ref=profile_id)
+        return await get_blueprint_profile(database, blueprint_ref=blueprint_id, profile_ref=profile_id)
 
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
@@ -222,7 +222,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     # update-from-source: per-part 3-way merge of a shelf profile against a newer
-    # version of its source pack — pull upstream improvements into un-evolved parts,
+    # version of its source blueprint — pull upstream improvements into un-evolved parts,
     # keep local edits. A real merge mints target_version; nothing pullable is a no-op.
     @app.post("/v1/profiles/{profile_ref}/update-from-source")
     async def update_from_source_route(
@@ -235,8 +235,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = UpdateFromSourceRequest.model_validate(json.loads(raw) if raw.strip() else {})
         return await update_from_source(database, principal=actor, profile_ref=profile_ref, request=payload)
 
-    # publish-profile: a team publishes a private shelf profile into a PUBLIC pack
-    # (new pack, or a new version of an owned pack). pack.yaml is library-generated
+    # publish-profile: a team publishes a private shelf profile into a PUBLIC blueprint
+    # (new blueprint, or a new version of an owned blueprint). blueprint.yaml is library-generated
     # and the profile set accumulates.
     @app.post("/v1/profiles/{profile_ref}/publish")
     async def publish_profile_route(
@@ -263,18 +263,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
         return await register_team(database, principal=actor, owner=payload.owner, display_name=payload.display_name)
 
-    # publish-pack: a producer uploads/updates a PUBLIC pack (the former import,
+    # publish-blueprint: a producer uploads/updates a PUBLIC blueprint (the former import,
     # wire-unchanged: canonical import-payload -> import-return).
-    @app.post("/v1/profile-packs/import")
-    async def publish_pack_route(
+    @app.post("/v1/blueprints/import")
+    async def publish_blueprint_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await publish_pack(database, principal=actor, payload=await request.json())
+        return await publish_blueprint(database, principal=actor, payload=await request.json())
 
-    # import-to-shelf: a team copies a public-pack profile onto its private shelf.
-    # Idempotent keyed by (team, source pack, source profile): re-import is a pure
+    # import-to-shelf: a team copies a public-blueprint profile onto its private shelf.
+    # Idempotent keyed by (team, source blueprint, source profile): re-import is a pure
     # no-op returning the existing copy — never an update-from-source.
     @app.post("/v1/shelf/import")
     async def import_to_shelf_route(
@@ -287,8 +287,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await import_to_shelf(
             database,
             principal=actor,
-            source_profile_pack_ref=payload.source_profile_pack_ref,
-            source_profile_pack_version=payload.source_profile_pack_version,
+            source_blueprint_ref=payload.source_blueprint_ref,
+            source_blueprint_version=payload.source_blueprint_version,
             profile_ref=payload.profile_ref,
             tags=payload.tags,
         )
@@ -331,15 +331,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = SetTagsRequest.model_validate(await request.json())
         return await set_profile_tags(database, principal=actor, profile_ref=profile_ref, tags=payload.tags)
 
-    @app.put("/v1/profile-packs/{pack_ref}/tags")
-    async def set_pack_tags_route(
-        pack_ref: str,
+    @app.put("/v1/blueprints/{blueprint_ref}/tags")
+    async def set_blueprint_tags_route(
+        blueprint_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
-        return await set_pack_tags(database, principal=actor, pack_ref=pack_ref, tags=payload.tags)
+        return await set_blueprint_tags(database, principal=actor, blueprint_ref=blueprint_ref, tags=payload.tags)
 
     @app.post("/v1/proposals")
     async def create_proposal_route(

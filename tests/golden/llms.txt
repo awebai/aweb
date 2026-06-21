@@ -1,6 +1,6 @@
 # library — agent-first profiles for AWID teams
 
-library is the app that owns agent profiles, profile packs, profile versions and
+library is the app that owns agent profiles, blueprints, profile versions and
 digests, agent-profile bindings, materialization payloads, and profile learning.
 This is a Native Agentic App (naapp): an aweb app agents operate directly via its
 canonical manifest (a public byte artifact identified by its digest), published for
@@ -13,8 +13,8 @@ Origin:
 - Production: https://library.aweb.ai
 - Local development: http://127.0.0.1:8765
 
-The model is structural: profile packs are the public, versioned catalog; a team's
-shelf holds its private working copies. A team adopts a pack profile onto its shelf,
+The model is structural: blueprints are the public, versioned catalog; a team's
+shelf holds its private working copies. A team adopts a blueprint profile onto its shelf,
 evolves it (new versions, proposals), binds agents to shelf profiles, and
 materializes them. "Public" is a publish, not a flag.
 
@@ -26,21 +26,21 @@ command; nothing here needs a browser or an account.
 
 1. npm install -g @awebai/aw
 2. aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
-3. aw library list-packs
+3. aw library list-blueprints
 4. aw team create my-team
-5. aw library import-to-shelf --source_profile_pack_ref aweb.engineering-pack --source_profile_pack_version 0.1.0 --profile_ref coordinator
+5. aw library import-to-shelf --source_blueprint_ref aweb.engineering --source_blueprint_version 0.1.0 --profile_ref coordinator
 6. aw team add alice@coordinator
 
 Step 6 binds the profile, materializes the agent's home, and prints the home
-directory path it wrote. Shortcut: aw team add alice@aweb.engineering-pack/coordinator
-adopts the pack profile onto your shelf and adds the agent in one command.
+directory path it wrote. Shortcut: aw team add alice@aweb.engineering/coordinator
+adopts the blueprint profile onto your shelf and adds the agent in one command.
 
 
 ## How to call it
 
 The canonical form is the native plugin verbs: after
 aw plugin install https://library.aweb.ai/.well-known/aweb-app.json, every operation below is
-aw library <verb> (e.g. aw library list-packs, aw library import-to-shelf,
+aw library <verb> (e.g. aw library list-blueprints, aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same
 surface; call them directly with aw id request --team-auth (the low-level escape
 hatch) if you are not using the plugin.
@@ -48,7 +48,7 @@ hatch) if you are not using the plugin.
 
 ## Authentication
 
-Public catalog reads (list-packs, get-pack, get-profile) need no auth. Every other
+Public catalog reads (list-blueprints, get-blueprint, get-profile) need no auth. Every other
 operation is team-scoped and authenticated with your AWID team certificate. When you
 call through the aw plugin verbs (or the low-level aw id request --team-auth), aw
 signs each request for you with your team member key — you never assemble auth
@@ -68,22 +68,22 @@ signing recipe with per-operation curl is at https://library.aweb.ai/reference.
 
 Public operations (no auth):
 
-aw library list-packs  (GET /v1/profile-packs)
-    Browse the public profile-pack catalog, optionally filtered by tag overlap.
+aw library list-blueprints  (GET /v1/blueprints)
+    Browse the public blueprint catalog, optionally filtered by tag overlap.
     optional: tags
 
-aw library get-pack  (GET /v1/profile-packs/{pack_ref})
-    Get a public profile pack and its profile summaries.
-    required: pack_ref
+aw library get-blueprint  (GET /v1/blueprints/{blueprint_ref})
+    Get a public blueprint and its profile summaries.
+    required: blueprint_ref
 
-aw library get-profile  (GET /v1/profile-packs/{pack_ref}/profiles/{profile_ref})
-    Get a public profile's full content from the latest version of a pack.
-    required: pack_ref, profile_ref
+aw library get-profile  (GET /v1/blueprints/{blueprint_ref}/profiles/{profile_ref})
+    Get a public profile's full content from the latest version of a blueprint.
+    required: blueprint_ref, profile_ref
 
 Team operations (AWID team certificate):
 
-aw library publish-pack  (POST /v1/profile-packs/import)
-    Publish or update a public profile pack. The body is the canonical import payload directly.
+aw library publish-blueprint  (POST /v1/blueprints/import)
+    Publish or update a public blueprint. The body is the canonical import payload directly.
     required: files, schema
 
 aw library register  (POST /v1/team/register)
@@ -100,39 +100,39 @@ aw library shelf-version  (POST /v1/profiles/{profile_ref}/versions)
     required: profile_ref, files
 
 aw library update-from-source  (POST /v1/profiles/{profile_ref}/update-from-source)
-    Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.
+    Per-part 3-way merge of a shelf profile against a newer version of its source blueprint: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.
     required: profile_ref, target_version
-    optional: source_profile_pack_version
+    optional: source_blueprint_version
 
 aw library import-to-shelf  (POST /v1/shelf/import)
-    Copy a public-pack profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.
-    required: source_profile_pack_ref, profile_ref
-    optional: source_profile_pack_version, tags
+    Copy a public-blueprint profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.
+    required: source_blueprint_ref, profile_ref
+    optional: source_blueprint_version, tags
 
 aw library publish-profile  (POST /v1/profiles/{profile_ref}/publish)
-    Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.
-    required: profile_ref, pack_version
-    optional: profile_version, target_pack_ref, new_pack
+    Publish a private shelf profile into a public blueprint (new blueprint or a new version of an owned blueprint); blueprint.yaml is library-generated and the profile set accumulates.
+    required: profile_ref, blueprint_version
+    optional: profile_version, target_blueprint_ref, new_blueprint
 
 aw library set-profile-tags  (PUT /v1/profiles/{profile_ref}/tags)
     Replace a profile's organizational tags.
     required: profile_ref, tags
 
-aw library set-pack-tags  (PUT /v1/profile-packs/{pack_ref}/tags)
-    Replace a profile pack's organizational tags.
-    required: pack_ref, tags
+aw library set-blueprint-tags  (PUT /v1/blueprints/{blueprint_ref}/tags)
+    Replace a blueprint's organizational tags.
+    required: blueprint_ref, tags
 
 aw library bind  (POST /v1/agents/{agent_id}/profile-binding)
     Bind an agent identity to a profile ref/version/digest.
     required: agent_id, profile_ref, profile_version, profile_digest
-    optional: source_profile_pack_ref
+    optional: source_blueprint_ref
 
 aw library get-binding  (GET /v1/agents/{agent_id}/profile-binding)
     Get the profile binding for an agent identity.
     required: agent_id
 
 aw library shelf  (GET /v1/shelf)
-    List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-pack version is available.
+    List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-blueprint version is available.
 
 aw library materialize  (POST /v1/materialize)
     Materialize a profile payload for a local or custodial runtime.

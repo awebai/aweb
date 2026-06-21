@@ -2,7 +2,7 @@
 
 library has no app accounts. Team-scoped reads and writes authenticate with an
 AWID team certificate over the aw-native signed-request path. Public catalog
-reads (`/v1/profile-packs`, `/v1/profile-packs/{id}/profiles/{profile_id}`) need
+reads (`/v1/blueprints`, `/v1/blueprints/{id}/profiles/{profile_id}`) need
 no auth; the shelf (`/v1/shelf`, `/v1/profiles/{id}`) is private and cert-gated.
 
 ## Call a team-scoped endpoint

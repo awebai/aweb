@@ -8,6 +8,17 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
 from library.auth import Principal
+from library.blueprint import (
+    ParsedBlueprint,
+    ParsedProfile,
+    build_blueprint_payload,
+    import_return,
+    materialize_home,
+    parse_import_payload,
+    parse_profile_payload,
+    part_baselines,
+    three_way_merge,
+)
 from library.digest import PROFILE_PAYLOAD_SCHEMA
 from library.models import (
     MaterializeRequest,
@@ -15,17 +26,6 @@ from library.models import (
     ProfilePublishRequest,
     ProposalCreateRequest,
     UpdateFromSourceRequest,
-)
-from library.profile_pack import (
-    ParsedPack,
-    ParsedProfile,
-    build_pack_payload,
-    import_return,
-    materialize_home,
-    parse_import_payload,
-    parse_profile_payload,
-    part_baselines,
-    three_way_merge,
 )
 
 
@@ -47,51 +47,51 @@ def normalize_tags(tags: list[Any]) -> list[str]:
     return sorted({str(tag).strip().lower() for tag in tags if str(tag).strip()})
 
 
-# --- Public packs (the catalog) -----------------------------------------------
+# --- Public blueprints (the catalog) -----------------------------------------------
 
 
-async def publish_pack(
+async def publish_blueprint(
     db: AsyncDatabaseManager, *, principal: Principal, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Publish (or update) a public pack in the global catalog. Wire-compatible
-    with the frozen import-payload -> import-return contract; the pack and its
+    """Publish (or update) a public blueprint in the global catalog. Wire-compatible
+    with the frozen import-payload -> import-return contract; the blueprint and its
     profile snapshots are always public."""
     try:
-        pack = parse_import_payload(payload)
+        blueprint = parse_import_payload(payload)
     except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid profile pack: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"Invalid blueprint: {exc}") from exc
 
-    await _persist_pack(db, principal=principal, pack=pack)
-    return import_return(pack)
+    await _persist_blueprint(db, principal=principal, blueprint=blueprint)
+    return import_return(blueprint)
 
 
-async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack: ParsedPack) -> None:
+async def _persist_blueprint(db: AsyncDatabaseManager, *, principal: Principal, blueprint: ParsedBlueprint) -> None:
     async with db.transaction() as tx:
         await tx.execute(
             """
-            INSERT INTO {{tables.profile_packs}}
-              (owner_team, pack_ref, version, digest, name, summary, description,
+            INSERT INTO {{tables.blueprints}}
+              (owner_team, blueprint_ref, version, digest, name, summary, description,
                recommendations, runtime_hints, expected_apps, first_mission_examples, payload)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb)
-            ON CONFLICT (owner_team, pack_ref, version) DO UPDATE SET
+            ON CONFLICT (owner_team, blueprint_ref, version) DO UPDATE SET
                 digest = EXCLUDED.digest, name = EXCLUDED.name, summary = EXCLUDED.summary,
                 description = EXCLUDED.description, recommendations = EXCLUDED.recommendations,
                 runtime_hints = EXCLUDED.runtime_hints, expected_apps = EXCLUDED.expected_apps,
                 first_mission_examples = EXCLUDED.first_mission_examples, payload = EXCLUDED.payload
             """,
-            principal.team_id, pack.pack_ref, pack.version, pack.digest, pack.name, pack.summary,
-            pack.description, _dumps(pack.recommendations), pack.runtime_hints, pack.expected_apps,
-            pack.first_mission_examples, _dumps(pack.files),
+            principal.team_id, blueprint.blueprint_ref, blueprint.version, blueprint.digest, blueprint.name, blueprint.summary,
+            blueprint.description, _dumps(blueprint.recommendations), blueprint.runtime_hints, blueprint.expected_apps,
+            blueprint.first_mission_examples, _dumps(blueprint.files),
         )
-        for profile in pack.profiles:
+        for profile in blueprint.profiles:
             await tx.execute(
                 """
-                INSERT INTO {{tables.pack_profiles}}
-                  (owner_team, pack_ref, pack_version, profile_ref, profile_version, digest, name,
+                INSERT INTO {{tables.blueprint_profiles}}
+                  (owner_team, blueprint_ref, blueprint_version, profile_ref, profile_version, digest, name,
                    mission, accepted_work, runtime_assumptions, memory_policy, expected_apps,
                    event_subscriptions, approval_required, files)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb)
-                ON CONFLICT (owner_team, pack_ref, pack_version, profile_ref) DO UPDATE SET
+                ON CONFLICT (owner_team, blueprint_ref, blueprint_version, profile_ref) DO UPDATE SET
                     profile_version = EXCLUDED.profile_version, digest = EXCLUDED.digest,
                     name = EXCLUDED.name, mission = EXCLUDED.mission,
                     accepted_work = EXCLUDED.accepted_work,
@@ -100,7 +100,7 @@ async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack:
                     event_subscriptions = EXCLUDED.event_subscriptions,
                     approval_required = EXCLUDED.approval_required, files = EXCLUDED.files
                 """,
-                principal.team_id, pack.pack_ref, pack.version, profile.profile_ref, profile.version,
+                principal.team_id, blueprint.blueprint_ref, blueprint.version, profile.profile_ref, profile.version,
                 profile.digest, profile.name, profile.mission, profile.accepted_work,
                 profile.runtime_assumptions,
                 _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
@@ -110,11 +110,11 @@ async def _persist_pack(db: AsyncDatabaseManager, *, principal: Principal, pack:
 
 
 def _profile_runtime_hints(recommendations: Any, profile_ref: str) -> list[str]:
-    """Structured harness hints are profile-specific pack recommendation metadata.
+    """Structured harness hints are profile-specific blueprint recommendation metadata.
 
-    v0.2.0 stores these in pack.yaml's ``profiles`` entries, persisted as the
-    profile_packs.recommendations JSON. Public get-profile surfaces the matching
-    recommendation as a top-level field so callers do not need to parse pack.yaml.
+    v0.2.0 stores these in blueprint.yaml's ``profiles`` entries, persisted as the
+    blueprints.recommendations JSON. Public get-profile surfaces the matching
+    recommendation as a top-level field so callers do not need to parse blueprint.yaml.
     """
     for recommendation in _json_value(recommendations) or []:
         if not isinstance(recommendation, dict):
@@ -126,10 +126,10 @@ def _profile_runtime_hints(recommendations: Any, profile_ref: str) -> list[str]:
     return []
 
 
-def _pack_summary(row: Any) -> dict[str, Any]:
+def _blueprint_summary(row: Any) -> dict[str, Any]:
     data = dict(row)
     return {
-        "pack_ref": data["pack_ref"],
+        "blueprint_ref": data["blueprint_ref"],
         "version": data["version"],
         "digest": data["digest"],
         "tags": list(data["tags"] or []),
@@ -143,71 +143,71 @@ def _pack_summary(row: Any) -> dict[str, Any]:
     }
 
 
-_PACK_COLUMNS = (
-    "pack_ref, version, digest, tags, name, summary, description, "
+_BLUEPRINT_COLUMNS = (
+    "blueprint_ref, version, digest, tags, name, summary, description, "
     "recommendations, runtime_hints, expected_apps, first_mission_examples"
 )
 
 
-async def list_profile_packs(db: AsyncDatabaseManager, *, tags: list[str] | None) -> list[dict[str, Any]]:
-    """The public catalog: latest version of every pack, optional ?tags overlap."""
+async def list_blueprints(db: AsyncDatabaseManager, *, tags: list[str] | None) -> list[dict[str, Any]]:
+    """The public catalog: latest version of every blueprint, optional ?tags overlap."""
     rows = await db.fetch_all(
-        "SELECT DISTINCT ON (owner_team, pack_ref) "
-        + _PACK_COLUMNS
-        + " FROM {{tables.profile_packs}}"
+        "SELECT DISTINCT ON (owner_team, blueprint_ref) "
+        + _BLUEPRINT_COLUMNS
+        + " FROM {{tables.blueprints}}"
         + " WHERE ($1::text[] IS NULL OR tags && $1)"
-        + " ORDER BY owner_team, pack_ref, created_at DESC",
+        + " ORDER BY owner_team, blueprint_ref, created_at DESC",
         tags,
     )
-    return [_pack_summary(row) for row in rows]
+    return [_blueprint_summary(row) for row in rows]
 
 
-async def get_profile_pack(db: AsyncDatabaseManager, *, pack_ref: str) -> dict[str, Any]:
+async def get_blueprint(db: AsyncDatabaseManager, *, blueprint_ref: str) -> dict[str, Any]:
     row = await db.fetch_one(
-        "SELECT " + _PACK_COLUMNS + " FROM {{tables.profile_packs}}"
-        " WHERE pack_ref = $1 ORDER BY created_at DESC LIMIT 1",
-        pack_ref,
+        "SELECT " + _BLUEPRINT_COLUMNS + " FROM {{tables.blueprints}}"
+        " WHERE blueprint_ref = $1 ORDER BY created_at DESC LIMIT 1",
+        blueprint_ref,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="Profile pack not found")
-    summary = _pack_summary(row)
+        raise HTTPException(status_code=404, detail="Blueprint not found")
+    summary = _blueprint_summary(row)
     profiles = await db.fetch_all(
         "SELECT profile_ref, profile_version AS version, digest, name, mission"
-        " FROM {{tables.pack_profiles}}"
-        " WHERE pack_ref = $1 AND pack_version = $2 ORDER BY profile_ref",
-        pack_ref,
+        " FROM {{tables.blueprint_profiles}}"
+        " WHERE blueprint_ref = $1 AND blueprint_version = $2 ORDER BY profile_ref",
+        blueprint_ref,
         summary["version"],
     )
     summary["profiles"] = [dict(profile) for profile in profiles]
     return summary
 
 
-async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_ref: str) -> dict[str, Any]:
-    """A public profile snapshot from the latest version of a catalog pack — the
+async def get_blueprint_profile(db: AsyncDatabaseManager, *, blueprint_ref: str, profile_ref: str) -> dict[str, Any]:
+    """A public profile snapshot from the latest version of a catalog blueprint — the
     full profile content, for previewing before import. No auth (public catalog)."""
-    pack = await db.fetch_one(
-        "SELECT owner_team, version, recommendations FROM {{tables.profile_packs}}"
-        " WHERE pack_ref = $1 ORDER BY created_at DESC LIMIT 1",
-        pack_ref,
+    blueprint = await db.fetch_one(
+        "SELECT owner_team, version, recommendations FROM {{tables.blueprints}}"
+        " WHERE blueprint_ref = $1 ORDER BY created_at DESC LIMIT 1",
+        blueprint_ref,
     )
-    if pack is None:
-        raise HTTPException(status_code=404, detail="Profile pack not found")
+    if blueprint is None:
+        raise HTTPException(status_code=404, detail="Blueprint not found")
     row = await db.fetch_one(
         "SELECT profile_ref, profile_version, digest, name, mission, accepted_work,"
         " runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required, files"
-        " FROM {{tables.pack_profiles}}"
-        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
-        pack["owner_team"],
-        pack_ref,
-        pack["version"],
+        " FROM {{tables.blueprint_profiles}}"
+        " WHERE owner_team = $1 AND blueprint_ref = $2 AND blueprint_version = $3 AND profile_ref = $4",
+        blueprint["owner_team"],
+        blueprint_ref,
+        blueprint["version"],
         profile_ref,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="Profile not found in pack")
+        raise HTTPException(status_code=404, detail="Profile not found in blueprint")
     data = dict(row)
     return {
-        "pack_ref": pack_ref,
-        "pack_version": pack["version"],
+        "blueprint_ref": blueprint_ref,
+        "blueprint_version": blueprint["version"],
         "profile_ref": data["profile_ref"],
         "version": data["profile_version"],
         "digest": data["digest"],
@@ -215,7 +215,7 @@ async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_r
         "mission": data.get("mission"),
         "accepted_work": list(data.get("accepted_work") or []),
         "runtime_assumptions": list(data.get("runtime_assumptions") or []),
-        "runtime_hints": _profile_runtime_hints(pack["recommendations"], data["profile_ref"]),
+        "runtime_hints": _profile_runtime_hints(blueprint["recommendations"], data["profile_ref"]),
         "memory_policy": _json_value(data.get("memory_policy")),
         "expected_apps": list(data.get("expected_apps") or []),
         "event_subscriptions": _json_value(data.get("event_subscriptions")) or [],
@@ -224,35 +224,35 @@ async def get_pack_profile(db: AsyncDatabaseManager, *, pack_ref: str, profile_r
     }
 
 
-async def set_pack_tags(
-    db: AsyncDatabaseManager, *, principal: Principal, pack_ref: str, tags: list[Any]
+async def set_blueprint_tags(
+    db: AsyncDatabaseManager, *, principal: Principal, blueprint_ref: str, tags: list[Any]
 ) -> dict[str, Any]:
     normalized = normalize_tags(tags)
     rows = await db.fetch_all(
-        "UPDATE {{tables.profile_packs}} SET tags = $3"
-        " WHERE owner_team = $1 AND pack_ref = $2 RETURNING version",
+        "UPDATE {{tables.blueprints}} SET tags = $3"
+        " WHERE owner_team = $1 AND blueprint_ref = $2 RETURNING version",
         principal.team_id,
-        pack_ref,
+        blueprint_ref,
         normalized,
     )
     if not rows:
-        raise HTTPException(status_code=404, detail="Profile pack not found")
-    return {"pack_ref": pack_ref, "tags": normalized}
+        raise HTTPException(status_code=404, detail="Blueprint not found")
+    return {"blueprint_ref": blueprint_ref, "tags": normalized}
 
 
 async def publish_profile(
     db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: ProfilePublishRequest
 ) -> dict[str, Any]:
-    """Publish a private shelf profile into a public pack. The pack is created
-    (``new_pack``) or a new version of an owned pack (``existing_pack_ref``), with
-    a library-generated pack.yaml and an accumulating profile set. The pack digest
+    """Publish a private shelf profile into a public blueprint. The blueprint is created
+    (``new_blueprint``) or a new version of an owned blueprint (``existing_blueprint_ref``), with
+    a library-generated blueprint.yaml and an accumulating profile set. The blueprint digest
     is the import-payload.v1 digest of the generated files; the published profile
     keeps the digest it had on the shelf."""
-    existing_pack_ref = request.target_pack_ref
-    new_pack = request.new_pack
-    if bool(existing_pack_ref) == bool(new_pack):
+    existing_blueprint_ref = request.target_blueprint_ref
+    new_blueprint = request.new_blueprint
+    if bool(existing_blueprint_ref) == bool(new_blueprint):
         raise HTTPException(
-            status_code=422, detail="exactly one of target_pack_ref or new_pack is required"
+            status_code=422, detail="exactly one of target_blueprint_ref or new_blueprint is required"
         )
 
     version = request.profile_version
@@ -278,37 +278,37 @@ async def publish_profile(
     profile_files = _json_value(row["files"]) or []
 
     tags: list[str] | None = None
-    if existing_pack_ref is not None:
-        pack_row = await db.fetch_one(
+    if existing_blueprint_ref is not None:
+        blueprint_row = await db.fetch_one(
             "SELECT name, summary, description, first_mission_examples, payload"
-            " FROM {{tables.profile_packs}}"
-            " WHERE owner_team = $1 AND pack_ref = $2 ORDER BY created_at DESC LIMIT 1",
+            " FROM {{tables.blueprints}}"
+            " WHERE owner_team = $1 AND blueprint_ref = $2 ORDER BY created_at DESC LIMIT 1",
             principal.team_id,
-            existing_pack_ref,
+            existing_blueprint_ref,
         )
-        if pack_row is None:
-            raise HTTPException(status_code=404, detail="Profile pack not found")
-        pack_ref = existing_pack_ref
-        name = pack_row["name"]
-        summary = pack_row["summary"]
-        description = pack_row["description"]
-        first_mission_examples = list(pack_row["first_mission_examples"] or [])
-        prior_files = _json_value(pack_row["payload"]) or []
+        if blueprint_row is None:
+            raise HTTPException(status_code=404, detail="Blueprint not found")
+        blueprint_ref = existing_blueprint_ref
+        name = blueprint_row["name"]
+        summary = blueprint_row["summary"]
+        description = blueprint_row["description"]
+        first_mission_examples = list(blueprint_row["first_mission_examples"] or [])
+        prior_files = _json_value(blueprint_row["payload"]) or []
         readme = None
     else:
-        assert new_pack is not None
-        pack_ref = new_pack.pack_ref
-        name = new_pack.name
-        summary = new_pack.summary
-        description = new_pack.description
-        first_mission_examples = list(new_pack.missions)
+        assert new_blueprint is not None
+        blueprint_ref = new_blueprint.blueprint_ref
+        name = new_blueprint.name
+        summary = new_blueprint.summary
+        description = new_blueprint.description
+        first_mission_examples = list(new_blueprint.missions)
         prior_files = None
-        readme = new_pack.readme
-        tags = normalize_tags(new_pack.tags) or None
+        readme = new_blueprint.readme
+        tags = normalize_tags(new_blueprint.tags) or None
 
-    payload = build_pack_payload(
-        pack_ref=pack_ref,
-        pack_version=request.pack_version,
+    payload = build_blueprint_payload(
+        blueprint_ref=blueprint_ref,
+        blueprint_version=request.blueprint_version,
         name=name,
         summary=summary,
         description=description,
@@ -319,19 +319,19 @@ async def publish_profile(
         profile_files=profile_files,
     )
     try:
-        pack = parse_import_payload(payload)
+        blueprint = parse_import_payload(payload)
     except (ValueError, KeyError) as exc:  # pragma: no cover - generated payload is well-formed
-        raise HTTPException(status_code=422, detail=f"Invalid generated pack: {exc}") from exc
-    published = next(p for p in pack.profiles if p.profile_ref == profile_ref)
+        raise HTTPException(status_code=422, detail=f"Invalid generated blueprint: {exc}") from exc
+    published = next(p for p in blueprint.profiles if p.profile_ref == profile_ref)
 
-    await _persist_pack(db, principal=principal, pack=pack)
+    await _persist_blueprint(db, principal=principal, blueprint=blueprint)
     if tags:
-        await set_pack_tags(db, principal=principal, pack_ref=pack_ref, tags=tags)
+        await set_blueprint_tags(db, principal=principal, blueprint_ref=blueprint_ref, tags=tags)
 
     return {
-        "pack_ref": pack.pack_ref,
-        "pack_version": pack.version,
-        "pack_digest": pack.digest,
+        "blueprint_ref": blueprint.blueprint_ref,
+        "blueprint_version": blueprint.version,
+        "blueprint_digest": blueprint.digest,
         "profile_ref": published.profile_ref,
         "profile_version": published.version,
         "profile_digest": published.digest,
@@ -354,9 +354,9 @@ def _shelf_summary(row: Any) -> dict[str, Any]:
         "runtime_assumptions": list(data.get("runtime_assumptions") or []),
         "memory_policy": _json_value(data.get("memory_policy")),
         "expected_apps": list(data.get("expected_apps") or []),
-        "source_profile_pack_ref": data.get("source_profile_pack_ref"),
-        "source_profile_pack_version": data.get("source_profile_pack_version"),
-        "source_profile_pack_digest": data.get("source_profile_pack_digest"),
+        "source_blueprint_ref": data.get("source_blueprint_ref"),
+        "source_blueprint_version": data.get("source_blueprint_version"),
+        "source_blueprint_digest": data.get("source_blueprint_digest"),
         "source_profile_ref": data.get("source_profile_ref"),
         "source_profile_version": data.get("source_profile_version"),
         "source_profile_digest": data.get("source_profile_digest"),
@@ -365,44 +365,44 @@ def _shelf_summary(row: Any) -> dict[str, Any]:
 
 _SHELF_SUMMARY_COLUMNS = (
     "profile_ref, version, digest, tags, name, mission, accepted_work, runtime_assumptions, "
-    "memory_policy, expected_apps, source_profile_pack_ref, source_profile_pack_version, "
-    "source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest"
+    "memory_policy, expected_apps, source_blueprint_ref, source_blueprint_version, "
+    "source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest"
 )
 
 
 async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[str, Any]:
     """The team's shelf working set: the latest version of each shelf profile, each
     carrying its source provenance and an ``update_available`` signal. The signal is
-    computed here — true when the entry came from a pack and that pack's latest
+    computed here — true when the entry came from a blueprint and that blueprint's latest
     catalog version differs from the copy's pinned source version (the source
-    pack has moved on). The update-from-source ACT is chunk B; this is the SIGNAL."""
+    blueprint has moved on). The update-from-source ACT is chunk B; this is the SIGNAL."""
     rows = await db.fetch_all(
         "SELECT DISTINCT ON (profile_ref) profile_ref, version, digest, name, mission, tags,"
-        " source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,"
+        " source_blueprint_ref, source_blueprint_version, source_blueprint_digest,"
         " source_profile_ref, source_profile_version"
         " FROM {{tables.shelf_profiles}} WHERE team_id = $1"
         " ORDER BY profile_ref, created_at DESC",
         principal.team_id,
     )
-    pack_refs = sorted({r["source_profile_pack_ref"] for r in rows if r["source_profile_pack_ref"]})
+    blueprint_refs = sorted({r["source_blueprint_ref"] for r in rows if r["source_blueprint_ref"]})
     latest: dict[str, str] = {}
-    if pack_refs:
+    if blueprint_refs:
         latest_rows = await db.fetch_all(
-            "SELECT DISTINCT ON (pack_ref) pack_ref, version FROM {{tables.profile_packs}}"
-            " WHERE pack_ref = ANY($1::text[]) ORDER BY pack_ref, created_at DESC",
-            pack_refs,
+            "SELECT DISTINCT ON (blueprint_ref) blueprint_ref, version FROM {{tables.blueprints}}"
+            " WHERE blueprint_ref = ANY($1::text[]) ORDER BY blueprint_ref, created_at DESC",
+            blueprint_refs,
         )
-        latest = {r["pack_ref"]: r["version"] for r in latest_rows}
+        latest = {r["blueprint_ref"]: r["version"] for r in latest_rows}
 
     profiles: list[dict[str, Any]] = []
     for row in rows:
         data = dict(row)
-        source_pack_ref = data["source_profile_pack_ref"]
-        latest_version = latest.get(source_pack_ref) if source_pack_ref else None
+        source_blueprint_ref = data["source_blueprint_ref"]
+        latest_version = latest.get(source_blueprint_ref) if source_blueprint_ref else None
         update_available = bool(
-            source_pack_ref
+            source_blueprint_ref
             and latest_version is not None
-            and latest_version != data["source_profile_pack_version"]
+            and latest_version != data["source_blueprint_version"]
         )
         profiles.append(
             {
@@ -412,12 +412,12 @@ async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[
                 "name": data["name"],
                 "summary": data["mission"],
                 "tags": list(data["tags"] or []),
-                "source_profile_pack_ref": source_pack_ref,
-                "source_profile_pack_version": data["source_profile_pack_version"],
-                "source_profile_pack_digest": data["source_profile_pack_digest"],
+                "source_blueprint_ref": source_blueprint_ref,
+                "source_blueprint_version": data["source_blueprint_version"],
+                "source_blueprint_digest": data["source_blueprint_digest"],
                 "source_profile_ref": data["source_profile_ref"],
                 "source_profile_version": data["source_profile_version"],
-                "source_pack_latest_version": latest_version,
+                "source_blueprint_latest_version": latest_version,
                 "update_available": update_available,
             }
         )
@@ -458,9 +458,9 @@ async def _upsert_shelf_profile(
     team_id: str,
     profile: ParsedProfile,
     tags: list[str],
-    source_profile_pack_ref: str | None,
-    source_profile_pack_version: str | None,
-    source_profile_pack_digest: str | None,
+    source_blueprint_ref: str | None,
+    source_blueprint_version: str | None,
+    source_blueprint_digest: str | None,
     source_profile_ref: str | None,
     source_profile_version: str | None,
     source_profile_digest: str | None,
@@ -474,7 +474,7 @@ async def _upsert_shelf_profile(
         INSERT INTO {{tables.shelf_profiles}}
           (team_id, profile_ref, version, digest, tags, name, mission, accepted_work,
            runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required,
-           files, source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,
+           files, source_blueprint_ref, source_blueprint_version, source_blueprint_digest,
            source_profile_ref, source_profile_version, source_profile_digest, part_baselines)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14::jsonb,
                 $15, $16, $17, $18, $19, $20, $21::jsonb)
@@ -485,8 +485,8 @@ async def _upsert_shelf_profile(
         profile.mission, profile.accepted_work, profile.runtime_assumptions,
         _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
         profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
-        _dumps(profile.files), source_profile_pack_ref, source_profile_pack_version,
-        source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest,
+        _dumps(profile.files), source_blueprint_ref, source_blueprint_version,
+        source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest,
         _dumps(part_baselines),
     )
     if row is None:
@@ -499,7 +499,7 @@ async def _upsert_shelf_profile(
 async def create_shelf_profile(
     db: AsyncDatabaseManager, *, principal: Principal, files: list[dict[str, str]], tags: list[Any]
 ) -> dict[str, Any]:
-    """Create a directly-authored private shelf profile (no source pack)."""
+    """Create a directly-authored private shelf profile (no source blueprint)."""
     try:
         profile = parse_profile_payload(files)
     except (ValueError, KeyError) as exc:
@@ -509,9 +509,9 @@ async def create_shelf_profile(
         team_id=principal.team_id,
         profile=profile,
         tags=normalize_tags(tags or []),
-        source_profile_pack_ref=None,
-        source_profile_pack_version=None,
-        source_profile_pack_digest=None,
+        source_blueprint_ref=None,
+        source_blueprint_version=None,
+        source_blueprint_digest=None,
         source_profile_ref=None,
         source_profile_version=None,
         source_profile_digest=None,
@@ -532,7 +532,7 @@ async def create_shelf_version(
     if profile.profile_ref != profile_ref:
         raise HTTPException(status_code=422, detail="profile.yaml id must match the path profile_ref")
     prior = await db.fetch_one(
-        "SELECT tags, source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest,"
+        "SELECT tags, source_blueprint_ref, source_blueprint_version, source_blueprint_digest,"
         " source_profile_ref, source_profile_version, source_profile_digest, part_baselines"
         " FROM {{tables.shelf_profiles}} WHERE team_id = $1 AND profile_ref = $2"
         " ORDER BY created_at DESC LIMIT 1",
@@ -546,9 +546,9 @@ async def create_shelf_version(
         team_id=principal.team_id,
         profile=profile,
         tags=list(prior["tags"] or []),
-        source_profile_pack_ref=prior["source_profile_pack_ref"],
-        source_profile_pack_version=prior["source_profile_pack_version"],
-        source_profile_pack_digest=prior["source_profile_pack_digest"],
+        source_blueprint_ref=prior["source_blueprint_ref"],
+        source_blueprint_version=prior["source_blueprint_version"],
+        source_blueprint_digest=prior["source_blueprint_digest"],
         source_profile_ref=prior["source_profile_ref"],
         source_profile_version=prior["source_profile_version"],
         source_profile_digest=prior["source_profile_digest"],
@@ -565,9 +565,9 @@ def _shelf_provenance(data: dict[str, Any], *, created: bool) -> dict[str, Any]:
         "source_profile_ref": data["source_profile_ref"],
         "source_profile_version": data["source_profile_version"],
         "source_profile_digest": data["source_profile_digest"],
-        "source_profile_pack_ref": data["source_profile_pack_ref"],
-        "source_profile_pack_version": data["source_profile_pack_version"],
-        "source_profile_pack_digest": data["source_profile_pack_digest"],
+        "source_blueprint_ref": data["source_blueprint_ref"],
+        "source_blueprint_version": data["source_blueprint_version"],
+        "source_blueprint_digest": data["source_blueprint_digest"],
         "created": created,
     }
 
@@ -576,57 +576,57 @@ async def import_to_shelf(
     db: AsyncDatabaseManager,
     *,
     principal: Principal,
-    source_profile_pack_ref: str,
-    source_profile_pack_version: str | None,
+    source_blueprint_ref: str,
+    source_blueprint_version: str | None,
     profile_ref: str,
     tags: list[Any] | None,
 ) -> dict[str, Any]:
-    """Copy a public-pack profile onto the team's private shelf under its source
-    profile_ref. Idempotent keyed by (team, source pack, profile_ref): a re-import
-    from the same pack is a pure no-op returning the existing copy — it NEVER pulls
+    """Copy a public-blueprint profile onto the team's private shelf under its source
+    profile_ref. Idempotent keyed by (team, source blueprint, profile_ref): a re-import
+    from the same blueprint is a pure no-op returning the existing copy — it NEVER pulls
     a newer version (that is update-from-source). A profile_ref already held from a
     DIFFERENT source is a 409 conflict. First import records baselines + provenance."""
     existing = await db.fetch_one(
         "SELECT profile_ref, version, digest, source_profile_ref, source_profile_version,"
-        " source_profile_digest, source_profile_pack_ref, source_profile_pack_version,"
-        " source_profile_pack_digest FROM {{tables.shelf_profiles}}"
+        " source_profile_digest, source_blueprint_ref, source_blueprint_version,"
+        " source_blueprint_digest FROM {{tables.shelf_profiles}}"
         " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
         profile_ref,
     )
     if existing is not None:
         data = dict(existing)
-        if data["source_profile_pack_ref"] != source_profile_pack_ref:
+        if data["source_blueprint_ref"] != source_blueprint_ref:
             raise HTTPException(
                 status_code=409,
                 detail=f"Shelf profile '{profile_ref}' already exists from a different source",
             )
         return _shelf_provenance(data, created=False)
 
-    pack = await db.fetch_one(
-        "SELECT owner_team, version, digest FROM {{tables.profile_packs}}"
-        " WHERE pack_ref = $1 AND ($2::text IS NULL OR version = $2)"
+    blueprint = await db.fetch_one(
+        "SELECT owner_team, version, digest FROM {{tables.blueprints}}"
+        " WHERE blueprint_ref = $1 AND ($2::text IS NULL OR version = $2)"
         " ORDER BY created_at DESC LIMIT 1",
-        source_profile_pack_ref,
-        source_profile_pack_version,
+        source_blueprint_ref,
+        source_blueprint_version,
     )
-    if pack is None:
-        raise HTTPException(status_code=404, detail="Source profile pack not found")
-    pack_version = pack["version"]
-    pack_digest = pack["digest"]
+    if blueprint is None:
+        raise HTTPException(status_code=404, detail="Source blueprint not found")
+    blueprint_version = blueprint["version"]
+    blueprint_digest = blueprint["digest"]
 
     source = await db.fetch_one(
         "SELECT profile_ref, profile_version, digest, name, mission, accepted_work,"
         " runtime_assumptions, memory_policy, expected_apps, event_subscriptions, approval_required, files"
-        " FROM {{tables.pack_profiles}}"
-        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
-        pack["owner_team"],
-        source_profile_pack_ref,
-        pack_version,
+        " FROM {{tables.blueprint_profiles}}"
+        " WHERE owner_team = $1 AND blueprint_ref = $2 AND blueprint_version = $3 AND profile_ref = $4",
+        blueprint["owner_team"],
+        source_blueprint_ref,
+        blueprint_version,
         profile_ref,
     )
     if source is None:
-        raise HTTPException(status_code=404, detail="Source profile not found in pack")
+        raise HTTPException(status_code=404, detail="Source profile not found in blueprint")
 
     source_profile = ParsedProfile(
         profile_ref=source["profile_ref"],
@@ -649,9 +649,9 @@ async def import_to_shelf(
         team_id=principal.team_id,
         profile=source_profile,
         tags=normalize_tags(tags or []),
-        source_profile_pack_ref=source_profile_pack_ref,
-        source_profile_pack_version=pack_version,
-        source_profile_pack_digest=pack_digest,
+        source_blueprint_ref=source_blueprint_ref,
+        source_blueprint_version=blueprint_version,
+        source_blueprint_digest=blueprint_digest,
         source_profile_ref=source_profile.profile_ref,
         source_profile_version=source_profile.version,
         source_profile_digest=source_profile.digest,
@@ -665,15 +665,15 @@ async def import_to_shelf(
             "source_profile_ref": source_profile.profile_ref,
             "source_profile_version": source_profile.version,
             "source_profile_digest": source_profile.digest,
-            "source_profile_pack_ref": source_profile_pack_ref,
-            "source_profile_pack_version": pack_version,
-            "source_profile_pack_digest": pack_digest,
+            "source_blueprint_ref": source_blueprint_ref,
+            "source_blueprint_version": blueprint_version,
+            "source_blueprint_digest": blueprint_digest,
         },
         created=True,
     )
 
 
-def _pack_profile_files(row: Any) -> list[dict[str, str]]:
+def _blueprint_profile_files(row: Any) -> list[dict[str, str]]:
     return _json_value(row["files"]) or []
 
 
@@ -681,14 +681,14 @@ async def update_from_source(
     db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: UpdateFromSourceRequest
 ) -> dict[str, Any]:
     """Per-part 3-way merge of a shelf profile against a newer version of its source
-    pack: pull upstream improvements only into parts the team has not evolved, never
+    blueprint: pull upstream improvements only into parts the team has not evolved, never
     clobbering local edits. A real merge (some part pulled) mints a new version
     (``target_version``) and advances the source pin + baselines to the synced
     version; if nothing is pullable it is a pure no-op (no new version, pin
     unchanged)."""
     ours = await db.fetch_one(
-        "SELECT version, digest, tags, files, part_baselines, source_profile_pack_ref,"
-        " source_profile_pack_version, source_profile_pack_digest, source_profile_ref"
+        "SELECT version, digest, tags, files, part_baselines, source_blueprint_ref,"
+        " source_blueprint_version, source_blueprint_digest, source_profile_ref"
         " FROM {{tables.shelf_profiles}}"
         " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
@@ -696,34 +696,34 @@ async def update_from_source(
     )
     if ours is None:
         raise HTTPException(status_code=404, detail="Shelf profile not found")
-    source_pack_ref = ours["source_profile_pack_ref"]
-    if not source_pack_ref:
-        raise HTTPException(status_code=422, detail="Shelf profile has no source pack to update from")
+    source_blueprint_ref = ours["source_blueprint_ref"]
+    if not source_blueprint_ref:
+        raise HTTPException(status_code=422, detail="Shelf profile has no source blueprint to update from")
 
-    pack = await db.fetch_one(
-        "SELECT owner_team, version, digest FROM {{tables.profile_packs}}"
-        " WHERE pack_ref = $1 AND ($2::text IS NULL OR version = $2)"
+    blueprint = await db.fetch_one(
+        "SELECT owner_team, version, digest FROM {{tables.blueprints}}"
+        " WHERE blueprint_ref = $1 AND ($2::text IS NULL OR version = $2)"
         " ORDER BY created_at DESC LIMIT 1",
-        source_pack_ref,
-        request.source_profile_pack_version,
+        source_blueprint_ref,
+        request.source_blueprint_version,
     )
-    if pack is None:
-        raise HTTPException(status_code=404, detail="Source profile pack not found")
+    if blueprint is None:
+        raise HTTPException(status_code=404, detail="Source blueprint not found")
     theirs_row = await db.fetch_one(
-        "SELECT files FROM {{tables.pack_profiles}}"
-        " WHERE owner_team = $1 AND pack_ref = $2 AND pack_version = $3 AND profile_ref = $4",
-        pack["owner_team"],
-        source_pack_ref,
-        pack["version"],
+        "SELECT files FROM {{tables.blueprint_profiles}}"
+        " WHERE owner_team = $1 AND blueprint_ref = $2 AND blueprint_version = $3 AND profile_ref = $4",
+        blueprint["owner_team"],
+        source_blueprint_ref,
+        blueprint["version"],
         ours["source_profile_ref"] or profile_ref,
     )
     if theirs_row is None:
-        raise HTTPException(status_code=404, detail="Source profile not found in pack")
+        raise HTTPException(status_code=404, detail="Source profile not found in blueprint")
 
     baselines = _json_value(ours["part_baselines"]) or {}
     merge = three_way_merge(
         ours_files=_json_value(ours["files"]) or [],
-        theirs_files=_pack_profile_files(theirs_row),
+        theirs_files=_blueprint_profile_files(theirs_row),
         baselines=baselines,
         target_version=request.target_version,
     )
@@ -737,20 +737,20 @@ async def update_from_source(
             "digest": ours["digest"],
             "updated_parts": [],
             "preserved_parts": merge.preserved_parts,
-            "source_profile_pack_version": ours["source_profile_pack_version"],
-            "source_profile_pack_digest": ours["source_profile_pack_digest"],
+            "source_blueprint_version": ours["source_blueprint_version"],
+            "source_blueprint_digest": ours["source_blueprint_digest"],
         }
 
     merged = parse_profile_payload(merge.files)
-    theirs = parse_profile_payload(_pack_profile_files(theirs_row))
+    theirs = parse_profile_payload(_blueprint_profile_files(theirs_row))
     await _upsert_shelf_profile(
         db,
         team_id=principal.team_id,
         profile=merged,
         tags=list(ours["tags"] or []),
-        source_profile_pack_ref=source_pack_ref,
-        source_profile_pack_version=pack["version"],
-        source_profile_pack_digest=pack["digest"],
+        source_blueprint_ref=source_blueprint_ref,
+        source_blueprint_version=blueprint["version"],
+        source_blueprint_digest=blueprint["digest"],
         source_profile_ref=ours["source_profile_ref"] or profile_ref,
         source_profile_version=theirs.version,
         source_profile_digest=theirs.digest,
@@ -762,8 +762,8 @@ async def update_from_source(
         "digest": merged.digest,
         "updated_parts": merge.updated_parts,
         "preserved_parts": merge.preserved_parts,
-        "source_profile_pack_version": pack["version"],
-        "source_profile_pack_digest": pack["digest"],
+        "source_blueprint_version": blueprint["version"],
+        "source_blueprint_digest": blueprint["digest"],
     }
 
 
@@ -864,7 +864,7 @@ async def materialize(
 
     row = await db.fetch_one(
         "SELECT profile_ref, version, digest, runtime_assumptions, memory_policy, files,"
-        " source_profile_pack_ref, source_profile_pack_version, source_profile_pack_digest"
+        " source_blueprint_ref, source_blueprint_version, source_blueprint_digest"
         " FROM {{tables.shelf_profiles}} WHERE team_id = $1 AND profile_ref = $2 AND version = $3",
         principal.team_id,
         profile_ref,
@@ -880,17 +880,17 @@ async def materialize(
         profile_ref=row["profile_ref"],
         profile_version=row["version"],
         profile_digest=row["digest"],
-        source_profile_pack_ref=row["source_profile_pack_ref"],
-        source_profile_pack_version=row["source_profile_pack_version"],
-        source_profile_pack_digest=row["source_profile_pack_digest"],
+        source_blueprint_ref=row["source_blueprint_ref"],
+        source_blueprint_version=row["source_blueprint_version"],
+        source_blueprint_digest=row["source_blueprint_digest"],
     )
     return {
         "profile_ref": row["profile_ref"],
         "profile_version": row["version"],
         "profile_digest": row["digest"],
-        "source_profile_pack_ref": row["source_profile_pack_ref"],
-        "source_profile_pack_version": row["source_profile_pack_version"],
-        "source_profile_pack_digest": row["source_profile_pack_digest"],
+        "source_blueprint_ref": row["source_blueprint_ref"],
+        "source_blueprint_version": row["source_blueprint_version"],
+        "source_blueprint_digest": row["source_blueprint_digest"],
         "runtime_assumptions": runtime_assumptions,
         "memory_policy": memory_policy,
         "home_files": home_files,
@@ -998,7 +998,7 @@ async def _mint_from_proposal(
     """Mint a new shelf-profile version from an approved profile proposal. The
     proposal's recorded base must still be the shelf profile's latest version
     (reject-if-stale), guarding against minting from a raced base. The minted version
-    is local evolution, so the source-pack provenance and per-part baselines carry
+    is local evolution, so the source-blueprint provenance and per-part baselines carry
     from the base unchanged."""
     profile_ref = proposal["profile_ref"]
     if not profile_ref:
@@ -1014,8 +1014,8 @@ async def _mint_from_proposal(
         raise HTTPException(status_code=422, detail="proposal content profile.yaml id must match profile_ref")
 
     prior = await db.fetch_one(
-        "SELECT version, digest, tags, source_profile_pack_ref, source_profile_pack_version,"
-        " source_profile_pack_digest, source_profile_ref, source_profile_version, source_profile_digest,"
+        "SELECT version, digest, tags, source_blueprint_ref, source_blueprint_version,"
+        " source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest,"
         " part_baselines FROM {{tables.shelf_profiles}}"
         " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
@@ -1034,9 +1034,9 @@ async def _mint_from_proposal(
         team_id=principal.team_id,
         profile=profile,
         tags=list(prior["tags"] or []),
-        source_profile_pack_ref=prior["source_profile_pack_ref"],
-        source_profile_pack_version=prior["source_profile_pack_version"],
-        source_profile_pack_digest=prior["source_profile_pack_digest"],
+        source_blueprint_ref=prior["source_blueprint_ref"],
+        source_blueprint_version=prior["source_blueprint_version"],
+        source_blueprint_digest=prior["source_blueprint_digest"],
         source_profile_ref=prior["source_profile_ref"],
         source_profile_version=prior["source_profile_version"],
         source_profile_digest=prior["source_profile_digest"],

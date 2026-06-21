@@ -19,18 +19,18 @@ from test_e2e_smoke import (
     _provision_team,
 )
 
-from library.digest import PACK_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
-from library.profile_pack import (
-    ParsedPack,
-    build_pack_payload,
+from library.blueprint import (
+    ParsedBlueprint,
+    build_blueprint_payload,
     import_return,
     parse_import_payload,
     parse_profile_payload,
 )
+from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files
 
 pytestmark = pytest.mark.e2e
 
-_FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
+_FIXTURE = Path(__file__).parent / "vectors" / "blueprints" / "engineering"
 _SOURCE = _FIXTURE / "source"
 _EXPECTED = _FIXTURE / "expected"
 
@@ -51,12 +51,12 @@ def _canonical_payload() -> dict[str, Any]:
     return _load_json(_EXPECTED / "import-payload.canonical.json")
 
 
-def _payload_pack(payload: dict[str, Any]) -> ParsedPack:
+def _payload_blueprint(payload: dict[str, Any]) -> ParsedBlueprint:
     return parse_import_payload(payload)
 
 
-def _fixture_pack() -> ParsedPack:
-    return parse_import_payload({"files": collect_files(_SOURCE), "schema": PACK_PAYLOAD_SCHEMA})
+def _fixture_blueprint() -> ParsedBlueprint:
+    return parse_import_payload({"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA})
 
 
 def _expected_import_return() -> dict[str, Any]:
@@ -65,36 +65,36 @@ def _expected_import_return() -> dict[str, Any]:
     return payload
 
 
-def _profile_from_pack(pack: ParsedPack, profile_ref: str) -> dict[str, str]:
-    for profile in pack.profiles:
+def _profile_from_blueprint(blueprint: ParsedBlueprint, profile_ref: str) -> dict[str, str]:
+    for profile in blueprint.profiles:
         if profile.profile_ref == profile_ref:
             return {"profile_ref": profile.profile_ref, "version": profile.version, "digest": profile.digest}
-    raise AssertionError(f"pack missing profile {profile_ref!r}")
+    raise AssertionError(f"blueprint missing profile {profile_ref!r}")
 
 
 def _profile_payload_files(profile_ref: str) -> list[dict[str, str]]:
-    profile = next(profile for profile in _fixture_pack().profiles if profile.profile_ref == profile_ref)
+    profile = next(profile for profile in _fixture_blueprint().profiles if profile.profile_ref == profile_ref)
     return list(profile.files)
 
 
-def _expected_pack_summary(pack: ParsedPack, *, tags: list[str]) -> dict[str, Any]:
+def _expected_blueprint_summary(blueprint: ParsedBlueprint, *, tags: list[str]) -> dict[str, Any]:
     return {
-        "pack_ref": pack.pack_ref,
-        "version": pack.version,
-        "digest": pack.digest,
+        "blueprint_ref": blueprint.blueprint_ref,
+        "version": blueprint.version,
+        "digest": blueprint.digest,
         "tags": tags,
-        "name": pack.name,
-        "summary": pack.summary,
-        "description": pack.description,
-        "recommendations": pack.recommendations,
-        "runtime_hints": pack.runtime_hints,
-        "expected_apps": pack.expected_apps,
-        "first_mission_examples": pack.first_mission_examples,
+        "name": blueprint.name,
+        "summary": blueprint.summary,
+        "description": blueprint.description,
+        "recommendations": blueprint.recommendations,
+        "runtime_hints": blueprint.runtime_hints,
+        "expected_apps": blueprint.expected_apps,
+        "first_mission_examples": blueprint.first_mission_examples,
     }
 
 
-def _expected_pack_detail(pack: ParsedPack, *, tags: list[str]) -> dict[str, Any]:
-    detail = _expected_pack_summary(pack, tags=tags)
+def _expected_blueprint_detail(blueprint: ParsedBlueprint, *, tags: list[str]) -> dict[str, Any]:
+    detail = _expected_blueprint_summary(blueprint, tags=tags)
     detail["profiles"] = [
         {
             "profile_ref": profile.profile_ref,
@@ -103,24 +103,24 @@ def _expected_pack_detail(pack: ParsedPack, *, tags: list[str]) -> dict[str, Any
             "name": profile.name,
             "mission": profile.mission,
         }
-        for profile in sorted(pack.profiles, key=lambda item: item.profile_ref)
+        for profile in sorted(blueprint.profiles, key=lambda item: item.profile_ref)
     ]
     return detail
 
 
-def _runtime_hints_for_profile(pack: ParsedPack, profile_ref: str) -> list[str]:
-    for recommendation in pack.recommendations:
+def _runtime_hints_for_profile(blueprint: ParsedBlueprint, profile_ref: str) -> list[str]:
+    for recommendation in blueprint.recommendations:
         if recommendation.get("id") == profile_ref:
             value = recommendation.get("runtime_hints")
             return [str(item) for item in value] if isinstance(value, list) else []
     return []
 
 
-def _expected_pack_profile(pack: ParsedPack, profile_ref: str) -> dict[str, Any]:
-    profile = next(profile for profile in pack.profiles if profile.profile_ref == profile_ref)
+def _expected_blueprint_profile(blueprint: ParsedBlueprint, profile_ref: str) -> dict[str, Any]:
+    profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
     return {
-        "pack_ref": pack.pack_ref,
-        "pack_version": pack.version,
+        "blueprint_ref": blueprint.blueprint_ref,
+        "blueprint_version": blueprint.version,
         "profile_ref": profile.profile_ref,
         "version": profile.version,
         "digest": profile.digest,
@@ -128,7 +128,7 @@ def _expected_pack_profile(pack: ParsedPack, profile_ref: str) -> dict[str, Any]
         "mission": profile.mission,
         "accepted_work": profile.accepted_work,
         "runtime_assumptions": profile.runtime_assumptions,
-        "runtime_hints": _runtime_hints_for_profile(pack, profile_ref),
+        "runtime_hints": _runtime_hints_for_profile(blueprint, profile_ref),
         "memory_policy": profile.memory_policy,
         "expected_apps": profile.expected_apps,
         "event_subscriptions": profile.event_subscriptions,
@@ -138,13 +138,13 @@ def _expected_pack_profile(pack: ParsedPack, profile_ref: str) -> dict[str, Any]
 
 
 def _expected_shelf_profile(
-    pack: ParsedPack,
+    blueprint: ParsedBlueprint,
     profile_ref: str,
     *,
     tags: list[str],
     source: bool = True,
 ) -> dict[str, Any]:
-    profile = next(profile for profile in pack.profiles if profile.profile_ref == profile_ref)
+    profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
     base = {
         "profile_ref": profile.profile_ref,
         "version": profile.version,
@@ -160,9 +160,9 @@ def _expected_shelf_profile(
     if source:
         base.update(
             {
-                "source_profile_pack_ref": pack.pack_ref,
-                "source_profile_pack_version": pack.version,
-                "source_profile_pack_digest": pack.digest,
+                "source_blueprint_ref": blueprint.blueprint_ref,
+                "source_blueprint_version": blueprint.version,
+                "source_blueprint_digest": blueprint.digest,
                 "source_profile_ref": profile.profile_ref,
                 "source_profile_version": profile.version,
                 "source_profile_digest": profile.digest,
@@ -171,9 +171,9 @@ def _expected_shelf_profile(
     else:
         base.update(
             {
-                "source_profile_pack_ref": None,
-                "source_profile_pack_version": None,
-                "source_profile_pack_digest": None,
+                "source_blueprint_ref": None,
+                "source_blueprint_version": None,
+                "source_blueprint_digest": None,
                 "source_profile_ref": None,
                 "source_profile_version": None,
                 "source_profile_digest": None,
@@ -182,8 +182,8 @@ def _expected_shelf_profile(
     return base
 
 
-def _expected_shelf_read_profile(pack: ParsedPack, profile_ref: str, *, tags: list[str], update_available: bool) -> dict[str, Any]:
-    profile = next(profile for profile in pack.profiles if profile.profile_ref == profile_ref)
+def _expected_shelf_read_profile(blueprint: ParsedBlueprint, profile_ref: str, *, tags: list[str], update_available: bool) -> dict[str, Any]:
+    profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
     return {
         "profile_ref": profile.profile_ref,
         "version": profile.version,
@@ -191,17 +191,17 @@ def _expected_shelf_read_profile(pack: ParsedPack, profile_ref: str, *, tags: li
         "name": profile.name,
         "summary": profile.mission,
         "tags": tags,
-        "source_profile_pack_ref": pack.pack_ref,
-        "source_profile_pack_version": pack.version,
-        "source_profile_pack_digest": pack.digest,
+        "source_blueprint_ref": blueprint.blueprint_ref,
+        "source_blueprint_version": blueprint.version,
+        "source_blueprint_digest": blueprint.digest,
         "source_profile_ref": profile.profile_ref,
         "source_profile_version": profile.version,
-        "source_pack_latest_version": "0.2.0" if update_available else pack.version,
+        "source_blueprint_latest_version": "0.2.0" if update_available else blueprint.version,
         "update_available": update_available,
     }
 
 
-def _expected_home_entries(profile_ref: str, *, created: bool = False, pack: ParsedPack | None = None) -> list[dict[str, str]]:
+def _expected_home_entries(profile_ref: str, *, created: bool = False, blueprint: ParsedBlueprint | None = None) -> list[dict[str, str]]:
     root_name = "materialized-home-created" if created else "materialized-home"
     root = _EXPECTED / root_name / profile_ref
     entries: list[dict[str, str]] = []
@@ -222,14 +222,14 @@ def _expected_home_entries(profile_ref: str, *, created: bool = False, pack: Par
                     "content_utf8": path.read_text(encoding="utf-8"),
                 }
             )
-    if pack is not None:
-        fixture_pack = _fixture_pack()
+    if blueprint is not None:
+        fixture_blueprint = _fixture_blueprint()
         for entry in entries:
             if entry["kind"] == "file":
                 entry["content_utf8"] = (
                     entry["content_utf8"]
-                    .replace(fixture_pack.pack_ref, pack.pack_ref)
-                    .replace(fixture_pack.digest, pack.digest)
+                    .replace(fixture_blueprint.blueprint_ref, blueprint.blueprint_ref)
+                    .replace(fixture_blueprint.digest, blueprint.digest)
                 )
     return entries
 
@@ -240,10 +240,10 @@ def _home_file(entries: list[dict[str, Any]], path: str) -> str:
     return entry["content_utf8"]
 
 
-def _pack_payload(
+def _blueprint_payload(
     *,
-    pack_ref: str,
-    pack_version: str = "0.1.0",
+    blueprint_ref: str,
+    blueprint_version: str = "0.1.0",
     mutate_developer: bool = False,
     coordinator_mission: str | None = None,
     coordinator_instructions_suffix: str | None = None,
@@ -251,10 +251,10 @@ def _pack_payload(
 ) -> dict[str, Any]:
     files = [dict(file) for file in _canonical_payload()["files"]]
     for file in files:
-        if file["path"] == "pack.yaml":
+        if file["path"] == "blueprint.yaml":
             doc = yaml.safe_load(file["content_utf8"])
-            doc["id"] = pack_ref
-            doc["version"] = pack_version
+            doc["id"] = blueprint_ref
+            doc["version"] = blueprint_version
             if profile_runtime_hints is not None:
                 for recommendation in doc.get("profiles") or []:
                     profile_id = str(recommendation.get("id") or "")
@@ -264,7 +264,7 @@ def _pack_payload(
             file["sha256"] = _sha(file["content_utf8"])
         if file["path"] == "profiles/coordinator/profile.yaml":
             doc = yaml.safe_load(file["content_utf8"])
-            doc["version"] = pack_version
+            doc["version"] = blueprint_version
             if coordinator_mission is not None:
                 doc["mission"] = coordinator_mission
             file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
@@ -273,10 +273,10 @@ def _pack_payload(
             file["content_utf8"] += coordinator_instructions_suffix
             file["sha256"] = _sha(file["content_utf8"])
         if mutate_developer and file["path"] == "profiles/developer/instructions.md":
-            file["content_utf8"] += "\nAlways mention the updated pack version.\n"
+            file["content_utf8"] += "\nAlways mention the updated blueprint version.\n"
             file["sha256"] = _sha(file["content_utf8"])
     files.sort(key=lambda entry: entry["path"])
-    return {"files": files, "schema": PACK_PAYLOAD_SCHEMA}
+    return {"files": files, "schema": BLUEPRINT_PAYLOAD_SCHEMA}
 
 
 def _profile_files_with_changes(
@@ -319,13 +319,13 @@ def _put_json(team: Any, url: str, payload: Any) -> subprocess.CompletedProcess[
     return _aw_request(team, "PUT", url, body=_json_body(payload))
 
 
-def _publish_pack(team: Any, library: RunningLibrary, payload: dict[str, Any]) -> dict[str, Any]:
-    pack = _payload_pack(payload)
+def _publish_blueprint(team: Any, library: RunningLibrary, payload: dict[str, Any]) -> dict[str, Any]:
+    blueprint = _payload_blueprint(payload)
     result = _aw_json(
-        _post_json(team, f"{library.origin}/v1/profile-packs/import", payload),
-        context=f"publish pack {pack.pack_ref}",
+        _post_json(team, f"{library.origin}/v1/blueprints/import", payload),
+        context=f"publish blueprint {blueprint.blueprint_ref}",
     )
-    assert result == import_return(pack)
+    assert result == import_return(blueprint)
     return result
 
 
@@ -333,18 +333,18 @@ def _import_to_shelf(
     team: Any,
     library: RunningLibrary,
     *,
-    pack: ParsedPack,
+    blueprint: ParsedBlueprint,
     profile_ref: str = "developer",
     tags: list[str] | None = None,
     created: bool = True,
 ) -> dict[str, Any]:
-    profile = next(profile for profile in pack.profiles if profile.profile_ref == profile_ref)
+    profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
     response = _aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/shelf/import",
             {
-                "source_profile_pack_ref": pack.pack_ref,
+                "source_blueprint_ref": blueprint.blueprint_ref,
                 "profile_ref": profile_ref,
                 "tags": tags or [],
             },
@@ -358,9 +358,9 @@ def _import_to_shelf(
         "source_profile_ref": profile.profile_ref,
         "source_profile_version": profile.version,
         "source_profile_digest": profile.digest,
-        "source_profile_pack_ref": pack.pack_ref,
-        "source_profile_pack_version": pack.version,
-        "source_profile_pack_digest": pack.digest,
+        "source_blueprint_ref": blueprint.blueprint_ref,
+        "source_blueprint_version": blueprint.version,
+        "source_blueprint_digest": blueprint.digest,
         "created": created,
     }
     return response
@@ -393,7 +393,7 @@ def _bind_profile(
     return set_response
 
 
-def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
+def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
@@ -410,53 +410,53 @@ def test_manifest_digest_and_public_pack_catalog_reads_are_unauth(
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
     runtime_hints = {"coordinator": ["claude-code"], "reviewer": ["pi", "claude-code"]}
-    payload = _pack_payload(pack_ref=f"aweb.e2e-{unique}-pack", profile_runtime_hints=runtime_hints)
-    pack = _payload_pack(payload)
-    _publish_pack(team, library, payload)
+    payload = _blueprint_payload(blueprint_ref=f"aweb.e2e-{unique}-blueprint", profile_runtime_hints=runtime_hints)
+    blueprint = _payload_blueprint(payload)
+    _publish_blueprint(team, library, payload)
 
     tags = _aw_json(
         _put_json(
             team,
-            f"{library.origin}/v1/profile-packs/{pack.pack_ref}/tags",
+            f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/tags",
             {"tags": [f"E2E-{unique}", "Starter", "starter"]},
         ),
-        context="set pack tags",
+        context="set blueprint tags",
     )
-    assert tags == {"pack_ref": pack.pack_ref, "tags": [f"e2e-{unique}", "starter"]}
+    assert tags == {"blueprint_ref": blueprint.blueprint_ref, "tags": [f"e2e-{unique}", "starter"]}
 
-    catalog = httpx.get(f"{library.origin}/v1/profile-packs", params={"tags": f"e2e-{unique}"}, timeout=10.0)
+    catalog = httpx.get(f"{library.origin}/v1/blueprints", params={"tags": f"e2e-{unique}"}, timeout=10.0)
     assert catalog.status_code == 200, catalog.text
-    assert catalog.json() == [_expected_pack_summary(pack, tags=[f"e2e-{unique}", "starter"])]
+    assert catalog.json() == [_expected_blueprint_summary(blueprint, tags=[f"e2e-{unique}", "starter"])]
 
-    missing = httpx.get(f"{library.origin}/v1/profile-packs", params={"tags": "missing"}, timeout=10.0)
+    missing = httpx.get(f"{library.origin}/v1/blueprints", params={"tags": "missing"}, timeout=10.0)
     assert missing.status_code == 200, missing.text
-    assert all(item["pack_ref"] != pack.pack_ref for item in missing.json())
+    assert all(item["blueprint_ref"] != blueprint.blueprint_ref for item in missing.json())
 
-    detail = httpx.get(f"{library.origin}/v1/profile-packs/{pack.pack_ref}", timeout=10.0)
+    detail = httpx.get(f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}", timeout=10.0)
     assert detail.status_code == 200, detail.text
-    assert detail.json() == _expected_pack_detail(pack, tags=[f"e2e-{unique}", "starter"])
+    assert detail.json() == _expected_blueprint_detail(blueprint, tags=[f"e2e-{unique}", "starter"])
 
-    preview = httpx.get(f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/developer", timeout=10.0)
+    preview = httpx.get(f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/developer", timeout=10.0)
     assert preview.status_code == 200, preview.text
-    assert preview.json() == _expected_pack_profile(pack, "developer")
+    assert preview.json() == _expected_blueprint_profile(blueprint, "developer")
 
     coordinator_preview = httpx.get(
-        f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/coordinator", timeout=10.0
+        f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator", timeout=10.0
     )
     assert coordinator_preview.status_code == 200, coordinator_preview.text
     assert coordinator_preview.json()["runtime_hints"] == ["claude-code"]
 
-    reviewer_preview = httpx.get(f"{library.origin}/v1/profile-packs/{pack.pack_ref}/profiles/reviewer", timeout=10.0)
+    reviewer_preview = httpx.get(f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/reviewer", timeout=10.0)
     assert reviewer_preview.status_code == 200, reviewer_preview.text
     assert reviewer_preview.json()["runtime_hints"] == ["pi", "claude-code"]
 
 
-def test_publish_pack_preserves_frozen_import_contract(
+def test_publish_blueprint_preserves_frozen_import_contract(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
-    result = _publish_pack(team, library, _canonical_payload())
+    result = _publish_blueprint(team, library, _canonical_payload())
     assert result == _expected_import_return()
 
 
@@ -466,13 +466,13 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    pack_payload = _pack_payload(pack_ref=f"aweb.copy-{unique}")
-    pack = _payload_pack(pack_payload)
-    _publish_pack(team, library, pack_payload)
+    blueprint_payload = _blueprint_payload(blueprint_ref=f"aweb.copy-{unique}")
+    blueprint = _payload_blueprint(blueprint_payload)
+    _publish_blueprint(team, library, blueprint_payload)
 
-    _import_to_shelf(team, library, pack=pack, tags=["First", "first"])
+    _import_to_shelf(team, library, blueprint=blueprint, tags=["First", "first"])
     shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf")
-    assert shelf == {"profiles": [_expected_shelf_read_profile(pack, "developer", tags=["first"], update_available=False)]}
+    assert shelf == {"profiles": [_expected_shelf_read_profile(blueprint, "developer", tags=["first"], update_available=False)]}
 
     updated_tags = _aw_json(
         _put_json(team, f"{library.origin}/v1/profiles/developer/tags", {"tags": ["local", "first"]}),
@@ -481,29 +481,29 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
     assert updated_tags == {"profile_ref": "developer", "tags": ["first", "local"]}
 
     # Same source profile is a pure no-op and never clobbers local shelf metadata.
-    _import_to_shelf(team, library, pack=pack, tags=["ignored"], created=False)
+    _import_to_shelf(team, library, blueprint=blueprint, tags=["ignored"], created=False)
     shelf_after_noop = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after noop")
     assert shelf_after_noop["profiles"][0]["tags"] == ["first", "local"]
     assert shelf_after_noop["profiles"][0]["update_available"] is False
 
-    # Publishing a newer source pack version does not auto-update the shelf copy;
+    # Publishing a newer source blueprint version does not auto-update the shelf copy;
     # the read only exposes update_available until a future update-from-source act.
-    newer_payload = _pack_payload(pack_ref=pack.pack_ref, pack_version="0.2.0", mutate_developer=True)
-    _publish_pack(team, library, newer_payload)
-    _import_to_shelf(team, library, pack=pack, created=False)
+    newer_payload = _blueprint_payload(blueprint_ref=blueprint.blueprint_ref, blueprint_version="0.2.0", mutate_developer=True)
+    _publish_blueprint(team, library, newer_payload)
+    _import_to_shelf(team, library, blueprint=blueprint, created=False)
     shelf_with_update = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf with update")
     assert shelf_with_update == {
-        "profiles": [_expected_shelf_read_profile(pack, "developer", tags=["first", "local"], update_available=True)]
+        "profiles": [_expected_shelf_read_profile(blueprint, "developer", tags=["first", "local"], update_available=True)]
     }
 
-    # Same target shelf ref from a different source pack is a conflict.
-    other_payload = _pack_payload(pack_ref=f"aweb.other-{unique}")
-    other_pack = _payload_pack(other_payload)
-    _publish_pack(team, library, other_payload)
+    # Same target shelf ref from a different source blueprint is a conflict.
+    other_payload = _blueprint_payload(blueprint_ref=f"aweb.other-{unique}")
+    other_blueprint = _payload_blueprint(other_payload)
+    _publish_blueprint(team, library, other_payload)
     conflict = _post_json(
         team,
         f"{library.origin}/v1/shelf/import",
-        {"source_profile_pack_ref": other_pack.pack_ref, "profile_ref": "developer"},
+        {"source_blueprint_ref": other_blueprint.blueprint_ref, "profile_ref": "developer"},
     )
     _assert_aw_status(conflict, 409, context="different source same shelf ref")
 
@@ -514,10 +514,10 @@ def test_update_from_source_merges_noops_and_rejects_collision(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _pack_payload(pack_ref=f"aweb.update-{unique}")
-    pack = _payload_pack(payload)
-    _publish_pack(team, library, payload)
-    base = _import_to_shelf(team, library, pack=pack, profile_ref="coordinator", tags=["Update"])
+    payload = _blueprint_payload(blueprint_ref=f"aweb.update-{unique}")
+    blueprint = _payload_blueprint(payload)
+    _publish_blueprint(team, library, payload)
+    base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator", tags=["Update"])
     assert base["version"] == "0.1.0"
 
     local_instructions = "\nLocal-only coordinator instruction: preserve team-specific triage notes.\n"
@@ -529,18 +529,18 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     )
     assert local["version"] == "0.1.1"
     assert local["digest"] == local_profile.digest
-    assert local["source_profile_pack_version"] == "0.1.0"
+    assert local["source_blueprint_version"] == "0.1.0"
 
     upstream_mission = "Coordinate upstream work, keep blockers visible, and preserve crisp evidence."
     upstream_instructions = "\nUpstream coordinator instruction: summarize reviewer handoffs explicitly.\n"
-    newer_payload = _pack_payload(
-        pack_ref=pack.pack_ref,
-        pack_version="0.2.0",
+    newer_payload = _blueprint_payload(
+        blueprint_ref=blueprint.blueprint_ref,
+        blueprint_version="0.2.0",
         coordinator_mission=upstream_mission,
         coordinator_instructions_suffix=upstream_instructions,
     )
-    newer_pack = _payload_pack(newer_payload)
-    _publish_pack(team, library, newer_payload)
+    newer_blueprint = _payload_blueprint(newer_payload)
+    _publish_blueprint(team, library, newer_payload)
 
     update = _aw_json(
         _post_json(
@@ -554,8 +554,8 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert update["version"] == "0.2.0"
     assert update["updated_parts"] == ["field:mission"]
     assert update["preserved_parts"] == ["file:instructions.md"]
-    assert update["source_profile_pack_version"] == "0.2.0"
-    assert update["source_profile_pack_digest"] == newer_pack.digest
+    assert update["source_blueprint_version"] == "0.2.0"
+    assert update["source_blueprint_digest"] == newer_blueprint.digest
 
     shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after update")
     coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
@@ -563,10 +563,10 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert coordinator["digest"] == update["digest"]
     assert coordinator["summary"] == upstream_mission
     assert coordinator["tags"] == ["update"]
-    assert coordinator["source_profile_pack_ref"] == pack.pack_ref
-    assert coordinator["source_profile_pack_version"] == "0.2.0"
-    assert coordinator["source_profile_pack_digest"] == newer_pack.digest
-    assert coordinator["source_pack_latest_version"] == "0.2.0"
+    assert coordinator["source_blueprint_ref"] == blueprint.blueprint_ref
+    assert coordinator["source_blueprint_version"] == "0.2.0"
+    assert coordinator["source_blueprint_digest"] == newer_blueprint.digest
+    assert coordinator["source_blueprint_latest_version"] == "0.2.0"
     assert coordinator["update_available"] is False
 
     materialized = _aw_json(
@@ -579,9 +579,9 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     )
     assert materialized["profile_version"] == "0.2.0"
     assert materialized["profile_digest"] == update["digest"]
-    assert materialized["source_profile_pack_ref"] == pack.pack_ref
-    assert materialized["source_profile_pack_version"] == "0.2.0"
-    assert materialized["source_profile_pack_digest"] == newer_pack.digest
+    assert materialized["source_blueprint_ref"] == blueprint.blueprint_ref
+    assert materialized["source_blueprint_version"] == "0.2.0"
+    assert materialized["source_blueprint_digest"] == newer_blueprint.digest
     profile_yaml = yaml.safe_load(_home_file(materialized["home_files"], ".aw/profile/profile.yaml"))
     assert profile_yaml["version"] == "0.2.0"
     assert profile_yaml["mission"] == upstream_mission
@@ -593,9 +593,9 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         "profile_ref": "coordinator",
         "profile_version": "0.2.0",
         "profile_digest": update["digest"],
-        "source_profile_pack_ref": pack.pack_ref,
-        "source_profile_pack_version": "0.2.0",
-        "source_profile_pack_digest": newer_pack.digest,
+        "source_blueprint_ref": blueprint.blueprint_ref,
+        "source_blueprint_version": "0.2.0",
+        "source_blueprint_digest": newer_blueprint.digest,
     }
 
     no_op = _aw_json(
@@ -612,8 +612,8 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         "digest": update["digest"],
         "updated_parts": [],
         "preserved_parts": [],
-        "source_profile_pack_version": "0.2.0",
-        "source_profile_pack_digest": newer_pack.digest,
+        "source_blueprint_version": "0.2.0",
+        "source_blueprint_digest": newer_blueprint.digest,
     }
     missing_noop_version = _post_json(
         team,
@@ -622,13 +622,13 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     )
     _assert_aw_status(missing_noop_version, 404, context="no-op does not mint target version")
 
-    collision_payload = _pack_payload(
-        pack_ref=pack.pack_ref,
-        pack_version="0.3.0",
+    collision_payload = _blueprint_payload(
+        blueprint_ref=blueprint.blueprint_ref,
+        blueprint_version="0.3.0",
         coordinator_mission="Coordinate the latest upstream work without overwriting local instructions.",
         coordinator_instructions_suffix=upstream_instructions,
     )
-    _publish_pack(team, library, collision_payload)
+    _publish_blueprint(team, library, collision_payload)
     collision = _post_json(
         team,
         f"{library.origin}/v1/profiles/coordinator/update-from-source",
@@ -650,8 +650,8 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         ),
         context="create direct shelf profile",
     )
-    direct_pack = _fixture_pack()
-    assert created == _expected_shelf_profile(direct_pack, "developer", tags=["direct"], source=False)
+    direct_blueprint = _fixture_blueprint()
+    assert created == _expected_shelf_profile(direct_blueprint, "developer", tags=["direct"], source=False)
 
     binding = _bind_profile(
         team,
@@ -673,9 +673,9 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         "profile_ref": "developer",
         "profile_version": "0.1.0",
         "profile_digest": binding["profile_digest"],
-        "source_profile_pack_ref": None,
-        "source_profile_pack_version": None,
-        "source_profile_pack_digest": None,
+        "source_blueprint_ref": None,
+        "source_blueprint_version": None,
+        "source_blueprint_digest": None,
         "runtime_assumptions": created["runtime_assumptions"],
         "memory_policy": created["memory_policy"],
         "home_files": _expected_home_entries("developer", created=True),
@@ -691,67 +691,67 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
     assert versioned["version"] == "0.1.1"
     assert versioned["digest"] == next_profile.digest
     assert versioned["tags"] == ["direct"]
-    assert versioned["source_profile_pack_ref"] is None
+    assert versioned["source_blueprint_ref"] is None
 
     unique = uuid.uuid4().hex[:8]
     publish_request = {
         "profile_version": "0.1.0",
-        "pack_version": "1.0.0",
-        "new_pack": {
-            "pack_ref": f"aweb.published-{unique}",
-            "name": "Published E2E Pack",
+        "blueprint_version": "1.0.0",
+        "new_blueprint": {
+            "blueprint_ref": f"aweb.published-{unique}",
+            "name": "Published E2E Blueprint",
             "summary": "Published from a private shelf profile.",
             "description": "Round-trip digest proof.",
             "tags": ["Published", f"E2E-{unique}"],
-            "readme": "# Published E2E Pack\n",
+            "readme": "# Published E2E Blueprint\n",
             "missions": ["Use the published profile."],
         },
     }
     published = _aw_json(
         _post_json(team, f"{library.origin}/v1/profiles/developer/publish", publish_request),
-        context="publish shelf profile into new pack",
+        context="publish shelf profile into new blueprint",
     )
-    expected_payload = build_pack_payload(
-        pack_ref=publish_request["new_pack"]["pack_ref"],
-        pack_version="1.0.0",
-        name="Published E2E Pack",
+    expected_payload = build_blueprint_payload(
+        blueprint_ref=publish_request["new_blueprint"]["blueprint_ref"],
+        blueprint_version="1.0.0",
+        name="Published E2E Blueprint",
         summary="Published from a private shelf profile.",
         description="Round-trip digest proof.",
         first_mission_examples=["Use the published profile."],
-        readme="# Published E2E Pack\n",
+        readme="# Published E2E Blueprint\n",
         prior_files=None,
         profile_ref="developer",
         profile_files=_profile_payload_files("developer"),
     )
-    expected_pack = parse_import_payload(expected_payload)
+    expected_blueprint = parse_import_payload(expected_payload)
     assert published == {
-        "pack_ref": expected_pack.pack_ref,
-        "pack_version": expected_pack.version,
-        "pack_digest": expected_pack.digest,
+        "blueprint_ref": expected_blueprint.blueprint_ref,
+        "blueprint_version": expected_blueprint.version,
+        "blueprint_digest": expected_blueprint.digest,
         "profile_ref": "developer",
         "profile_version": "0.1.0",
         "profile_digest": created["digest"],
     }
-    assert published["pack_digest"] == import_return(expected_pack)["digest"]
+    assert published["blueprint_digest"] == import_return(expected_blueprint)["digest"]
 
-    public_pack = httpx.get(
-        f"{library.origin}/v1/profile-packs",
+    public_blueprint = httpx.get(
+        f"{library.origin}/v1/blueprints",
         params={"tags": f"e2e-{unique}"},
         timeout=10.0,
     )
-    assert public_pack.status_code == 200, public_pack.text
-    assert public_pack.json() == [_expected_pack_summary(expected_pack, tags=[f"e2e-{unique}", "published"])]
+    assert public_blueprint.status_code == 200, public_blueprint.text
+    assert public_blueprint.json() == [_expected_blueprint_summary(expected_blueprint, tags=[f"e2e-{unique}", "published"])]
 
     existing_publish = _aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/developer/publish",
-            {"profile_version": "0.1.0", "pack_version": "1.0.1", "target_pack_ref": expected_pack.pack_ref},
+            {"profile_version": "0.1.0", "blueprint_version": "1.0.1", "target_blueprint_ref": expected_blueprint.blueprint_ref},
         ),
-        context="publish shelf profile into existing pack",
+        context="publish shelf profile into existing blueprint",
     )
-    assert existing_publish["pack_ref"] == expected_pack.pack_ref
-    assert existing_publish["pack_version"] == "1.0.1"
+    assert existing_publish["blueprint_ref"] == expected_blueprint.blueprint_ref
+    assert existing_publish["blueprint_version"] == "1.0.1"
     assert existing_publish["profile_digest"] == created["digest"]
 
     invalid_target = _post_json(
@@ -759,24 +759,24 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         f"{library.origin}/v1/profiles/developer/publish",
         {
             "profile_version": "0.1.0",
-            "pack_version": "1.0.2",
-            "target_pack_ref": expected_pack.pack_ref,
-            "new_pack": {"pack_ref": f"aweb.invalid-{unique}", "name": "Invalid"},
+            "blueprint_version": "1.0.2",
+            "target_blueprint_ref": expected_blueprint.blueprint_ref,
+            "new_blueprint": {"blueprint_ref": f"aweb.invalid-{unique}", "name": "Invalid"},
         },
     )
-    _assert_aw_status(invalid_target, 422, context="publish target XOR new_pack")
+    _assert_aw_status(invalid_target, 422, context="publish target XOR new_blueprint")
 
 
-def test_register_bind_materialize_pack_copy_and_proposals(
+def test_register_bind_materialize_blueprint_copy_and_proposals(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _pack_payload(pack_ref=f"aweb.flow-{unique}")
-    pack = _payload_pack(payload)
-    _publish_pack(team, library, payload)
-    shelf_copy = _import_to_shelf(team, library, pack=pack)
+    payload = _blueprint_payload(blueprint_ref=f"aweb.flow-{unique}")
+    blueprint = _payload_blueprint(payload)
+    _publish_blueprint(team, library, payload)
+    shelf_copy = _import_to_shelf(team, library, blueprint=blueprint)
 
     first_register = _aw_json(_post_json(team, f"{library.origin}/v1/team/register", {}), context="team register")
     second_register = _aw_json(_post_json(team, f"{library.origin}/v1/team/register", {}), context="team register again")
@@ -807,19 +807,19 @@ def test_register_bind_materialize_pack_copy_and_proposals(
             f"{library.origin}/v1/materialize",
             {"agent_id": "agent-dev-1", "runtime_kind": "claude-code", "target": "local"},
         ),
-        context="materialize bound pack-copy profile",
+        context="materialize bound blueprint-copy profile",
     )
-    inspect_profile = next(profile for profile in _fixture_pack().profiles if profile.profile_ref == "developer")
+    inspect_profile = next(profile for profile in _fixture_blueprint().profiles if profile.profile_ref == "developer")
     assert materialized == {
         "profile_ref": "developer",
         "profile_version": "0.1.0",
         "profile_digest": binding["profile_digest"],
-        "source_profile_pack_ref": pack.pack_ref,
-        "source_profile_pack_version": pack.version,
-        "source_profile_pack_digest": pack.digest,
+        "source_blueprint_ref": blueprint.blueprint_ref,
+        "source_blueprint_version": blueprint.version,
+        "source_blueprint_digest": blueprint.digest,
         "runtime_assumptions": inspect_profile.runtime_assumptions,
         "memory_policy": inspect_profile.memory_policy,
-        "home_files": _expected_home_entries("developer", pack=pack),
+        "home_files": _expected_home_entries("developer", blueprint=blueprint),
     }
     assert any(entry == {"path": "CLAUDE.md", "kind": "symlink", "target": "AGENTS.md"} for entry in materialized["home_files"])
     ref_entry = next(entry for entry in materialized["home_files"] if entry["path"] == ".aw/profile/ref.json")
@@ -828,9 +828,9 @@ def test_register_bind_materialize_pack_copy_and_proposals(
         "profile_ref": "developer",
         "profile_version": "0.1.0",
         "profile_digest": binding["profile_digest"],
-        "source_profile_pack_ref": pack.pack_ref,
-        "source_profile_pack_version": pack.version,
-        "source_profile_pack_digest": pack.digest,
+        "source_blueprint_ref": blueprint.blueprint_ref,
+        "source_blueprint_version": blueprint.version,
+        "source_blueprint_digest": blueprint.digest,
     }
 
     def assert_proposal_shape(
@@ -930,10 +930,10 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _pack_payload(pack_ref=f"aweb.mint-{unique}")
-    pack = _payload_pack(payload)
-    _publish_pack(team, library, payload)
-    base = _import_to_shelf(team, library, pack=pack, profile_ref="coordinator")
+    payload = _blueprint_payload(blueprint_ref=f"aweb.mint-{unique}")
+    blueprint = _payload_blueprint(payload)
+    _publish_blueprint(team, library, payload)
+    base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator")
 
     def assert_profile_proposal_shape(
         proposal: dict[str, Any], *, status: str, content: dict[str, Any], minted: bool = False
@@ -1006,7 +1006,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_or_collision(
     coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
     assert coordinator["version"] == "0.2.0"
     assert coordinator["digest"] == minted_profile.digest
-    assert coordinator["source_profile_pack_ref"] == pack.pack_ref
+    assert coordinator["source_blueprint_ref"] == blueprint.blueprint_ref
 
     stale_files = _profile_files_with_version("coordinator", "0.3.0")
     stale_proposal = _aw_json(
@@ -1059,12 +1059,12 @@ def test_empty_profile_invariant_never_requires_reachable_library(
 ) -> None:
     expected = _load_json(_EXPECTED / "empty-profile-invariant.json")
     assert expected == {
-        "schema": "aweb.profile-pack.empty-profile-invariant.v1",
+        "schema": "aweb.blueprint.empty-profile-invariant.v1",
         "library_unreachable": True,
         "team_create": {
             "default_profile": "empty",
             "must_succeed_without_library": True,
-            "profile_pack_required": False,
+            "blueprint_required": False,
         },
         "agent_add": {
             "default_profile": "empty",
@@ -1089,7 +1089,7 @@ def test_empty_profile_invariant_never_requires_reachable_library(
 
 def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> None:
     payload = _canonical_payload()
-    unauth_publish = httpx.post(f"{library.origin}/v1/profile-packs/import", json=payload, timeout=10.0)
+    unauth_publish = httpx.post(f"{library.origin}/v1/blueprints/import", json=payload, timeout=10.0)
     assert unauth_publish.status_code == 401, unauth_publish.text
     unauth_register = httpx.post(f"{library.origin}/v1/team/register", json={}, timeout=10.0)
     assert unauth_register.status_code == 401, unauth_register.text
@@ -1097,7 +1097,7 @@ def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> N
     assert unauth_shelf.status_code == 401, unauth_shelf.text
     unauth_import_shelf = httpx.post(
         f"{library.origin}/v1/shelf/import",
-        json={"source_profile_pack_ref": "aweb.engineering-pack", "profile_ref": "developer"},
+        json={"source_blueprint_ref": "aweb.engineering", "profile_ref": "developer"},
         timeout=10.0,
     )
     assert unauth_import_shelf.status_code == 401, unauth_import_shelf.text
@@ -1110,10 +1110,10 @@ def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> N
 
 
 def test_contract_fixture_contains_materialized_profile_refs() -> None:
-    pack_ref = _fixture_pack().pack_ref
+    blueprint_ref = _fixture_blueprint().blueprint_ref
     for profile_ref in ("coordinator", "developer", "reviewer"):
         ref = _load_json(_EXPECTED / "materialized-home" / profile_ref / ".aw" / "profile" / "ref.json")
         assert ref["profile_ref"] == profile_ref
-        assert ref["source_profile_pack_ref"] == pack_ref
+        assert ref["source_blueprint_ref"] == blueprint_ref
     created_ref = _load_json(_EXPECTED / "materialized-home-created" / "developer" / ".aw" / "profile" / "ref.json")
     assert set(created_ref) == {"profile_digest", "profile_ref", "profile_version"}

@@ -18,7 +18,7 @@ class ProfileBindingRequest(BaseModel):
     profile_ref: str = Field(..., min_length=1, max_length=240)
     profile_version: str = Field(..., min_length=1, max_length=80)
     profile_digest: str = Field(..., min_length=1, max_length=128)
-    source_profile_pack_ref: str | None = Field(default=None, max_length=240)
+    source_blueprint_ref: str | None = Field(default=None, max_length=240)
 
 
 class MaterializeRequest(BaseModel):
@@ -40,8 +40,8 @@ class SetTagsRequest(BaseModel):
 class ImportToShelfRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    source_profile_pack_ref: str = Field(..., min_length=1, max_length=240)
-    source_profile_pack_version: str | None = Field(default=None, max_length=80)
+    source_blueprint_ref: str = Field(..., min_length=1, max_length=240)
+    source_blueprint_version: str | None = Field(default=None, max_length=80)
     profile_ref: str = Field(..., min_length=1, max_length=240)
     tags: list[str] = Field(default_factory=list)
 
@@ -50,13 +50,13 @@ class UpdateFromSourceRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     target_version: str = Field(..., min_length=1, max_length=80)
-    source_profile_pack_version: str | None = Field(default=None, max_length=80)
+    source_blueprint_version: str | None = Field(default=None, max_length=80)
 
 
-class NewPackTarget(BaseModel):
+class NewBlueprintTarget(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    pack_ref: str = Field(..., min_length=1, max_length=240)
+    blueprint_ref: str = Field(..., min_length=1, max_length=240)
     name: str = Field(..., min_length=1, max_length=240)
     summary: str | None = Field(default=None, max_length=2000)
     description: str | None = Field(default=None)
@@ -69,9 +69,9 @@ class ProfilePublishRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     profile_version: str | None = Field(default=None, max_length=80)
-    pack_version: str = Field(..., min_length=1, max_length=80)
-    target_pack_ref: str | None = Field(default=None, max_length=240)
-    new_pack: NewPackTarget | None = Field(default=None)
+    blueprint_version: str = Field(..., min_length=1, max_length=80)
+    target_blueprint_ref: str | None = Field(default=None, max_length=240)
+    new_blueprint: NewBlueprintTarget | None = Field(default=None)
 
 
 class ProposalCreateRequest(BaseModel):

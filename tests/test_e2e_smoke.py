@@ -461,12 +461,12 @@ def test_health_endpoints_are_public(library: RunningLibrary) -> None:
         assert response.json() == {"status": "ok", "service": "library"}
 
 
-def test_public_pack_catalog_needs_no_auth(library: RunningLibrary) -> None:
-    # Packs are the public catalog.
-    packs = httpx.get(f"{library.origin}/v1/profile-packs", timeout=10.0)
-    assert packs.status_code == 200, packs.text
-    assert packs.json() == []
-    assert httpx.get(f"{library.origin}/v1/profile-packs/none", timeout=10.0).status_code == 404
+def test_public_blueprint_catalog_needs_no_auth(library: RunningLibrary) -> None:
+    # Blueprints are the public catalog.
+    blueprints = httpx.get(f"{library.origin}/v1/blueprints", timeout=10.0)
+    assert blueprints.status_code == 200, blueprints.text
+    assert blueprints.json() == []
+    assert httpx.get(f"{library.origin}/v1/blueprints/none", timeout=10.0).status_code == 404
 
 
 def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str) -> None:
@@ -489,9 +489,9 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
 def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
     team = _provision_team(aw_workspace)
     # Public catalog read with team auth still works (a JSON array; may be non-empty
-    # if earlier tests published packs into the shared catalog).
-    packs = _aw_request(team, "GET", f"{library.origin}/v1/profile-packs")
-    assert isinstance(json.loads(_assert_aw_success(packs, context="list profile packs smoke")), list)
+    # if earlier tests published blueprints into the shared catalog).
+    blueprints = _aw_request(team, "GET", f"{library.origin}/v1/blueprints")
+    assert isinstance(json.loads(_assert_aw_success(blueprints, context="list blueprints smoke")), list)
     # A valid certificate passes auth: get-binding for an unbound agent is a real
     # 404 (not 401), proving auth + the live endpoint.
     binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")

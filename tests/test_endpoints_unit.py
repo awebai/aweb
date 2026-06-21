@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from library.blueprint import parse_profile_payload, part_baselines
 from library.digest import collect_files
-from library.models import MaterializeRequest, NewPackTarget, ProfilePublishRequest
-from library.profile_pack import parse_profile_payload, part_baselines
+from library.models import MaterializeRequest, NewBlueprintTarget, ProfilePublishRequest
 from library.repository import (
-    get_pack_profile,
+    get_blueprint_profile,
     import_to_shelf,
     list_shelf,
     materialize,
@@ -19,7 +19,7 @@ from library.repository import (
     publish_profile,
 )
 
-_FIXTURE = Path(__file__).parent / "vectors" / "profile-packs" / "engineering"
+_FIXTURE = Path(__file__).parent / "vectors" / "blueprints" / "engineering"
 
 
 async def test_materialize_requires_agent_or_profile_ref() -> None:
@@ -62,16 +62,16 @@ class _ShelfImportDB:
                 "source_profile_ref": params[17],
                 "source_profile_version": params[18],
                 "source_profile_digest": params[19],
-                "source_profile_pack_ref": params[14],
-                "source_profile_pack_version": params[15],
-                "source_profile_pack_digest": params[16],
+                "source_blueprint_ref": params[14],
+                "source_blueprint_version": params[15],
+                "source_blueprint_digest": params[16],
             }
             return {"version": params[2]}  # RETURNING version (no prior conflict)
         if "FROM {{tables.shelf_profiles}}" in sql:
             return self.shelf_row
-        if "FROM {{tables.profile_packs}}" in sql:
-            return {"owner_team": "default:atext.aweb.ai", "version": "0.1.0", "digest": "sha256:packdigest"}
-        if "FROM {{tables.pack_profiles}}" in sql:
+        if "FROM {{tables.blueprints}}" in sql:
+            return {"owner_team": "default:atext.aweb.ai", "version": "0.1.0", "digest": "sha256:blueprintdigest"}
+        if "FROM {{tables.blueprint_profiles}}" in sql:
             s = self._source
             return {
                 "profile_ref": s.profile_ref,
@@ -98,8 +98,8 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
     first = await import_to_shelf(
         db,
         principal=principal,
-        source_profile_pack_ref="aweb.engineering-pack",
-        source_profile_pack_version=None,
+        source_blueprint_ref="aweb.engineering",
+        source_blueprint_version=None,
         profile_ref="coordinator",
         tags=["Coder"],
     )
@@ -108,20 +108,20 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
     assert first["digest"] == source.digest
     assert first["source_profile_ref"] == "coordinator"
     assert first["source_profile_digest"] == source.digest
-    assert first["source_profile_pack_ref"] == "aweb.engineering-pack"
-    assert first["source_profile_pack_version"] == "0.1.0"
-    assert first["source_profile_pack_digest"] == "sha256:packdigest"
+    assert first["source_blueprint_ref"] == "aweb.engineering"
+    assert first["source_blueprint_version"] == "0.1.0"
+    assert first["source_blueprint_digest"] == "sha256:blueprintdigest"
     # Per-part baselines recorded as the canonical copy-time content digests.
     written_baselines = json.loads(db.writes[0][20])
     assert written_baselines == part_baselines(source)
 
-    # A re-import keyed by (team, source pack, source profile) is a pure no-op:
+    # A re-import keyed by (team, source blueprint, source profile) is a pure no-op:
     # created=False, no new write, returns the existing copy.
     second = await import_to_shelf(
         db,
         principal=principal,
-        source_profile_pack_ref="aweb.engineering-pack",
-        source_profile_pack_version=None,
+        source_blueprint_ref="aweb.engineering",
+        source_blueprint_version=None,
         profile_ref="coordinator",
         tags=["Coder"],
     )
@@ -130,19 +130,19 @@ async def test_import_to_shelf_copies_then_is_idempotent() -> None:
     assert len(db.writes) == 1
 
 
-class _PackProfileDB:
+class _BlueprintProfileDB:
     def __init__(self, source, recommendations: list[dict]) -> None:
         self._source = source
         self._recommendations = recommendations
 
     async def fetch_one(self, sql: str, *params):
-        if "FROM {{tables.profile_packs}}" in sql:
+        if "FROM {{tables.blueprints}}" in sql:
             return {
                 "owner_team": "default:atext.aweb.ai",
                 "version": "0.2.0",
                 "recommendations": json.dumps(self._recommendations),
             }
-        if "FROM {{tables.pack_profiles}}" in sql:
+        if "FROM {{tables.blueprint_profiles}}" in sql:
             s = self._source
             return {
                 "profile_ref": s.profile_ref,
@@ -165,11 +165,11 @@ class _PackProfileDB:
     ("profile_ref", "runtime_hints"),
     [("coordinator", ["claude-code"]), ("reviewer", ["pi", "claude-code"])],
 )
-async def test_get_pack_profile_surfaces_profile_runtime_hints_from_pack_recommendation(
+async def test_get_blueprint_profile_surfaces_profile_runtime_hints_from_blueprint_recommendation(
     profile_ref: str, runtime_hints: list[str]
 ) -> None:
     source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / profile_ref))
-    db = _PackProfileDB(
+    db = _BlueprintProfileDB(
         source,
         [
             {"id": "coordinator", "runtime_hints": ["claude-code"]},
@@ -177,14 +177,14 @@ async def test_get_pack_profile_surfaces_profile_runtime_hints_from_pack_recomme
         ],
     )
 
-    result = await get_pack_profile(db, pack_ref="aweb.engineering-pack", profile_ref=profile_ref)
+    result = await get_blueprint_profile(db, blueprint_ref="aweb.engineering", profile_ref=profile_ref)
 
     assert result["profile_ref"] == profile_ref
     assert result["runtime_hints"] == runtime_hints
 
 
 async def test_import_to_shelf_conflicts_on_different_source() -> None:
-    # A profile_ref already held from a different source pack is a 409 — v1 never
+    # A profile_ref already held from a different source blueprint is a 409 — v1 never
     # renames or shadows; the team must resolve the name clash explicitly.
     source = parse_profile_payload(collect_files(_FIXTURE / "source" / "profiles" / "coordinator"))
     db = _ShelfImportDB(source)
@@ -195,16 +195,16 @@ async def test_import_to_shelf_conflicts_on_different_source() -> None:
         "source_profile_ref": "coordinator",
         "source_profile_version": "0.1.0",
         "source_profile_digest": source.digest,
-        "source_profile_pack_ref": "some-other-pack",
-        "source_profile_pack_version": "0.1.0",
-        "source_profile_pack_digest": "sha256:other",
+        "source_blueprint_ref": "some-other-blueprint",
+        "source_blueprint_version": "0.1.0",
+        "source_blueprint_digest": "sha256:other",
     }
     with pytest.raises(HTTPException) as excinfo:
         await import_to_shelf(
             db,
             principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
-            source_profile_pack_ref="aweb.engineering-pack",
-            source_profile_pack_version=None,
+            source_blueprint_ref="aweb.engineering",
+            source_blueprint_version=None,
             profile_ref="coordinator",
             tags=None,
         )
@@ -213,25 +213,25 @@ async def test_import_to_shelf_conflicts_on_different_source() -> None:
 
 
 async def test_publish_profile_rejects_ambiguous_target() -> None:
-    # target must set exactly one of existing_pack_ref / new_pack — checked before
+    # target must set exactly one of existing_blueprint_ref / new_blueprint — checked before
     # any DB use, so the db is never touched.
     both = ProfilePublishRequest(
-        pack_version="1.0.0",
-        target_pack_ref="my-team.starter",
-        new_pack=NewPackTarget(pack_ref="my-team.starter", name="Starter"),
+        blueprint_version="1.0.0",
+        target_blueprint_ref="my-team.starter",
+        new_blueprint=NewBlueprintTarget(blueprint_ref="my-team.starter", name="Starter"),
     )
     with pytest.raises(HTTPException) as excinfo:
         await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=both)
     assert excinfo.value.status_code == 422
 
-    neither = ProfilePublishRequest(pack_version="1.0.0")
+    neither = ProfilePublishRequest(blueprint_version="1.0.0")
     with pytest.raises(HTTPException) as excinfo:
         await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=neither)
     assert excinfo.value.status_code == 422
 
 
 class _ShelfListDB:
-    """Returns the shelf rows then the per-pack latest catalog versions, routed by
+    """Returns the shelf rows then the per-blueprint latest catalog versions, routed by
     SQL fragment, so list_shelf can compute update_available."""
 
     def __init__(self, shelf_rows: list[dict], latest_rows: list[dict]) -> None:
@@ -241,12 +241,12 @@ class _ShelfListDB:
     async def fetch_all(self, sql: str, *params):
         if "FROM {{tables.shelf_profiles}}" in sql:
             return self._shelf_rows
-        if "FROM {{tables.profile_packs}}" in sql:
+        if "FROM {{tables.blueprints}}" in sql:
             return self._latest_rows
         raise AssertionError(f"unexpected query: {sql}")
 
 
-def _shelf_row(profile_ref: str, *, source_pack=None, source_pack_version=None) -> dict:
+def _shelf_row(profile_ref: str, *, source_blueprint=None, source_blueprint_version=None) -> dict:
     return {
         "profile_ref": profile_ref,
         "version": "1",
@@ -254,45 +254,45 @@ def _shelf_row(profile_ref: str, *, source_pack=None, source_pack_version=None) 
         "name": profile_ref.title(),
         "mission": f"{profile_ref} mission",
         "tags": ["coder"],
-        "source_profile_pack_ref": source_pack,
-        "source_profile_pack_version": source_pack_version,
-        "source_profile_pack_digest": "sha256:p" if source_pack else None,
-        "source_profile_ref": profile_ref if source_pack else None,
-        "source_profile_version": "0.1.0" if source_pack else None,
+        "source_blueprint_ref": source_blueprint,
+        "source_blueprint_version": source_blueprint_version,
+        "source_blueprint_digest": "sha256:p" if source_blueprint else None,
+        "source_profile_ref": profile_ref if source_blueprint else None,
+        "source_profile_version": "0.1.0" if source_blueprint else None,
     }
 
 
-async def test_list_shelf_flags_update_available_only_when_pack_moved_on() -> None:
+async def test_list_shelf_flags_update_available_only_when_blueprint_moved_on() -> None:
     shelf_rows = [
-        _shelf_row("coordinator", source_pack="aweb.eng", source_pack_version="0.1.0"),
-        _shelf_row("developer", source_pack="aweb.eng", source_pack_version="0.2.0"),
-        _shelf_row("home-grown"),  # created fresh, no source pack
+        _shelf_row("coordinator", source_blueprint="aweb.eng", source_blueprint_version="0.1.0"),
+        _shelf_row("developer", source_blueprint="aweb.eng", source_blueprint_version="0.2.0"),
+        _shelf_row("home-grown"),  # created fresh, no source blueprint
     ]
     # The catalog's latest version of aweb.eng is 0.2.0.
-    db = _ShelfListDB(shelf_rows, [{"pack_ref": "aweb.eng", "version": "0.2.0"}])
+    db = _ShelfListDB(shelf_rows, [{"blueprint_ref": "aweb.eng", "version": "0.2.0"}])
 
     result = await list_shelf(db, principal=SimpleNamespace(team_id="default:atext.aweb.ai"))
     by_ref = {p["profile_ref"]: p for p in result["profiles"]}
 
     # Pinned to 0.1.0 while latest is 0.2.0 -> update available, latest surfaced.
     assert by_ref["coordinator"]["update_available"] is True
-    assert by_ref["coordinator"]["source_pack_latest_version"] == "0.2.0"
+    assert by_ref["coordinator"]["source_blueprint_latest_version"] == "0.2.0"
     assert by_ref["coordinator"]["summary"] == "coordinator mission"
     # Already on the latest -> no update.
     assert by_ref["developer"]["update_available"] is False
-    assert by_ref["developer"]["source_pack_latest_version"] == "0.2.0"
+    assert by_ref["developer"]["source_blueprint_latest_version"] == "0.2.0"
     # Created fresh -> source provenance null, never an update.
     assert by_ref["home-grown"]["update_available"] is False
-    assert by_ref["home-grown"]["source_profile_pack_ref"] is None
-    assert by_ref["home-grown"]["source_pack_latest_version"] is None
+    assert by_ref["home-grown"]["source_blueprint_ref"] is None
+    assert by_ref["home-grown"]["source_blueprint_latest_version"] is None
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:
     invariant = json.loads((_FIXTURE / "expected" / "empty-profile-invariant.json").read_text(encoding="utf-8"))
-    assert invariant["schema"] == "aweb.profile-pack.empty-profile-invariant.v1"
+    assert invariant["schema"] == "aweb.blueprint.empty-profile-invariant.v1"
     # Library is optional: a team and its agents exist without any Library state.
     assert invariant["team_create"]["must_succeed_without_library"] is True
-    assert invariant["team_create"]["profile_pack_required"] is False
+    assert invariant["team_create"]["blueprint_required"] is False
     assert invariant["agent_add"]["profile_binding_required"] is False
     # Materialize needs a bound profile, but an all-empty team is not an error.
     assert invariant["materialize"]["requires_bound_profile"] is True

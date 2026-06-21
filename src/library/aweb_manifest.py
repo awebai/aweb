@@ -5,7 +5,7 @@ authoring source. A test asserts the file equals ``canonical_bytes(MANIFEST)`` s
 the two never drift.
 
 Only cert-authed team operations are declared as verbs. Library's public catalog
-reads (profile packs / profiles) are unauthenticated discovery endpoints, not
+reads (blueprints / profiles) are unauthenticated discovery endpoints, not
 dispatcher verbs. Library emits no events at v0, so there is no events catalog or
 event_emitters entry yet.
 """
@@ -29,10 +29,10 @@ MANIFEST: dict[str, Any] = {
     },
     "tools": [
         {
-            "name": "list-packs",
-            "description": "Browse the public profile-pack catalog, optionally filtered by tag overlap.",
+            "name": "list-blueprints",
+            "description": "Browse the public blueprint catalog, optionally filtered by tag overlap.",
             "method": "GET",
-            "path": "/v1/profile-packs",
+            "path": "/v1/blueprints",
             "input_schema": {"type": "object", "properties": {"tags": {"type": "array"}}},
             "params": [{"name": "tags", "in": "query"}],
             "scopes": ["library:read"],
@@ -40,27 +40,27 @@ MANIFEST: dict[str, Any] = {
             "mutation": False,
         },
         {
-            "name": "get-pack",
-            "description": "Get a public profile pack and its profile summaries.",
+            "name": "get-blueprint",
+            "description": "Get a public blueprint and its profile summaries.",
             "method": "GET",
-            "path": "/v1/profile-packs/{pack_ref}",
-            "input_schema": {"type": "object", "properties": {"pack_ref": {"type": "string"}}},
-            "params": [{"name": "pack_ref", "in": "path"}],
+            "path": "/v1/blueprints/{blueprint_ref}",
+            "input_schema": {"type": "object", "properties": {"blueprint_ref": {"type": "string"}}},
+            "params": [{"name": "blueprint_ref", "in": "path"}],
             "scopes": ["library:read"],
             "auth": "none",
             "mutation": False,
         },
         {
             "name": "get-profile",
-            "description": "Get a public profile's full content from the latest version of a pack.",
+            "description": "Get a public profile's full content from the latest version of a blueprint.",
             "method": "GET",
-            "path": "/v1/profile-packs/{pack_ref}/profiles/{profile_ref}",
+            "path": "/v1/blueprints/{blueprint_ref}/profiles/{profile_ref}",
             "input_schema": {
                 "type": "object",
-                "properties": {"pack_ref": {"type": "string"}, "profile_ref": {"type": "string"}},
+                "properties": {"blueprint_ref": {"type": "string"}, "profile_ref": {"type": "string"}},
             },
             "params": [
-                {"name": "pack_ref", "in": "path"},
+                {"name": "blueprint_ref", "in": "path"},
                 {"name": "profile_ref", "in": "path"},
             ],
             "scopes": ["library:read"],
@@ -68,10 +68,10 @@ MANIFEST: dict[str, Any] = {
             "mutation": False,
         },
         {
-            "name": "publish-pack",
-            "description": "Publish or update a public profile pack. The body is the canonical import payload directly.",
+            "name": "publish-blueprint",
+            "description": "Publish or update a public blueprint. The body is the canonical import payload directly.",
             "method": "POST",
-            "path": "/v1/profile-packs/import",
+            "path": "/v1/blueprints/import",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -146,7 +146,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "update-from-source",
-            "description": "Per-part 3-way merge of a shelf profile against a newer version of its source pack: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.",
+            "description": "Per-part 3-way merge of a shelf profile against a newer version of its source blueprint: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.",
             "method": "POST",
             "path": "/v1/profiles/{profile_ref}/update-from-source",
             "input_schema": {
@@ -154,14 +154,14 @@ MANIFEST: dict[str, Any] = {
                 "properties": {
                     "profile_ref": {"type": "string"},
                     "target_version": {"type": "string"},
-                    "source_profile_pack_version": {"type": "string"},
+                    "source_blueprint_version": {"type": "string"},
                 },
                 "required": ["profile_ref", "target_version"],
             },
             "params": [
                 {"name": "profile_ref", "in": "path"},
                 {"name": "target_version", "in": "body"},
-                {"name": "source_profile_pack_version", "in": "body"},
+                {"name": "source_blueprint_version", "in": "body"},
             ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],
@@ -169,22 +169,22 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "import-to-shelf",
-            "description": "Copy a public-pack profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.",
+            "description": "Copy a public-blueprint profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.",
             "method": "POST",
             "path": "/v1/shelf/import",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "source_profile_pack_ref": {"type": "string"},
-                    "source_profile_pack_version": {"type": "string"},
+                    "source_blueprint_ref": {"type": "string"},
+                    "source_blueprint_version": {"type": "string"},
                     "profile_ref": {"type": "string"},
                     "tags": {"type": "array"},
                 },
-                "required": ["source_profile_pack_ref", "profile_ref"],
+                "required": ["source_blueprint_ref", "profile_ref"],
             },
             "params": [
-                {"name": "source_profile_pack_ref", "in": "body"},
-                {"name": "source_profile_pack_version", "in": "body"},
+                {"name": "source_blueprint_ref", "in": "body"},
+                {"name": "source_blueprint_version", "in": "body"},
                 {"name": "profile_ref", "in": "body"},
                 {"name": "tags", "in": "body"},
             ],
@@ -194,7 +194,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "publish-profile",
-            "description": "Publish a private shelf profile into a public pack (new pack or a new version of an owned pack); pack.yaml is library-generated and the profile set accumulates.",
+            "description": "Publish a private shelf profile into a public blueprint (new blueprint or a new version of an owned blueprint); blueprint.yaml is library-generated and the profile set accumulates.",
             "method": "POST",
             "path": "/v1/profiles/{profile_ref}/publish",
             "input_schema": {
@@ -202,18 +202,18 @@ MANIFEST: dict[str, Any] = {
                 "properties": {
                     "profile_ref": {"type": "string"},
                     "profile_version": {"type": "string"},
-                    "pack_version": {"type": "string"},
-                    "target_pack_ref": {"type": "string"},
-                    "new_pack": {"type": "object"},
+                    "blueprint_version": {"type": "string"},
+                    "target_blueprint_ref": {"type": "string"},
+                    "new_blueprint": {"type": "object"},
                 },
-                "required": ["profile_ref", "pack_version"],
+                "required": ["profile_ref", "blueprint_version"],
             },
             "params": [
                 {"name": "profile_ref", "in": "path"},
                 {"name": "profile_version", "in": "body"},
-                {"name": "pack_version", "in": "body"},
-                {"name": "target_pack_ref", "in": "body"},
-                {"name": "new_pack", "in": "body"},
+                {"name": "blueprint_version", "in": "body"},
+                {"name": "target_blueprint_ref", "in": "body"},
+                {"name": "new_blueprint", "in": "body"},
             ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],
@@ -241,20 +241,20 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
         {
-            "name": "set-pack-tags",
-            "description": "Replace a profile pack's organizational tags.",
+            "name": "set-blueprint-tags",
+            "description": "Replace a blueprint's organizational tags.",
             "method": "PUT",
-            "path": "/v1/profile-packs/{pack_ref}/tags",
+            "path": "/v1/blueprints/{blueprint_ref}/tags",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "pack_ref": {"type": "string"},
+                    "blueprint_ref": {"type": "string"},
                     "tags": {"type": "array"},
                 },
-                "required": ["pack_ref", "tags"],
+                "required": ["blueprint_ref", "tags"],
             },
             "params": [
-                {"name": "pack_ref", "in": "path"},
+                {"name": "blueprint_ref", "in": "path"},
                 {"name": "tags", "in": "body"},
             ],
             "body": {"mode": "json"},
@@ -273,7 +273,7 @@ MANIFEST: dict[str, Any] = {
                     "profile_ref": {"type": "string"},
                     "profile_version": {"type": "string"},
                     "profile_digest": {"type": "string"},
-                    "source_profile_pack_ref": {"type": "string"},
+                    "source_blueprint_ref": {"type": "string"},
                 },
                 "required": ["agent_id", "profile_ref", "profile_version", "profile_digest"],
             },
@@ -282,7 +282,7 @@ MANIFEST: dict[str, Any] = {
                 {"name": "profile_ref", "in": "body"},
                 {"name": "profile_version", "in": "body"},
                 {"name": "profile_digest", "in": "body"},
-                {"name": "source_profile_pack_ref", "in": "body"},
+                {"name": "source_blueprint_ref", "in": "body"},
             ],
             "body": {"mode": "json"},
             "scopes": ["library:write"],
@@ -304,7 +304,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "shelf",
-            "description": "List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-pack version is available.",
+            "description": "List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-blueprint version is available.",
             "method": "GET",
             "path": "/v1/shelf",
             "input_schema": {"type": "object", "properties": {}},
