@@ -98,10 +98,10 @@
         },
         "tools": [
           {
-            "name": "list-packs",
+            "name": "list-blueprints",
             "auth": "none",
             "method": "GET",
-            "path": "/v1/profile-packs",
+            "path": "/v1/blueprints",
             "input_schema": {
               "type": "object",
               "properties": {}
@@ -114,12 +114,12 @@
           }
         ]
       },
-      "verb": "list-packs",
+      "verb": "list-blueprints",
       "args": {},
       "expected": {
         "method": "GET",
-        "url": "https://library.example/v1/profile-packs",
-        "path_query": "/v1/profile-packs",
+        "url": "https://library.example/v1/blueprints",
+        "path_query": "/v1/blueprints",
         "headers": {
           "Content-Type": "application/json"
         },
@@ -1292,10 +1292,10 @@
         },
         "tools": [
           {
-            "name": "publish-pack",
+            "name": "publish-blueprint",
             "auth": "none",
             "method": "POST",
-            "path": "/v1/profile-packs/import",
+            "path": "/v1/blueprints/import",
             "input_schema": {
               "type": "object",
               "properties": {
@@ -1320,11 +1320,40 @@
           }
         ]
       },
-      "verb": "publish-pack",
+      "verb": "publish-blueprint",
       "args": {
         "files": []
       },
       "expected_error_contains": "auth:none"
+    },
+    {
+      "name": "unsupported_auth_rejected",
+      "description": "Manifest tools must use a supported auth value; unknown auth modes fail validation instead of silently downgrading or signing.",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "library",
+          "version": "1.0.0",
+          "origin": "https://library.example"
+        },
+        "tools": [
+          {
+            "name": "list-blueprints",
+            "auth": "bogus",
+            "method": "GET",
+            "path": "/v1/blueprints",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "list-blueprints",
+      "args": {},
+      "expected_error_contains": "unsupported auth"
     }
   ]
 }
