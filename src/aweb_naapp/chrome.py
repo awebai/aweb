@@ -84,7 +84,25 @@ _SITE_SCRIPT_BODY = """    function awebToggleTheme() {
         else if (e.key === 'Escape') { close(); if (caret) caret.focus(); }
       });
       document.addEventListener('click', function (e) { if (!sb.contains(e.target)) close(); });
-    });"""
+    });
+    // Reference page: highlight the sidebar link for the operation in view.
+    var refOps = document.querySelectorAll('.ref-op[id]');
+    if (refOps.length && 'IntersectionObserver' in window) {
+      var refLinks = {};
+      Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a[href^="#"]'), function (a) {
+        refLinks[a.getAttribute('href').slice(1)] = a;
+      });
+      var refSpy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          var link = refLinks[e.target.id];
+          if (!link) return;
+          Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a.active'), function (a) { a.classList.remove('active'); });
+          link.classList.add('active');
+        });
+      }, { rootMargin: '-80px 0px -68% 0px' });
+      Array.prototype.forEach.call(refOps, function (op) { refSpy.observe(op); });
+    }"""
 
 
 @dataclass(frozen=True)

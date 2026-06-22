@@ -130,47 +130,75 @@ def _wire_block(origin: str, tool: dict[str, Any], values: dict[str, str]) -> st
     return "\n".join(lines)
 
 
-def _operation(origin: str, tool: dict[str, Any], verb: str, values: dict[str, str]) -> str:
-    req, opt = tool_params(tool)
-    is_public = tool.get("auth") == "none"
-    pill = (
-        '<span class="pill ok">public</span>'
-        if is_public
-        else '<span class="pill run">team cert</span>'
+def _params_table(tool: dict[str, Any]) -> str:
+    """A typed parameter table for one operation: name, location, type, required."""
+    schema = tool.get("input_schema") or {}
+    props = schema.get("properties") or {}
+    req, _opt = tool_params(tool)
+    locs = params_by_loc(tool)
+    names = [p["name"] for p in tool.get("params", []) if "name" in p]
+    for name in props:
+        if name not in names:
+            names.append(name)
+    if not names:
+        return ""
+    rows = "\n            ".join(
+        f"<tr><td><code>{escape(n)}</code></td><td>{escape(locs.get(n, 'body'))}</td>"
+        f"<td>{escape(str((props.get(n) or {}).get('type', '—')))}</td>"
+        + ('<td class="ref-req">required</td>' if n in req else '<td class="ref-opt">optional</td>')
+        + "</tr>"
+        for n in names
     )
-    bits = []
-    if req:
-        bits.append(f"required: {escape(', '.join(req))}")
-    if opt:
-        bits.append(f"optional: {escape(', '.join(opt))}")
-    params_line = f'<p class="op-params">{" · ".join(bits)}</p>' if bits else ""
+    return f"""
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            {rows}
+            </tbody>
+          </table>"""
 
-    signed = ""
-    if not is_public:
-        signed = (
-            '\n          <p class="cmd-label">Run it signed, without the plugin</p>'
-            f'\n          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_id_request(origin, tool), quote=False)}</pre>{COPY_BTN}</div></div>'
+
+def _operation(origin: str, tool: dict[str, Any], verb: str, values: dict[str, str]) -> str:
+    is_public = tool.get("auth") == "none"
+    name = tool["name"]
+    auth_tag = (
+        '<span class="ref-auth-tag ref-auth-tag--public">public</span>'
+        if is_public
+        else '<span class="ref-auth-tag ref-auth-tag--team">team cert</span>'
+    )
+    scope_tags = "".join(
+        f'<span class="ref-scope-tag">{escape(s)}</span>' for s in tool.get("scopes") or []
+    )
+    method_cls = "ref-op-method ref-op-method--write" if tool.get("mutation") else "ref-op-method"
+    aw_cmd = escape(_aw_command(tool, verb, examples=values if is_public else None), quote=False)
+    wire = escape(_wire_block(origin, tool, values), quote=False)
+    if is_public:
+        runnable = " — copy-paste runnable" if is_fully_substituted(tool, values) else ""
+        wire_body = (
+            f'<p class="ref-wire-note">Raw HTTP, no auth{runnable}.</p>'
+            f'<div class="cmd"><pre>{wire}</pre>{COPY_BTN}</div>'
         )
-    # A public read is only labelled runnable when every path placeholder has an
-    # example value; otherwise the curl keeps a {brace} and is just the shape.
-    if not is_public:
-        wire_label = "On the wire — aw signs this for you"
-    elif is_fully_substituted(tool, values):
-        wire_label = "On the wire — runnable"
     else:
-        wire_label = "On the wire"
-    aw_examples = values if is_public else None
-
-    return f"""        <div class="cmd-panel op" id="op-{tool['name']}">
-          <h3><code>aw {verb} {tool['name']}</code> {pill}</h3>
-          <p class="op-meta"><code>{tool['method']} {escape(tool['path'])}</code></p>
-          <p>{escape(tool['description'])}</p>
-          {params_line}
-          <p class="cmd-label">Run it</p>
-          <div class="cmd-list"><div class="cmd"><pre>{escape(_aw_command(tool, verb, examples=aw_examples), quote=False)}</pre>{COPY_BTN}</div></div>{signed}
-          <p class="cmd-label">{wire_label}</p>
-          <div class="cmd-list"><div class="cmd"><pre>{escape(_wire_block(origin, tool, values), quote=False)}</pre>{COPY_BTN}</div></div>
-        </div>"""
+        signed = escape(_aw_id_request(origin, tool), quote=False)
+        wire_body = (
+            f'<div class="cmd"><pre>{wire}</pre>{COPY_BTN}</div>'
+            '<p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p>'
+            f'<div class="cmd"><pre>{signed}</pre>{COPY_BTN}</div>'
+        )
+    return f"""        <article class="ref-op" id="op-{name}">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-{name}" aria-label="Link to {name}">#</a>
+              <code class="ref-op-verb">aw {verb} {name}</code>
+              <span class="{method_cls}">{tool['method']}</span>
+              <code class="ref-op-path">{escape(tool['path'])}</code>
+            </span>
+            <span class="ref-op-tags">{scope_tags}{auth_tag}</span>
+          </div>
+          <p class="ref-op-desc">{escape(tool['description'])}</p>{_params_table(tool)}
+          <div class="cmd ref-cmd-primary"><pre>{aw_cmd}</pre>{COPY_BTN}</div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body">{wire_body}</div></details>
+        </article>"""
 
 
 _AUTH_TAIL = (
@@ -184,22 +212,17 @@ def _events_section(events: list[dict[str, Any]], text: ReferenceCopy) -> str:
     if not events:
         return ""
     blocks = "\n".join(
-        f"""        <div class="cmd-panel op" id="event-{e["type"].replace("/", "-")}">
-          <h3><code>{escape(e["type"])}</code> <span class="pill run">{escape(str(e.get("default_delivery_intent", "wake")))}</span></h3>
-          <p>{escape(e.get("description", ""))}</p>
-        </div>"""
+        f"""        <article class="ref-op" id="event-{e["type"].replace("/", "-")}">
+          <div class="ref-op-sig">
+            <code class="ref-op-verb">{escape(e["type"])}</code>
+            <span class="ref-auth-tag ref-auth-tag--team">{escape(str(e.get("default_delivery_intent", "wake")))}</span>
+          </div>
+          <p class="ref-op-desc">{escape(e.get("description", ""))}</p>
+        </article>"""
         for e in events
     )
-    return f"""    <section class="section" id="events">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">{text.events_kicker}</p>
-          <h2>{text.events_heading}</h2>
-          <p>{text.events_blurb}</p>
-        </div>
-{blocks}
-      </div>
-    </section>"""
+    return f"""        <div class="ref-section-label"><h2>{text.events_heading}</h2><span class="count">{_count_word(len(events))}</span></div>
+{blocks}"""
 
 
 def render_reference(
@@ -219,7 +242,6 @@ def render_reference(
     fragments (the defaults are domain-neutral).
     """
     raw_origin = site.origin.rstrip("/")
-    host = raw_origin.split("://", 1)[-1]
     values = example_path_values or {}
     text = copy or ReferenceCopy()
     btn = COPY_BTN
@@ -229,78 +251,86 @@ def render_reference(
     has_public = bool(publics)
 
     if has_public:
-        auth_heading = "Public reads need nothing; everything else is signed"
         auth_intro = (
             f"The {_count_word(len(publics))} public {text.reads_phrase} take no auth. "
             f"Every other operation is team-scoped and authenticated with your AWID team "
             f"certificate. {_AUTH_TAIL}"
         )
     else:
-        auth_heading = "Every operation is signed"
         auth_intro = (
             f"Every operation is team-scoped and authenticated with your AWID team "
             f"certificate. {_AUTH_TAIL}"
         )
 
-    hero = f"""    <section class="hero-center">
-      <div class="wrap">
-        <p class="kicker">API reference · {host}</p>
-        <h1>Every operation, two ways</h1>
-        <p class="lede">Each {site.brand} operation is shown as the canonical <code>aw {verb}</code> verb a person or agent runs, and as the raw HTTP wire format for anyone writing their own client. The verbs are the <a href="/aweb-app.json">canonical manifest</a>; this page is generated from it.</p>
-        <div class="cta-row">
-          <a class="btn primary btn--lg" href="/llms.txt">Read llms.txt</a>
-          <a class="btn secondary btn--lg" href="/#use">Getting started</a>
-        </div>
-      </div>
-    </section>"""
+    ref_header = """    <div class="wrap ref-page-header">
+      <h1 class="ref-page-title">API reference</h1>
+      <p class="ref-page-desc">Generated from <a href="/aweb-app.json">aweb-app.json</a> · <a href="/llms.txt">llms.txt</a></p>
+    </div>"""
 
-    auth = f"""    <section class="section section--tint" id="auth">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">Authentication</p>
-          <h2>{auth_heading}</h2>
-          <p>{auth_intro}</p>
-        </div>
-        <p class="prose-intro">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector — the source of truth, at <a href="{VECTOR_URL}"><code>cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code></a>. To port a signer to another language, match that vector byte for byte.</p>
-        <p class="cmd-label">Every team-certificate request carries four headers</p>
-        <div class="cmd-list"><div class="cmd"><pre>{escape(_SIGNED_HEADERS, quote=False)}</pre>{btn}</div></div>
-        <p class="prose-intro">Mind the three encodings — do not mix them: the <code>Authorization</code> signature and the certificate use standard base64; the signed payload uses base64url <strong>without padding</strong> ({text.rejects_subject} rejects values containing <code>=</code>). The certificate's <code>member_did_key</code> must equal the <code>Authorization</code> did:key.</p>
-        <p class="cmd-label">The signed payload — a canonical-JSON envelope (version 2)</p>
-        <div class="cmd-list"><div class="cmd"><pre>{escape(_envelope_spec(raw_origin, text.envelope_path_example), quote=False)}</pre>{btn}</div></div>
-        <p class="prose-intro">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the same convention as awid <code>canonical_json_bytes</code>). The fields are shown above in sorted order; the pretty-printing is for reading only. The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
-        <p class="prose-outro">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives — the root-mounted <code>/v1/...</code> with its query string and no <code>/api</code> prefix — <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes (empty body hashes the empty string), <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a replay window of 300 seconds.</p>
-      </div>
-    </section>"""
+    def _nav_group(label: str, links: str) -> str:
+        return f"""        <div class="ref-nav-group">
+          <p class="ref-nav-label">{label}</p>
+          {links}
+        </div>"""
+
+    nav_groups = ""
+    if has_public:
+        nav_groups += _nav_group(
+            "Public",
+            "\n          ".join(f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in publics),
+        )
+    if certs:
+        nav_groups += _nav_group(
+            "Authenticated",
+            "\n          ".join(f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in certs),
+        )
+    if events:
+        nav_groups += _nav_group(
+            "Events",
+            "\n          ".join(
+                f'<a href="#event-{e["type"].replace("/", "-")}">{escape(e["type"])}</a>' for e in events
+            ),
+        )
+    sidebar = f"""      <aside class="ref-sidebar">
+        <nav class="ref-nav">
+{nav_groups}
+          <div class="ref-nav-divider"></div>
+          <a class="ref-nav-link" href="#auth">Authentication</a>
+        </nav>
+      </aside>"""
 
     public_section = ""
     if has_public:
         public_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in publics)
-        public_section = f"""    <section class="section" id="public">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">{text.public_kicker}</p>
-          <h2>{text.public_heading}</h2>
-          <p>{text.public_blurb}</p>
-        </div>
-{public_ops}
-      </div>
-    </section>"""
+        public_section = f"""        <div class="ref-section-label"><h2>{text.public_heading}</h2><span class="count">{_count_word(len(publics))}</span></div>
+{public_ops}"""
 
     team_section = ""
     if certs:
         team_ops = "\n".join(_operation(raw_origin, t, verb, values) for t in certs)
-        team_section = f"""    <section class="section section--tint" id="team">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">{text.team_kicker}</p>
-          <h2>{text.team_heading}</h2>
-          <p>{text.team_blurb}</p>
-        </div>
-{team_ops}
-      </div>
-    </section>"""
+        team_section = f"""        <div class="ref-section-label"><h2>{text.team_heading}</h2><span class="count">{_count_word(len(certs))}</span></div>
+        <p class="ref-section-note">aw signs every team-certificate request for you. The HTTP wire format under each operation is only needed to port a signer — see <a href="#auth">Authentication</a>.</p>
+{team_ops}"""
 
     events_section = _events_section(events, text)
-    sections = [hero, auth, public_section, team_section, events_section]
-    body = "\n\n".join(s for s in sections if s)
+
+    auth = f"""        <div class="ref-section-label" id="auth"><h2>Authentication</h2></div>
+        <p class="ref-op-desc">{auth_intro}</p>
+        <p class="ref-wire-note">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector at <a href="{VECTOR_URL}"><code>cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code></a> — match it byte for byte to port a signer.</p>
+        <p class="cmd-label">Four headers on every team-certificate request</p>
+        <div class="cmd"><pre>{escape(_SIGNED_HEADERS, quote=False)}</pre>{btn}</div>
+        <p class="ref-wire-note">Mind the three encodings: the <code>Authorization</code> signature and the certificate use standard base64; the signed payload uses base64url <strong>without padding</strong> ({text.rejects_subject} rejects values containing <code>=</code>). The certificate's <code>member_did_key</code> must equal the <code>Authorization</code> did:key.</p>
+        <p class="cmd-label">The signed payload — a canonical-JSON envelope (version 2)</p>
+        <div class="cmd"><pre>{escape(_envelope_spec(raw_origin, text.envelope_path_example), quote=False)}</pre>{btn}</div>
+        <p class="ref-wire-note">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the awid <code>canonical_json_bytes</code> convention). The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
+        <p class="ref-wire-note">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives (root-mounted <code>/v1/...</code> with query string, no <code>/api</code> prefix), <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes, <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a 300-second replay window.</p>"""
+
+    content = "\n".join(s for s in [public_section, team_section, events_section, auth] if s)
+    layout = f"""    <div class="wrap ref-layout">
+{sidebar}
+      <div class="ref-content">
+{content}
+      </div>
+    </div>"""
+    body = f"{ref_header}\n{layout}"
     return page(site, body)

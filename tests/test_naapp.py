@@ -158,14 +158,14 @@ def test_public_read_runnable_only_when_example_supplied() -> None:
     # No example for doc_id: the curl keeps the brace and is NOT labelled runnable.
     html_no = naapp.render_reference(_DOCS_MANIFEST, _docs_site(), verb="docs")
     assert "/v1/docs/{doc_id}" in html_no
-    assert "On the wire — runnable" not in html_no
+    assert "copy-paste runnable" not in html_no
     # Example supplied: a genuinely runnable curl, no brace placeholder anywhere
     # labelled runnable.
     html_yes = naapp.render_reference(
         _DOCS_MANIFEST, _docs_site(), verb="docs", example_path_values={"doc_id": "getting-started"}
     )
     assert "curl -s https://docs.example.ai/v1/docs/getting-started" in html_yes
-    assert "On the wire — runnable" in html_yes
+    assert "copy-paste runnable" in html_yes
     for line in html_yes.splitlines():
         if "curl -s" in line:
             assert "{" not in line and "}" not in line, line
@@ -227,7 +227,7 @@ _CERT_ONLY_MANIFEST = {
 def test_no_public_tools_omits_public_section_and_words_auth_signed() -> None:
     html = naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio")
     assert 'id="public"' not in html
-    assert "Every operation is signed" in html
+    assert "Every operation is team-scoped" in html
     assert "take no auth" not in html
     auth = llms.auth_section(_CERT_ONLY_MANIFEST, "https://folio.aweb.ai")
     assert auth.startswith("Every operation is team-scoped")
@@ -236,7 +236,7 @@ def test_no_public_tools_omits_public_section_and_words_auth_signed() -> None:
 
 def test_events_rendered_in_reference_and_llms() -> None:
     html = naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio")
-    assert 'id="events"' in html
+    assert 'id="event-folio-doc.changed"' in html
     assert "folio/doc.changed" in html
     ev = llms.events_section(_CERT_ONLY_MANIFEST)
     assert "folio/doc.changed" in ev
