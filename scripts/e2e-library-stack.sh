@@ -44,10 +44,37 @@ AWID_URL="http://127.0.0.1:$AWID_PORT"
 AWEB_URL="http://127.0.0.1:$AWEB_PORT"
 LIBRARY_URL="http://127.0.0.1:$LIBRARY_PORT"
 
-# Sibling-checkout defaults for the two cross-repo build inputs. Exported so the
-# compose file's build context and the seed script pick them up.
-export LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$REPO_ROOT/../library}"
-export LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$REPO_ROOT/../blueprints/engineering}"
+# Resolve a cross-repo sibling checkout. The two inputs (../library, ../blueprints)
+# live beside the *main* repo. In a normal checkout that is $REPO_ROOT/..; in a
+# git worktree $REPO_ROOT/.. is the worktree's parent, not the main repo's, so we
+# also try the main repo's parent (via --git-common-dir). An explicit override
+# always wins. Result: a worktree run works with no manual env vars.
+resolve_sibling() {
+  local subpath="$1" explicit="$2"
+  if [[ -n "$explicit" ]]; then
+    echo "$explicit"
+    return
+  fi
+  if [[ -d "$REPO_ROOT/../$subpath" ]]; then
+    (cd "$REPO_ROOT/../$subpath" && pwd -P)
+    return
+  fi
+  local common main
+  if common="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+    main="$(cd "$REPO_ROOT" && cd "$(dirname "$common")" && pwd -P)"
+    if [[ -d "$main/../$subpath" ]]; then
+      (cd "$main/../$subpath" && pwd -P)
+      return
+    fi
+  fi
+  # Conventional path; stack_up fails with a clear message if it does not exist.
+  echo "$REPO_ROOT/../$subpath"
+}
+
+# Cross-repo build inputs. Exported so the compose file's build context and the
+# seed script pick them up.
+export LIBRARY_E2E_LIBRARY_CONTEXT="$(resolve_sibling library "${LIBRARY_E2E_LIBRARY_CONTEXT:-}")"
+export LIBRARY_E2E_BLUEPRINT_SRC="$(resolve_sibling blueprints/engineering "${LIBRARY_E2E_BLUEPRINT_SRC:-}")"
 # Keep the team-auth audience the seed signs in lockstep with the port mapping.
 export LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN="${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-$LIBRARY_URL}"
 # Pin the published ports compose binds so they match the health-check URLs.
