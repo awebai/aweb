@@ -70,6 +70,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      # GitHub runners share IPs and hit Docker Hub's anonymous pull limits, which
+      # fails the stack's postgres/redis pulls and the python:3.12-slim base in the
+      # awid/aweb/library builds. Route docker.io through Google's pull-through
+      # mirror (no auth, no rate limit) so every docker.io pull is covered.
+      - name: Route Docker Hub pulls through a mirror
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Run CLI real-stack e2e
         working-directory: aweb
         env:
