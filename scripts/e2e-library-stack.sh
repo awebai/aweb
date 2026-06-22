@@ -111,6 +111,10 @@ stack_up() {
   echo "=== Building and starting the stack ==="
   echo "  library context: $LIBRARY_E2E_LIBRARY_CONTEXT"
   echo "  blueprint src:   $LIBRARY_E2E_BLUEPRINT_SRC"
+  # Reset any prior stack for this project first, so every `up` is a clean slate
+  # (a reused stack keeps awid state like the shared `local` namespace, which
+  # breaks tests that create a local team).
+  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   "${COMPOSE[@]}" up --build -d
   wait_health awid "$AWID_URL/health"
   wait_health aweb "$AWEB_URL/health"
@@ -144,7 +148,6 @@ case "$ACTION" in
     ;;
   all)
     trap 'status=$?; if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then stack_down || true; fi; exit $status' EXIT
-    "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     stack_up
     stack_seed
     echo ""

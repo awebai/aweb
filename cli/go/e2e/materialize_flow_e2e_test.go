@@ -12,20 +12,17 @@
 //	       home on disk.
 //
 // SCOPE NOTE (see the escalation on default-aabq.3): the four bugs live in
-// applyLibraryProfileToHome -> MaterializeLibraryProfilePayload, but no aw
-// command invokes that path and stops before the aweb "configure" step
-// (InjectAgentDocs), which hard-requires an aweb-server connection the
-// self-hosted stack does not have - that coupling is filed as default-aabq.21.
-// So each bug is driven at the finest real-binary granularity that exercises
-// the same behavior without the aweb step:
+// applyLibraryProfileToHome -> MaterializeLibraryProfilePayload, downstream of
+// which `aw team create --profile` runs the aweb "configure" step
+// (InjectAgentDocs). On a self-hosted stack that step used to fail (Wall 2);
+// it is fixed in default-aabq.21 and the full flow is now exercised end to end
+// by TestRealStackTeamCreateRosterMaterializesAndConnects (team_create_flow).
+// These tests stay deliberately focused on the materialize bugs, driving each
+// at the finest real-binary granularity so they are fast and isolated:
 //   - .3.22 via `aw library import-to-shelf` (the real Library adopt path);
 //   - .3.24 via `aw library get-profile` (Library round-trip) + `aw blueprint
 //     materialize` (the local compose, which shares the folded-scalar parsing);
 //   - .3.23 via `aw blueprint materialize` of a broken blueprint.
-//
-// The server-side member-cert dimension of .3.23 is coupled to the same aweb
-// step (the roster path configures each member as it goes) and is left to
-// default-aabq.21; documented here, not silently dropped.
 //
 // Reaching Library at all needs the library plugin pointed at the stack origin.
 // The committed Library manifest hardcodes origin https://library.aweb.ai and
@@ -88,6 +85,14 @@ func teamHome(t *testing.T, tm *e2eTeam) string {
 // origin. Delete this once aabq.20 lets Library serve a self-hosted origin.
 func installLibraryPluginFixture(t *testing.T, tm *e2eTeam) {
 	t.Helper()
+	writeLibraryManifestFixture(t, teamHome(t, tm))
+}
+
+// writeLibraryManifestFixture writes the library plugin manifest into home,
+// with its origin rewritten to the stack URL. See installLibraryPluginFixture's
+// doc for the aabq.20 caveat this works around.
+func writeLibraryManifestFixture(t *testing.T, home string) {
+	t.Helper()
 	resp, err := httpGet(t, libraryURL()+"/aweb-app.json")
 	if err != nil {
 		t.Fatalf("fetch library manifest: %v", err)
@@ -105,7 +110,7 @@ func installLibraryPluginFixture(t *testing.T, tm *e2eTeam) {
 	if err != nil {
 		t.Fatalf("re-encode library manifest: %v", err)
 	}
-	dir := filepath.Join(teamHome(t, tm), ".aw", "plugins", "library")
+	dir := filepath.Join(home, ".aw", "plugins", "library")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir plugin dir: %v", err)
 	}

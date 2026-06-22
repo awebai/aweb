@@ -721,13 +721,33 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			if agentID == "" {
 				agentID = plans[i].Name
 			}
-			if _, _, err := applyLibraryProfileToHomeAndConfigure(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+			rollbackOnErr := func(err error) error {
 				if createdProfileIdentity && rollback != nil {
 					if rbErr := rollback.Rollback(); rbErr != nil {
 						return fmt.Errorf("%w; rollback failed: %v", err, rbErr)
 					}
 				}
 				return err
+			}
+			// Materialize the profile home, connect the member to the aweb service,
+			// then run the coordination configure step. Connect sits between the two:
+			// the configure step injects the team's active instructions, which the
+			// aweb server serves only to a connected agent, and self-hosted create/add
+			// install the awid certificate but not the aweb connection. Connecting only
+			// after materialize succeeds avoids an orphaned aweb connection on a
+			// materialize failure. (default-aabq.21)
+			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+				return rollbackOnErr(err)
+			}
+			if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
+				if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
+					Role: strings.TrimSpace(plans[i].Profile.ProfileRef),
+				}); err != nil {
+					return rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err))
+				}
+			}
+			if err := configureMaterializedAgentHome(plans[i].HomeDir); err != nil {
+				return rollbackOnErr(err)
 			}
 		}
 	}

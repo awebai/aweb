@@ -26,7 +26,8 @@ This harness depends on two checkouts sitting beside the aweb repo:
 
 - **`../library`** — the Library service. It is the build context for the
   `library` service. Override with `LIBRARY_E2E_LIBRARY_CONTEXT`.
-- **`../blueprints/engineering`** — the `aweb.engineering` pack (v0.2.3) that the
+- **`../blueprints/engineering`** — the `aweb.engineering` pack (whatever version
+  the checkout holds) that the
   seed publishes into Library. Override with `LIBRARY_E2E_BLUEPRINT_SRC`.
 
 The expected layout is the standard sibling checkout:
@@ -132,6 +133,12 @@ The suite covers:
   Library materialize bugs (shelf-adopt idempotency, folded-block-scalar mission
   round-trip + materialize, and materialize-failure atomicity), driven through
   the real binary against the real seeded Library.
+- **`team_create_flow_e2e_test.go`** — the full self-hosted
+  `aw team create --profile` flow: adopting two profiles materializes both homes
+  and connects each member to the aweb service so the coordination-docs step
+  succeeds (the self-hostability fix). Because it creates the shared `local`
+  awid namespace, it needs a freshly-seeded stack (which `make -C cli e2e`
+  guarantees — `up` resets any prior stack first).
 
 **Manifest fixture caveat.** Reaching Library through `aw` needs the library
 plugin pointed at the stack. The committed Library manifest hardcodes
