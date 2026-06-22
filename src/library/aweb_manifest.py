@@ -12,18 +12,20 @@ event_emitters entry yet.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
 
 MANIFEST_PATH = Path(__file__).resolve().parent / "aweb-app.json"
+DEFAULT_PUBLIC_ORIGIN = "https://library.aweb.ai"
 
 MANIFEST: dict[str, Any] = {
     "manifest_version": 1,
     "app": {
         "id": "library",
         "version": "0.1.0",
-        "origin": "https://library.aweb.ai",
+        "origin": DEFAULT_PUBLIC_ORIGIN,
         "llms_txt": "/llms.txt",
         "skills": "/skills/",
     },
@@ -415,11 +417,24 @@ def canonical_bytes(obj: Any) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def read_manifest_bytes() -> bytes:
-    """The raw committed manifest bytes — served verbatim, never re-serialized."""
-    return MANIFEST_PATH.read_bytes()
+def manifest_for_origin(public_origin: str) -> dict[str, Any]:
+    """Return the manifest with ``app.origin`` set for this deployment origin."""
+    manifest = copy.deepcopy(MANIFEST)
+    manifest["app"]["origin"] = public_origin.rstrip("/")
+    return manifest
+
+
+def read_manifest_bytes(public_origin: str | None = None) -> bytes:
+    """Return byte-stable manifest bytes for the requested public origin.
+
+    The hosted origin serves the committed bytes verbatim; self-hosted origins get
+    the same canonical manifest with only ``app.origin`` changed to their origin.
+    """
+    if public_origin is None or public_origin.rstrip("/") == DEFAULT_PUBLIC_ORIGIN:
+        return MANIFEST_PATH.read_bytes()
+    return canonical_bytes(manifest_for_origin(public_origin))
 
 
 def write_manifest_file() -> None:
-    """Regenerate the committed canonical manifest file from MANIFEST."""
+    """Regenerate the committed canonical manifest file from the hosted-origin MANIFEST."""
     MANIFEST_PATH.write_bytes(canonical_bytes(MANIFEST))

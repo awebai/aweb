@@ -403,15 +403,16 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     library: RunningLibrary,
     aw_workspace: AWWorkspace,
 ) -> None:
-    # Drift test, not a pinned digest: the served manifest must equal the committed
-    # aweb-app.json byte-for-byte. This stays green across feature merges that add
-    # tools (each changes the digest) while still catching real serve/commit drift;
-    # the pinned-digest conformance lives at the unit level (test_app_manifest).
+    # Drift test, not a pinned digest: the served manifest must equal the canonical
+    # manifest bytes for this e2e origin. This stays green across feature merges that
+    # add tools while still catching real serve/commit drift; the hosted pinned-digest
+    # conformance lives at the unit level (test_app_manifest).
     from library.aweb_manifest import read_manifest_bytes
 
     manifest = httpx.get(f"{library.origin}/aweb-app.json", timeout=10.0)
     assert manifest.status_code == 200, manifest.text
-    assert manifest.content == read_manifest_bytes()
+    assert manifest.content == read_manifest_bytes(library.origin)
+    assert json.loads(manifest.content)["app"]["origin"] == library.origin
 
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]

@@ -10,7 +10,7 @@ def test_defaults_use_library_naming() -> None:
     settings = Settings()
     assert settings.app_id == "library"
     assert "library" in settings.database_url
-    assert settings.public_origin.startswith("http")
+    assert settings.public_origin == "https://library.aweb.ai"
 
 
 def test_env_prefix_is_library(monkeypatch) -> None:

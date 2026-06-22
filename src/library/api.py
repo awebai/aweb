@@ -136,7 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _manifest_response() -> Response:
         return Response(
-            content=read_manifest_bytes(),
+            content=read_manifest_bytes(resolved.public_origin),
             media_type="application/json",
             headers={"X-Content-Type-Options": "nosniff"},
         )
