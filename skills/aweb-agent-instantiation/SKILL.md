@@ -8,10 +8,11 @@ allowed-tools: "Bash(aw *), Bash(tmux *), Bash(claude *), Bash(rm *), Bash(mkdir
 
 Use this skill to turn a shipped blueprint profile into a **live teammate**:
 materialize its home, run it on the aweb channel, and hand it work over mail.
-This is the **mechanics** layer. The role using this skill supplies the
-*judgment* — when to staff, who, and how to onboard. The **coordinator** may
-create LOCAL agents (no AWID identity); the **AR (agent resources)** role owns
-GLOBAL, identity-bearing staffing. This skill is the *how*.
+This is the **mechanics** layer. The role using this skill supplies the staffing
+*judgment* — when to staff, who, and how to onboard. The **coordinator** uses it
+for local, no-AWID agents; the **AR (agent resources)** role uses it for the same
+local mechanics and additionally owns global, identity-bearing staffing through
+`manage-team-identities`. This skill is the *how*.
 
 For team coordination (tasks, work discovery, locks) load `aweb-coordination`;
 for mail/chat policy load `aweb-messaging`. This skill assumes those and covers
