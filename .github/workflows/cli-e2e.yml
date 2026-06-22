@@ -1,0 +1,90 @@
+name: CLI e2e (profile/team/Library)
+
+# Real-stack profile/team/Library e2e net (default-aabq.4, part 2). Brings up the
+# awid + aweb + Library docker-compose stack from source, seeds the engineering
+# pack, and runs the AW_E2E suite driving the REAL aw binary against the live
+# services. This is the blocking gate that catches the materialize/team/Library
+# regressions hermetic unit tests miss (the class of P0s that shipped on
+# green-plus-reviewer-ACK).
+#
+# It needs the two sibling checkouts the stack builds from / seeds:
+#   awebai/library      (public) -> Library service build context
+#   awebai/blueprints   (public) -> the aweb.engineering pack the seed publishes
+# Both are public, so the default GITHUB_TOKEN can clone them.
+
+on:
+  pull_request:
+    paths:
+      - "cli/**"
+      - "docker-compose.e2e.yml"
+      - "scripts/e2e-library-stack.sh"
+      - "scripts/e2e/**"
+      - "awid/**"
+      - "server/**"
+      - ".github/workflows/cli-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "docker-compose.e2e.yml"
+      - "scripts/e2e-library-stack.sh"
+      - "scripts/e2e/**"
+      - "awid/**"
+      - "server/**"
+      - ".github/workflows/cli-e2e.yml"
+
+concurrency:
+  group: cli-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli-e2e:
+    name: CLI real-stack e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout aweb
+        uses: actions/checkout@v4
+        with:
+          path: aweb
+
+      - name: Checkout library
+        uses: actions/checkout@v4
+        with:
+          repository: awebai/library
+          path: library
+
+      - name: Checkout blueprints
+        uses: actions/checkout@v4
+        with:
+          repository: awebai/blueprints
+          path: blueprints
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: aweb/cli/go/go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # GitHub runners share IPs and hit Docker Hub's anonymous pull limits, which
+      # fails the stack's postgres/redis pulls and the python:3.12-slim base in the
+      # awid/aweb/library builds. Route docker.io through Google's pull-through
+      # mirror (no auth, no rate limit) so every docker.io pull is covered.
+      - name: Route Docker Hub pulls through a mirror
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Run CLI real-stack e2e
+        working-directory: aweb
+        env:
+          # The stack auto-resolves siblings, but in CI the repos are checked out
+          # under explicit paths, so point at them directly.
+          LIBRARY_E2E_LIBRARY_CONTEXT: ${{ github.workspace }}/library
+          LIBRARY_E2E_BLUEPRINT_SRC: ${{ github.workspace }}/blueprints/engineering
+        run: make -C cli e2e
