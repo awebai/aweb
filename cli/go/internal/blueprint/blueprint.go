@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -628,12 +629,14 @@ var (
 	privateKeyPEMRe         = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	didKeyCandidateRe       = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
 	didAWCandidateRe        = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
-	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|password|team[_-]?certificate)(?:\b|["'])\s*[:=]\s*["']?[^\s"'<>][^\s"'<>]{3,}`)
+	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?[^\s"'<>][^\s"'<>]{3,}`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
+	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
+	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{80,}\b`)
 )
 
 func unsafeContent(s string) bool {
-	if privateKeyPEMRe.MatchString(s) || credentialAssignmentRe.MatchString(s) || teamCertificateHeaderRe.MatchString(s) {
+	if privateKeyPEMRe.MatchString(s) || credentialAssignmentRe.MatchString(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
 		return true
 	}
 	for _, candidate := range didKeyCandidateRe.FindAllString(s, -1) {
@@ -651,6 +654,52 @@ func unsafeContent(s string) bool {
 		}
 	}
 	return false
+}
+
+func hasLongBase64Blob(s string) bool {
+	for _, candidate := range longBase64BlobRe.FindAllString(s, -1) {
+		if decodesAsMaterialBase64(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func decodesAsMaterialBase64(candidate string) bool {
+	candidate = strings.Trim(candidate, "'\"`.,;:()[]{}")
+	if len(candidate) < 80 || !hasMixedBase64TokenShape(candidate) {
+		return false
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+		padded := candidate
+		if rem := len(padded) % 4; rem != 0 {
+			padded += strings.Repeat("=", 4-rem)
+		}
+		decoded, err := enc.DecodeString(padded)
+		if err == nil && len(decoded) >= 48 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMixedBase64TokenShape(candidate string) bool {
+	var hasLower, hasUpper, hasDigit bool
+	for _, r := range candidate {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r == '+' || r == '/' || r == '_' || r == '-' || r == '=':
+			// base64/base64url alphabet
+		default:
+			return false
+		}
+	}
+	return hasLower && hasUpper && hasDigit
 }
 
 func digestDir(root string) (string, []string, error) {

@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,9 +98,10 @@ The operations profile explains awid, did:key:, did:aw:, did:key:<value>,
 did:aw:<stable-id>, private key custody, the api_key field, access_token
 and team_certificate field names, and the X-AWID-Team-Certificate header
 without embedding live identity material.
-Example placeholders: api_key: <value>, {"access_token":"<token>"},
-{"api_key":""}, 'api_key': '', "X-AWID-Team-Certificate": "",
-'X-AWID-Team-Certificate': '', and {"X-AWID-Team-Certificate":"<certificate>"}.
+Example placeholders: api_key: <value>, token=<value>, secret=<redacted>,
+client_secret: <secret>, {"access_token":"<token>"}, {"api_key":""},
+'api_key': '', "X-AWID-Team-Certificate": "", 'X-AWID-Team-Certificate': '',
+and {"X-AWID-Team-Certificate":"<certificate>"}.
 `)
 
 	if _, err := LoadLocalDir(root); err != nil {
@@ -164,6 +166,8 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	didKey := awid.ComputeDIDKey(pub)
+	longBlob := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("headerless-key-material-", 6)))
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZ2VudCIsImV4cCI6OTk5OTk5OTk5OX0.c2lnbmF0dXJlX3NlY3JldF9ibG9i"
 	cases := []struct{ name, path, body, want string }{
 		{name: "aw-state", path: ".aw/workspace.yaml", body: "team: default", want: ".aw runtime state"},
 		{name: "private-key", path: "profiles/coordinator/id_ed25519", body: "secret", want: "identity material"},
@@ -177,10 +181,15 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		{name: "single-quoted-api-key-assignment", path: "profiles/coordinator/docs/api-yaml-single.md", body: `'api_key': aw_sk_secret_value`, want: "unexpected identity material"},
 		{name: "yaml-quoted-api-key-assignment", path: "profiles/coordinator/docs/api-yaml-double.md", body: `"api_key": aw_sk_secret_value`, want: "unexpected identity material"},
 		{name: "quoted-access-token-assignment", path: "profiles/coordinator/docs/oauth-json.md", body: `{"access_token":"secret_token_value"}`, want: "unexpected identity material"},
+		{name: "bare-token-assignment", path: "profiles/coordinator/docs/oauth-assignment.md", body: `token=secret_token_value`, want: "unexpected identity material"},
+		{name: "bare-secret-assignment", path: "profiles/coordinator/docs/value-assignment.md", body: `secret=secret_value`, want: "unexpected identity material"},
+		{name: "client-secret-assignment", path: "profiles/coordinator/docs/client-oauth.md", body: `client_secret=secret_value`, want: "unexpected identity material"},
 		{name: "team-certificate-header", path: "profiles/coordinator/docs/header.md", body: "X-AWID-Team-Certificate: abcdefghijklmnop", want: "unexpected identity material"},
 		{name: "quoted-team-certificate-header", path: "profiles/coordinator/docs/header-json.md", body: `{"X-AWID-Team-Certificate":"abcdefghijklmnop"}`, want: "unexpected identity material"},
 		{name: "quoted-team-certificate-header-spaced", path: "profiles/coordinator/docs/header-json-spaced.md", body: `"X-AWID-Team-Certificate" : "abcdefghijklmnop"`, want: "unexpected identity material"},
 		{name: "single-quoted-team-certificate-header", path: "profiles/coordinator/docs/header-yaml-single.md", body: `'X-AWID-Team-Certificate': abcdefghijklmnop`, want: "unexpected identity material"},
+		{name: "jwt-content", path: "profiles/coordinator/docs/jwt.md", body: jwt, want: "unexpected identity material"},
+		{name: "long-base64-blob", path: "profiles/coordinator/docs/blob.md", body: longBlob, want: "unexpected identity material"},
 		{name: "generated-worktree", path: "generated-worktrees/coordinator/README.md", body: "generated", want: "generated worktrees"},
 	}
 	for _, tc := range cases {
