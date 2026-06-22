@@ -785,6 +785,8 @@ Flags:
 Protocol/admin: remove a member by revoking a team certificate
 
 Flags:
+- `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
+- `--cert-id string Certificate id to revoke (hosted remove accepts --member or --cert-id)`
 - `-h, --help help for remove-member`
 - `--member string Member address (e.g. acme.com/alice)`
 - `--namespace string Namespace domain`
@@ -846,7 +848,7 @@ Subcommands:
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
-- `remove-agent` Remove an agent from a customer-controlled team
+- `remove-agent` Remove an agent from a team
 - `switch` Switch the active team for this identity
 
 Flags:
@@ -923,16 +925,17 @@ Flags:
 
 ### `team remove-agent`
 
-Remove an agent from a customer-controlled team.
+Remove an agent from a team.
 
-This everyday verb maps to the BYOT/controller-backed certificate revocation
-primitive. Hosted teams keep controller authority in cloud; use the hosted
-dashboard removal flow there until hosted CLI removal is added.
+This everyday verb maps to the identity/certificate revocation primitive.
+Customer-controlled teams revoke with the local team controller key; hosted
+aweb.ai teams call the cloud-mediated controller revoke endpoint.
 
 Flags:
+- `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
 - `-h, --help help for remove-agent`
 - `--registry string Registry origin override`
-- `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
+- `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)
 
 ## `team switch`
 

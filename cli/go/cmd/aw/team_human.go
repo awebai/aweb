@@ -36,6 +36,7 @@ var (
 	teamHumanAddRuntime        string
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
+	teamHumanRemoveAwebURL     string
 )
 
 var teamHumanCmd = &cobra.Command{
@@ -116,11 +117,11 @@ var teamHumanLeaveCmd = &cobra.Command{
 
 var teamHumanRemoveAgentCmd = &cobra.Command{
 	Use:   "remove-agent <member-address>",
-	Short: "Remove an agent from a customer-controlled team",
-	Long: "Remove an agent from a customer-controlled team.\n\n" +
-		"This everyday verb maps to the BYOT/controller-backed certificate revocation\n" +
-		"primitive. Hosted teams keep controller authority in cloud; use the hosted\n" +
-		"dashboard removal flow there until hosted CLI removal is added.",
+	Short: "Remove an agent from a team",
+	Long: "Remove an agent from a team.\n\n" +
+		"This everyday verb maps to the identity/certificate revocation primitive.\n" +
+		"Customer-controlled teams revoke with the local team controller key; hosted\n" +
+		"aweb.ai teams call the cloud-mediated controller revoke endpoint.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanRemoveAgent,
 }
@@ -161,6 +162,7 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
 	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
 	rootCmd.AddCommand(teamHumanCmd)
 }
@@ -1008,7 +1010,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	teamRemoveTeam = name
 	teamRemoveNamespace = domain
 	teamRemoveMember = strings.TrimSpace(args[0])
+	teamRemoveCertID = ""
 	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
+	teamRemoveAwebURL = teamHumanRemoveAwebURL
 	return runTeamRemoveMember(cmd, nil)
 }
 
