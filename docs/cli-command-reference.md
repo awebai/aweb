@@ -935,7 +935,7 @@ Flags:
 - `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
 - `-h, --help help for remove-agent`
 - `--registry string Registry origin override`
-- `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)
+- `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
 
 ## `team switch`
 
