@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awid"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -86,6 +88,25 @@ func TestLoadLocalDirAllowsFoldedBlockFreeText(t *testing.T) {
 	}
 }
 
+func TestLoadLocalDirAllowsIdentityConceptDocumentation(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/identity.md"), `# Identity concepts
+
+The operations profile explains awid, did:key:, did:aw:, did:key:<value>,
+did:aw:<stable-id>, private key custody, the api_key field, access_token
+and team_certificate field names, and the X-AWID-Team-Certificate header
+without embedding live identity material.
+Example placeholders: api_key: <value>, {"access_token":"<token>"},
+{"api_key":""}, 'api_key': '', "X-AWID-Team-Certificate": "",
+'X-AWID-Team-Certificate': '', and {"X-AWID-Team-Certificate":"<certificate>"}.
+`)
+
+	if _, err := LoadLocalDir(root); err != nil {
+		t.Fatalf("identity concept documentation should load: %v", err)
+	}
+}
+
 func TestLoadLocalDirRejectsGenuineControlsInFreeText(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
@@ -138,11 +159,28 @@ func TestLoadLocalDirValidatesAndPlansBlueprint(t *testing.T) {
 }
 
 func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
+	pub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
 	cases := []struct{ name, path, body, want string }{
 		{name: "aw-state", path: ".aw/workspace.yaml", body: "team: default", want: ".aw runtime state"},
 		{name: "private-key", path: "profiles/coordinator/id_ed25519", body: "secret", want: "identity material"},
 		{name: "token-file", path: "profiles/coordinator/token.txt", body: "secret", want: "identity material"},
-		{name: "did-content", path: "profiles/coordinator/docs/identity.md", body: "did:key:z6Mkabc", want: "unexpected identity material"},
+		{name: "real-pem-content", path: "profiles/coordinator/docs/pem-example.md", body: "-----BEGIN ED25519 PRIVATE KEY-----\nsecret\n-----END ED25519 PRIVATE KEY-----\n", want: "unexpected identity material"},
+		{name: "real-did-key-content", path: "profiles/coordinator/docs/identity.md", body: didKey, want: "unexpected identity material"},
+		{name: "real-did-aw-content", path: "profiles/coordinator/docs/stable.md", body: "did:aw:2TdFnyW1MyzkH5x8Q3hM7Pgx98Mn", want: "unexpected identity material"},
+		{name: "api-key-assignment", path: "profiles/coordinator/docs/api.md", body: "api_key=aw_sk_secret_value", want: "unexpected identity material"},
+		{name: "quoted-api-key-assignment", path: "profiles/coordinator/docs/api-json.md", body: `{"api_key":"aw_sk_secret_value"}`, want: "unexpected identity material"},
+		{name: "quoted-api-key-spaced-assignment", path: "profiles/coordinator/docs/api-json-spaced.md", body: `"api_key" : "aw_sk_secret_value"`, want: "unexpected identity material"},
+		{name: "single-quoted-api-key-assignment", path: "profiles/coordinator/docs/api-yaml-single.md", body: `'api_key': aw_sk_secret_value`, want: "unexpected identity material"},
+		{name: "yaml-quoted-api-key-assignment", path: "profiles/coordinator/docs/api-yaml-double.md", body: `"api_key": aw_sk_secret_value`, want: "unexpected identity material"},
+		{name: "quoted-access-token-assignment", path: "profiles/coordinator/docs/oauth-json.md", body: `{"access_token":"secret_token_value"}`, want: "unexpected identity material"},
+		{name: "team-certificate-header", path: "profiles/coordinator/docs/header.md", body: "X-AWID-Team-Certificate: abcdefghijklmnop", want: "unexpected identity material"},
+		{name: "quoted-team-certificate-header", path: "profiles/coordinator/docs/header-json.md", body: `{"X-AWID-Team-Certificate":"abcdefghijklmnop"}`, want: "unexpected identity material"},
+		{name: "quoted-team-certificate-header-spaced", path: "profiles/coordinator/docs/header-json-spaced.md", body: `"X-AWID-Team-Certificate" : "abcdefghijklmnop"`, want: "unexpected identity material"},
+		{name: "single-quoted-team-certificate-header", path: "profiles/coordinator/docs/header-yaml-single.md", body: `'X-AWID-Team-Certificate': abcdefghijklmnop`, want: "unexpected identity material"},
 		{name: "generated-worktree", path: "generated-worktrees/coordinator/README.md", body: "generated", want: "generated worktrees"},
 	}
 	for _, tc := range cases {

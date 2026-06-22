@@ -1,1 +1,1 @@
-did:key:z6MkNotAllowed
+did:key:z6MkfnJhxzucbzZRqPLhwsUbvjhYSfSFTFtsrgCq4Db9baNX
