@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -676,9 +677,31 @@ func decodesAsMaterialBase64(candidate string) bool {
 			padded += strings.Repeat("=", 4-rem)
 		}
 		decoded, err := enc.DecodeString(padded)
-		if err == nil && len(decoded) >= 48 {
+		if err == nil && len(decoded) >= 48 && parsesAsKeyOrCertificateMaterial(decoded) {
 			return true
 		}
+	}
+	return false
+}
+
+func parsesAsKeyOrCertificateMaterial(decoded []byte) bool {
+	if _, err := x509.ParsePKCS8PrivateKey(decoded); err == nil {
+		return true
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(decoded); err == nil {
+		return true
+	}
+	if _, err := x509.ParseECPrivateKey(decoded); err == nil {
+		return true
+	}
+	if _, err := x509.ParsePKIXPublicKey(decoded); err == nil {
+		return true
+	}
+	if _, err := x509.ParseCertificate(decoded); err == nil {
+		return true
+	}
+	if certs, err := x509.ParseCertificates(decoded); err == nil && len(certs) > 0 {
+		return true
 	}
 	return false
 }
