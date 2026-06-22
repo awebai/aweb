@@ -1182,14 +1182,12 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 	var pub ed25519.PublicKey
 	var signingKey ed25519.PrivateKey
 	var err error
-	if global {
-		pub, signingKey, err = hostedGlobalAcceptSigningKey(workingDir)
-	} else {
-		if err := ensureConnectTargetClean(workingDir); err != nil {
-			return nil, err
-		}
-		pub, signingKey, err = awid.GenerateKeypair()
-	}
+	// Persist the generated signing key to the home BEFORE calling AC, so a retry
+	// after AC has committed presents the SAME key and hits AC's idempotent
+	// re-mint instead of generating a new key (which AC 409s as a mismatch).
+	// Applies to both local and global accepts. (aabq.13, pairs with the AC
+	// idempotency fix in aabq.10.)
+	pub, signingKey, err = hostedAcceptSigningKey(workingDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1278,7 +1276,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 	}, nil
 }
 
-func hostedGlobalAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
+// hostedAcceptSigningKey returns the signing key for a hosted accept-invite,
+// generating and persisting it before the AC call so a retry reuses the same
+// key. A pending key with no completed identity/cert/workspace is reloaded (a
+// retry); an already-completed accept is refused rather than overwritten.
+func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
 	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
 		return nil, nil, err
 	}

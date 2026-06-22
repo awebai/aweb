@@ -1718,6 +1718,96 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 	}
 }
 
+func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
+	resetTeamBootstrapGlobals(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	acceptDir := filepath.Join(home, "retry-local")
+	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	teamID := "circle:gracehosted.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstDID string
+	var acceptCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		acceptCalls++
+		var req awid.SpawnAcceptInviteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if acceptCalls == 1 {
+			// AC committed, but the CLI fails after the POST.
+			firstDID = req.DID
+			http.Error(w, `{"detail":"simulated post-awid failure"}`, http.StatusInternalServerError)
+			return
+		}
+		// The retry must present the SAME did:key (the persisted key), so AC's
+		// key-aware branch re-mints idempotently instead of 409-ing on a new key.
+		if req.DID != firstDID {
+			t.Fatalf("retry did=%q want %q (must reuse the persisted key)", req.DID, firstDID)
+		}
+		cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
+			Team:         teamID,
+			MemberDIDKey: req.DID,
+			Alias:        "retry-child",
+			Lifetime:     awid.LifetimeEphemeral,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "server-team-id",
+			"team_slug":      "default",
+			"namespace_slug": "gracehosted",
+			"namespace":      "gracehosted.aweb.ai",
+			"identity_id":    "agent-retry-child",
+			"alias":          "retry-child",
+			"api_key":        "aw_sk_child_not_printed",
+			"server_url":     server.URL,
+			"did":            req.DID,
+			"custody":        "self",
+			"lifetime":       "ephemeral",
+			"access_mode":    "open",
+			"created":        true,
+			"team_cert":      encoded,
+		})
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", "retry-child", "")
+	if err == nil {
+		t.Fatal("first accept should fail")
+	}
+	// The fix persists the generated signing key BEFORE the AC POST, so it
+	// survives a post-commit failure and the retry presents the same did:key.
+	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
+
+	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", "retry-child", "")
+	if err != nil {
+		t.Fatalf("retry accept: %v", err)
+	}
+	if got := strings.TrimSpace(accepted.Output.Alias); got != "retry-child" {
+		t.Fatalf("accepted alias=%q want retry-child", got)
+	}
+	if acceptCalls != 2 {
+		t.Fatalf("accept calls=%d want 2", acceptCalls)
+	}
+}
+
 func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	t.Parallel()
 
@@ -1804,6 +1894,16 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
 		t.Fatal(err)
 	}
+	// A bare signing key alone is a PENDING accept and is reused on retry
+	// (TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey). What must
+	// not be clobbered is a COMPLETED identity, so add an identity.yaml.
+	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
+	if err := os.MkdirAll(filepath.Dir(identityPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(identityPath, []byte("did_key: did:key:zExisting\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_refuse_existing", "--alias", "bob")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
@@ -1812,7 +1912,7 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected hosted accept-invite to refuse existing identity:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "refusing to overwrite existing") || !strings.Contains(string(out), ".aw/signing.key") {
+	if !strings.Contains(string(out), "refusing to overwrite existing") || !strings.Contains(string(out), "identity.yaml") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
