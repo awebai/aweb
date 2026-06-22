@@ -17,11 +17,27 @@ import yaml
 from library.aweb_manifest import canonical_bytes
 from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, payload_digest
 
-# Structured-field parts tracked for the per-part update-from-source merge — all the
-# behavior/expectation fields, so a profile pulls upstream improvements to any of them
-# when un-evolved. Files are tracked per-file ("instructions" lives in instructions.md,
-# a file part). name/id/version are never merged.
-_BASELINE_FIELDS = (
+# Profile.yaml fields that are treated as asset-scoped parts. ``id`` is the stable
+# profile key and ``version`` is set by the minted target version, so neither is an
+# independently evolvable asset.
+PROFILE_FIELD_ASSETS = (
+    "name",
+    "mission",
+    "accepted_work",
+    "instructions",
+    "runtime_assumptions",
+    "memory_policy",
+    "expected_apps",
+    "event_subscriptions",
+    "approval_required",
+    "artifacts",
+    "skills",
+)
+
+# Structured-field parts tracked for the per-part update-from-source merge. Resource
+# lists (skills/artifacts) are reconstructed from the merged file set later in the
+# merge, so they are asset-scoped for proposals but not merged directly here.
+_MERGE_FIELDS = (
     "mission",
     "accepted_work",
     "runtime_assumptions",
@@ -172,14 +188,31 @@ def _field_digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
+def _profile_yaml_doc(files: list[dict[str, str]]) -> dict[str, Any]:
+    by_path = {f["path"]: f for f in files}
+    if "profile.yaml" not in by_path:
+        raise ValueError("profile payload missing profile.yaml")
+    return yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
+
+
+def profile_asset_digests(files: list[dict[str, str]]) -> dict[str, str]:
+    """Current per-asset digests for a profile payload.
+
+    Keys match ``part_baselines`` and proposal asset IDs: ``file:<path>`` for every
+    profile-relative file and ``field:<name>`` for each evolvable profile.yaml field.
+    """
+    digests = {f"file:{entry['path']}": entry["sha256"] for entry in files}
+    doc = _profile_yaml_doc(files)
+    for field in PROFILE_FIELD_ASSETS:
+        digests[f"field:{field}"] = _field_digest(doc.get(field))
+    return digests
+
+
 def part_baselines(profile: ParsedProfile) -> dict[str, str]:
-    """Per-part content digests recorded at copy/sync, for the per-part 3-way merge.
+    """Per-part content digests recorded at copy/sync/evolution.
     Parts = each file (its sha256) + each structured field (sha256 of its canonical
     bytes). Keys are namespaced ('file:<path>' / 'field:<name>')."""
-    baselines = {f"file:{entry['path']}": entry["sha256"] for entry in profile.files}
-    for field in _BASELINE_FIELDS:
-        baselines[f"field:{field}"] = _field_digest(getattr(profile, field))
-    return baselines
+    return profile_asset_digests(profile.files)
 
 
 @dataclass(frozen=True)
@@ -227,7 +260,7 @@ def three_way_merge(
     preserved: list[str] = []
 
     merged_doc = dict(ours_doc)
-    for field in _BASELINE_FIELDS:
+    for field in _MERGE_FIELDS:
         base_sha = baselines.get(f"field:{field}")
         ours_sha = _field_digest(ours_doc.get(field))
         theirs_sha = _field_digest(theirs_doc.get(field))

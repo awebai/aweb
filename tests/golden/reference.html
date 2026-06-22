@@ -371,8 +371,8 @@ Content-Type: application/json
         <div class="cmd-panel op" id="op-propose">
           <h3><code>aw library propose</code> <span class="pill run">team cert</span></h3>
           <p class="op-meta"><code>POST /v1/proposals</code></p>
-          <p>Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version&#x27;s content (profile-payload.v1); approve mints it.</p>
-          <p class="op-params">required: target · optional: profile_ref, profile_version, base_profile_version, base_profile_digest, content, summary, rationale</p>
+          <p>Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.</p>
+          <p class="op-params">required: target · optional: profile_ref, content, summary, rationale</p>
           <p class="cmd-label">Run it</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library propose --target &lt;target&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">Run it signed, without the plugin</p>

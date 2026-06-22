@@ -150,9 +150,9 @@ aw library materialize  (POST /v1/materialize)
     optional: agent_id, profile_ref
 
 aw library propose  (POST /v1/proposals)
-    Submit a profile learning proposal. A profile proposal carries the base it evolves from (base_profile_version/digest) and the new version's content (profile-payload.v1); approve mints it.
+    Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.
     required: target
-    optional: profile_ref, profile_version, base_profile_version, base_profile_digest, content, summary, rationale
+    optional: profile_ref, content, summary, rationale
 
 aw library proposals  (GET /v1/proposals)
     List the team's profile learning proposals.

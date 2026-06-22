@@ -127,22 +127,19 @@ CREATE TABLE IF NOT EXISTS {{tables.profile_bindings}} (
     PRIMARY KEY (team_id, agent_id)
 );
 
--- Learning proposals against a team's shelf profiles. Profile proposals may carry
--- the base version/digest and profile-payload.v1 content so approve can mint a new
--- immutable shelf version while rejecting stale bases and version collisions.
+-- Learning proposals against a team's shelf profiles. Profile proposals carry an
+-- asset-scoped changeset; approve applies it to the current shelf version, rejecting
+-- only assets whose recorded base digest is stale, then mints an immutable version.
 CREATE TABLE IF NOT EXISTS {{tables.proposals}} (
     proposal_id UUID PRIMARY KEY,
     team_id TEXT NOT NULL REFERENCES {{tables.teams}}(team_id) ON DELETE CASCADE,
     target TEXT NOT NULL CHECK (target IN ('profile', 'memory', 'skill', 'workflow')),
     profile_ref TEXT,
-    profile_version TEXT,
     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'approved', 'rejected')),
     content JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by_alias TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    base_profile_version TEXT,
-    base_profile_digest TEXT,
     summary TEXT,
     rationale TEXT
 );
