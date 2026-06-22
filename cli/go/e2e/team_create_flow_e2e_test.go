@@ -8,8 +8,9 @@
 // connected to the aweb server. With the aabq.21 fix (members connect to the
 // service before configure), the whole flow works end to end.
 //
-// Like the materialize suite, this drives the REAL aw binary and uses the
-// library-manifest fixture to reach the self-hosted Library (aabq.20).
+// Like the materialize suite, this drives the REAL aw binary and reaches the
+// self-hosted Library via a normal `aw plugin install` (the Library advertises
+// its real origin; aabq.20).
 //
 // NOTE: `aw team create` uses the shared awid namespace "local", so this test
 // needs a freshly-seeded stack (which `make -C cli e2e` provides). Re-running it
