@@ -45,21 +45,46 @@ _SITE_SCRIPT_BODY = """    function awebToggleTheme() {
           setTimeout(function () { button.classList.remove('copied'); }, 1600);
         });
       });
-    });"""
-
-_COPY_LLMS_SCRIPT = """    var llmsBtn = document.getElementById('copy-llms');
-    if (llmsBtn) {
-      llmsBtn.addEventListener('click', function () {
-        fetch(llmsBtn.getAttribute('data-llms-url')).then(function (r) { return r.text(); }).then(function (text) {
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.split-btn'), function (sb) {
+      var url = sb.getAttribute('data-llms-url');
+      var caret = sb.querySelector('.split-btn__caret');
+      var main = sb.querySelector('.split-btn__main');
+      var label = main ? main.querySelector('.split-btn__label') : null;
+      function items() { return Array.prototype.slice.call(sb.querySelectorAll('.split-btn__item')); }
+      function close() { sb.setAttribute('data-open', 'false'); if (caret) caret.setAttribute('aria-expanded', 'false'); }
+      function open() { sb.setAttribute('data-open', 'true'); if (caret) caret.setAttribute('aria-expanded', 'true'); }
+      function doCopy() {
+        fetch(url).then(function (r) { return r.text(); }).then(function (text) {
           navigator.clipboard.writeText(text).then(function () {
-            var label = llmsBtn.textContent;
-            llmsBtn.classList.add('copied');
-            llmsBtn.textContent = 'Copied llms.txt';
-            setTimeout(function () { llmsBtn.classList.remove('copied'); llmsBtn.textContent = label; }, 1600);
+            if (!main) return;
+            main.classList.add('copied');
+            if (label) label.textContent = 'Copied!';
+            main.setAttribute('aria-label', 'Copied to clipboard');
+            setTimeout(function () {
+              main.classList.remove('copied');
+              if (label) label.textContent = 'llms.txt';
+              main.setAttribute('aria-label', 'Copy llms.txt to clipboard');
+            }, 1600);
           });
         });
+      }
+      Array.prototype.forEach.call(sb.querySelectorAll('[data-llms-copy]'), function (b) {
+        b.addEventListener('click', function () { doCopy(); if (b.getAttribute('role') === 'menuitem') close(); });
       });
-    }"""
+      if (caret) caret.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (sb.getAttribute('data-open') === 'true') { close(); } else { open(); var it = items()[0]; if (it) it.focus(); }
+      });
+      sb.addEventListener('keydown', function (e) {
+        if (sb.getAttribute('data-open') !== 'true') return;
+        var list = items(); var i = list.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list[list.length - 1]).focus(); }
+        else if (e.key === 'Escape') { close(); if (caret) caret.focus(); }
+      });
+      document.addEventListener('click', function (e) { if (!sb.contains(e.target)) close(); });
+    });"""
 
 
 @dataclass(frozen=True)
@@ -87,11 +112,10 @@ class SiteConfig:
     footer_blurb: str
     footer_columns: tuple[FooterColumn, ...]
     footer_bottom: str
+    # Secondary buttons in the header-right; the standard llms.txt split control is
+    # always rendered after them, so it is not listed here.
     header_actions: tuple[NavLink, ...] = field(
-        default_factory=lambda: (
-            NavLink("aweb.ai", "https://aweb.ai"),
-            NavLink("Read llms.txt", "/llms.txt"),
-        )
+        default_factory=lambda: (NavLink("aweb.ai", "https://aweb.ai"),)
     )
 
     @property
@@ -99,11 +123,26 @@ class SiteConfig:
         return escape(self.origin.rstrip("/"), quote=True)
 
 
-_READ_ARROW = (
-    ' <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
-    'stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/>'
-    '<path d="m13 6 6 6-6 6"/></svg>'
-)
+# The standard llms.txt control: a split button (copy llms.txt) with a caret that
+# opens an opaque menu (copy / open). Present in the header of every aweb naapp.
+_LLMS_CONTROL = """        <div class="split-btn" data-llms-url="/llms.txt">
+          <button class="split-btn__main" type="button" data-llms-copy aria-label="Copy llms.txt to clipboard" title="The plain-text guide for LLMs and agents">
+            <svg class="icon-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span class="split-btn__label">llms.txt</span>
+          </button>
+          <button class="split-btn__caret" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="llms-menu" aria-label="More llms.txt options">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="split-btn__menu" id="llms-menu" role="menu">
+            <button class="split-btn__item" type="button" role="menuitem" data-llms-copy>
+              <span class="lead">Copy for LLMs</span><span class="sub">Copy llms.txt to clipboard</span>
+            </button>
+            <a class="split-btn__item" role="menuitem" href="/llms.txt" target="_blank" rel="noopener">
+              <span class="lead">Open llms.txt</span><span class="sub">View the plain-text guide</span>
+            </a>
+          </div>
+        </div>"""
 
 
 def render_head(site: SiteConfig) -> str:
@@ -121,13 +160,9 @@ def render_head(site: SiteConfig) -> str:
 
 def render_header(site: SiteConfig) -> str:
     nav = "\n".join(f'        <a href="{link.href}">{link.label}</a>' for link in site.nav_links)
-    # The header-right actions: a secondary button for each but the last, then a
-    # primary "Read llms.txt"-style action with the arrow.
-    *secondary, primary = site.header_actions
-    secondary_html = "".join(
-        f'\n        <a class="btn secondary" href="{a.href}">{a.label}</a>' for a in secondary
+    actions = "".join(
+        f'\n        <a class="btn secondary" href="{a.href}">{a.label}</a>' for a in site.header_actions
     )
-    primary_label = f"{primary.label}{_READ_ARROW}" if primary.label == "Read llms.txt" else primary.label
     return f"""  <header class="site-header">
     <div class="wrap">
       <a class="brand" href="/"><span class="dot"></span>{site.brand}</a>
@@ -138,8 +173,8 @@ def render_header(site: SiteConfig) -> str:
         <button class="theme-toggle" type="button" aria-label="Toggle dark mode" onclick="awebToggleTheme()">
           <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        </button>{secondary_html}
-        <a class="btn primary" href="{primary.href}">{primary_label}</a>
+        </button>{actions}
+{_LLMS_CONTROL}
       </div>
     </div>
   </header>"""
@@ -167,14 +202,11 @@ def render_footer(site: SiteConfig) -> str:
   </footer>"""
 
 
-def render_scripts(*, include_copy_llms: bool = False) -> str:
-    body = _SITE_SCRIPT_BODY
-    if include_copy_llms:
-        body = f"{body}\n{_COPY_LLMS_SCRIPT}"
-    return f"  <script>\n{body}\n  </script>"
+def render_scripts() -> str:
+    return f"  <script>\n{_SITE_SCRIPT_BODY}\n  </script>"
 
 
-def page(site: SiteConfig, body_html: str, *, include_copy_llms: bool = False) -> str:
+def page(site: SiteConfig, body_html: str) -> str:
     """Wrap an app-supplied ``<main>`` body in the shared chrome — a complete HTML
     document with the head, header, footer, and scripts."""
     return f"""<!doctype html>
@@ -186,6 +218,6 @@ def page(site: SiteConfig, body_html: str, *, include_copy_llms: bool = False) -
 {body_html}
   </main>
 {render_footer(site)}
-{render_scripts(include_copy_llms=include_copy_llms)}
+{render_scripts()}
 </body>
 </html>"""

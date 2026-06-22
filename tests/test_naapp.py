@@ -252,3 +252,14 @@ def test_raw_body_honored_in_wire_and_aw_id_request() -> None:
         "aw id request --team-auth POST https://docs.example.ai/v1/documents/{slug}/versions"
         " --raw --body" in html
     )
+
+
+def test_header_has_llms_split_control() -> None:
+    html = naapp.page(_site(), "    <section>hi</section>")
+    # The standard llms.txt split control replaces the old "Read llms.txt" button.
+    assert 'class="split-btn"' in html
+    assert "data-llms-copy" in html
+    assert 'class="split-btn__menu"' in html
+    assert "Read llms.txt" not in html
+    # The design system ships the component's styles.
+    assert ".split-btn" in naapp.aweb_css()
