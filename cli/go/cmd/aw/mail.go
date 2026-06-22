@@ -418,6 +418,18 @@ var mailSendCmd = &cobra.Command{
 				} else {
 					req.ToAlias = targetValue
 				}
+			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
+				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
+				req.ToAlias = targetValue
+			} else if liveFound {
+				kind, value := liveTarget.identityTarget()
+				applyMailRecipientTarget(req, kind, value)
+				if mailRecipientTargetApplied(req) {
+					targetKind = kind
+					targetValue = value
+				} else {
+					req.ToAlias = targetValue
+				}
 			} else {
 				req.ToAlias = targetValue
 			}
