@@ -59,12 +59,16 @@ def test_llms_txt_documents_every_manifest_operation() -> None:
     assert "required: blueprint_ref, profile_ref" in text
 
 
-def test_landing_offers_copiable_llms() -> None:
-    """The landing presents llms.txt for one-click copy: the URL in a copy
-    affordance and a button that copies the full llms.txt contents."""
+def test_landing_offers_llms_control_and_model_diagram() -> None:
+    """The header carries the standard llms.txt split control (the dedicated
+    For-LLMs section is gone), and the hero shows the model diagram."""
     html = _client().get("/").text
-    assert "id=\"copy-llms\"" in html
-    assert "https://library.aweb.ai/llms.txt" in html
+    assert 'class="split-btn"' in html
+    assert "data-llms-copy" in html
+    assert "For LLMs and agents" not in html
+    # The hero model diagram replaces the prose lede.
+    assert 'class="model-fig"' in html
+    assert "Browse the catalog, build your shelf, run your team." in html
 
 
 def test_reference_page_documents_every_operation_dual() -> None:

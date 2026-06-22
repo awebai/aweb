@@ -83,6 +83,81 @@ _REFERENCE_COPY = naapp.ReferenceCopy(
     ),
 )
 
+# The hero model diagram: Catalog -> Shelf -> Agent with the human-gated approval
+# loop (the one terracotta accent). Self-contained (its own <style> + two SVG
+# variants swapped at the 600px breakpoint), themeable via currentColor + tokens,
+# with a full text alternative on the figure. library-specific hero content.
+_MODEL_DIAGRAM = """<style>
+  .model-fig { max-width: 760px; margin: 1.6rem auto 0; color: var(--ink); }
+  .model-fig svg { width: 100%; height: auto; display: block; font-family: var(--font-sans); }
+  .model-fig figcaption { text-align: center; color: var(--muted); margin-top: .7rem; font-size: var(--step--1); }
+  .model-fig .mf-mobile { display: none; }
+  @media (max-width: 600px) {
+    .model-fig { max-width: 360px; }
+    .model-fig .mf-desktop { display: none; }
+    .model-fig .mf-mobile { display: block; }
+  }
+</style>
+<figure class="model-fig" role="img" aria-label="Flow: a public Catalog of blueprints is adopted onto a team's private Shelf; a Shelf profile is bound to create a running Agent; the Agent proposes changes, a human reviews and approves, and library mints a new version back onto the Shelf.">
+  <svg class="mf-desktop" viewBox="0 0 760 230" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <marker id="mfd" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
+      <marker id="mfda" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
+    </defs>
+    <rect x="8" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="274" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="540" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <text x="114" y="49" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Catalog</text>
+    <text x="114" y="69" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Public blueprints</text>
+    <text x="380" y="43" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Shelf</text>
+    <text x="380" y="61" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Team's private profiles</text>
+    <text x="380" y="79" text-anchor="middle" font-size="10.5" style="fill:var(--muted);opacity:.8">mission &#183; instructions &#183; tools &#183; sign-off</text>
+    <text x="646" y="49" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Agent</text>
+    <text x="646" y="69" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Bound &amp; running</text>
+    <path d="M222,52 H270" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
+    <path d="M488,52 H536" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
+    <text x="246" y="42" text-anchor="middle" font-size="12" style="fill:var(--muted)">adopt</text>
+    <text x="512" y="42" text-anchor="middle" font-size="12" style="fill:var(--muted)">bind</text>
+    <ellipse cx="513" cy="182" rx="72" ry="23" fill="none" style="stroke:var(--line)"/>
+    <circle cx="471" cy="178" r="3.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M464,190 q7,-9 14,0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="487" y="186" font-size="12" style="fill:var(--muted)">human review</text>
+    <path d="M646,86 V182 H586" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
+    <text x="616" y="171" text-anchor="middle" font-size="12" style="fill:var(--muted)">propose</text>
+    <path d="M441,182 H330 V86" fill="none" stroke-width="1.5" style="stroke:var(--accent)" marker-end="url(#mfda)"/>
+    <text x="383" y="171" text-anchor="middle" font-size="12" font-weight="600" style="fill:var(--accent)">approve &amp; mint</text>
+  </svg>
+  <svg class="mf-mobile" viewBox="0 0 360 470" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <marker id="mfm" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
+      <marker id="mfma" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
+    </defs>
+    <rect x="140" y="12" width="210" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="140" y="150" width="210" height="76" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="140" y="330" width="210" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <text x="245" y="40" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Catalog</text>
+    <text x="245" y="59" text-anchor="middle" font-size="12" style="fill:var(--muted)">Public blueprints</text>
+    <text x="245" y="176" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Shelf</text>
+    <text x="245" y="194" text-anchor="middle" font-size="12" style="fill:var(--muted)">Team's private profiles</text>
+    <text x="245" y="212" text-anchor="middle" font-size="10" style="fill:var(--muted);opacity:.8">mission &#183; instructions &#183; tools &#183; sign-off</text>
+    <text x="245" y="358" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Agent</text>
+    <text x="245" y="377" text-anchor="middle" font-size="12" style="fill:var(--muted)">Bound &amp; running</text>
+    <path d="M245,72 V148" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
+    <path d="M245,226 V328" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
+    <text x="257" y="114" font-size="12" style="fill:var(--muted)">adopt</text>
+    <text x="257" y="282" font-size="12" style="fill:var(--muted)">bind</text>
+    <ellipse cx="66" cy="270" rx="58" ry="22" fill="none" style="stroke:var(--line)"/>
+    <circle cx="44" cy="266" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M38,277 q6,-8 12,0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="57" y="274" font-size="11" style="fill:var(--muted)">human review</text>
+    <path d="M140,360 H66 V292" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
+    <text x="100" y="350" text-anchor="middle" font-size="12" style="fill:var(--muted)">propose</text>
+    <path d="M66,248 V200 H140" fill="none" stroke-width="1.5" style="stroke:var(--accent)" marker-end="url(#mfma)"/>
+    <text x="74" y="192" font-size="11" font-weight="600" style="fill:var(--accent)">approve &amp; mint</text>
+  </svg>
+  <figcaption>Browse the catalog, build your shelf, run your team.</figcaption>
+</figure>"""
+
 
 def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
     return SiteConfig(
@@ -123,29 +198,10 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <p class="kicker">Native Agentic App · library.aweb.ai</p>
         <h1>Where teams choose, keep, and improve the profiles their agents run.</h1>
-        <p class="lede">library.aweb.ai is the Native Agentic App for agent profiles: a public catalog of blueprints, a private team shelf of adopted profiles, and an approval loop that lets teams evolve how their agents work. A profile is an agent's job description — its mission, its instructions, the tools it may use, and what needs a human's sign-off.</p>
+        {_MODEL_DIAGRAM}
         <div class="cta-row">
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="llms">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">For LLMs and agents</p>
-          <h2>Point your agent at one file</h2>
-          <p>llms.txt is the complete, plain-text guide to operating library: what it is, how to install it in <code>aw</code>, how team-certificate auth works, every operation with its parameters, and the getting-started journey. An agent that reads it can drive library end to end.</p>
-        </div>
-        <div class="cmd-panel">
-          <p class="cmd-label">Copy the URL, or grab the whole file</p>
-          <div class="cmd-list"><div class="cmd"><pre>{origin}/llms.txt</pre>{copy}</div></div>
-          <div class="cta-row">
-            <button class="btn primary" type="button" id="copy-llms" data-llms-url="/llms.txt">Copy llms.txt contents</button>
-            <a class="btn secondary" href="/llms.txt">Open llms.txt</a>
-            <a class="btn secondary" href="/reference">API reference</a>
-          </div>
         </div>
       </div>
     </section>
@@ -259,7 +315,7 @@ def render_landing_page(*, public_origin: str) -> str:
         </div>
       </div>
     </section>"""
-    return naapp.page(site, body, include_copy_llms=True)
+    return naapp.page(site, body)
 
 
 def render_reference_page(*, public_origin: str) -> str:

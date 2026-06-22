@@ -166,6 +166,51 @@ img { max-width: 100%; display: block; }
 .btn.ghost:hover { gap: 0.65rem; }
 .btn--lg { padding: 0.85rem 1.3rem; font-size: var(--step-0); }
 
+/* Split button: a primary action plus a caret that opens an opaque menu. Used for
+   the standard llms.txt control in the header — present on every aweb naapp page. */
+.split-btn { position: relative; display: inline-flex; align-items: stretch; }
+.split-btn__main, .split-btn__caret {
+  font: 550 var(--step--1)/1 var(--font-sans); background: transparent; color: var(--ink);
+  border: 1px solid var(--line-strong); cursor: pointer; display: inline-flex;
+  align-items: center; transition: background .15s, color .15s;
+}
+.split-btn__main {
+  gap: 0.45rem; padding: 0.72rem 0.85rem; min-width: 7.25rem; justify-content: flex-start;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right-width: 0;
+}
+.split-btn__caret {
+  padding: 0 0.5rem; color: var(--muted); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.split-btn__main:hover, .split-btn__caret:hover { background: var(--surface-2); }
+.split-btn__main svg, .split-btn__caret svg { width: 15px; height: 15px; flex: none; }
+.split-btn__caret svg { transition: transform .15s; }
+.split-btn[data-open="true"] .split-btn__caret { background: var(--surface-2); color: var(--ink); }
+.split-btn[data-open="true"] .split-btn__caret svg { transform: rotate(180deg); }
+.split-btn__main .icon-check { display: none; }
+.split-btn__main.copied { color: var(--accent); }
+.split-btn__main.copied .icon-clip { display: none; }
+.split-btn__main.copied .icon-check { display: inline-flex; }
+:root[data-theme="dark"] .split-btn__main, :root[data-theme="dark"] .split-btn__caret { border-color: rgba(255,255,255,0.30); }
+:root[data-theme="dark"] .split-btn__main:hover, :root[data-theme="dark"] .split-btn__caret:hover { border-color: rgba(255,255,255,0.45); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .split-btn__main, :root:not([data-theme="light"]) .split-btn__caret { border-color: rgba(255,255,255,0.30); }
+}
+.split-btn__menu {
+  position: absolute; top: calc(100% + 5px); right: 0; z-index: 50; min-width: 15rem;
+  padding: 0.3rem; background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); display: none;
+}
+.split-btn[data-open="true"] .split-btn__menu { display: block; }
+.split-btn__item {
+  display: block; width: 100%; text-align: left; text-decoration: none; background: transparent;
+  border: 0; cursor: pointer; padding: 0.55rem 0.7rem; border-radius: 7px;
+  font: var(--step--1)/1.35 var(--font-sans); color: var(--ink);
+}
+.split-btn__item:hover { background: var(--surface-2); }
+.split-btn__item + .split-btn__item { margin-top: 2px; }
+.split-btn__item .lead { display: block; font-weight: 600; }
+.split-btn__item .sub { display: block; color: var(--muted); }
+
 /* ---- hero ---- */
 .hero { padding: var(--s8) 0 var(--s7); }
 .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: var(--s6); align-items: center; }
@@ -281,6 +326,9 @@ img { max-width: 100%; display: block; }
   .hero .lede { margin: var(--s2) 0 var(--s3); }
   /* avoid header overflow: drop Sign in, tighten spacing */
   .header-right .btn.secondary { display: none; }
+  /* drop the caret on small screens; the main copy action keeps working */
+  .split-btn__caret { display: none; }
+  .split-btn__main { border-right-width: 1px; border-radius: var(--radius-sm); min-width: 0; }
   .site-header .wrap { gap: var(--s2); }
 }
 

@@ -34,7 +34,24 @@
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
         </button>
         <a class="btn secondary" href="https://aweb.ai">aweb.ai</a>
-        <a class="btn primary" href="/llms.txt">Read llms.txt <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></a>
+        <div class="split-btn" data-llms-url="/llms.txt">
+          <button class="split-btn__main" type="button" data-llms-copy aria-label="Copy llms.txt to clipboard" title="The plain-text guide for LLMs and agents">
+            <svg class="icon-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span class="split-btn__label">llms.txt</span>
+          </button>
+          <button class="split-btn__caret" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="llms-menu" aria-label="More llms.txt options">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="split-btn__menu" id="llms-menu" role="menu">
+            <button class="split-btn__item" type="button" role="menuitem" data-llms-copy>
+              <span class="lead">Copy for LLMs</span><span class="sub">Copy llms.txt to clipboard</span>
+            </button>
+            <a class="split-btn__item" role="menuitem" href="/llms.txt" target="_blank" rel="noopener">
+              <span class="lead">Open llms.txt</span><span class="sub">View the plain-text guide</span>
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -481,6 +498,45 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
           setTimeout(function () { button.classList.remove('copied'); }, 1600);
         });
       });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.split-btn'), function (sb) {
+      var url = sb.getAttribute('data-llms-url');
+      var caret = sb.querySelector('.split-btn__caret');
+      var main = sb.querySelector('.split-btn__main');
+      var label = main ? main.querySelector('.split-btn__label') : null;
+      function items() { return Array.prototype.slice.call(sb.querySelectorAll('.split-btn__item')); }
+      function close() { sb.setAttribute('data-open', 'false'); if (caret) caret.setAttribute('aria-expanded', 'false'); }
+      function open() { sb.setAttribute('data-open', 'true'); if (caret) caret.setAttribute('aria-expanded', 'true'); }
+      function doCopy() {
+        fetch(url).then(function (r) { return r.text(); }).then(function (text) {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!main) return;
+            main.classList.add('copied');
+            if (label) label.textContent = 'Copied!';
+            main.setAttribute('aria-label', 'Copied to clipboard');
+            setTimeout(function () {
+              main.classList.remove('copied');
+              if (label) label.textContent = 'llms.txt';
+              main.setAttribute('aria-label', 'Copy llms.txt to clipboard');
+            }, 1600);
+          });
+        });
+      }
+      Array.prototype.forEach.call(sb.querySelectorAll('[data-llms-copy]'), function (b) {
+        b.addEventListener('click', function () { doCopy(); if (b.getAttribute('role') === 'menuitem') close(); });
+      });
+      if (caret) caret.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (sb.getAttribute('data-open') === 'true') { close(); } else { open(); var it = items()[0]; if (it) it.focus(); }
+      });
+      sb.addEventListener('keydown', function (e) {
+        if (sb.getAttribute('data-open') !== 'true') return;
+        var list = items(); var i = list.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list[list.length - 1]).focus(); }
+        else if (e.key === 'Escape') { close(); if (caret) caret.focus(); }
+      });
+      document.addEventListener('click', function (e) { if (!sb.contains(e.target)) close(); });
     });
   </script>
 </body>
