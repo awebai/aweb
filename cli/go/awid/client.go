@@ -172,7 +172,11 @@ const (
 	DefaultTimeout = 30 * time.Second
 
 	MaxResponseSize = 10 * 1024 * 1024
+
+	apiTransientMaxRetries = 3
 )
+
+var apiTransientRetryBaseDelay = 100 * time.Millisecond
 
 // agentMeta holds cached metadata about a resolved agent.
 type agentMeta struct {
@@ -808,6 +812,9 @@ func (e *APIError) Error() string {
 	if e.Body == "" {
 		return fmt.Sprintf("aweb: http %d%s", e.StatusCode, suffix)
 	}
+	if e.StatusCode == http.StatusServiceUnavailable && isTransientServiceUnavailableBody(e.Body) {
+		return fmt.Sprintf("aweb: service temporarily unavailable (http %d%s): %s", e.StatusCode, suffix, e.Body)
+	}
 	return fmt.Sprintf("aweb: http %d%s: %s", e.StatusCode, suffix, e.Body)
 }
 
@@ -905,7 +912,6 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 
 // DoRawWithHeaders performs an HTTP request and returns the raw response.
 func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept string, in any, extraHeaders map[string]string) (*http.Response, error) {
-	var body io.Reader
 	var bodyBytes []byte
 	if in != nil {
 		data, err := json.Marshal(in)
@@ -913,60 +919,191 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, err
 		}
 		bodyBytes = data
-		body = bytes.NewReader(data)
 	}
 
 	if strings.HasSuffix(c.baseURL, "/api") && strings.HasPrefix(path, "/api/") {
 		path = strings.TrimPrefix(path, "/api")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
-	if err != nil {
-		return nil, err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Accept", accept)
-	for key, value := range extraHeaders {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key != "" && value != "" {
-			req.Header.Set(key, value)
+	buildRequest := func() (*http.Request, error) {
+		var reqBody io.Reader
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
 		}
-	}
-	if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
-		// body_sha256 binds the request body to the signature without the
-		// server having to consume the body stream for signature verification.
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := certAuthSignPayload(c.teamID, timestamp, bodyBytes)
-		sig := ed25519.Sign(c.signingKey, signPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-	} else if c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := identityAuthSignPayload(c.stableID, timestamp, bodyBytes)
-		sig := ed25519.Sign(c.signingKey, signPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		if c.stableID != "" {
-			req.Header.Set("X-AWEB-DID-AW", c.stableID)
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+		if err != nil {
+			return nil, err
 		}
+		if in != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Accept", accept)
+		for key, value := range extraHeaders {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key != "" && value != "" {
+				req.Header.Set(key, value)
+			}
+		}
+		if c.teamCertHeader != "" && c.signingKey != nil {
+			// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
+			// body_sha256 binds the request body to the signature without the
+			// server having to consume the body stream for signature verification.
+			timestamp := time.Now().UTC().Format(time.RFC3339)
+			signPayload := certAuthSignPayload(c.teamID, timestamp, bodyBytes)
+			sig := ed25519.Sign(c.signingKey, signPayload)
+			req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+			req.Header.Set("X-AWEB-Timestamp", timestamp)
+			req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+		} else if c.signingKey != nil {
+			timestamp := time.Now().UTC().Format(time.RFC3339)
+			signPayload := identityAuthSignPayload(c.stableID, timestamp, bodyBytes)
+			sig := ed25519.Sign(c.signingKey, signPayload)
+			req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+			req.Header.Set("X-AWEB-Timestamp", timestamp)
+			if c.stableID != "" {
+				req.Header.Set("X-AWEB-DID-AW", c.stableID)
+			}
+		}
+		return req, nil
 	}
 
-	traceHTTPClientRequest(req, bodyBytes)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, decorateTimeoutError(method, err)
+	for attempt := 0; ; attempt++ {
+		req, err := buildRequest()
+		if err != nil {
+			return nil, err
+		}
+		traceHTTPClientRequest(req, bodyBytes)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			decorated := decorateTimeoutError(method, err)
+			if shouldRetryAPITransportError(ctx, method, path, bodyBytes, attempt, err) {
+				if sleepErr := reportAndSleepAPIRetry(ctx, attempt, method, path); sleepErr != nil {
+					return nil, sleepErr
+				}
+				continue
+			}
+			return nil, decorated
+		}
+		if err := traceHTTPClientResponse(resp); err != nil {
+			return nil, err
+		}
+		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
+			c.latestClientVersion.Store(v)
+		}
+		if retry, err := shouldRetryAPIResponse(ctx, method, path, bodyBytes, attempt, resp); err != nil {
+			_ = resp.Body.Close()
+			return nil, err
+		} else if retry {
+			_ = resp.Body.Close()
+			if sleepErr := reportAndSleepAPIRetry(ctx, attempt, method, path); sleepErr != nil {
+				return nil, sleepErr
+			}
+			continue
+		}
+		return resp, nil
 	}
-	if err := traceHTTPClientResponse(resp); err != nil {
+}
+
+func shouldRetryAPITransportError(ctx context.Context, method, path string, body []byte, attempt int, err error) bool {
+	if attempt >= apiTransientMaxRetries || err == nil || ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body)
+}
+
+func shouldRetryAPIResponse(ctx context.Context, method, path string, body []byte, attempt int, resp *http.Response) (bool, error) {
+	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable || attempt >= apiTransientMaxRetries || ctx.Err() != nil {
+		return false, nil
+	}
+	data, err := readAndRestoreHTTPBody(resp)
+	if err != nil {
+		return false, err
+	}
+	bodyText := string(data)
+	if isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body) || isTransientServiceUnavailableBody(bodyText) {
+		return true, nil
+	}
+	return false, nil
+}
+
+func readAndRestoreHTTPBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
+	if err != nil {
 		return nil, err
 	}
-	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
-		c.latestClientVersion.Store(v)
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	return data, nil
+}
+
+func reportAndSleepAPIRetry(ctx context.Context, attempt int, method, path string) error {
+	retry := attempt + 1
+	fmt.Fprintf(os.Stderr, "service temporarily unavailable, retrying %d/%d (%s %s)\n", retry, apiTransientMaxRetries, strings.ToUpper(strings.TrimSpace(method)), path)
+	delay := apiTransientBackoffDelay(attempt)
+	if delay <= 0 {
+		return nil
 	}
-	return resp, nil
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func apiTransientBackoffDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := apiTransientRetryBaseDelay
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+	}
+	return delay
+}
+
+func isSafeHTTPMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+func isIdempotentSendRequest(method, path string, body []byte) bool {
+	if strings.ToUpper(strings.TrimSpace(method)) != http.MethodPost || !requestBodyHasMessageID(body) {
+		return false
+	}
+	path = strings.TrimSpace(path)
+	if path == "/v1/messages" || path == "/v1/chat/sessions" {
+		return true
+	}
+	return strings.HasPrefix(path, "/v1/chat/sessions/") && strings.HasSuffix(path, "/messages")
+}
+
+func requestBodyHasMessageID(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false
+	}
+	messageID, _ := raw["message_id"].(string)
+	return strings.TrimSpace(messageID) != ""
+}
+
+func isTransientServiceUnavailableBody(body string) bool {
+	body = strings.ToLower(strings.TrimSpace(body))
+	return strings.Contains(body, "awid registry unavailable") || strings.Contains(body, "temporarily unavailable")
 }
 
 func traceEnabled() bool {
