@@ -1894,9 +1894,10 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
 		t.Fatal(err)
 	}
-	// A bare signing key alone is a PENDING accept and is reused on retry
-	// (TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey). What must
-	// not be clobbered is a COMPLETED identity, so add an identity.yaml.
+	// A bare signing key WITH the pending-accept marker is reused on retry
+	// (TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey); without the
+	// marker it is refused as stray (TestHostedTeamAcceptInviteRefusesStrayBareKey).
+	// What must not be clobbered is a COMPLETED identity, so add an identity.yaml.
 	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
 	if err := os.MkdirAll(filepath.Dir(identityPath), 0o755); err != nil {
 		t.Fatal(err)
