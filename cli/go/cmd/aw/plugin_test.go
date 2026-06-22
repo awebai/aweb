@@ -792,6 +792,66 @@ func TestPluginInstallRejectsMalformedManifestViaSharedValidation(t *testing.T) 
 	}
 }
 
+func TestPluginInstallDevOriginOverridesSelfHostedOrigin(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	// The served manifest advertises a DIFFERENT origin than where it is served,
+	// like a self-hosted Library whose manifest still claims the production
+	// origin. Without an override the install must reject this; with --dev-origin
+	// the operator points aw at the real (self-hosted) base URL.
+	manifest := `{"manifest_version":1,"app":{"id":"devlib","version":"1.0.0","origin":"https://library.aweb.ai"},"tools":[{"name":"ping","auth":"none","method":"GET","path":"/v1/ping","input_schema":{"type":"object","properties":{}},"params":[],"mutation":false}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/aweb-app.json" {
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifest))
+	}))
+	defer server.Close()
+
+	home := filepath.Join(tmp, "home")
+	env := append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+
+	// Without --dev-origin the origin-mismatch guard rejects it.
+	reject := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+	reject.Env = env
+	if out, err := reject.CombinedOutput(); err == nil || !strings.Contains(string(out), "claims origin") {
+		t.Fatalf("expected origin-mismatch rejection, got err=%v out=%s", err, string(out))
+	}
+
+	// With --dev-origin the app installs pointing at the self-hosted base URL.
+	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL, "--dev-origin", server.URL)
+	install.Env = env
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("plugin install --dev-origin failed: %v\n%s", err, string(out))
+	}
+
+	// The stored manifest now advertises the dev origin, which is the base URL
+	// dispatch uses (appmanifest.Interpret builds the request URL from app.origin).
+	manifestPath := filepath.Join(home, ".aw", "plugins", "devlib", "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read stored manifest: %v", err)
+	}
+	var stored appmanifest.Manifest
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("decode stored manifest: %v\n%s", err, string(data))
+	}
+	if stored.App.Origin != server.URL {
+		t.Fatalf("stored manifest origin=%q want %q", stored.App.Origin, server.URL)
+	}
+	if strings.Contains(string(data), "library.aweb.ai") {
+		t.Fatalf("stored manifest still references the production origin:\n%s", string(data))
+	}
+}
+
 func TestPluginInstallRejectsCrossOriginManifestRedirect(t *testing.T) {
 	t.Parallel()
 

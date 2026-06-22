@@ -32,6 +32,7 @@ var (
 	pluginInstallManifestVersion string
 	pluginInstallAppVersion      string
 	pluginInstallOrigin          string
+	pluginInstallDevOrigin       string
 )
 
 var pluginCmd = &cobra.Command{
@@ -119,6 +120,7 @@ func init() {
 	pluginInstallCmd.Flags().StringVar(&pluginInstallManifestVersion, "manifest-version", "", "Manifest version to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallAppVersion, "app-version", "", "App version to record in plugin provenance")
 	pluginInstallCmd.Flags().StringVar(&pluginInstallOrigin, "origin", "", "App origin to record in plugin provenance")
+	pluginInstallCmd.Flags().StringVar(&pluginInstallDevOrigin, "dev-origin", "", "Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check")
 
 	pluginCmd.GroupID = groupUtility
 	pluginCmd.AddCommand(pluginListCmd, pluginInstallCmd, pluginRemoveCmd, pluginUpdateCmd, pluginReservedNamesCmd)
@@ -149,7 +151,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if isManifestInstallSource(source) {
-		out, err := installManifestPlugin(source, dir)
+		out, err := installOrUpdateManifestPlugin(source, dir, false, strings.TrimSpace(pluginInstallDevOrigin))
 		if err != nil {
 			return err
 		}
@@ -253,7 +255,7 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if provenance == nil || strings.TrimSpace(provenance.ManifestURL) == "" {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
-	out, err := installOrUpdateManifestPlugin(provenance.ManifestURL, dir, true)
+	out, err := installOrUpdateManifestPlugin(provenance.ManifestURL, dir, true, "")
 	if err != nil {
 		return err
 	}
@@ -425,10 +427,14 @@ func isManifestInstallSource(source string) bool {
 }
 
 func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
-	return installOrUpdateManifestPlugin(source, dir, false)
+	return installOrUpdateManifestPlugin(source, dir, false, "")
 }
 
-func installOrUpdateManifestPlugin(source, dir string, update bool) (*pluginInstallOutput, error) {
+// installOrUpdateManifestPlugin installs (or updates) a manifest app. devOrigin,
+// when set, overrides the app's origin to that base URL and skips the
+// origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
+// whose served manifest still advertises a different (e.g. production) origin.
+func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
 	manifestURL, err := manifestURLForSource(source)
 	if err != nil {
 		return nil, err
@@ -447,12 +453,30 @@ func installOrUpdateManifestPlugin(source, dir string, update bool) (*pluginInst
 	if err := appmanifest.Validate(manifest, reserved); err != nil {
 		return nil, err
 	}
-	claimedManifestURL, err := manifestURLForSource(manifest.App.Origin)
-	if err != nil {
-		return nil, err
-	}
-	if claimedManifestURL != manifestURL {
-		return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected manifest URL %s)", manifestURL, manifest.App.Origin, claimedManifestURL)
+	if devOrigin != "" {
+		// Operator override: point the app at this base URL regardless of the
+		// origin the manifest declares. Rewrite the stored manifest so dispatch
+		// (which builds request URLs from app.origin) targets it, and recompute
+		// the digest over the stored bytes.
+		normalized, err := normalizeManifestDevOrigin(devOrigin)
+		if err != nil {
+			return nil, err
+		}
+		manifest.App.Origin = normalized
+		manifestBytes, err = json.Marshal(manifest)
+		if err != nil {
+			return nil, fmt.Errorf("re-encode manifest with --dev-origin: %w", err)
+		}
+		sum := sha256.Sum256(manifestBytes)
+		digest = "sha256:" + hex.EncodeToString(sum[:])
+	} else {
+		claimedManifestURL, err := manifestURLForSource(manifest.App.Origin)
+		if err != nil {
+			return nil, err
+		}
+		if claimedManifestURL != manifestURL {
+			return nil, fmt.Errorf("manifest fetched from %s claims origin %s (expected manifest URL %s); pass --dev-origin <base-url> to install a self-hosted app at its real origin", manifestURL, manifest.App.Origin, claimedManifestURL)
+		}
 	}
 	name, err := normalizePluginName(manifest.App.ID)
 	if err != nil {
@@ -507,6 +531,20 @@ func installOrUpdateManifestPlugin(source, dir string, update bool) (*pluginInst
 		return nil, err
 	}
 	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance}, nil
+}
+
+// normalizeManifestDevOrigin validates a --dev-origin override and returns it as
+// a bare scheme://host[/path] base URL (query and fragment stripped, trailing
+// slash trimmed).
+func normalizeManifestDevOrigin(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", usageError("invalid --dev-origin %q; expected a base URL like http://127.0.0.1:18765", raw)
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
 }
 
 func manifestURLForSource(source string) (string, error) {
