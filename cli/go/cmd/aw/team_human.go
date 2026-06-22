@@ -933,7 +933,29 @@ func ensureAcceptedTeamWorkspaceBinding(homeDir string, output *teamAcceptInvite
 func formatTeamHumanAdd(v any) string {
 	out := v.(teamHumanAddOutput)
 	var b strings.Builder
-	if out.HomeOverride {
+	profileCount := teamHumanProfileAgentCount(out.Agents)
+	if profileCount == len(out.Agents) && profileCount > 0 {
+		agentWord := "agent"
+		if len(out.Agents) != 1 {
+			agentWord = "agents"
+		}
+		profileText := "blueprint profiles"
+		if profileCount == 1 {
+			profileText = "blueprint profile " + teamHumanProfileLabel(out.Agents[0].Profile)
+		}
+		if out.HomeOverride {
+			fmt.Fprintf(&b, "Added %d %s from %s with explicit home\n", len(out.Agents), agentWord, profileText)
+		} else {
+			fmt.Fprintf(&b, "Added %d %s from %s under %s\n", len(out.Agents), agentWord, profileText, out.AgentsRoot)
+		}
+	} else if profileCount > 0 {
+		emptyCount := len(out.Agents) - profileCount
+		if out.HomeOverride {
+			fmt.Fprintf(&b, "Added %d agent(s) with explicit home (%d from blueprint profiles, %d empty-profile)\n", len(out.Agents), profileCount, emptyCount)
+		} else {
+			fmt.Fprintf(&b, "Added %d agent(s) under %s (%d from blueprint profiles, %d empty-profile)\n", len(out.Agents), out.AgentsRoot, profileCount, emptyCount)
+		}
+	} else if out.HomeOverride {
 		fmt.Fprintf(&b, "Added %d empty-profile agent(s) with explicit home\n", len(out.Agents))
 	} else {
 		fmt.Fprintf(&b, "Added %d empty-profile agent(s) under %s\n", len(out.Agents), out.AgentsRoot)
@@ -947,6 +969,27 @@ func formatTeamHumanAdd(v any) string {
 		b.WriteString("Library profile(s) adopted and materialized.\n")
 	}
 	return b.String()
+}
+
+func teamHumanProfileAgentCount(agents []teamHumanAddedAgent) int {
+	count := 0
+	for _, agent := range agents {
+		if agent.Profile != nil || agent.ProfileMode == "library" {
+			count++
+		}
+	}
+	return count
+}
+
+func teamHumanProfileLabel(selector *libraryProfileSelector) string {
+	if selector == nil {
+		return "unknown"
+	}
+	label := strings.TrimSpace(selector.SourceBlueprintRef) + "/" + strings.TrimSpace(selector.ProfileRef)
+	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
+		label += "@" + strings.TrimSpace(selector.SourceBlueprintVersion)
+	}
+	return label
 }
 
 func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {

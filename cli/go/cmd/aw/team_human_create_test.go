@@ -92,6 +92,34 @@ func TestFormatTeamHumanAddPrintsEachAgentHome(t *testing.T) {
 	}
 }
 
+func TestFormatTeamHumanAddDistinguishesProfileBoundAgent(t *testing.T) {
+	selector := &libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "developer"}
+	out := formatTeamHumanAdd(teamHumanAddOutput{
+		AgentsRoot: "/repo/agents/instances",
+		Agents:     []teamHumanAddedAgent{{Name: "dev", HomeDir: "/repo/agents/instances/dev", ProfileMode: "library", Profile: selector}},
+		NoLibrary:  false,
+		NoProfile:  false,
+	})
+	if !strings.Contains(out, "Added 1 agent from blueprint profile aweb.engineering/developer under /repo/agents/instances") {
+		t.Fatalf("profile-bound output missing profile wording:\n%s", out)
+	}
+	if strings.Contains(out, "Added 1 empty-profile agent") {
+		t.Fatalf("profile-bound output used empty-profile wording:\n%s", out)
+	}
+}
+
+func TestFormatTeamHumanAddKeepsBareAgentEmptyProfileWording(t *testing.T) {
+	out := formatTeamHumanAdd(teamHumanAddOutput{
+		AgentsRoot: "/repo/agents/instances",
+		Agents:     []teamHumanAddedAgent{{Name: "worker", HomeDir: "/repo/agents/instances/worker", ProfileMode: "empty"}},
+		NoLibrary:  true,
+		NoProfile:  true,
+	})
+	if !strings.Contains(out, "Added 1 empty-profile agent(s) under /repo/agents/instances") {
+		t.Fatalf("bare output missing empty-profile wording:\n%s", out)
+	}
+}
+
 func TestTeamHumanCreateEmptyProfileUsesImplicitLocalTeamNameAndNoLibrary(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")

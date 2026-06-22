@@ -1,6 +1,9 @@
 package blueprint
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -109,6 +112,21 @@ and {"X-AWID-Team-Certificate":"<certificate>"}.
 	}
 }
 
+func TestLoadLocalDirAllowsPublicCryptoVectors(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	signature := "0YI14/N2Hjt+lgvKPAhIFsjgLxUEY5DuZWXycnTmyB5bWafvOFgXZe6XRzOzdLfPE+XUgX5Izo1IzwfsU9gpAQ"
+	ciphertext := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("public ciphertext fixture bytes ", 3)))
+	signedPayload := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(strings.Repeat("signed payload fixture bytes ", 3)))
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/signature-vector.md"), "signature_b64: "+signature+"\n")
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/ciphertext-vector.md"), "ciphertext_b64: "+ciphertext+"\n")
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/signed-payload-vector.md"), "signed_payload_b64url: "+signedPayload+"\n")
+
+	if _, err := LoadLocalDir(root); err != nil {
+		t.Fatalf("public crypto vectors should load: %v", err)
+	}
+}
+
 func TestLoadLocalDirRejectsGenuineControlsInFreeText(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
@@ -166,7 +184,11 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	didKey := awid.ComputeDIDKey(pub)
-	longBlob := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("headerless-key-material-", 6)))
+	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerlessPrivateKey := base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(privateKey))
 	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZ2VudCIsImV4cCI6OTk5OTk5OTk5OX0.c2lnbmF0dXJlX3NlY3JldF9ibG9i"
 	cases := []struct{ name, path, body, want string }{
 		{name: "aw-state", path: ".aw/workspace.yaml", body: "team: default", want: ".aw runtime state"},
@@ -189,7 +211,7 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		{name: "quoted-team-certificate-header-spaced", path: "profiles/coordinator/docs/header-json-spaced.md", body: `"X-AWID-Team-Certificate" : "abcdefghijklmnop"`, want: "unexpected identity material"},
 		{name: "single-quoted-team-certificate-header", path: "profiles/coordinator/docs/header-yaml-single.md", body: `'X-AWID-Team-Certificate': abcdefghijklmnop`, want: "unexpected identity material"},
 		{name: "jwt-content", path: "profiles/coordinator/docs/jwt.md", body: jwt, want: "unexpected identity material"},
-		{name: "long-base64-blob", path: "profiles/coordinator/docs/blob.md", body: longBlob, want: "unexpected identity material"},
+		{name: "headerless-private-key-blob", path: "profiles/coordinator/docs/blob.md", body: headerlessPrivateKey, want: "unexpected identity material"},
 		{name: "generated-worktree", path: "generated-worktrees/coordinator/README.md", body: "generated", want: "generated worktrees"},
 	}
 	for _, tc := range cases {
