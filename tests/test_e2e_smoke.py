@@ -476,14 +476,15 @@ def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str)
 
 
 def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
-    from library.aweb_manifest import MANIFEST_PATH
+    from library.aweb_manifest import read_manifest_bytes
 
-    committed = MANIFEST_PATH.read_bytes()
+    expected = read_manifest_bytes(library.origin)
     for path in ("/.well-known/aweb-app.json", "/aweb-app.json"):
         response = httpx.get(f"{library.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
         assert response.headers["content-type"].startswith("application/json")
-        assert response.content == committed
+        assert response.content == expected
+        assert json.loads(response.content)["app"]["origin"] == library.origin
 
 
 def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:

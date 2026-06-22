@@ -9,7 +9,13 @@ from urllib.parse import quote
 from fastapi.testclient import TestClient
 
 import library.api as library_api
-from library.aweb_manifest import MANIFEST, MANIFEST_PATH, canonical_bytes, read_manifest_bytes
+from library.aweb_manifest import (
+    MANIFEST,
+    MANIFEST_PATH,
+    canonical_bytes,
+    manifest_for_origin,
+    read_manifest_bytes,
+)
 from library.config import Settings
 
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -81,8 +87,8 @@ def _manifest_errors(m: dict) -> list[str]:
             value = app.get(key)
             if not isinstance(value, str) or not value:
                 errors.append(f"app.{key} must be a non-empty string")
-        if not str(app.get("origin", "")).startswith("https://"):
-            errors.append("app.origin must be an https URL")
+        if not str(app.get("origin", "")).startswith(("http://", "https://")):
+            errors.append("app.origin must be an http(s) URL")
 
     tools = m.get("tools")
     if not isinstance(tools, list) or not tools:
@@ -278,7 +284,16 @@ def test_interpreted_spec_import_to_shelf() -> None:
     assert spec["mutation"] is True
 
 
-def test_manifest_served_at_both_paths_as_raw_committed_bytes() -> None:
+def test_manifest_bytes_are_stable_per_origin() -> None:
+    committed = MANIFEST_PATH.read_bytes()
+    assert read_manifest_bytes("https://library.aweb.ai") == committed
+    custom = read_manifest_bytes("http://self-hosted.test:8765/")
+    assert custom == canonical_bytes(manifest_for_origin("http://self-hosted.test:8765/"))
+    assert json.loads(custom)["app"]["origin"] == "http://self-hosted.test:8765"
+    assert read_manifest_bytes("http://self-hosted.test:8765") == custom
+
+
+def test_manifest_served_at_both_paths_as_raw_committed_bytes_for_hosted_origin() -> None:
     committed = MANIFEST_PATH.read_bytes()
     client = _client()
     for route in ("/.well-known/aweb-app.json", "/aweb-app.json"):
@@ -288,3 +303,14 @@ def test_manifest_served_at_both_paths_as_raw_committed_bytes() -> None:
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.content == committed
         assert hashlib.sha256(response.content).hexdigest() == hashlib.sha256(committed).hexdigest()
+
+
+def test_manifest_served_with_configured_self_hosted_origin() -> None:
+    origin = "http://127.0.0.1:9876"
+    client = TestClient(library_api.create_app(Settings(public_origin=origin)))
+    expected = canonical_bytes(manifest_for_origin(origin))
+    for route in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+        response = client.get(route)
+        assert response.status_code == 200, (route, response.text)
+        assert response.content == expected
+        assert json.loads(response.content)["app"]["origin"] == origin
