@@ -8,6 +8,11 @@ from fastapi import Depends, HTTPException, Request
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.deps import get_db
 from aweb.team_auth_deps import TeamIdentity, _aweb_db, get_team_identity
 
@@ -78,13 +83,16 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client not configured")
+        raise awid_registry_not_configured_exception(operation="AWID did:aw resolution")
 
     try:
         resolution = await registry_client.resolve_key(did_aw)
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning("AWID registry dependency failed for did:aw resolution: %s", did_aw, exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID did:aw resolution") from exc
     except Exception as exc:
-        logger.warning("AWID registry unavailable for did:aw resolution: %s", did_aw, exc_info=True)
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        logger.exception("Unexpected AWID registry dependency error for did:aw resolution: %s", did_aw)
+        raise awid_dependency_http_exception(exc, operation="AWID did:aw resolution") from exc
 
     if resolution and resolution.current_did_key != did_key and hasattr(registry_client, "resolve_key_fresh"):
         try:

@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
+from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
 from aweb.e2ee_messages import (
@@ -1433,7 +1434,7 @@ async def send_message(
                 if await namespace_exists(db, domain):
                     raise HTTPException(status_code=404, detail="Recipient agent not found")
                 if registry_client is None:
-                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
+                    raise awid_registry_not_configured_exception(operation="AWID mail recipient address lookup")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
             if registry_client is not None and requires_registry_address_binding(recipient):
                 if not (

@@ -21,6 +21,11 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid.team_ids import parse_team_id
 from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import (
@@ -90,12 +95,16 @@ async def _get_team_visibility(request: Request, team_id: str) -> str:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+        raise awid_registry_not_configured_exception(operation="AWID dashboard team visibility lookup")
 
     try:
         team = await registry_client.get_team(domain, team_name)
-    except Exception:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning("AWID registry dependency failed for team visibility lookup: %s", team_id, exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
+    except Exception as exc:
+        logger.exception("Unexpected AWID registry dependency error for team visibility lookup: %s", team_id)
+        raise awid_dependency_http_exception(exc, operation="AWID dashboard team visibility lookup") from exc
 
     if team is None:
         return "private"
