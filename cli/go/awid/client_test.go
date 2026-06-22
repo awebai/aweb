@@ -1713,6 +1713,164 @@ func TestHTTPStatusHelpers(t *testing.T) {
 	}
 }
 
+func TestClientRetriesSafe503WithTransientNotice(t *testing.T) {
+	oldBaseDelay := apiTransientRetryBaseDelay
+	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
+	apiTransientRetryBaseDelay = 0
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/conversations" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if calls < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"detail":"AWID registry unavailable"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	stderr := captureStderrForTest(t, func() {
+		err = client.Get(context.Background(), "/v1/conversations", &out)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("calls=%d want 3", calls)
+	}
+	for _, want := range []string{"service temporarily unavailable, retrying 1/3", "service temporarily unavailable, retrying 2/3"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestClientRetriesIdempotentSend503(t *testing.T) {
+	oldBaseDelay := apiTransientRetryBaseDelay
+	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
+	apiTransientRetryBaseDelay = 0
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["message_id"] != "msg-retry" {
+			t.Fatalf("message_id=%v", body["message_id"])
+		}
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"detail":"upstream busy"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SendMessageResponse{MessageID: "msg-retry", Status: "sent"})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out SendMessageResponse
+	stderr := captureStderrForTest(t, func() {
+		err = client.Post(context.Background(), "/v1/messages", map[string]any{"message_id": "msg-retry", "body": "hello"}, &out)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want 2", calls)
+	}
+	if out.MessageID != "msg-retry" || !strings.Contains(stderr, "retrying 1/3") {
+		t.Fatalf("out=%+v stderr=%q", out, stderr)
+	}
+}
+
+func TestClientDoesNotRetryUnsafeGeneric503(t *testing.T) {
+	oldBaseDelay := apiTransientRetryBaseDelay
+	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
+	apiTransientRetryBaseDelay = 0
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"detail":"upstream busy"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderrForTest(t, func() {
+		err = client.Post(context.Background(), "/v1/tasks", map[string]any{"status": "done"}, nil)
+	})
+	if err == nil {
+		t.Fatal("expected APIError")
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d want 1", calls)
+	}
+	if strings.Contains(stderr, "retrying") {
+		t.Fatalf("unsafe generic 503 should not retry; stderr=%q", stderr)
+	}
+}
+
+func TestClientRetriesUnsafeRegistryUnavailable503(t *testing.T) {
+	oldBaseDelay := apiTransientRetryBaseDelay
+	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
+	apiTransientRetryBaseDelay = 0
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"detail":"AWID registry unavailable"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	stderr := captureStderrForTest(t, func() {
+		err = client.Post(context.Background(), "/v1/tasks", map[string]any{"status": "done"}, &out)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !strings.Contains(stderr, "retrying 1/3") {
+		t.Fatalf("calls=%d stderr=%q", calls, stderr)
+	}
+}
+
+func TestTransient503ErrorUsesTemporarilyUnavailableMessage(t *testing.T) {
+	err := &APIError{StatusCode: http.StatusServiceUnavailable, Body: `{"detail":"AWID registry unavailable"}`}
+	if got := err.Error(); !strings.Contains(got, "service temporarily unavailable") || strings.Contains(got, "aweb: http 503:") {
+		t.Fatalf("error=%q", got)
+	}
+}
+
 func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	t.Setenv("AW_TRACE", "1")
 
