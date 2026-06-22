@@ -342,6 +342,11 @@ release-all-check:
 #    awid that unit/integration tests miss in isolation.
 #  - test-federation-e2e catches cross-server mail/chat federation
 #    regressions that single-server user journeys cannot see.
+#  - cli e2e (make -C cli e2e) runs the real-stack profile/team/Library net:
+#    awid + aweb + Library from source, seeded, driven by the real aw binary.
+#    It catches the materialize/team/Library regressions hermetic tests miss
+#    (the class of P0s that shipped on green-plus-ACK). Requires Docker and the
+#    sibling ../library + ../blueprints checkouts (see docs/e2e-library-stack.md).
 #
 # Banked discipline: releases 1.18.3 / 1.18.4 / 1.18.5 / 1.18.6 each
 # ran `make test` instead of the canonical comprehensive gate. Even
@@ -357,6 +362,9 @@ ship: release-all-check
 	@echo ""
 	@echo "=== Running e2e user journey ==="
 	$(MAKE) test-e2e
+	@echo ""
+	@echo "=== Running profile/team/Library e2e ==="
+	$(MAKE) -C cli e2e
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
