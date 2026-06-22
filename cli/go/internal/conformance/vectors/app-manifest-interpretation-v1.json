@@ -1354,6 +1354,35 @@
       "verb": "list-blueprints",
       "args": {},
       "expected_error_contains": "unsupported auth"
+    },
+    {
+      "name": "whitespace_auth_rejected",
+      "description": "A present-but-whitespace-only auth string is malformed; reject it as unsupported instead of trimming to empty and normalizing to signed team-cert.",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "library",
+          "version": "1.0.0",
+          "origin": "https://library.example"
+        },
+        "tools": [
+          {
+            "name": "list-blueprints",
+            "auth": "   ",
+            "method": "GET",
+            "path": "/v1/blueprints",
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "params": [],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "list-blueprints",
+      "args": {},
+      "expected_error_contains": "unsupported auth"
     }
   ]
 }
