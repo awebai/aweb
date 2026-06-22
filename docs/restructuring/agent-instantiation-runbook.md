@@ -133,11 +133,13 @@ the Enter-keystroke pattern in step 4 is the way, or file `/feedback` for a
 - **Non-deterministic start** — the dev-channel confirmation (above) until
   allowlisting.
 
-## For the coordinator profile
+## For the AR (agent resources) profile
 
-A coordinator agent must be able to run this entire sequence to staff its team.
-The profile's instructions/skills need: the exact commands (steps 1-5), the
-Enter-keystroke handling with read-before-send, the dead-ends so it does not
-waste time on `aw agent start`/`aw run`/`.mcp.json`, and mail-based coordination
-after start. This runbook is the source for that profile content and for a
-packaged skill.
+Staffing the team is the **AR (agent resources)** profile's job, not the
+coordinator's. The coordinator decides what work and who is needed; AR
+provisions, onboards, and runs the agents. So this runbook is the source for
+the **AR profile's core instantiation skill**: the exact commands (steps 1-5),
+the Enter-keystroke handling with read-before-send, the dead-ends so it does not
+waste time on `aw agent start`/`aw run`/`.mcp.json`, and mail-based onboarding
+after start. The coordinator profile only needs to know that it *requests*
+staffing from AR.
