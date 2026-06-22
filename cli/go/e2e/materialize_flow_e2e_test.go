@@ -24,39 +24,23 @@
 //     materialize` (the local compose, which shares the folded-scalar parsing);
 //   - .3.23 via `aw blueprint materialize` of a broken blueprint.
 //
-// Reaching Library at all needs the library plugin pointed at the stack origin.
-// The committed Library manifest hardcodes origin https://library.aweb.ai and
-// `aw plugin install` enforces origin/fetch-URL self-consistency, so a
-// self-hosted Library cannot be installed normally (filed as default-aabq.20).
-// installLibraryPluginFixture works around that for the test only by writing the
-// served manifest with its origin rewritten to the stack URL. When aabq.20 is
-// fixed (Library serves origin = its public origin), this fixture is deleted and
-// the test installs the manifest the real way.
+// Reaching Library needs the library plugin installed. The stack's Library
+// advertises its real origin (it serves the manifest origin from
+// LIBRARY_PUBLIC_ORIGIN - the aabq.20 Library-side fix), so a plain
+// `aw plugin install` passes the origin/fetch-URL self-consistency guard with
+// no fixture and no override. This is the real self-hosting path. The
+// --dev-origin escape hatch (for apps you cannot reconfigure) is covered by a
+// unit test (cmd/aw), not here.
 package e2e
 
 import (
 	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
-
-// httpGet fetches a URL and returns the body, failing the test on error.
-func httpGet(t *testing.T, url string) ([]byte, error) {
-	t.Helper()
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
-}
 
 // teamHome returns the HOME the throwaway team runs under (where its aw state,
 // including the library plugin, lives).
@@ -76,46 +60,17 @@ func teamHome(t *testing.T, tm *e2eTeam) string {
 	return home
 }
 
-// installLibraryPluginFixture makes the library app dispatch to the stack.
-//
-// FIXTURE for default-aabq.20: it fetches the manifest the stack actually
-// serves, rewrites app.origin to the stack URL (so dispatch and the install
-// self-consistency rule agree), and writes it straight into the plugin dir -
-// bypassing `aw plugin install`, which would reject the hardcoded production
-// origin. Delete this once aabq.20 lets Library serve a self-hosted origin.
-func installLibraryPluginFixture(t *testing.T, tm *e2eTeam) {
+// installLibraryPlugin installs the library app against the live stack with the
+// real `aw plugin install <manifest-url>` - no fixture, no override. The stack's
+// Library advertises its real origin (aabq.20 Library side), so the origin guard
+// passes. This is the proper self-hosting path.
+func installLibraryPlugin(t *testing.T, home string) {
 	t.Helper()
-	writeLibraryManifestFixture(t, teamHome(t, tm))
-}
-
-// writeLibraryManifestFixture writes the library plugin manifest into home,
-// with its origin rewritten to the stack URL. See installLibraryPluginFixture's
-// doc for the aabq.20 caveat this works around.
-func writeLibraryManifestFixture(t *testing.T, home string) {
-	t.Helper()
-	resp, err := httpGet(t, libraryURL()+"/aweb-app.json")
-	if err != nil {
-		t.Fatalf("fetch library manifest: %v", err)
-	}
-	var manifest map[string]any
-	if err := json.Unmarshal(resp, &manifest); err != nil {
-		t.Fatalf("decode library manifest: %v\n%s", err, resp)
-	}
-	app, ok := manifest["app"].(map[string]any)
-	if !ok {
-		t.Fatalf("library manifest has no app object: %s", resp)
-	}
-	app["origin"] = libraryURL()
-	rewritten, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("re-encode library manifest: %v", err)
-	}
-	dir := filepath.Join(home, ".aw", "plugins", "library")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir plugin dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), rewritten, 0o644); err != nil {
-		t.Fatalf("write plugin manifest: %v", err)
+	bin := awBinary(t)
+	cmd := exec.Command(bin, "plugin", "install", libraryURL()+"/.well-known/aweb-app.json")
+	cmd.Env = append(os.Environ(), "HOME="+home, "NO_COLOR=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("aw plugin install failed: %v\n%s", err, string(out))
 	}
 }
 
@@ -178,7 +133,7 @@ func realDir(t *testing.T, path string) string {
 func TestRealStackShelfAdoptIsIdempotent(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibraryPluginFixture(t, tm)
+	installLibraryPlugin(t, teamHome(t, tm))
 
 	first := tm.library(t, "import-to-shelf",
 		"--source_blueprint_ref", "aweb.engineering", "--profile_ref", "reviewer")
@@ -226,7 +181,7 @@ const reviewerMissionText = "Give independent, fresh-eyes review of a change bef
 func TestRealStackFoldedScalarMissionMaterializes(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibraryPluginFixture(t, tm)
+	installLibraryPlugin(t, teamHome(t, tm))
 
 	// Library round-trip: the served profile carries the folded mission intact.
 	profile := tm.library(t, "get-profile",
