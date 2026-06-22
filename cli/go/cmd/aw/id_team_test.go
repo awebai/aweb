@@ -1894,9 +1894,10 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
 		t.Fatal(err)
 	}
-	// A bare signing key alone is a PENDING accept and is reused on retry
-	// (TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey). What must
-	// not be clobbered is a COMPLETED identity, so add an identity.yaml.
+	// A bare signing key WITH the pending-accept marker is reused on retry
+	// (TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey); without the
+	// marker it is refused as stray (TestHostedTeamAcceptInviteRefusesStrayBareKey).
+	// What must not be clobbered is a COMPLETED identity, so add an identity.yaml.
 	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
 	if err := os.MkdirAll(filepath.Dir(identityPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -1913,6 +1914,40 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 		t.Fatalf("expected hosted accept-invite to refuse existing identity:\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "refusing to overwrite existing") || !strings.Contains(string(out), "identity.yaml") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestHostedTeamAcceptInviteRefusesStrayBareKey(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	// A bare signing key with no pending-accept marker is a stray leftover, not a
+	// genuine pending hosted accept (aabq.13 reuses pending keys for retry-safety;
+	// aabq.26 distinguishes the two via the marker). The accept must refuse it
+	// rather than silently adopt an unrelated key.
+	_, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_stray", "--alias", "bob")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected accept-invite to refuse a stray bare key:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "not a pending hosted accept") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

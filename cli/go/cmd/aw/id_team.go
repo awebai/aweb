@@ -1261,6 +1261,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 	if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, global); err != nil {
 		return nil, err
 	}
+	// Accept completed: clear the pending marker so the home is no longer in
+	// pending-accept state. (The completed-identity guard already protects it.)
+	_ = os.Remove(hostedAcceptPendingMarkerPath(workingDir))
 
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
@@ -1285,6 +1288,7 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 		return nil, nil, err
 	}
 	keyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	markerPath := hostedAcceptPendingMarkerPath(workingDir)
 	if _, err := os.Stat(keyPath); err == nil {
 		paths := []string{
 			filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
@@ -1298,13 +1302,22 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 				return nil, nil, err
 			}
 		}
+		// Only reuse the existing key if it is a genuine pending accept (marked
+		// when this flow generated it). A stray leftover key without the marker is
+		// refused rather than silently adopted.
+		if _, err := os.Stat(markerPath); err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil, usageError("refusing to reuse existing %s: not a pending hosted accept (no %s marker); remove it if it is stale", keyPath, filepath.Base(markerPath))
+			}
+			return nil, nil, err
+		}
 		signingKey, err := awid.LoadSigningKey(keyPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load pending hosted global invite signing key: %w", err)
+			return nil, nil, fmt.Errorf("load pending hosted accept signing key: %w", err)
 		}
 		pub, ok := signingKey.Public().(ed25519.PublicKey)
 		if !ok {
-			return nil, nil, fmt.Errorf("pending hosted global invite signing key has invalid public key")
+			return nil, nil, fmt.Errorf("pending hosted accept signing key has invalid public key")
 		}
 		return pub, signingKey, nil
 	} else if !os.IsNotExist(err) {
@@ -1318,9 +1331,19 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 		return nil, nil, err
 	}
 	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
-		return nil, nil, fmt.Errorf("save pending hosted global invite signing key: %w", err)
+		return nil, nil, fmt.Errorf("save pending hosted accept signing key: %w", err)
+	}
+	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
+		return nil, nil, fmt.Errorf("write pending hosted accept marker: %w", err)
 	}
 	return pub, signingKey, nil
+}
+
+// hostedAcceptPendingMarkerPath is the marker written next to the signing key
+// while a hosted accept is pending, so a retry reuses the key while a stray
+// leftover key (no marker) is refused.
+func hostedAcceptPendingMarkerPath(workingDir string) string {
+	return filepath.Join(filepath.Dir(awconfig.WorktreeSigningKeyPath(workingDir)), "pending-hosted-accept")
 }
 
 func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress string) (*awid.TeamCertificate, string, error) {
