@@ -425,6 +425,72 @@ func clientHasAgentAlias(ctx context.Context, c *aweb.Client, targetAlias string
 	return found, err
 }
 
+type liveTeamMemberAliasTarget struct {
+	Alias   string
+	Address string
+	DIDAW   string
+	DIDKey  string
+}
+
+func (t liveTeamMemberAliasTarget) identityTarget() (kind, value string) {
+	if strings.TrimSpace(t.DIDAW) != "" {
+		return "did", strings.TrimSpace(t.DIDAW)
+	}
+	if strings.TrimSpace(t.DIDKey) != "" {
+		return "did", strings.TrimSpace(t.DIDKey)
+	}
+	if strings.TrimSpace(t.Address) != "" {
+		return "address", strings.TrimSpace(t.Address)
+	}
+	return "", ""
+}
+
+func shouldTryLiveRosterAliasFallback(targetAlias string) bool {
+	targetAlias = strings.TrimSpace(targetAlias)
+	return targetAlias != "" && !strings.Contains(targetAlias, "/") && !strings.Contains(targetAlias, "~") && !strings.HasPrefix(targetAlias, "did:")
+}
+
+func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selection, targetAlias string) (liveTeamMemberAliasTarget, bool, error) {
+	targetAlias = strings.TrimSpace(targetAlias)
+	if sel == nil || strings.TrimSpace(sel.TeamID) == "" || !shouldTryLiveRosterAliasFallback(targetAlias) {
+		return liveTeamMemberAliasTarget{}, false, nil
+	}
+	domain, team, err := awid.ParseTeamID(strings.TrimSpace(sel.TeamID))
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
+	}
+	registryURL := ""
+	if state, stateErr := awconfig.LoadTeamState(sel.WorkingDir); stateErr == nil && state != nil {
+		if membership := state.Membership(sel.TeamID); membership != nil {
+			registryURL = registryURLForTeamMembersMembership(membership)
+		}
+	}
+	registryURL = firstNonEmpty(registryURL, strings.TrimSpace(sel.RegistryURL))
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return liveTeamMemberAliasTarget{}, false, err
+		}
+	}
+	member, err := registry.ResolveTeamMember(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, targetAlias)
+	if err != nil {
+		var registryErr *awid.RegistryError
+		if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound {
+			return liveTeamMemberAliasTarget{}, false, nil
+		}
+		return liveTeamMemberAliasTarget{}, false, err
+	}
+	return liveTeamMemberAliasTarget{
+		Alias:   strings.TrimSpace(member.Alias),
+		Address: strings.TrimSpace(member.MemberAddress),
+		DIDAW:   strings.TrimSpace(member.MemberDIDAW),
+		DIDKey:  strings.TrimSpace(member.MemberDIDKey),
+	}, true, nil
+}
+
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
