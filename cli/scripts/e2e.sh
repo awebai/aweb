@@ -43,17 +43,21 @@ teardown() {
 }
 trap teardown EXIT
 
-echo "=== Bring up + seed the stack ==="
-"$STACK" up
-"$STACK" seed
-
+# Build aw first and drive the seed with it, so the run never depends on an `aw`
+# already being on PATH (it is not in CI; on a dev box a stray one might be the
+# wrong version).
 echo "=== Build the aw binary ==="
 make -C "$CLI_DIR/go" build
+AW_BIN="$CLI_DIR/go/aw"
+
+echo "=== Bring up + seed the stack ==="
+"$STACK" up
+AW_BIN="$AW_BIN" "$STACK" seed
 
 echo "=== Run the real-stack Go e2e suite (AW_E2E=1, -tags e2e) ==="
 cd "$CLI_DIR/go"
 AW_E2E=1 \
-AW_BIN="$CLI_DIR/go/aw" \
+AW_BIN="$AW_BIN" \
 AWEB_URL="$AWEB_URL" \
 AWID_REGISTRY_URL="$AWID_URL" \
 LIBRARY_E2E_LIBRARY_URL="$LIBRARY_URL" \
