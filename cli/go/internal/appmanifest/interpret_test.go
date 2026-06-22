@@ -143,6 +143,13 @@ func TestValidateAuthNoneIsOptionalAndReadOnly(t *testing.T) {
 		t.Fatalf("Validate(unsupported auth) error = %v, want unsupported auth", err)
 	}
 
+	// A present-but-whitespace-only auth is malformed: rejected as unsupported,
+	// not trimmed to "" and normalized to team-cert (parity with AC; aabq.12).
+	manifest.Tools[0].Auth = "   "
+	if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), "unsupported auth") {
+		t.Fatalf("Validate(whitespace-only auth) error = %v, want unsupported auth", err)
+	}
+
 	manifest.Tools[0].Auth = ""
 	got, err = Interpret(InterpretRequest{Manifest: manifest, Verb: "list-blueprints"})
 	if err != nil {

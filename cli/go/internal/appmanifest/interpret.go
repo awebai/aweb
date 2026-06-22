@@ -105,10 +105,13 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 }
 
 func normalizeToolAuth(tool Tool) (string, error) {
-	auth := strings.TrimSpace(tool.Auth)
-	if auth == "" {
+	// Absent auth defaults to signed team-cert. A present-but-whitespace-only
+	// auth is malformed and rejected as unsupported (matching AC), rather than
+	// trimmed to "" and silently normalized to team-cert.
+	if tool.Auth == "" {
 		return "team-cert", nil
 	}
+	auth := strings.TrimSpace(tool.Auth)
 	if auth != "none" {
 		return "", fmt.Errorf("tool %q has unsupported auth %q", tool.Name, tool.Auth)
 	}
