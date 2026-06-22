@@ -56,6 +56,14 @@ coordination block), `CLAUDE.md` symlink, `.aw/` (identity + team-cert + the
 evolvable profile), the wake hook. Runtime is the explicit `--runtime` (never
 inferred from the profile).
 
+**Scope — local agents only.** `aw team add` defaults to `--local` (a
+team-scoped agent identity), which is exactly what staffing a team needs and is
+the boundary of this skill. Do **not** pass `--global`. Global,
+AWID-identity-backed agents (`aw team add --global`, or `aw id team add-member
+--global`) are a separate identity-level operation owned by the **AR** role via
+the `manage-team-identities` skill — not this one. Staffing creates local
+team members; minting global identities is a distinct, gated responsibility.
+
 ### 2. Remove the materialized `.mcp.json` — workaround
 
 ```bash
