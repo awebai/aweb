@@ -33,7 +33,10 @@ ACTION="${1:-all}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
-PROJECT="aweb-e2e-stack"
+# Per-worktree compose project name so concurrent runs from different checkouts
+# (e.g. an author and a reviewer worktree) never tear down each other's stack.
+# Stable for a given checkout, so up/seed/down within one run target one stack.
+PROJECT="${LIBRARY_E2E_PROJECT:-aweb-e2e-stack-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
 COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
 
 AWID_PORT="${LIBRARY_E2E_AWID_PORT:-18010}"

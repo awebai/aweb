@@ -231,8 +231,10 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 	for _, bp := range catalog {
 		if ref, _ := bp["blueprint_ref"].(string); ref == "aweb.engineering" {
 			found = true
-			if v, _ := bp["version"].(string); v != "0.2.3" {
-				t.Errorf("aweb.engineering version = %q, want 0.2.3", v)
+			// Assert it is versioned, not a specific version: the pack evolves
+			// (it has bumped 0.2.3 -> 0.2.4), so pinning a version is brittle.
+			if v, _ := bp["version"].(string); strings.TrimSpace(v) == "" {
+				t.Errorf("aweb.engineering has empty version")
 			}
 		}
 	}

@@ -124,6 +124,24 @@ The suite is **double-gated** so it never runs in the default `go test ./...`:
 per test), so tests are isolated and never touch the shared cli team; the
 temp dirs are cleaned up by `t.TempDir`.
 
+The suite covers:
+
+- **`real_stack_e2e_test.go`** — team-certificate auth reaches Library, and the
+  seeded `aweb.engineering` blueprint is visible in the public catalog.
+- **`materialize_flow_e2e_test.go`** — the tight regression net for the three
+  Library materialize bugs (shelf-adopt idempotency, folded-block-scalar mission
+  round-trip + materialize, and materialize-failure atomicity), driven through
+  the real binary against the real seeded Library.
+
+**Manifest fixture caveat.** Reaching Library through `aw` needs the library
+plugin pointed at the stack. The committed Library manifest hardcodes
+`origin: https://library.aweb.ai` and `aw plugin install` enforces origin/fetch
+self-consistency, so a self-hosted Library cannot be installed normally — filed
+as a self-hostability bug. The materialize suite works around this *for the test
+only* by writing the served manifest with its origin rewritten to the stack URL.
+When that bug is fixed (Library serves its own public origin), the fixture is
+deleted and the suite installs the manifest the real way.
+
 To iterate against an already-running stack without the up/down cycle:
 
 ```bash
@@ -149,4 +167,9 @@ make -C cli e2e-down                      # remove all state
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
 | `AW_BIN` | `aw` | aw binary used to drive the seed / Go suite |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |
+| `LIBRARY_E2E_PROJECT` | `aweb-e2e-stack-<hash>` | compose project name; defaults to a per-checkout value so concurrent runs don't collide |
 | `KEEP_UP` | (unset) | leave the stack up on success (`all` / `cli e2e`) |
+
+The compose project name is derived per-checkout (a hash of the repo path), so an
+author's run and a reviewer's run from different worktrees use separate stacks
+and never tear down each other's. Override with `LIBRARY_E2E_PROJECT` if needed.
