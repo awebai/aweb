@@ -202,6 +202,36 @@ func formatTeamList(v any) string {
 	return sb.String()
 }
 
+func formatTeamMembers(v any) string {
+	out := v.(teamMembersOutput)
+	if len(out.Members) == 0 {
+		return fmt.Sprintf("No members found for %s.\n", strings.TrimSpace(out.TeamID))
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Team: %s\n", strings.TrimSpace(out.TeamID)))
+	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ALIAS\tMEMBER\tDID\tIDENTITY\tISSUED\tREVOKED\tCERTIFICATE")
+	for _, item := range out.Members {
+		member := firstNonEmpty(item.MemberAddress, item.MemberDIDAW, item.MemberDIDKey, "-")
+		did := firstNonEmpty(item.MemberDIDAW, item.MemberDIDKey, "-")
+		identity := "-"
+		if strings.TrimSpace(item.IdentityScope) != "" {
+			identity = awid.NormalizeIdentityScope(item.IdentityScope)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			firstNonEmpty(item.Alias, "-"),
+			member,
+			did,
+			identity,
+			firstNonEmpty(item.IssuedAt, "-"),
+			firstNonEmpty(item.RevokedAt, "-"),
+			firstNonEmpty(item.CertificateID, "-"),
+		)
+	}
+	_ = tw.Flush()
+	return sb.String()
+}
+
 func formatTeamLeave(v any) string {
 	out := v.(teamLeaveOutput)
 	var sb strings.Builder

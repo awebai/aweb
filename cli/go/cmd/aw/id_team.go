@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,6 +63,23 @@ type teamRemoveMemberOutput struct {
 	Status        string `json:"status"`
 	TeamID        string `json:"team_id"`
 	MemberAddress string `json:"member_address"`
+}
+
+type teamMemberItem struct {
+	CertificateID string `json:"certificate_id"`
+	TeamID        string `json:"team_id"`
+	Alias         string `json:"alias"`
+	MemberAddress string `json:"member_address,omitempty"`
+	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	IdentityScope string `json:"identity_scope"`
+	IssuedAt      string `json:"issued_at"`
+	RevokedAt     string `json:"revoked_at,omitempty"`
+}
+
+type teamMembersOutput struct {
+	TeamID  string           `json:"team_id"`
+	Members []teamMemberItem `json:"members"`
 }
 
 type teamImportRequestOutput struct {
@@ -221,6 +239,12 @@ var (
 	teamRemoveMember      string
 	teamRemoveRegistryURL string
 
+	teamMembersTeam           string
+	teamMembersNamespace      string
+	teamMembersTeamID         string
+	teamMembersRegistryURL    string
+	teamMembersIncludeRevoked bool
+
 	teamImportRequestTeam           string
 	teamImportRequestNamespace      string
 	teamImportRequestOrganizationID string
@@ -339,6 +363,16 @@ var teamRemoveMemberCmd = &cobra.Command{
 	RunE:  runTeamRemoveMember,
 }
 
+var teamMembersCmd = &cobra.Command{
+	Use:   "members",
+	Short: "List a team's members from AWID certificates",
+	Long: "List a team's members from AWID certificates.\n\n" +
+		"Membership is represented by team certificates, so this identity-level\n" +
+		"command lists the certificate roster for the selected team. By default it\n" +
+		"shows active certificates; pass --include-revoked to include revoked rows.",
+	RunE: runTeamMembers,
+}
+
 var teamImportRequestCmd = &cobra.Command{
 	Use:   "import-request",
 	Short: "Protocol/admin: create a signed BYOT import request for aweb cloud",
@@ -441,6 +475,13 @@ func init() {
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveMember, "member", "", "Member address (e.g. acme.com/alice)")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamCmd.AddCommand(teamRemoveMemberCmd)
+
+	teamMembersCmd.Flags().StringVar(&teamMembersTeamID, "team-id", "", "Canonical team id (<team>:<namespace>); defaults to active team")
+	teamMembersCmd.Flags().StringVar(&teamMembersTeam, "team", "", "Team name; defaults to active team name")
+	teamMembersCmd.Flags().StringVar(&teamMembersNamespace, "namespace", "", "Namespace domain; defaults to active team namespace")
+	teamMembersCmd.Flags().StringVar(&teamMembersRegistryURL, "registry", "", "Registry origin override")
+	teamMembersCmd.Flags().BoolVar(&teamMembersIncludeRevoked, "include-revoked", false, "Include revoked membership certificates")
+	teamCmd.AddCommand(teamMembersCmd)
 
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTeam, "team", "", "Team name")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestNamespace, "namespace", "", "Namespace domain")
@@ -769,6 +810,130 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		Memberships: items,
 	}, formatTeamList)
 	return nil
+}
+
+func runTeamMembers(cmd *cobra.Command, args []string) error {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	domain, team, teamID, registryURL, err := resolveTeamMembersTarget(workingDir)
+	if err != nil {
+		return err
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(registryURL) != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid --registry: %w", err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	certs, err := registry.ListCertificates(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, !teamMembersIncludeRevoked)
+	if err != nil {
+		return fmt.Errorf("list team members for %s: %w", teamID, err)
+	}
+	items := make([]teamMemberItem, 0, len(certs))
+	for _, cert := range certs {
+		items = append(items, teamMemberItem{
+			CertificateID: strings.TrimSpace(cert.CertificateID),
+			TeamID:        strings.TrimSpace(cert.TeamID),
+			Alias:         strings.TrimSpace(cert.Alias),
+			MemberAddress: strings.TrimSpace(cert.MemberAddress),
+			MemberDIDKey:  strings.TrimSpace(cert.MemberDIDKey),
+			MemberDIDAW:   strings.TrimSpace(cert.MemberDIDAW),
+			IdentityScope: awid.NormalizeIdentityScope(cert.IdentityScope),
+			IssuedAt:      strings.TrimSpace(cert.IssuedAt),
+			RevokedAt:     strings.TrimSpace(cert.RevokedAt),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := strings.ToLower(firstNonEmpty(items[i].Alias, items[i].MemberAddress, items[i].MemberDIDAW, items[i].MemberDIDKey, items[i].CertificateID))
+		right := strings.ToLower(firstNonEmpty(items[j].Alias, items[j].MemberAddress, items[j].MemberDIDAW, items[j].MemberDIDKey, items[j].CertificateID))
+		return left < right
+	})
+	printOutput(teamMembersOutput{TeamID: teamID, Members: items}, formatTeamMembers)
+	return nil
+}
+
+func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registryURL string, err error) {
+	if strings.TrimSpace(teamMembersTeamID) != "" {
+		if strings.TrimSpace(teamMembersTeam) != "" || strings.TrimSpace(teamMembersNamespace) != "" {
+			return "", "", "", "", usageError("--team-id cannot be combined with --team or --namespace")
+		}
+		domain, team, err = awid.ParseTeamID(strings.TrimSpace(teamMembersTeamID))
+		if err != nil {
+			return "", "", "", "", err
+		}
+		teamID = awid.BuildTeamID(domain, team)
+		registryURL = strings.TrimSpace(teamMembersRegistryURL)
+		if registryURL == "" {
+			if state, stateErr := awconfig.LoadTeamState(workingDir); stateErr == nil && state != nil {
+				if membership := state.Membership(teamID); membership != nil {
+					registryURL = registryURLForTeamMembersMembership(membership)
+				}
+			}
+		}
+		return domain, team, teamID, registryURL, nil
+	}
+	team = strings.ToLower(strings.TrimSpace(teamMembersTeam))
+	domain = awconfig.NormalizeDomain(teamMembersNamespace)
+	var state *awconfig.TeamState
+	if team == "" || domain == "" || strings.TrimSpace(teamMembersRegistryURL) == "" {
+		if loaded, stateErr := awconfig.LoadTeamState(workingDir); stateErr == nil {
+			state = loaded
+		} else if team == "" || domain == "" {
+			return "", "", "", "", usageError("--team-id or both --team and --namespace are required when no active team can be inferred from this workspace: %v", stateErr)
+		}
+	}
+	if team == "" || domain == "" {
+		active := ""
+		if state != nil {
+			active = strings.TrimSpace(state.ActiveTeam)
+		}
+		activeDomain, activeTeam, parseErr := awid.ParseTeamID(active)
+		if parseErr != nil {
+			return "", "", "", "", fmt.Errorf("invalid active team %q: %w", active, parseErr)
+		}
+		if team == "" {
+			team = activeTeam
+		}
+		if domain == "" {
+			domain = activeDomain
+		}
+	}
+	if team == "" {
+		return "", "", "", "", usageError("--team is required")
+	}
+	if domain == "" {
+		return "", "", "", "", usageError("--namespace is required")
+	}
+	teamID = awid.BuildTeamID(domain, team)
+	registryURL = strings.TrimSpace(teamMembersRegistryURL)
+	if registryURL == "" && state != nil {
+		if membership := state.Membership(teamID); membership != nil {
+			registryURL = registryURLForTeamMembersMembership(membership)
+		}
+	}
+	return domain, team, teamID, registryURL, nil
+}
+
+func registryURLForTeamMembersMembership(membership *awconfig.TeamMembership) string {
+	if membership == nil {
+		return ""
+	}
+	if registryURL := strings.TrimSpace(membership.RegistryURL); registryURL != "" {
+		return registryURL
+	}
+	if awebURL := strings.TrimSpace(membership.AwebURL); awebURL != "" {
+		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
+			return strings.TrimSpace(discovered.RegistryURL)
+		}
+	}
+	return ""
 }
 
 func runTeamLeave(cmd *cobra.Command, args []string) error {

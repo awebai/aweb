@@ -72,6 +72,168 @@ func writeTeamInviteForTest(t *testing.T, home string, invite *awconfig.TeamInvi
 	}
 }
 
+func resetTeamMembersGlobals(t *testing.T) {
+	t.Helper()
+	oldTeamID := teamMembersTeamID
+	oldTeam := teamMembersTeam
+	oldNamespace := teamMembersNamespace
+	oldRegistry := teamMembersRegistryURL
+	oldIncludeRevoked := teamMembersIncludeRevoked
+	oldJSON := jsonFlag
+	t.Cleanup(func() {
+		teamMembersTeamID = oldTeamID
+		teamMembersTeam = oldTeam
+		teamMembersNamespace = oldNamespace
+		teamMembersRegistryURL = oldRegistry
+		teamMembersIncludeRevoked = oldIncludeRevoked
+		jsonFlag = oldJSON
+	})
+	teamMembersTeamID = ""
+	teamMembersTeam = ""
+	teamMembersNamespace = ""
+	teamMembersRegistryURL = ""
+	teamMembersIncludeRevoked = false
+	jsonFlag = false
+}
+
+func TestRunTeamMembersListsActiveCertificates(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	var sawActiveOnly string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		sawActiveOnly = r.URL.Query().Get("active_only")
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []map[string]any{{
+			"certificate_id": "cert-alice",
+			"team_id":        "backend:acme.com",
+			"member_did_key": "did:key:alice",
+			"member_address": "acme.com/alice",
+			"alias":          "alice",
+			"identity_scope": "global",
+			"issued_at":      "2026-06-22T00:00:00Z",
+		}}})
+	}))
+	defer server.Close()
+	teamMembersTeamID = "backend:acme.com"
+	teamMembersRegistryURL = server.URL
+
+	if err := runTeamMembers(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamMembers: %v", err)
+	}
+	if sawActiveOnly != "true" {
+		t.Fatalf("active_only=%q want true", sawActiveOnly)
+	}
+}
+
+func TestRunTeamMembersInfersActiveTeamAndCanIncludeRevoked(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		if got := r.URL.Query().Get("active_only"); got != "" {
+			t.Fatalf("active_only=%q want absent when including revoked", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []map[string]any{{
+			"certificate_id": "cert-bob",
+			"team_id":        "backend:acme.com",
+			"member_did_key": "did:key:bob",
+			"alias":          "bob",
+			"identity_scope": "local",
+			"issued_at":      "2026-06-22T00:00:00Z",
+			"revoked_at":     "2026-06-22T01:00:00Z",
+		}}})
+	}))
+	defer server.Close()
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "self",
+			CertPath:    "team-certs/backend_acme.com.json",
+			RegistryURL: server.URL,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	teamMembersIncludeRevoked = true
+
+	if err := runTeamMembers(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamMembers: %v", err)
+	}
+}
+
+func TestRunTeamMembersDiscoversRegistryFromHostedMembershipAwebURL(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates" {
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []map[string]any{{
+			"certificate_id": "cert-ada",
+			"team_id":        "backend:acme.com",
+			"member_did_key": "did:key:ada",
+			"alias":          "ada",
+			"identity_scope": "local",
+			"issued_at":      "2026-06-22T00:00:00Z",
+		}}})
+	}))
+	defer registryServer.Close()
+	awebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/discovery" {
+			t.Fatalf("unexpected discovery request %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"onboarding_url": awebServerURLForTest(r),
+			"aweb_url":       awebServerURLForTest(r),
+			"registry_url":   registryServer.URL,
+		})
+	}))
+	defer awebServer.Close()
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "backend:acme.com",
+			Alias:    "self",
+			CertPath: "team-certs/backend_acme.com.json",
+			AwebURL:  awebServer.URL + "/api",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runTeamMembers(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamMembers: %v", err)
+	}
+}
+
+func awebServerURLForTest(r *http.Request) string {
+	return "http://" + r.Host + "/api"
+}
+
+func TestFormatTeamMembersPrintsRosterColumns(t *testing.T) {
+	out := formatTeamMembers(teamMembersOutput{TeamID: "backend:acme.com", Members: []teamMemberItem{{
+		Alias:         "alice",
+		MemberAddress: "acme.com/alice",
+		MemberDIDKey:  "did:key:alice",
+		IdentityScope: "global",
+		IssuedAt:      "2026-06-22T00:00:00Z",
+		RevokedAt:     "-",
+	}}})
+	for _, want := range []string{"ALIAS", "MEMBER", "DID", "IDENTITY", "ISSUED", "REVOKED", "alice", "acme.com/alice", "did:key:alice", "global"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestTeamKeyLoadErrorHostedNamespacePointsToDashboard(t *testing.T) {
 	err := teamKeyLoadError("aweb:juan.aweb.ai", "juan.aweb.ai", errors.New("open missing: no such file or directory"))
 	got := err.Error()
