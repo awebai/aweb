@@ -1,5 +1,6 @@
 .PHONY: help clean test test-server test-awid test-cli test-channel test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
+	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
@@ -33,6 +34,8 @@ help:
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
+	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed the engineering pack, verify, tear down (requires Docker + ../library + ../blueprints)"
+	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
 	@echo "  awid-prod-verify    Print awid prod table row counts"
 	@echo "  awid-prod-dump      Dump awid prod data to /tmp (--column-inserts)"
@@ -104,6 +107,21 @@ awid-down:
 
 awid-logs:
 	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
+
+# ---- combined e2e stack: awid + aweb + Library, seeded ----------------------
+# Requires Docker and sibling ../library + ../blueprints checkouts.
+# See docs/e2e-library-stack.md.
+e2e-library-stack:
+	./scripts/e2e-library-stack.sh all
+
+e2e-library-stack-up:
+	./scripts/e2e-library-stack.sh up
+
+e2e-library-stack-seed:
+	./scripts/e2e-library-stack.sh seed
+
+e2e-library-stack-down:
+	./scripts/e2e-library-stack.sh down
 
 # ---- awid production DB lifecycle (Neon) ------------------------------------
 # All targets default to ./.env.awid-production. Override with ENV_FILE=...
