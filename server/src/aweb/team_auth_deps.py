@@ -20,6 +20,11 @@ from pgdbm import AsyncDatabaseManager
 from awid.signing import verify_did_key_signature
 from awid.team_ids import parse_team_id
 from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.config import get_settings
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
@@ -258,14 +263,17 @@ async def _resolve_team_key(request: Request, team_id: str) -> str:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client not configured")
+        raise awid_registry_not_configured_exception(operation="AWID team key resolution")
 
     try:
         key = await registry_client.get_team_public_key(domain, team_name)
         return key or ""
-    except Exception:
-        logger.warning("AWID registry unreachable for team key resolution: %s", team_id, exc_info=True)
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning("AWID registry dependency failed for team key resolution: %s", team_id, exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
+    except Exception as exc:
+        logger.exception("Unexpected AWID registry dependency error for team key resolution: %s", team_id)
+        raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
 
 
 async def _get_revoked_certificates(request: Request, team_id: str) -> set[str]:
@@ -280,10 +288,13 @@ async def _get_revoked_certificates(request: Request, team_id: str) -> set[str]:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry client not configured")
+        raise awid_registry_not_configured_exception(operation="AWID team revocation check")
 
     try:
         return await registry_client.get_team_revocations(domain, team_name)
-    except Exception:
-        logger.warning("AWID registry unreachable for revocation check: %s", team_id, exc_info=True)
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning("AWID registry dependency failed for revocation check: %s", team_id, exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
+    except Exception as exc:
+        logger.exception("Unexpected AWID registry dependency error for revocation check: %s", team_id)
+        raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc

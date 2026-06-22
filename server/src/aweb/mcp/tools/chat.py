@@ -9,6 +9,7 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
+from aweb.awid_error_handling import awid_dependency_error_detail
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -436,7 +437,7 @@ async def chat_send(
                     if await namespace_exists(db_infra, domain):
                         return json.dumps({"error": f"Recipient '{to_address}' not connected"})
                     if registry_client is None:
-                        return json.dumps({"error": "AWID registry unavailable"})
+                        return json.dumps({"error": "AWID MCP chat address lookup registry client not configured"})
                     return json.dumps({"error": f"Recipient address '{to_address}' not found"})
                 if (
                     registry_client is not None
@@ -679,8 +680,11 @@ async def chat_send(
                     recipient=remote_recipients[0],
                 )
             except Exception as exc:
-                detail = getattr(exc, "detail", None)
-                return json.dumps({"error": detail or str(exc)})
+                detail = getattr(exc, "detail", None) or awid_dependency_error_detail(
+                    exc,
+                    operation="AWID stored remote chat route resolution",
+                )
+                return json.dumps({"error": detail})
             recipient_rows[0] = {
                 **recipient_rows[0],
                 "external": True,

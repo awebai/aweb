@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.log import canonical_server_origin
 
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.e2ee_messages import encrypted_message_storage_metadata
@@ -130,8 +135,10 @@ async def _verify_sender_current_key(registry_client, envelope: FederationEnvelo
             and hasattr(registry_client, "resolve_key_fresh")
         ):
             resolution = await registry_client.resolve_key_fresh(envelope.sender_did_aw)
+    except AWID_DEPENDENCY_ERRORS as exc:
+        raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
     if not resolution or resolution.current_did_key != envelope.sender_current_did_key:
         raise HTTPException(status_code=422, detail="Federation sender current key mismatch")
 
@@ -151,8 +158,10 @@ async def _resolve_target_identity(
         resolved = await registry_client.resolve_address(domain, name)
     except HTTPException:
         raise
+    except AWID_DEPENDENCY_ERRORS as exc:
+        raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
     if resolved is None:
         raise HTTPException(status_code=404, detail="Federation target identity not found")
     if resolved.did_aw != envelope.target_did_aw:
@@ -526,7 +535,7 @@ async def receive_federated_message(
         raise HTTPException(status_code=422, detail="Federation endpoint accepts mail or chat")
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+        raise awid_registry_not_configured_exception(operation="AWID federation receive registry lookup")
 
     try:
         envelope = verify_federation_envelope(

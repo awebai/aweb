@@ -18,6 +18,11 @@ from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+    awid_registry_not_configured_exception,
+)
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
@@ -413,7 +418,7 @@ async def _resolve_remote_chat_route(
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+        raise awid_registry_not_configured_exception(operation="AWID remote chat route resolution")
     try:
         if "/" in address:
             domain, name = address.split("/", 1)
@@ -432,8 +437,12 @@ async def _resolve_remote_chat_route(
             )
     except HTTPException:
         raise
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning("AWID registry dependency failed for remote chat route resolution: %s", address, exc_info=True)
+        raise awid_dependency_http_exception(exc, operation="AWID remote chat route resolution") from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        logger.exception("Unexpected AWID registry dependency error for remote chat route resolution: %s", address)
+        raise awid_dependency_http_exception(exc, operation="AWID remote chat route resolution") from exc
     if resolution is None:
         raise HTTPException(status_code=404, detail=f"Recipient route not found: {address}")
     target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
@@ -888,7 +897,7 @@ async def _resolve_chat_targets(
             if await namespace_exists(db, domain):
                 raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
             if registry_client is None:
-                raise HTTPException(status_code=503, detail="AWID registry unavailable")
+                raise awid_registry_not_configured_exception(operation="AWID chat address target lookup")
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
         if registry_client is not None and requires_registry_address_binding(row):
             binding = _signed_payload_address_binding(

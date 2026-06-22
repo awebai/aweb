@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+
+import httpx
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -52,6 +54,11 @@ class _FakeRegistryClient:
 class _FailingRegistryClient:
     async def get_team(self, domain: str, name: str):
         raise RuntimeError(f"registry unavailable for {domain}/{name}")
+
+
+class _ConnectFailingRegistryClient:
+    async def get_team(self, domain: str, name: str):
+        raise httpx.ConnectError(f"connect failed for {domain}/{name}")
 
 
 class _FakeRedisPipeline:
@@ -988,6 +995,18 @@ async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_anonymous_request_reports_upstream_registry_connect_errors_as_503(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_ConnectFailingRegistryClient())
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/backend:acme.com/agents")
+
+    assert resp.status_code == 503
+    assert "AWID dashboard team visibility lookup upstream unavailable (ConnectError)" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
     await _seed(aweb_cloud_db.aweb_db)
@@ -1004,25 +1023,27 @@ async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_erro
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_fails_closed_when_registry_lookup_errors(aweb_cloud_db):
+async def test_anonymous_request_surfaces_unexpected_registry_lookup_errors(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
     await _seed(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/teams/backend:acme.com/agents")
 
-    assert resp.status_code == 503
+    assert resp.status_code == 500
+    assert "Unexpected AWID dashboard team visibility lookup dependency error (RuntimeError)" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_anonymous_request_returns_503_during_partial_init_without_registry_client(aweb_cloud_db):
+async def test_anonymous_request_returns_500_during_partial_init_without_registry_client(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
     await _seed(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/teams/backend:acme.com/agents")
 
-    assert resp.status_code == 503
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "AWID dashboard team visibility lookup registry client not configured"
 
 
 @pytest.mark.asyncio
