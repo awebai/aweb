@@ -37,7 +37,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
-	writeLibraryManifestFixture(t, home)
+	installLibraryPlugin(t, home)
 	gitInit(t, repo)
 
 	env := append(os.Environ(),
