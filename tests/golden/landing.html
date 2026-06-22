@@ -139,24 +139,72 @@
 
     <section class="section section--tint">
       <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">Why this exists</p>
-          <h2>AI agents are starting to do real work — as teams</h2>
-          <p>A coordinator that routes the work, a developer that writes the code, a reviewer that checks it. Each one needs a clear account of its job: its mission, its instructions, the tools it may use, and what needs a human's sign-off.</p>
+        <style>
+          .why-split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s6); align-items: start; }
+          .why-lead h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .why-need { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 32ch; }
+          .why-answer { color: var(--muted); margin-top: var(--s4); max-width: 42ch; }
+          .why-points { list-style: none; margin: var(--s3) 0 0; padding: 0; }
+          .why-points li { border-top: 2px solid var(--line-strong); padding: var(--s3) 0; }
+          .why-points li:first-child { border-top-color: var(--accent); }
+          .why-points li:last-child { padding-bottom: 0; }
+          .why-points strong { display: block; margin-bottom: 0.25rem; }
+          .why-points span { color: var(--muted); }
+          @media (max-width: 880px) { .why-split { grid-template-columns: 1fr; gap: var(--s5); } }
+        </style>
+        <div class="why-split">
+          <div class="why-lead">
+            <p class="kicker">Why this exists</p>
+            <h2>Agents need evolving job descriptions to work as a team</h2>
+            <p class="why-need">A coordinator routes the work, a developer writes the code, a reviewer checks it. Each role needs a clear, stable account of its job.</p>
+            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai">AWID</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
+          </div>
+          <div>
+            <p class="kicker" style="color:var(--faint)">What library gives you</p>
+            <ul class="why-points">
+              <li><strong>Proven profiles to start from</strong><span>A first-party catalog of high-quality profiles — coordinator, developer, reviewer — ready to adopt.</span></li>
+              <li><strong>Build and share your own</strong><span>Author a profile and publish it; any team can adopt it and build on it.</span></li>
+              <li><strong>Start shared, evolve private</strong><span>Adopt a profile onto your team's private shelf and evolve it there, under review.</span></li>
+            </ul>
+          </div>
         </div>
-        <p class="prose-intro">Today that account is usually a prompt pasted into a box — no versions, nothing shared between teams, no identity behind it, no record of what changed. That does not hold up once you are trusting agents with real work.</p>
-        <p class="prose-outro"><strong>aweb</strong> is the system that makes agent teams workable: it gives every agent and team a verifiable identity — an <a href="https://awid.ai">AWID</a>, a cryptographic passport instead of accounts and API keys — and a single command-line tool, <code>aw</code>, to drive it. <strong>library</strong> is the part of aweb that holds the agents' job descriptions. That is what this is.</p>
       </div>
     </section>
 
     <section class="section">
       <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">What it is</p>
-          <h2>A Native Agentic App</h2>
-          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a canonical manifest (a public byte artifact, identified by its digest) that turns its API into native <code>aw</code> verbs, can declare event emitters that wake subscribed agents, and ships agent-readable llms.txt and skills. The manifest is public; what is signed is each verb call, with your team certificate.</p>
-        </div>
-        <p class="prose-outro">In practice: you do not write an integration or click around a console. You install library into <code>aw</code> once (below), and from then on a person or an agent runs the same <code>aw library</code> commands. Because the manifest is machine-readable, an agent can discover and operate library with no custom code.</p>
+        <style>
+          .whatis-h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .whatis-lead { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 60ch; }
+          .whatis-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+          .whatis-grid li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); }
+          .whatis-grid .kicker { color: var(--muted); }
+          .whatis-grid p { margin-top: var(--s2); font-size: var(--step-0); }
+          .whatis-practice { margin-top: var(--s5); border-left: 2px solid var(--accent); padding-left: var(--s3); color: var(--muted); max-width: 72ch; }
+          @media (max-width: 720px) { .whatis-grid { grid-template-columns: 1fr; } }
+        </style>
+        <p class="kicker">What it is</p>
+        <h2 class="whatis-h2">A Native Agentic App</h2>
+        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the aweb protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
+        <ul class="whatis-grid">
+          <li>
+            <p class="kicker">CLI-native API</p>
+            <p>A public manifest maps library's whole API to <code>aw</code> commands. No integration to write, no SDK to wire up — you just run <code>aw library</code>.</p>
+          </li>
+          <li>
+            <p class="kicker">Events that wake agents</p>
+            <p>library emits events that wake subscribed agents automatically — a workflow that reacts to new content needs no polling loop.</p>
+          </li>
+          <li>
+            <p class="kicker">Ships agent docs</p>
+            <p>An <code>llms.txt</code> and a set of skills ship with library, so any agent that finds it gets readable docs and ready-to-run operations.</p>
+          </li>
+          <li>
+            <p class="kicker">Verified by identity</p>
+            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai">AWID</a> — auditable and tamper-evident.</p>
+          </li>
+        </ul>
+        <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw library</code> commands. Because the manifest is machine-readable, an agent discovers and operates library with no custom code.</p>
       </div>
     </section>
 
@@ -218,29 +266,47 @@
 
     <section class="section section--tint" id="engineers">
       <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">For engineers</p>
-          <h2>What's actually real</h2>
-          <p>No magic words — concrete, versioned, signed behavior you can reproduce.</p>
-        </div>
-        <div class="card-grid card-grid--auto">
-          <article class="card"><h3>Immutable versions</h3><p>Every profile version is identified by a content digest. Reference a digest and you get exactly that content — there is no "latest" pointer that silently moves.</p></article>
-          <article class="card"><h3>Signed, no accounts</h3><p>There are no app accounts or API keys. Every write is a request signed by your team's AWID identity, and the signer is recorded with each change.</p></article>
-          <article class="card"><h3>Per-part updates</h3><p>update-from-source merges a newer blueprint version part by part: it takes upstream changes only where you have not edited, and an existing version is never overwritten.</p></article>
-          <article class="card"><h3>Reproducible homes</h3><p>Materializing a profile by digest produces the same files every time — an agent's starting behavior is set by the profile, not by hidden state.</p></article>
-          <article class="card"><h3>Honest boundary</h3><p>library defines how agents behave. It does not run them, route messages, or manage compute — those are separate aweb concerns. v0 has no dashboard and emits no events.</p></article>
-        </div>
+        <style>
+          .eng-h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .eng-lede { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 52ch; }
+          .eng-specs { margin: var(--s5) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
+          .eng-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
+          .eng-specs > div:first-child { border-top-color: var(--accent); }
+          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .eng-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
+          .eng-scope { margin-top: var(--s5); color: var(--muted); font-size: var(--step--1); max-width: 70ch; }
+          .eng-scope .kicker { color: var(--faint); margin-right: 0.6rem; }
+          @media (max-width: 640px) { .eng-specs { grid-template-columns: 1fr; } }
+        </style>
+        <p class="kicker">For engineers</p>
+        <h2 class="eng-h2">Invariants</h2>
+        <p class="eng-lede">These four properties hold at every version, for every team.</p>
+        <dl class="eng-specs">
+          <div>
+            <dt>content-addressed</dt>
+            <dd>Every profile version is identified by its content digest. Reference a digest and you get exactly that content — no "latest" pointer that can silently move.</dd>
+          </div>
+          <div>
+            <dt>awid-signed</dt>
+            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai">AWID</a> identity, and the signer is recorded with each change.</dd>
+          </div>
+          <div>
+            <dt>non-destructive merge</dt>
+            <dd><code>update-from-source</code> takes upstream blueprint changes only where you haven't edited locally — an existing version is never overwritten.</dd>
+          </div>
+          <div>
+            <dt>byte-reproducible</dt>
+            <dd>Materializing a profile by digest produces the same files every time. Starting behavior is set by the profile, not by hidden runtime state.</dd>
+          </div>
+        </dl>
+        <p class="eng-scope"><span class="kicker">Scope</span>library defines how agents behave — it does not run agents, route messages, or manage compute. v0 has no dashboard and emits no events.</p>
       </div>
     </section>
 
     <section class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">The bigger bet</p>
-          <h2>Agent behavior as a first-class artifact</h2>
-          <p>Today an agent's behavior is a pasted prompt: unversioned, unshared, no identity, no audit. library treats it the way software treats code — authored, versioned, shared, reviewed, and signed. The public catalog compounds as teams adopt and improve profiles; an agent that proposes a good change contributes it back.</p>
-        </div>
-        <div class="cta-row">
+      <div class="wrap" style="text-align:center">
+        <p style="font-size:var(--step-2);font-weight:650;letter-spacing:-0.02em;max-width:24ch;margin:0 auto var(--s4)">Start from a proven profile, evolve it your way.</p>
+        <div class="cta-row" style="justify-content:center">
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/aweb-app.json">Read the manifest</a>
         </div>
@@ -330,6 +396,24 @@
       });
       document.addEventListener('click', function (e) { if (!sb.contains(e.target)) close(); });
     });
+    // Reference page: highlight the sidebar link for the operation in view.
+    var refOps = document.querySelectorAll('.ref-op[id]');
+    if (refOps.length && 'IntersectionObserver' in window) {
+      var refLinks = {};
+      Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a[href^="#"]'), function (a) {
+        refLinks[a.getAttribute('href').slice(1)] = a;
+      });
+      var refSpy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          var link = refLinks[e.target.id];
+          if (!link) return;
+          Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a.active'), function (a) { a.classList.remove('active'); });
+          link.classList.add('active');
+        });
+      }, { rootMargin: '-80px 0px -68% 0px' });
+      Array.prototype.forEach.call(refOps, function (op) { refSpy.observe(op); });
+    }
   </script>
 </body>
 </html>
