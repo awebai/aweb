@@ -151,6 +151,7 @@ the categories stable unless this document is updated.
 | `aw id namespace assign-address` / `delete-address` / `set-delivery-origin` / `rotate-controller` / `delete` | Protocol/admin primitives | Controller-holder operations. Keep documented in protocol/admin reference. |
 | `aw id team create` | Protocol/admin BYOT primitive; backing primitive for `aw team create --byot` | Creates AWID team with customer controller. Do not present as hosted default create-team. |
 | `aw id team add-member` / `remove-member` | Protocol/admin certificate primitives | Controller signs/revokes membership. Hosted users should normally use invite/dashboard flows. BYOT controller holders use these directly. |
+| `aw id team members` | Identity/certificate roster diagnostic | Lists a team's AWID membership certificates (active by default, `--include-revoked` for history). This belongs under `aw id team` because membership is identity/certificate state, not everyday workspace layout. |
 | `aw id team fetch-cert` | Protocol/admin/agent primitive bridge | Installs a cert minted elsewhere. Use in BYOT cross-machine and hosted add-existing-identity flows. |
 | `aw id team request` | Protocol/admin bridge primitive | Joiner prints the controller-side add-member command. Useful for BYOT; not the hosted invite happy path. |
 | `aw id team register` | Protocol/admin service projection primitive | Registers/syncs customer-controlled AWID team with a service; does not initialize workspaces. |
