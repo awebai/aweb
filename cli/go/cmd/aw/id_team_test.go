@@ -1917,6 +1917,40 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	}
 }
 
+func TestHostedTeamAcceptInviteRefusesStrayBareKey(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	// A bare signing key with no pending-accept marker is a stray leftover, not a
+	// genuine pending hosted accept (aabq.13 reuses pending keys for retry-safety;
+	// aabq.26 distinguishes the two via the marker). The accept must refuse it
+	// rather than silently adopt an unrelated key.
+	_, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_stray", "--alias", "bob")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected accept-invite to refuse a stray bare key:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "not a pending hosted accept") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
 func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	t.Parallel()
 
