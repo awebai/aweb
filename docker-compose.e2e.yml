@@ -1,0 +1,131 @@
+# Combined local end-to-end stack: awid + aweb + Library on one network.
+#
+# Brings up, from source, the services the profile/team/Library flow exercises:
+#   postgres (tmpfs, ephemeral) + redis + awid + aweb + library
+#
+# awid and aweb build from this repo (context `.`). library builds from the
+# sibling ../library checkout; the engineering blueprint seeded into library
+# lives in the sibling ../blueprints checkout. Both sibling paths are
+# overridable via the *_CONTEXT env vars (see docs/e2e-library-stack.md).
+#
+# Rate limiting is disabled and DNS verification skipped (like folio's
+# docker-compose.e2e.yml) so a freshly created test team works offline.
+# Postgres data lives on tmpfs, so `down -v` leaves no state behind.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aweb
+      POSTGRES_PASSWORD: aweb
+      POSTGRES_DB: aweb
+    ports:
+      - "${LIBRARY_E2E_POSTGRES_PORT:-55432}:5432"
+    # Create the separate `library` database alongside `aweb` on first init.
+    # With tmpfs every `up` is a fresh init, so this always runs.
+    volumes:
+      - ./scripts/e2e/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aweb -d aweb"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  awid:
+    build:
+      context: .
+      dockerfile: awid/Dockerfile
+    environment:
+      AWID_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/aweb
+      AWID_REDIS_URL: redis://redis:6379/0
+      AWID_HOST: 0.0.0.0
+      AWID_PORT: 8010
+      AWID_DB_SCHEMA: awid
+      AWID_LOG_JSON: "false"
+      AWID_RATE_LIMIT_BACKEND: redis
+      AWID_RATE_LIMIT_DISABLED: "true"
+      AWID_SKIP_DNS_VERIFY: "1"
+    ports:
+      - "${LIBRARY_E2E_AWID_PORT:-18010}:8010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 2s
+      timeout: 5s
+      start_period: 5s
+      retries: 30
+
+  aweb:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      AWEB_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/aweb
+      AWEB_REDIS_URL: redis://redis:6379/0
+      AWEB_HOST: 0.0.0.0
+      AWEB_PORT: 8000
+      AWEB_PUBLIC_ORIGIN: ${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-http://127.0.0.1:18000}
+      APP_ENV: development
+      AWEB_LOG_JSON: "false"
+      AWID_REGISTRY_URL: http://awid:8010
+      AWID_PUBLIC_REGISTRY_URL: ${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-http://127.0.0.1:18010}
+    ports:
+      - "${LIBRARY_E2E_AWEB_PORT:-18000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      awid:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 2s
+      timeout: 5s
+      start_period: 5s
+      retries: 30
+
+  library:
+    build:
+      context: ${LIBRARY_E2E_LIBRARY_CONTEXT:-../library}
+      dockerfile: Dockerfile
+    environment:
+      LIBRARY_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
+      LIBRARY_AWID_REGISTRY_URL: http://awid:8010
+      # Clients sign the team-auth audience (aud) as scheme://host of the URL
+      # they POST to. The seed posts to this host:port, so the audience library
+      # enforces must match the seed's target origin exactly.
+      LIBRARY_PUBLIC_ORIGIN: ${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-http://127.0.0.1:18765}
+      LIBRARY_AUTH_CACHE_TTL_SECONDS: "2"
+      PORT: "8765"
+    ports:
+      - "${LIBRARY_E2E_LIBRARY_PORT:-18765}:8765"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      awid:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/health').status==200 else 1)"
+      interval: 2s
+      timeout: 5s
+      start_period: 5s
+      retries: 30
