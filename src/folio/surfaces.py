@@ -135,25 +135,6 @@ def render_landing_page(*, public_origin: str) -> str:
       </div>
     </section>
 
-    <section class="section" id="llms">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">For LLMs and agents</p>
-          <h2>Point your agent at one file</h2>
-          <p>llms.txt is the complete, plain-text guide to operating folio: what it is, how to install it in <code>aw</code>, how team-certificate auth works, every operation with its parameters, the events it emits, and the getting-started journey. An agent that reads it can drive folio end to end.</p>
-        </div>
-        <div class="cmd-panel">
-          <p class="cmd-label">Copy the URL, or grab the whole file</p>
-          <div class="cmd-list"><div class="cmd"><pre>{origin}/llms.txt</pre>{copy}</div></div>
-          <div class="cta-row">
-            <button class="btn primary" type="button" id="copy-llms" data-llms-url="/llms.txt">Copy llms.txt contents</button>
-            <a class="btn secondary" href="/llms.txt">Open llms.txt</a>
-            <a class="btn secondary" href="/reference">API reference</a>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section class="section section--tint">
       <div class="wrap">
         <div class="section-head">
@@ -222,7 +203,7 @@ def render_landing_page(*, public_origin: str) -> str:
         </div>
       </div>
     </section>"""
-    return naapp.page(site, body, include_copy_llms=True)
+    return naapp.page(site, body)
 
 
 def render_reference_page(*, public_origin: str) -> str:
