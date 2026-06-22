@@ -9,11 +9,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/awebai/aw/awid"
+	"github.com/mr-tron/base58"
 	"gopkg.in/yaml.v3"
 )
 
@@ -621,11 +624,29 @@ func unsafeFileName(base string) bool {
 	return strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".crt") || strings.HasSuffix(base, ".p12")
 }
 
+var (
+	privateKeyPEMRe         = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
+	didKeyCandidateRe       = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
+	didAWCandidateRe        = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
+	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|password|team[_-]?certificate)(?:\b|["'])\s*[:=]\s*["']?[^\s"'<>][^\s"'<>]{3,}`)
+	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
+)
+
 func unsafeContent(s string) bool {
-	lower := strings.ToLower(s)
-	patterns := []string{"-----begin ", "private key", "did:key:", "did:aw:", "awid", "team_certificate", "x-awid-team-certificate", "api_key", "apikey", "access_token", "refresh_token", "secret_key", "password="}
-	for _, pattern := range patterns {
-		if strings.Contains(lower, pattern) {
+	if privateKeyPEMRe.MatchString(s) || credentialAssignmentRe.MatchString(s) || teamCertificateHeaderRe.MatchString(s) {
+		return true
+	}
+	for _, candidate := range didKeyCandidateRe.FindAllString(s, -1) {
+		if _, err := awid.ExtractPublicKey(candidate); err == nil {
+			return true
+		}
+	}
+	for _, match := range didAWCandidateRe.FindAllStringSubmatch(s, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		decoded, err := base58.Decode(match[1])
+		if err == nil && len(decoded) == 20 {
 			return true
 		}
 	}
