@@ -8,9 +8,11 @@ allowed-tools: "Bash(aw *), Bash(tmux *), Bash(claude *), Bash(rm *), Bash(mkdir
 
 Use this skill to turn a shipped blueprint profile into a **live teammate**:
 materialize its home, run it on the aweb channel, and hand it work over mail.
-This is the **mechanics** layer. The **AR (agent resources)** role decides
-*when* to staff, *who*, and *how to onboard*; that judgment lives in the AR
-profile. This skill is the *how*.
+This is the **mechanics** layer. The role using this skill supplies the staffing
+*judgment* — when to staff, who, and how to onboard. The **coordinator** uses it
+for local, no-AWID agents; the **AR (agent resources)** role uses it for the same
+local mechanics and additionally owns global, identity-bearing staffing through
+`manage-team-identities`. This skill is the *how*.
 
 For team coordination (tasks, work discovery, locks) load `aweb-coordination`;
 for mail/chat policy load `aweb-messaging`. This skill assumes those and covers
@@ -55,6 +57,14 @@ Produces a working home: `AGENTS.md` (profile body + the injected aweb
 coordination block), `CLAUDE.md` symlink, `.aw/` (identity + team-cert + the
 evolvable profile), the wake hook. Runtime is the explicit `--runtime` (never
 inferred from the profile).
+
+**Scope — local agents only.** `aw team add` defaults to `--local` (a
+team-scoped agent identity), which is exactly what staffing a team needs and is
+the boundary of this skill. Do **not** pass `--global`. Global,
+AWID-identity-backed agents (`aw team add --global`, or `aw id team add-member
+--global`) are a separate identity-level operation owned by the **AR** role via
+the `manage-team-identities` skill — not this one. Staffing creates local
+team members; minting global identities is a distinct, gated responsibility.
 
 ### 2. Remove the materialized `.mcp.json` — workaround
 

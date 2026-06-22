@@ -553,6 +553,7 @@ Subcommands:
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
+- `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
@@ -738,6 +739,24 @@ List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
+
+## `id team members`
+
+### `id team members`
+
+List a team's members from AWID certificates.
+
+Membership is represented by team certificates, so this identity-level
+command lists the certificate roster for the selected team. By default it
+shows active certificates; pass --include-revoked to include revoked rows.
+
+Flags:
+- `-h, --help help for members`
+- `--include-revoked Include revoked membership certificates`
+- `--namespace string Namespace domain; defaults to active team namespace`
+- `--registry string Registry origin override`
+- `--team string Team name; defaults to active team name`
+- `--team-id string Canonical team id (<team>:<namespace>); defaults to active team`
 
 ## `id team register`
 
