@@ -1108,7 +1108,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 	lifetime := awid.LifetimePersistent
 	if invite.Ephemeral {
 		if strings.TrimSpace(addressOverride) != "" {
-			return nil, usageError("--address is only valid for global invites")
+			return nil, usageError("--address is only valid for persistent/global team invites")
 		}
 		lifetime = awid.LifetimeEphemeral
 	}
@@ -1926,6 +1926,9 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 	var out hostedTeamRemoveMemberResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode hosted remove-member response: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(out.Status), "not_found") {
+		out.Status = "already_removed"
 	}
 	return &out, nil
 }
