@@ -49,24 +49,24 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout aweb
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: aweb
 
       - name: Checkout library
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: awebai/library
           path: library
 
       - name: Checkout blueprints
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: awebai/blueprints
           path: blueprints
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: aweb/cli/go/go.mod
           # The Go module lives at cli/go; point the build/module cache at its
@@ -74,7 +74,7 @@ jobs:
           cache-dependency-path: aweb/cli/go/go.sum
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -94,7 +94,7 @@ jobs:
       # for the base-image pulls inside the awid/aweb/library builds.
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-config-inline: |
             [registry."docker.io"]
@@ -106,7 +106,7 @@ jobs:
       # plain `run:` step - and our build runs inline via `make ... e2e` ->
       # compose bake. Export them so cache_to/cache_from: type=gha can configure.
       - name: Expose GitHub Actions runtime for the buildx GHA cache
-        uses: crazy-max/ghaction-github-runtime@v3
+        uses: crazy-max/ghaction-github-runtime@v4
 
       - name: Run CLI real-stack e2e
         working-directory: aweb
