@@ -38,6 +38,12 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 # Stable for a given checkout, so up/seed/down within one run target one stack.
 PROJECT="${LIBRARY_E2E_PROJECT:-aweb-e2e-stack-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
 COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
+# Optional overlay compose file, appended only when set. CI uses it to add the
+# buildx GHA layer-cache config (docker-compose.e2e.cache.yml); local runs leave
+# it unset and are unaffected.
+if [[ -n "${LIBRARY_E2E_COMPOSE_OVERLAY:-}" ]]; then
+  COMPOSE+=(-f "$LIBRARY_E2E_COMPOSE_OVERLAY")
+fi
 
 AWID_PORT="${LIBRARY_E2E_AWID_PORT:-18010}"
 AWEB_PORT="${LIBRARY_E2E_AWEB_PORT:-18000}"
