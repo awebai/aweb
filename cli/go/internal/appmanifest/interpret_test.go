@@ -1,6 +1,7 @@
 package appmanifest
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -175,5 +176,65 @@ func TestValidateRejectsUndeclaredSchemaPlacement(t *testing.T) {
 	}
 	if err := Validate(manifest, nil); err == nil || !strings.Contains(err.Error(), "ttl") {
 		t.Fatalf("Validate() error = %v, want missing ttl placement", err)
+	}
+}
+
+// Object and array body params arrive from the CLI as JSON strings (a flag value
+// is always a string); they must be decoded into the JSON body, not rejected.
+func TestInterpretObjectAndArrayBodyParamsAcceptJSONString(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "lib", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:   "propose",
+			Method: "POST",
+			Path:   "/v1/proposals",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"content": map[string]any{"type": "object"},
+				"files":   map[string]any{"type": "array"},
+			}},
+			Params: []Param{{Name: "content", In: "body"}, {Name: "files", In: "body"}},
+			Body:   Body{Mode: "json"},
+		}},
+	}
+	got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "propose", Args: map[string]any{
+		"content": `{"schema":"x","assets":[{"path":"a"}]}`,
+		"files":   `["a.md","b.md"]`,
+	}})
+	if err != nil {
+		t.Fatalf("Interpret() error = %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(got.Body, &body); err != nil {
+		t.Fatalf("interpreted body not JSON: %v\n%s", err, got.BodyString)
+	}
+	content, ok := body["content"].(map[string]any)
+	if !ok || content["schema"] != "x" {
+		t.Fatalf("object body param not decoded from JSON string: %#v", body["content"])
+	}
+	files, ok := body["files"].([]any)
+	if !ok || len(files) != 2 || files[0] != "a.md" {
+		t.Fatalf("array body param not decoded from JSON string: %#v", body["files"])
+	}
+}
+
+// A malformed JSON string for an object/array body param is a clear error, not a
+// silently-stringified body.
+func TestInterpretObjectBodyParamRejectsMalformedJSON(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "lib", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:        "propose",
+			Method:      "POST",
+			Path:        "/v1/proposals",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"content": map[string]any{"type": "object"}}},
+			Params:      []Param{{Name: "content", In: "body"}},
+			Body:        Body{Mode: "json"},
+		}},
+	}
+	_, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "propose", Args: map[string]any{"content": "not json"}})
+	if err == nil || !strings.Contains(err.Error(), "content") {
+		t.Fatalf("Interpret() error = %v, want a content body-param JSON error", err)
 	}
 }
