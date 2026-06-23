@@ -42,6 +42,19 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert 'href="/skills/"' in response.text
 
 
+def test_landing_brand_marks_and_nav_cleanup() -> None:
+    text = _client().get("/").text
+    # aweb / awid wordmarks carry the brand-mark — in the nav and in body copy.
+    assert '<a href="https://aweb.ai" class="brand-mark">aweb</a>' in text
+    assert '<a href="https://awid.ai" class="brand-mark">awid</a>' in text
+    assert '<span class="brand-mark">aweb</span>' in text
+    # Nav cleanup: the broken "Model" link is gone (no #model section to reach).
+    assert 'href="/#model"' not in text
+    # The open-source / MIT line is prominent in the hero, linking the repo.
+    assert "Open source, MIT-licensed" in text
+    assert "github.com/awebai/folio" in text
+
+
 def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     response = _client().get("/llms.txt")
 
