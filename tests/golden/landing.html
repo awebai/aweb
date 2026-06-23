@@ -22,11 +22,10 @@
     <div class="wrap">
       <a class="brand" href="/"><span class="dot"></span>library</a>
       <nav class="nav-links">
-        <a href="/#model">Model</a>
-        <a href="/llms.txt">llms.txt</a>
         <a href="/reference">Reference</a>
         <a href="/skills/">Skills</a>
-        <a href="https://awid.ai">AWID</a>
+        <a href="https://awid.ai" class="brand-mark">awid</a>
+        <a href="https://aweb.ai" class="brand-mark">aweb</a>
       </nav>
       <div class="header-right">
         <button class="theme-toggle" type="button" aria-label="Toggle dark mode" onclick="awebToggleTheme()">
@@ -34,7 +33,6 @@
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
         </button>
         <a class="gh-link" href="https://github.com/awebai/library" target="_blank" rel="noopener" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-1.93c-3.2.69-3.87-1.54-3.87-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.39-5.25 5.68.41.35.78 1.05.78 2.11v3.13c0 .3.21.66.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg></a>
-        <a class="btn secondary" href="https://aweb.ai">aweb.ai</a>
         <div class="split-btn" data-llms-url="/llms.txt">
           <button class="split-btn__main" type="button" data-llms-copy aria-label="Copy llms.txt to clipboard" title="The plain-text guide for LLMs and agents">
             <svg class="icon-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -135,6 +133,7 @@
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
+        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/library" style="color:var(--accent);font-weight:550">github.com/awebai/library</a></p>
       </div>
     </section>
 
@@ -158,7 +157,7 @@
             <p class="kicker">Why this exists</p>
             <h2>Agents need evolving job descriptions to work as a team</h2>
             <p class="why-need">A coordinator routes the work, a developer writes the code, a reviewer checks it. Each role needs a clear, stable account of its job.</p>
-            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai">AWID</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
+            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
           </div>
           <div>
             <p class="kicker" style="color:var(--faint)">What library gives you</p>
@@ -186,7 +185,7 @@
         </style>
         <p class="kicker">What it is</p>
         <h2 class="whatis-h2">A Native Agentic App</h2>
-        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the aweb protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
+        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the <span class="brand-mark">aweb</span> protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
         <ul class="whatis-grid">
           <li>
             <p class="kicker">CLI-native API</p>
@@ -202,7 +201,7 @@
           </li>
           <li>
             <p class="kicker">Verified by identity</p>
-            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai">AWID</a> — auditable and tamper-evident.</p>
+            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> — auditable and tamper-evident.</p>
           </li>
         </ul>
         <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw library</code> commands. Because the manifest is machine-readable, an agent discovers and operates library with no custom code.</p>
@@ -235,7 +234,7 @@
           <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; creating your team mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
-          <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
+          <p class="cmd-label">1 · Install aw, the <span class="brand-mark">aweb</span> command-line tool</p>
           <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">2 · Add the library naapp — its operations become native aw library verbs</p>
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install https://library.aweb.ai/.well-known/aweb-app.json</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
@@ -289,7 +288,7 @@
           </div>
           <div>
             <dt>awid-signed</dt>
-            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai">AWID</a> identity, and the signer is recorded with each change.</dd>
+            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity, and the signer is recorded with each change.</dd>
           </div>
           <div>
             <dt>non-destructive merge</dt>
@@ -319,7 +318,7 @@
       <div class="footer-cols">
         <div class="footer-brand">
           <a class="brand" href="/"><span class="dot"></span>library</a>
-          <p>Public blueprints and private team shelves for AWID teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
+          <p>Public blueprints and private team shelves for <span class="brand-mark">awid</span> teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
           <p class="footer-oss">Open source, MIT-licensed. <a href="https://github.com/awebai/library">View on GitHub &rarr;</a></p>
         </div>
         <div class="footer-col">
@@ -332,10 +331,10 @@
         <div class="footer-col">
           <h4>aweb</h4>
           <a href="https://aweb.ai">aweb.ai</a>
-          <a href="https://awid.ai">AWID</a>
+          <a href="https://awid.ai">awid</a>
         </div>
       </div>
-      <div class="footer-bottom">library is a Native Agentic App on the aweb.ai hub. AWID is the identity authority. Origin: https://library.aweb.ai</div>
+      <div class="footer-bottom">library is a Native Agentic App on the <span class="brand-mark">aweb</span>.ai hub. <span class="brand-mark">awid</span> is the identity authority. Origin: https://library.aweb.ai</div>
     </div>
   </footer>
   <script>

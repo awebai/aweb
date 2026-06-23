@@ -32,14 +32,13 @@ _CONTAINER_SKILLS_DIR = Path("/app/skills")
 # landing body and llms.txt prose.
 _VERB = "library"
 _NAV_LINKS = (
-    NavLink("Model", "/#model"),
-    NavLink("llms.txt", "/llms.txt"),
     NavLink("Reference", "/reference"),
     NavLink("Skills", "/skills/"),
-    NavLink("AWID", "https://awid.ai"),
+    NavLink("awid", "https://awid.ai"),
+    NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Public blueprints and private team shelves for AWID teams — "
+    "Public blueprints and private team shelves for <span class=\"brand-mark\">awid</span> teams — "
     "adopt, bind, materialize, and evolve your agents' profiles."
 )
 _FOOTER_COLUMNS = (
@@ -56,12 +55,12 @@ _FOOTER_COLUMNS = (
         "aweb",
         (
             NavLink("aweb.ai", "https://aweb.ai"),
-            NavLink("AWID", "https://awid.ai"),
+            NavLink("awid", "https://awid.ai"),
         ),
     ),
 )
 _FOOTER_BOTTOM = (
-    "library is a Native Agentic App on the aweb.ai hub. AWID is the identity authority."
+    'library is a Native Agentic App on the <span class="brand-mark">aweb</span>.ai hub. <span class="brand-mark">awid</span> is the identity authority.'
 )
 # library's domain values for the shared docs generators: live path-param values
 # that make the public catalog reads genuinely runnable, the public-reads phrase,
@@ -182,7 +181,7 @@ _WHY_SECTION = """    <section class="section section--tint">
             <p class="kicker">Why this exists</p>
             <h2>Agents need evolving job descriptions to work as a team</h2>
             <p class="why-need">A coordinator routes the work, a developer writes the code, a reviewer checks it. Each role needs a clear, stable account of its job.</p>
-            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai">AWID</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
+            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
           </div>
           <div>
             <p class="kicker" style="color:var(--faint)">What library gives you</p>
@@ -213,7 +212,7 @@ _WHATIS_SECTION = """    <section class="section">
         </style>
         <p class="kicker">What it is</p>
         <h2 class="whatis-h2">A Native Agentic App</h2>
-        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the aweb protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
+        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the <span class="brand-mark">aweb</span> protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
         <ul class="whatis-grid">
           <li>
             <p class="kicker">CLI-native API</p>
@@ -229,7 +228,7 @@ _WHATIS_SECTION = """    <section class="section">
           </li>
           <li>
             <p class="kicker">Verified by identity</p>
-            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai">AWID</a> — auditable and tamper-evident.</p>
+            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> — auditable and tamper-evident.</p>
           </li>
         </ul>
         <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw library</code> commands. Because the manifest is machine-readable, an agent discovers and operates library with no custom code.</p>
@@ -263,7 +262,7 @@ _ENGINEERS_SECTION = """    <section class="section section--tint" id="engineers
           </div>
           <div>
             <dt>awid-signed</dt>
-            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai">AWID</a> identity, and the signer is recorded with each change.</dd>
+            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity, and the signer is recorded with each change.</dd>
           </div>
           <div>
             <dt>non-destructive merge</dt>
@@ -289,6 +288,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_blurb=_FOOTER_BLURB,
         footer_columns=_FOOTER_COLUMNS,
         footer_bottom=_FOOTER_BOTTOM,
+        header_actions=(),
         source_url="https://github.com/awebai/library",
     )
 
@@ -324,6 +324,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
+        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/library" style="color:var(--accent);font-weight:550">github.com/awebai/library</a></p>
       </div>
     </section>
 
@@ -357,7 +358,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; creating your team mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
-          <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
+          <p class="cmd-label">1 · Install aw, the <span class="brand-mark">aweb</span> command-line tool</p>
           <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div></div>
           <p class="cmd-label">2 · Add the library naapp — its operations become native aw library verbs</p>
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>

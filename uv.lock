@@ -120,7 +120,7 @@ wheels = [
 [[package]]
 name = "aweb-naapp"
 version = "0.1.0"
-source = { git = "https://github.com/awebai/aweb-naapp.git?rev=3ab30fce92337cfa70aca43a592348c5de48ab02#3ab30fce92337cfa70aca43a592348c5de48ab02" }
+source = { git = "https://github.com/awebai/aweb-naapp.git?rev=6ca377c81e2900304132614aefc7eb016e007a67#6ca377c81e2900304132614aefc7eb016e007a67" }
 
 [[package]]
 name = "awid-service"
@@ -380,7 +380,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-naapp", git = "https://github.com/awebai/aweb-naapp.git?rev=3ab30fce92337cfa70aca43a592348c5de48ab02" },
+    { name = "aweb-naapp", git = "https://github.com/awebai/aweb-naapp.git?rev=6ca377c81e2900304132614aefc7eb016e007a67" },
     { name = "awid-service", git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=0de73deb73c133c7fb85ad3de3d5827616e19500" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "httpx", specifier = ">=0.28.1" },

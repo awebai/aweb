@@ -130,7 +130,10 @@ img { max-width: 100%; display: block; }
   border-bottom: 1px solid var(--line);
 }
 .site-header .wrap { display: flex; align-items: center; gap: var(--s4); padding-top: 0.85rem; padding-bottom: 0.85rem; }
-.brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 680; font-size: var(--step-1); letter-spacing: -0.02em; text-decoration: none; color: var(--ink); }
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; font: 600 var(--step-1)/1 var(--font-mono); letter-spacing: -0.01em; text-decoration: none; color: var(--ink); }
+/* aweb / awid wordmarks in body copy: the system monospace + the accent, so the
+   protocol and identity names read as the brand they are. */
+.brand-mark { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
 .brand .dot { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--accent); flex: none; }
 .nav-links { display: flex; gap: var(--s3); margin-left: var(--s2); }
 .nav-links a { color: var(--muted); text-decoration: none; font-size: var(--step--1); }
