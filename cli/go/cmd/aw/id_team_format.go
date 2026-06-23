@@ -71,7 +71,18 @@ func formatTeamRemoveMember(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
-	sb.WriteString(fmt.Sprintf("Member:      %s\n", out.MemberAddress))
+	if strings.TrimSpace(out.MemberAddress) != "" {
+		sb.WriteString(fmt.Sprintf("Member:      %s\n", out.MemberAddress))
+	}
+	if strings.TrimSpace(out.CertificateID) != "" {
+		sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertificateID))
+	}
+	if strings.TrimSpace(out.AgentID) != "" {
+		sb.WriteString(fmt.Sprintf("Agent:       %s\n", out.AgentID))
+	}
+	if strings.TrimSpace(out.WorkspaceID) != "" {
+		sb.WriteString(fmt.Sprintf("Workspace:   %s\n", out.WorkspaceID))
+	}
 	return sb.String()
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,7 +63,26 @@ type teamFetchCertOutput struct {
 type teamRemoveMemberOutput struct {
 	Status        string `json:"status"`
 	TeamID        string `json:"team_id"`
-	MemberAddress string `json:"member_address"`
+	MemberAddress string `json:"member_address,omitempty"`
+	CertificateID string `json:"certificate_id,omitempty"`
+	AgentID       string `json:"agent_id,omitempty"`
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+}
+
+type hostedTeamRemoveMemberRequest struct {
+	MemberAddress string `json:"member_address,omitempty"`
+	CertificateID string `json:"certificate_id,omitempty"`
+}
+
+type hostedTeamRemoveMemberResponse struct {
+	Status          string `json:"status"`
+	TeamID          string `json:"team_id,omitempty"`
+	CanonicalTeamID string `json:"canonical_team_id,omitempty"`
+	MemberAddress   string `json:"member_address,omitempty"`
+	CertificateID   string `json:"certificate_id,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
+	AuditID         string `json:"audit_id,omitempty"`
 }
 
 type teamMemberItem struct {
@@ -237,7 +257,9 @@ var (
 	teamRemoveTeam        string
 	teamRemoveNamespace   string
 	teamRemoveMember      string
+	teamRemoveCertID      string
 	teamRemoveRegistryURL string
+	teamRemoveAwebURL     string
 
 	teamMembersTeam           string
 	teamMembersNamespace      string
@@ -473,7 +495,9 @@ func init() {
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveTeam, "team", "", "Team name")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveNamespace, "namespace", "", "Namespace domain")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveMember, "member", "", "Member address (e.g. acme.com/alice)")
+	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveCertID, "cert-id", "", "Certificate id to revoke (hosted remove accepts --member or --cert-id)")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveRegistryURL, "registry", "", "Registry origin override")
+	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
 	teamCmd.AddCommand(teamRemoveMemberCmd)
 
 	teamMembersCmd.Flags().StringVar(&teamMembersTeamID, "team-id", "", "Canonical team id (<team>:<namespace>); defaults to active team")
@@ -1084,7 +1108,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 	lifetime := awid.LifetimePersistent
 	if invite.Ephemeral {
 		if strings.TrimSpace(addressOverride) != "" {
-			return nil, usageError("--address is only valid for global invites")
+			return nil, usageError("--address is only valid for persistent/global team invites")
 		}
 		lifetime = awid.LifetimeEphemeral
 	}
@@ -1732,17 +1756,24 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamRemoveTeam))
 	domain := awconfig.NormalizeDomain(teamRemoveNamespace)
 	member := strings.TrimSpace(teamRemoveMember)
+	certificateID := strings.TrimSpace(teamRemoveCertID)
 	if team == "" {
 		return usageError("--team is required")
 	}
 	if domain == "" {
 		return usageError("--namespace is required")
 	}
-	if member == "" {
-		return usageError("--member is required")
+	if member == "" && certificateID == "" {
+		return usageError("--member or --cert-id is required")
+	}
+	if member != "" && certificateID != "" {
+		return usageError("--member and --cert-id are mutually exclusive")
 	}
 
 	teamID := awid.BuildTeamID(domain, team)
+	if isAwebHostedNamespace(domain) {
+		return runHostedTeamRemoveMember(teamID, member, certificateID)
+	}
 
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
@@ -1770,16 +1801,19 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, memberName, err := parseAddress(member)
-	if err != nil {
-		return err
-	}
-	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
-	if err != nil {
-		return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
+	if certificateID == "" {
+		_, memberName, err := parseAddress(member)
+		if err != nil {
+			return err
+		}
+		memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
+		if err != nil {
+			return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
+		}
+		certificateID = strings.TrimSpace(memberRef.CertificateID)
 	}
 
-	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, memberRef.CertificateID, teamKey); err != nil {
+	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, certificateID, teamKey); err != nil {
 		return fmt.Errorf("revoke certificate: %w", err)
 	}
 
@@ -1787,8 +1821,120 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		Status:        "removed",
 		TeamID:        teamID,
 		MemberAddress: member,
+		CertificateID: certificateID,
 	}, formatTeamRemoveMember)
 	return nil
+}
+
+func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) error {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	awebURL, apiKey, err := resolveHostedTeamRemoveAuth(workingDir, teamID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := postHostedTeamRemoveMember(ctx, awebURL, apiKey, teamID, hostedTeamRemoveMemberRequest{
+		MemberAddress: strings.TrimSpace(memberAddress),
+		CertificateID: strings.TrimSpace(certificateID),
+	})
+	if err != nil {
+		return err
+	}
+	status := strings.TrimSpace(resp.Status)
+	if status == "" {
+		status = "removed"
+	}
+	printOutput(teamRemoveMemberOutput{
+		Status:        status,
+		TeamID:        firstNonEmpty(resp.CanonicalTeamID, resp.TeamID, teamID),
+		MemberAddress: firstNonEmpty(resp.MemberAddress, memberAddress),
+		CertificateID: firstNonEmpty(resp.CertificateID, certificateID),
+		AgentID:       strings.TrimSpace(resp.AgentID),
+		WorkspaceID:   strings.TrimSpace(resp.WorkspaceID),
+	}, formatTeamRemoveMember)
+	return nil
+}
+
+func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey string, err error) {
+	awebURL = strings.TrimSpace(teamRemoveAwebURL)
+	apiKey = strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
+	workspace, teamState, _, loadErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	if loadErr == nil && workspace != nil {
+		if awebURL == "" {
+			awebURL = strings.TrimSpace(workspace.AwebURL)
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(workspace.APIKey)
+		}
+		if teamState != nil {
+			if membership := teamState.Membership(teamID); membership != nil {
+				if awebURL == "" {
+					awebURL = strings.TrimSpace(membership.AwebURL)
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(awebURL) == "" {
+		if loadErr != nil {
+			return "", "", usageError("hosted remove for %s requires --aweb-url or a workspace with aweb_url: %v", teamID, loadErr)
+		}
+		return "", "", usageError("hosted remove for %s requires --aweb-url or a workspace with aweb_url", teamID)
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		return "", "", usageError("hosted remove for %s requires a workspace api_key or %s", teamID, initAPIKeyEnvVar)
+	}
+	return awebURL, apiKey, nil
+}
+
+func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID string, payload hostedTeamRemoveMemberRequest) (*hostedTeamRemoveMemberResponse, error) {
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	path := "/api/v1/teams/" + urlPathSegmentEscape(teamID) + "/agents/remove-member"
+	base := strings.TrimRight(strings.TrimSpace(awebURL), "/")
+	if strings.HasSuffix(base, "/api") {
+		path = strings.TrimPrefix(path, "/api")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var detail struct {
+			Detail any `json:"detail"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		if detail.Detail != nil {
+			encoded, _ := json.Marshal(detail.Detail)
+			return nil, fmt.Errorf("hosted remove-member returned %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
+		}
+		return nil, fmt.Errorf("hosted remove-member returned %d", resp.StatusCode)
+	}
+	var out hostedTeamRemoveMemberResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode hosted remove-member response: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(out.Status), "not_found") {
+		out.Status = "already_removed"
+	}
+	return &out, nil
+}
+
+func urlPathSegmentEscape(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(strings.TrimSpace(value)), "+", "%20")
 }
 
 func runTeamImportRequest(cmd *cobra.Command, args []string) error {

@@ -234,6 +234,228 @@ func TestFormatTeamMembersPrintsRosterColumns(t *testing.T) {
 	}
 }
 
+func resetTeamRemoveMemberGlobals(t *testing.T) {
+	t.Helper()
+	oldTeam := teamRemoveTeam
+	oldNamespace := teamRemoveNamespace
+	oldMember := teamRemoveMember
+	oldCertID := teamRemoveCertID
+	oldRegistry := teamRemoveRegistryURL
+	oldAwebURL := teamRemoveAwebURL
+	oldJSON := jsonFlag
+	t.Cleanup(func() {
+		teamRemoveTeam = oldTeam
+		teamRemoveNamespace = oldNamespace
+		teamRemoveMember = oldMember
+		teamRemoveCertID = oldCertID
+		teamRemoveRegistryURL = oldRegistry
+		teamRemoveAwebURL = oldAwebURL
+		jsonFlag = oldJSON
+	})
+	teamRemoveTeam = ""
+	teamRemoveNamespace = ""
+	teamRemoveMember = ""
+	teamRemoveCertID = ""
+	teamRemoveRegistryURL = ""
+	teamRemoveAwebURL = ""
+	jsonFlag = false
+}
+
+func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddress(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	var gotBody map[string]any
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":            "removed",
+			"canonical_team_id": "default:alice.aweb.ai",
+			"member_address":    "alice.aweb.ai/reviewer",
+			"certificate_id":    "cert-123",
+			"agent_id":          "agent-123",
+			"workspace_id":      "workspace-123",
+		})
+	}))
+	defer server.Close()
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "default:alice.aweb.ai",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "default:alice.aweb.ai",
+			Alias:    "owner",
+			CertPath: "team-certs/default__alice.aweb.ai.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(root, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		AwebURL: server.URL + "/api",
+		APIKey:  "aw_sk_owner",
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:   "default:alice.aweb.ai",
+			Alias:    "owner",
+			CertPath: "team-certs/default__alice.aweb.ai.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	teamRemoveTeam = "default"
+	teamRemoveNamespace = "alice.aweb.ai"
+	teamRemoveMember = "alice.aweb.ai/reviewer"
+
+	if err := runTeamRemoveMember(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamRemoveMember: %v", err)
+	}
+	if gotAuth != "Bearer aw_sk_owner" {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
+	if gotBody["member_address"] != "alice.aweb.ai/reviewer" || gotBody["certificate_id"] != nil {
+		t.Fatalf("body=%#v", gotBody)
+	}
+}
+
+func TestRunTeamRemoveMemberHostedPostsCloudRevokeByCertificateID(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer aw_sk_env" {
+			t.Fatalf("Authorization=%q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "removed", "certificate_id": "cert-456"})
+	}))
+	defer server.Close()
+	teamRemoveTeam = "default"
+	teamRemoveNamespace = "alice.aweb.ai"
+	teamRemoveCertID = "cert-456"
+	teamRemoveAwebURL = server.URL
+
+	if err := runTeamRemoveMember(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamRemoveMember: %v", err)
+	}
+	if gotBody["certificate_id"] != "cert-456" || gotBody["member_address"] != nil {
+		t.Fatalf("body=%#v", gotBody)
+	}
+}
+
+func TestPostHostedTeamRemoveMemberMapsNotFoundStatusIn2xxResponseToAlreadyRemoved(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "not_found", "team_id": "default:alice.aweb.ai", "certificate_id": "cert-456"})
+	}))
+	defer server.Close()
+
+	resp, err := postHostedTeamRemoveMember(context.Background(), server.URL, "aw_sk_owner", "default:alice.aweb.ai", hostedTeamRemoveMemberRequest{CertificateID: "cert-456"})
+	if err != nil {
+		t.Fatalf("postHostedTeamRemoveMember: %v", err)
+	}
+	if resp.Status != "already_removed" || resp.TeamID != "default:alice.aweb.ai" || resp.CertificateID != "cert-456" {
+		t.Fatalf("response=%+v", resp)
+	}
+}
+
+func TestPostHostedTeamRemoveMemberTreatsHTTP404AsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("404 page not found"))
+	}))
+	defer server.Close()
+
+	_, err := postHostedTeamRemoveMember(context.Background(), server.URL, "aw_sk_owner", "default:alice.aweb.ai", hostedTeamRemoveMemberRequest{CertificateID: "cert-456"})
+	if err == nil || !strings.Contains(err.Error(), "hosted remove-member returned 404") {
+		t.Fatalf("error=%v, want hosted remove-member returned 404", err)
+	}
+}
+
+func TestPostHostedTeamRemoveMemberSurfacesNon2xxErrors(t *testing.T) {
+	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity, http.StatusConflict, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(statusCode), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(statusCode)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{"code": "expected_error"}})
+			}))
+			defer server.Close()
+
+			_, err := postHostedTeamRemoveMember(context.Background(), server.URL, "aw_sk_owner", "default:alice.aweb.ai", hostedTeamRemoveMemberRequest{CertificateID: "cert-456"})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("hosted remove-member returned %d", statusCode)) {
+				t.Fatalf("error=%v, want hosted remove-member returned %d", err, statusCode)
+			}
+		})
+	}
+}
+
+func TestRunTeamRemoveMemberLocalCanRevokeByCertificateID(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("HOME", root)
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, root, "acme.com", "backend", teamKey)
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates/revoke" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+			t.Fatalf("missing Authorization header")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"revoked": true})
+	}))
+	defer server.Close()
+	teamRemoveTeam = "backend"
+	teamRemoveNamespace = "acme.com"
+	teamRemoveCertID = "cert-local"
+	teamRemoveRegistryURL = server.URL
+
+	if err := runTeamRemoveMember(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamRemoveMember: %v", err)
+	}
+	if gotBody["certificate_id"] != "cert-local" {
+		t.Fatalf("body=%#v", gotBody)
+	}
+}
+
+func TestRunTeamRemoveMemberHostedRequiresAPIKey(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	teamRemoveTeam = "default"
+	teamRemoveNamespace = "alice.aweb.ai"
+	teamRemoveMember = "alice.aweb.ai/reviewer"
+	teamRemoveAwebURL = "https://app.aweb.ai/api"
+
+	err := runTeamRemoveMember(&cobra.Command{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "requires a workspace api_key") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTeamKeyLoadErrorHostedNamespacePointsToDashboard(t *testing.T) {
 	err := teamKeyLoadError("aweb:juan.aweb.ai", "juan.aweb.ai", errors.New("open missing: no such file or directory"))
 	got := err.Error()
@@ -2107,7 +2329,7 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
 	}
-	if !strings.Contains(string(acceptOut), "--address is only valid for global invites") {
+	if !strings.Contains(string(acceptOut), "--address is only valid for persistent/global team invites") {
 		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
