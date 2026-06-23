@@ -1314,25 +1314,28 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	keyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	markerPath := hostedAcceptPendingMarkerPath(workingDir)
 	if _, err := os.Stat(keyPath); err == nil {
-		paths := []string{
+		completedPaths := []string{
 			filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-			awconfig.TeamCertificatesDir(workingDir),
 			filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
 		}
-		for _, path := range paths {
+		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
 				return nil, nil, usageError("refusing to overwrite existing %s", path)
 			} else if !os.IsNotExist(err) {
 				return nil, nil, err
 			}
 		}
-		// Only reuse the existing key if it is a genuine pending accept (marked
-		// when this flow generated it). A stray leftover key without the marker is
-		// refused rather than silently adopted.
-		if _, err := os.Stat(markerPath); err != nil {
-			if os.IsNotExist(err) {
-				return nil, nil, usageError("refusing to reuse existing %s: not a pending hosted accept (no %s marker); remove it if it is stale", keyPath, filepath.Base(markerPath))
-			}
+		markerErr := statHostedAcceptPendingMarker(markerPath, keyPath)
+		if markerErr != nil {
+			return nil, nil, markerErr
+		}
+		certsPath := awconfig.TeamCertificatesDir(workingDir)
+		if _, err := os.Stat(certsPath); err == nil {
+			// A previous hosted accept can fail after writing the certificate but
+			// before writing identity.yaml. The pending marker proves this is the
+			// same in-flight hosted accept, so retry with the saved key instead of
+			// trapping the user in key+cert+no-identity partial state.
+		} else if !os.IsNotExist(err) {
 			return nil, nil, err
 		}
 		signingKey, err := awid.LoadSigningKey(keyPath)
@@ -1466,9 +1469,33 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	return nil
 }
 
+func statHostedAcceptPendingMarker(markerPath, keyPath string) error {
+	if _, err := os.Stat(markerPath); err != nil {
+		if os.IsNotExist(err) {
+			return usageError(
+				"refusing to reuse existing %s: not a pending hosted accept (no %s marker); remove it if it is stale. If this directory has .aw/team-certs but no .aw/identity.yaml after a failed hosted global accept, rerun the same accept-invite command only when the marker is present; otherwise back up/remove the partial .aw/signing.key and .aw/team-certs state before retrying",
+				keyPath,
+				filepath.Base(markerPath),
+			)
+		}
+		return err
+	}
+	return nil
+}
+
 func isAwebHostedNamespace(domain string) bool {
 	normalized := awconfig.NormalizeDomain(domain)
-	return normalized == "aweb.ai" || strings.HasSuffix(normalized, ".aweb.ai")
+	// Hosted team authority is reserved for the exact aweb.ai zone and valid
+	// DNS-label subdomains below it. The leading dot in the suffix is the
+	// boundary; lookalikes such as evil-aweb.ai or aweb.ai.example.com must not
+	// route to hosted cloud signing.
+	if normalized == "aweb.ai" {
+		return true
+	}
+	if strings.HasPrefix(normalized, ".") || strings.Contains(normalized, "..") {
+		return false
+	}
+	return strings.HasSuffix(normalized, ".aweb.ai")
 }
 
 func teamKeyLoadError(teamID, domain string, err error) error {
@@ -1868,6 +1895,9 @@ func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey str
 			awebURL = strings.TrimSpace(workspace.AwebURL)
 		}
 		if apiKey == "" {
+			// Existing CLI workspaces persist the team-scoped admin API key in
+			// workspace.yaml. Prefer AWEB_API_KEY when present, but keep this fallback
+			// for non-interactive hosted member-removal from initialized workspaces.
 			apiKey = strings.TrimSpace(workspace.APIKey)
 		}
 		if teamState != nil {
@@ -2217,7 +2247,7 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newTeamCloudHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -2239,6 +2269,10 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		}
 	}
 	return nil
+}
+
+func newTeamCloudHTTPClient() *http.Client {
+	return &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
 }
 
 func verifyTeamRegisterLocalKey(ctx context.Context, teamKey ed25519.PrivateKey, domain, teamName, registryURL string) error {
@@ -2438,7 +2472,7 @@ func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]a
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newTeamCloudHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
