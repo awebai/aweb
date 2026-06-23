@@ -627,17 +627,21 @@ func unsafeFileName(base string) bool {
 }
 
 var (
-	privateKeyPEMRe         = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
-	didKeyCandidateRe       = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
-	didAWCandidateRe        = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
-	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?([^\s"'<>]{4,})`)
+	privateKeyPEMRe        = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
+	didKeyCandidateRe      = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
+	didAWCandidateRe       = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
+	credentialAssignmentRe = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?([^\s"'<>]{4,})`)
+	// A credential key opening a YAML block scalar (key: | or key: >, with optional
+	// indent/chomp modifiers and a trailing comment). The value is on the indented
+	// lines that follow; hasBlockScalarCredentialAssignment walks those lines.
+	blockScalarHeaderRe     = regexp.MustCompile(`(?i)^[ \t]*["']?(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)["']?[ \t]*[:=][ \t]*[|>][0-9+-]*[ \t]*(?:#.*)?$`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
 	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
 )
 
 func unsafeContent(s string) bool {
-	if privateKeyPEMRe.MatchString(s) || hasCredentialAssignment(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
+	if privateKeyPEMRe.MatchString(s) || hasCredentialAssignment(s) || hasBlockScalarCredentialAssignment(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
 		return true
 	}
 	for _, candidate := range didKeyCandidateRe.FindAllString(s, -1) {
@@ -664,6 +668,71 @@ func hasCredentialAssignment(s string) bool {
 		}
 	}
 	return false
+}
+
+// hasBlockScalarCredentialAssignment catches a credential whose value is a YAML
+// block scalar (key: | or key: >), which the inline credentialAssignmentRe misses
+// because its value match stops at the block indicator. It walks EVERY indented
+// line of the block (to a dedent or EOF), not just the first, so a placeholder or
+// prose line followed by a real secret line cannot smuggle it past. Each line's
+// leading token is extracted like an inline value (quote-stripped, placeholder
+// excluded) and run through the same credentialAssignmentIsMaterial rules, so a
+// quoted secret or a secret with trailing text is caught while a placeholder or
+// bare-keyword prose word passes.
+func hasBlockScalarCredentialAssignment(s string) bool {
+	// Normalize line endings first: a CRLF/CR file would otherwise leave a \r on
+	// each line and defeat the per-line header anchors - an easy evasion.
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for i, header := range lines {
+		m := blockScalarHeaderRe.FindStringSubmatch(header)
+		if m == nil {
+			continue
+		}
+		key := m[1]
+		keyIndent := len(header) - len(strings.TrimLeft(header, " \t"))
+		for _, body := range lines[i+1:] {
+			trimmed := strings.TrimLeft(body, " \t")
+			if trimmed == "" {
+				continue // blank lines stay within the block scalar
+			}
+			if len(body)-len(trimmed) <= keyIndent {
+				break // a dedent to the key's level or shallower ends the block
+			}
+			// Classify the line's leading token the same way the inline path
+			// handles a value (quote-stripped, placeholder excluded). The key's
+			// confidence does the prose/secret discrimination - a high-confidence
+			// key flags any leading token; a bare token/secret needs entropy - so a
+			// quoted secret, or a secret with trailing text, is caught while a
+			// placeholder or a bare-keyword prose word still passes.
+			fields := strings.Fields(trimmed)
+			if len(fields) == 0 {
+				continue
+			}
+			if v := leadingCredentialValue(fields[0]); v != "" && credentialAssignmentIsMaterial(key, v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// leadingCredentialValue extracts the credential-candidate value from a token the
+// same way the inline path does: it strips one optional surrounding quote (inline
+// allows ["']?value) and takes the leading run before any remaining quote or
+// angle bracket. A <...> placeholder starts with an angle bracket, so it yields
+// "", as does a run too short to be material.
+func leadingCredentialValue(tok string) string {
+	if len(tok) > 0 && (tok[0] == '"' || tok[0] == '\'') {
+		tok = tok[1:]
+	}
+	if i := strings.IndexAny(tok, `"'<>`); i >= 0 {
+		tok = tok[:i]
+	}
+	if len(tok) < 4 {
+		return ""
+	}
+	return tok
 }
 
 // credentialAssignmentIsMaterial decides whether a `<key>: <value>` match is a

@@ -139,6 +139,68 @@ token: false,
 	}
 }
 
+func TestLoadLocalDirRejectsBlockScalarCredential(t *testing.T) {
+	// A credential smuggled into a YAML block scalar (key: | or key: > with the
+	// value on the indented next line) must be caught: the inline-only scanner
+	// missed it entirely because the value match stopped at the | indicator and
+	// the indented value carried no keyword. (aabq.34, found probing aabq.32)
+	cases := []struct{ name, path, body string }{
+		{"literal-api-key", "profiles/coordinator/docs/bs-one.md", "api_key: |\n  aw_sk_live_secret_value\n"},
+		{"folded-access-token", "profiles/coordinator/docs/bs-two.md", "access_token: >\n  ghp_realToken_AbC123\n"},
+		{"literal-lowercase-password", "profiles/coordinator/docs/bs-three.md", "password: |\n  hunter2example\n"},
+		{"chomped-bare-token-entropy", "profiles/coordinator/docs/bs-four.md", "token: |-\n  ghp_AbC123def\n"},
+		{"nested-api-key", "profiles/coordinator/docs/bs-five.md", "config:\n  api_key: |\n    aw_sk_nested_value\n"},
+		// The secret hides behind a placeholder/comment/prose first line - the
+		// scanner must walk every block line, not just the first. (grace, aabq.34)
+		{"placeholder-then-secret", "profiles/coordinator/docs/bs-six.md", "api_key: |\n  <placeholder>\n  aw_sk_real_secret_value\n"},
+		{"comment-then-secret", "profiles/coordinator/docs/bs-seven.md", "api_key: |\n  # fill this in\n  aw_sk_real_secret_value\n"},
+		{"prose-then-entropy-bare-token", "profiles/coordinator/docs/bs-eight.md", "token: |\n  bearer\n  ghp_AbC123def\n"},
+		{"crlf-line-endings", "profiles/coordinator/docs/bs-nine.md", "api_key: |\r\n  aw_sk_crlf_secret_value\r\n"},
+		// Quoted values and a leading secret with trailing text - the block value
+		// extraction must match the inline path (strip quotes, first token even
+		// with trailing text). (grace, aabq.34)
+		{"double-quoted-api-key", "profiles/coordinator/docs/bs-ten.md", "api_key: |\n  \"aw_sk_real_secret_value\"\n"},
+		{"single-quoted-api-key", "profiles/coordinator/docs/bs-eleven.md", "api_key: |\n  'aw_sk_real_secret_value'\n"},
+		{"quoted-bare-token", "profiles/coordinator/docs/bs-twelve.md", "token: |\n  \"ghp_AbC123def\"\n"},
+		{"secret-then-trailing-text", "profiles/coordinator/docs/bs-thirteen.md", "api_key: |\n  aw_sk_real_secret_value # copied from prod\n"},
+		{"entropy-bare-token-trailing-text", "profiles/coordinator/docs/bs-fourteen.md", "token: |\n  ghp_AbC123def # from the vault\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValidPack(t, root)
+			writeFile(t, filepath.Join(root, tc.path), tc.body)
+			if _, err := LoadLocalDir(root); err == nil || !strings.Contains(err.Error(), "unexpected identity material") {
+				t.Fatalf("block-scalar credential should be rejected: err=%v", err)
+			}
+		})
+	}
+}
+
+func TestLoadLocalDirAllowsBlockScalarPlaceholderAndProse(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	// Block-scalar placeholders, comments, and bare-keyword prose must still load:
+	// a <...> placeholder is not material, a comment/prose line is multi-word
+	// documentation, and a bare token/secret block whose value is an English word
+	// is documentation, not a secret - including when several such lines stack in
+	// one block (the shape that, with a real secret line, must be caught). (aabq.34)
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/bs-doc.md"), `# Block-scalar examples
+
+api_key: |
+  # fill this in with your key, e.g. from the dashboard
+  <your-key-here>
+token: |
+  bearer authentication is required for the API
+secret: >
+  none is needed for the public read endpoints
+`)
+
+	if _, err := LoadLocalDir(root); err != nil {
+		t.Fatalf("block-scalar placeholders/prose should load: %v", err)
+	}
+}
+
 func TestLoadLocalDirAllowsPublicCryptoVectors(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
