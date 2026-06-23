@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html import escape
 
+from aweb_naapp.css import CSS_SHA256
+
 COPY_BTN = (
     '<button class="copy-btn" type="button" aria-label="Copy command">'
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -138,6 +140,9 @@ class SiteConfig:
     # The app's public source repo. When set, a GitHub-logo link shows in the
     # header and an "open source, MIT-licensed" line in the footer.
     source_url: str | None = None
+    # The social-card image path (1200x630), served by the app. When set, it is
+    # the og:image / twitter:image for link previews (WhatsApp, Slack, X, etc.).
+    og_image: str | None = None
 
     @property
     def origin_html(self) -> str:
@@ -179,15 +184,42 @@ _GITHUB_ICON = (
 
 
 def render_head(site: SiteConfig) -> str:
+    origin = site.origin_html
+    title = escape(site.title, quote=True)
+    desc = escape(site.description, quote=True)
+    # Fingerprint the stylesheet URL with the css content hash so a CDN edge never
+    # serves a stale /css/aweb.css after a toolkit css change — every rev is a new
+    # URL. The app serves /css/aweb.<hash>.css (and the legacy /css/aweb.css).
+    css_href = f"/css/aweb.{CSS_SHA256[:12]}.css"
+    og_image = ""
+    if site.og_image:
+        img = f"{origin}{escape(site.og_image, quote=True)}"
+        og_image = (
+            f'\n  <meta property="og:image" content="{img}">'
+            '\n  <meta property="og:image:width" content="1200">'
+            '\n  <meta property="og:image:height" content="630">'
+            f'\n  <meta property="og:image:alt" content="{title}">'
+            f'\n  <meta name="twitter:image" content="{img}">'
+        )
     return f"""<head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="{escape(site.description, quote=True)}">
+  <title>{escape(site.title)}</title>
+  <meta name="description" content="{desc}">
+  <link rel="canonical" href="{origin}/">
   <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0a0705" media="(prefers-color-scheme: dark)">
-  <title>{escape(site.title)}</title>
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{escape(site.brand, quote=True)}">
+  <meta property="og:title" content="{title}">
+  <meta property="og:description" content="{desc}">
+  <meta property="og:url" content="{origin}/">
+  <meta property="og:locale" content="en_US">{og_image}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{title}">
+  <meta name="twitter:description" content="{desc}">
 {_THEME_INIT_SCRIPT}
-  <link rel="stylesheet" href="/css/aweb.css">
+  <link rel="stylesheet" href="{css_href}">
 </head>"""
 
 
@@ -230,13 +262,19 @@ def render_footer(site: SiteConfig) -> str:
     cols = "\n".join(
         '        <div class="footer-col">\n'
         f"          <h4>{col.heading}</h4>\n"
-        + "\n".join(f'          <a href="{link.href}">{link.label}</a>' for link in col.links)
+        + "\n".join(
+            f'          <a href="{link.href}"'
+            + (' class="brand-mark"' if link.label.lower() in ("aweb", "awid") else "")
+            + f">{link.label}</a>"
+            for link in col.links
+        )
         + "\n        </div>"
         for col in site.footer_columns
     )
     oss = (
         f'\n          <p class="footer-oss">Open source, MIT-licensed. '
-        f'<a href="{escape(site.source_url, quote=True)}">View on GitHub &rarr;</a></p>'
+        f'<a href="{escape(site.source_url, quote=True)}" target="_blank" rel="noopener">'
+        "View on GitHub &rarr;</a></p>"
         if site.source_url
         else ""
     )

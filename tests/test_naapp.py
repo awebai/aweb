@@ -86,10 +86,28 @@ def test_canonical_bytes_sorted_compact() -> None:
 def test_page_wraps_body_in_chrome() -> None:
     html = naapp.page(_site(), "    <section>hi</section>")
     assert html.startswith("<!doctype html>\n<html lang=\"en\">")
-    assert '<link rel="stylesheet" href="/css/aweb.css">' in html
+    # css URL is fingerprinted with the content hash (CDN edge cache busting).
+    assert f'<link rel="stylesheet" href="/css/aweb.{naapp.CSS_SHA256[:12]}.css">' in html
     assert '<header class="site-header">' in html
     assert "<main>\n    <section>hi</section>\n  </main>" in html
     assert "Origin: https://library.aweb.ai" in html
+
+
+def test_head_has_seo_and_social_meta() -> None:
+    import dataclasses
+
+    site = dataclasses.replace(_site(), og_image="/og-card.png")
+    html = naapp.page(site, "    <section>hi</section>")
+    # canonical + Open Graph + Twitter card for SEO and link previews.
+    assert '<link rel="canonical" href="https://library.aweb.ai/">' in html
+    assert '<meta property="og:type" content="website">' in html
+    assert '<meta property="og:title" content="library — API reference">' in html
+    assert '<meta property="og:url" content="https://library.aweb.ai/">' in html
+    assert '<meta name="twitter:card" content="summary_large_image">' in html
+    # og:image only when an image is configured.
+    assert '<meta property="og:image" content="https://library.aweb.ai/og-card.png">' in html
+    assert '<meta property="og:image:width" content="1200">' in html
+    assert "og:image" not in naapp.page(_site(), "    <section>hi</section>")
 
 
 def test_reference_documents_every_operation_dual() -> None:
