@@ -11,6 +11,8 @@ first-party blueprints, an app manifest for `aw`/gateway dispatch, and `/llms.tx
 `/skills/`. There is no app-specific human account system — AWID is the login.
 AC does not authorize library; library owns its own state.
 
+Open source, MIT-licensed — [github.com/awebai/library](https://github.com/awebai/library).
+
 ## Status
 
 Scaffold (`default-aaas.14.1`): the service boots, enforces AWID
@@ -45,3 +47,7 @@ uv run mypy src/library
 ```
 
 The e2e suite (`-m e2e`) is docker-backed and uses real `aw`/AWID tooling.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

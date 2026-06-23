@@ -289,6 +289,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_blurb=_FOOTER_BLURB,
         footer_columns=_FOOTER_COLUMNS,
         footer_bottom=_FOOTER_BOTTOM,
+        source_url="https://github.com/awebai/library",
     )
 
 
