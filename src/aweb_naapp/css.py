@@ -14,7 +14,7 @@ _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 # sha256 of the vendored stylesheet, byte-for-byte from the awebai/ac repo
 # (site/static/css/aweb.css).
-CSS_SHA256 = "9c31ca3ad954239cee068051a1b7b21216e0520e7873741ecdd29220e5bfcf3b"
+CSS_SHA256 = "ec16ff786121d6d82939b981f887949ef67d2d07bc8050468d928f86a7f4e4f5"
 
 
 @lru_cache(maxsize=1)

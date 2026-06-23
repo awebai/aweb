@@ -192,7 +192,14 @@ def render_head(site: SiteConfig) -> str:
 
 
 def render_header(site: SiteConfig) -> str:
-    nav = "\n".join(f'        <a href="{link.href}">{link.label}</a>' for link in site.nav_links)
+    # aweb / awid nav links carry the brand-mark (mono + accent), like the wordmarks
+    # in body copy; other nav links use the plain nav style.
+    nav = "\n".join(
+        f'        <a href="{link.href}"'
+        + (' class="brand-mark"' if link.label.lower() in ("aweb", "awid") else "")
+        + f">{link.label}</a>"
+        for link in site.nav_links
+    )
     actions = "".join(
         f'\n        <a class="btn secondary" href="{a.href}">{a.label}</a>' for a in site.header_actions
     )

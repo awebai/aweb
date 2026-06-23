@@ -279,3 +279,24 @@ def test_source_url_renders_github_link_and_oss_footer() -> None:
     assert "MIT-licensed" in html
     # Absent by default (no source_url).
     assert 'class="gh-link"' not in naapp.page(_site(), "    <section>hi</section>")
+
+
+def test_aweb_awid_nav_links_carry_brand_mark() -> None:
+    import dataclasses
+
+    site = dataclasses.replace(
+        _site(),
+        nav_links=(
+            naapp.NavLink("Reference", "/reference"),
+            naapp.NavLink("aweb", "https://aweb.ai"),
+            naapp.NavLink("awid", "https://awid.ai"),
+        ),
+    )
+    html = naapp.page(site, "    <section>x</section>")
+    # aweb / awid nav links get the brand-mark; ordinary links do not.
+    assert '<a href="https://aweb.ai" class="brand-mark">aweb</a>' in html
+    assert '<a href="https://awid.ai" class="brand-mark">awid</a>' in html
+    assert '<a href="/reference">Reference</a>' in html
+    # the design system ships the brand-mark and a monospace logo.
+    assert ".brand-mark" in naapp.aweb_css()
+    assert ".brand {" in naapp.aweb_css() and "var(--font-mono)" in naapp.aweb_css()
