@@ -111,6 +111,208 @@ def _skills_dir() -> Path:
     return _SKILLS_DIR
 
 
+# Hero model: a team of agents drafts a shared, versioned document; a minted link
+# (the one terracotta accent) hands it to a human to read or edit. A straight
+# author->share pipeline, not a loop. Self-contained <style>, desktop + mobile SVG.
+_FOLIO_DIAGRAM = """<style>
+  .ff-fig { margin: var(--s5) auto 0; max-width: 780px; }
+  .ff-fig svg { width: 100%; height: auto; display: block; }
+  .ff-fig .ff-mobile { display: none; }
+  .ff-fig figcaption { text-align: center; color: var(--muted); font-size: var(--step--1); margin-top: var(--s3); }
+  @media (max-width: 620px) {
+    .ff-fig .ff-desktop { display: none; }
+    .ff-fig .ff-mobile { display: block; max-width: 320px; margin: 0 auto; }
+  }
+</style>
+<figure class="ff-fig" role="img" aria-label="A team of agents drafts a shared document in folio, which keeps it as append-only versions; an agent mints a no-login link, and a human opens it to read or edit the team-themed page.">
+  <svg class="ff-desktop" viewBox="0 0 760 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ffa" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M1 1 L6 4.5 L1 8" stroke="currentColor" stroke-width="1.4" fill="none"/></marker>
+      <marker id="ffaa" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M1 1 L6 4.5 L1 8" stroke="var(--accent)" stroke-width="1.6" fill="none"/></marker>
+    </defs>
+    <rect x="18" y="50" width="168" height="84" rx="12" fill="var(--surface)" stroke="currentColor" stroke-opacity="0.22"/>
+    <rect x="26" y="58" width="168" height="84" rx="12" fill="var(--surface)" stroke="currentColor" stroke-opacity="0.45"/>
+    <rect x="34" y="66" width="168" height="84" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <text x="118" y="104" text-anchor="middle" font-family="var(--font-sans)" font-weight="650" font-size="16" fill="currentColor">Agents</text>
+    <text x="118" y="124" text-anchor="middle" font-family="var(--font-sans)" font-size="12.5" fill="var(--muted)">your team</text>
+    <path d="M210 108 H292" stroke="currentColor" stroke-width="1.4" marker-end="url(#ffa)"/>
+    <text x="251" y="98" text-anchor="middle" font-family="var(--font-sans)" font-size="12" fill="var(--muted)">draft &amp; revise</text>
+    <rect x="300" y="60" width="216" height="96" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <text x="408" y="102" text-anchor="middle" font-family="var(--font-sans)" font-weight="650" font-size="16" fill="currentColor">Shared document</text>
+    <text x="408" y="124" text-anchor="middle" font-family="var(--font-mono)" font-size="12" fill="var(--muted)">append-only versions</text>
+    <path d="M524 108 H600" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ffaa)"/>
+    <text x="562" y="98" text-anchor="middle" font-family="var(--font-sans)" font-weight="600" font-size="12" fill="var(--accent)">mint link</text>
+    <rect x="608" y="66" width="134" height="84" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <circle cx="675" cy="92" r="9" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M661 116 a14 12 0 0 1 28 0" stroke="currentColor" stroke-width="1.5"/>
+    <text x="675" y="138" text-anchor="middle" font-family="var(--font-sans)" font-size="12.5" fill="var(--muted)">reads or edits</text>
+  </svg>
+  <svg class="ff-mobile" viewBox="0 0 300 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ffm" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M1 1 L6 4.5 L1 8" stroke="currentColor" stroke-width="1.4" fill="none"/></marker>
+      <marker id="ffma" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M1 1 L6 4.5 L1 8" stroke="var(--accent)" stroke-width="1.6" fill="none"/></marker>
+    </defs>
+    <rect x="64" y="6" width="172" height="74" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <text x="150" y="40" text-anchor="middle" font-family="var(--font-sans)" font-weight="650" font-size="15" fill="currentColor">Agents</text>
+    <text x="150" y="59" text-anchor="middle" font-family="var(--font-sans)" font-size="12" fill="var(--muted)">your team</text>
+    <path d="M150 84 V120" stroke="currentColor" stroke-width="1.4" marker-end="url(#ffm)"/>
+    <text x="160" y="106" text-anchor="start" font-family="var(--font-sans)" font-size="11.5" fill="var(--muted)">draft &amp; revise</text>
+    <rect x="54" y="126" width="192" height="80" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <text x="150" y="162" text-anchor="middle" font-family="var(--font-sans)" font-weight="650" font-size="15" fill="currentColor">Shared document</text>
+    <text x="150" y="182" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="var(--muted)">append-only versions</text>
+    <path d="M150 210 V246" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ffma)"/>
+    <text x="160" y="232" text-anchor="start" font-family="var(--font-sans)" font-weight="600" font-size="11.5" fill="var(--accent)">mint link</text>
+    <rect x="74" y="252" width="152" height="80" rx="12" fill="var(--surface)" stroke="currentColor"/>
+    <circle cx="150" cy="282" r="9" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M136 306 a14 12 0 0 1 28 0" stroke="currentColor" stroke-width="1.5"/>
+    <text x="150" y="326" text-anchor="middle" font-family="var(--font-sans)" font-size="12" fill="var(--muted)">human reads or edits</text>
+  </svg>
+  <figcaption>Agents draft and revise together; a minted link lets a human read or edit — no account, team-branded.</figcaption>
+</figure>"""
+
+# "Why this exists" — left lead (the need) + right column of three things folio
+# gives, over thin rules (first accented). Mirrors the home-page skill's split.
+_WHY_SECTION = """    <section class="section section--tint">
+      <div class="wrap">
+        <style>
+          .why-split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s6); align-items: start; }
+          .why-lead h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .why-need { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 34ch; }
+          .why-answer { color: var(--muted); margin-top: var(--s4); max-width: 42ch; }
+          .why-points { list-style: none; margin: var(--s3) 0 0; padding: 0; }
+          .why-points li { border-top: 2px solid var(--line-strong); padding: var(--s3) 0; }
+          .why-points li:first-child { border-top-color: var(--accent); }
+          .why-points li:last-child { padding-bottom: 0; }
+          .why-points strong { display: block; margin-bottom: 0.25rem; }
+          .why-points span { color: var(--muted); }
+          @media (max-width: 880px) { .why-split { grid-template-columns: 1fr; gap: var(--s5); } }
+        </style>
+        <div class="why-split">
+          <div class="why-lead">
+            <p class="kicker">Why this exists</p>
+            <h2>A team's documents now come from its agents</h2>
+            <p class="why-need">Briefs, specs, reports, decks — the outputs a team hands off. When the team is agents, the documents come from agents. folio is where they write them together and hand them to a human.</p>
+            <p class="why-answer">Identity is the team's <a href="https://awid.ai">AWID</a> certificate — no usernames, no API keys, nothing for the human to install.</p>
+          </div>
+          <div>
+            <p class="kicker" style="color:var(--faint)">What folio gives you</p>
+            <ul class="why-points">
+              <li><strong>A shared, versioned record</strong><span>Many agents append to one document; every edit is a new version and history is never rewritten.</span></li>
+              <li><strong>A branded page</strong><span>The human opens a themed page — logo, colors, clean type — with nothing to install.</span></li>
+              <li><strong>Access the team controls</strong><span>Hand out revocable no-login links to read or edit; the team mints them and the team revokes them.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>"""
+
+# "What folio does" — the six capabilities as a mono-label strip grid (label + one
+# line over thin rules), not cards, so it doesn't twin with the naapp card grid.
+_WHATFOLIO_SECTION = """    <section class="section section--tint">
+      <div class="wrap">
+        <style>
+          .ff-do-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4) var(--s6); }
+          .ff-do-grid > li { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
+          .ff-do-grid > li:first-child { border-top-color: var(--accent); }
+          .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .ff-do-grid dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step--1); }
+          @media (max-width: 760px) { .ff-do-grid { grid-template-columns: 1fr 1fr; } }
+          @media (max-width: 480px) { .ff-do-grid { grid-template-columns: 1fr; } }
+        </style>
+        <p class="kicker">What folio does</p>
+        <h2 style="font-size:var(--step-3);margin-top:var(--s3)">Documents, versions, and the links between them</h2>
+        <ul class="ff-do-grid">
+          <li><dt>documents</dt><dd>Markdown, or schema-validated template slots; team-private, addressed by a slug.</dd></li>
+          <li><dt>append-only</dt><dd>Each edit is a new version; present links pin a version — nothing is overwritten.</dd></li>
+          <li><dt>templates</dt><dd>Declarative slots in a schema; the server validates and renders to Markdown.</dd></li>
+          <li><dt>present links</dt><dd>Opaque, revocable, no-login, noindex — a capability URL, not a share link.</dd></li>
+          <li><dt>safe media</dt><dd>Images and Cloudflare Stream video; team-supplied HTML and JS are stripped.</dd></li>
+          <li><dt>team themes</dt><dd>CSS tokens, logo, header, footer — applied server-side on every page.</dd></li>
+        </ul>
+      </div>
+    </section>"""
+
+# "What it is" — the generic naapp definition: a plain lead + a 2x2 capability card
+# grid + an in-practice callout. Distinct (cards) from the strip grid above it.
+_WHATIS_SECTION = """    <section class="section">
+      <div class="wrap">
+        <style>
+          .whatis-h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .whatis-lead { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 60ch; }
+          .whatis-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+          .whatis-grid li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); }
+          .whatis-grid .kicker { color: var(--muted); }
+          .whatis-grid p { margin-top: var(--s2); font-size: var(--step-0); }
+          .whatis-practice { margin-top: var(--s5); border-left: 2px solid var(--accent); padding-left: var(--s3); color: var(--muted); max-width: 72ch; }
+          @media (max-width: 720px) { .whatis-grid { grid-template-columns: 1fr; } }
+        </style>
+        <p class="kicker">What it is</p>
+        <h2 class="whatis-h2">A Native Agentic App</h2>
+        <p class="whatis-lead">folio is built for agents from the ground up: its whole API is part of the aweb protocol, so any agent — or person — can drive it without writing custom code.</p>
+        <ul class="whatis-grid">
+          <li>
+            <p class="kicker">CLI-native API</p>
+            <p>A public manifest maps folio's whole API to <code>aw</code> commands. No integration to write, no SDK — you just run <code>aw folio</code>.</p>
+          </li>
+          <li>
+            <p class="kicker">Events that wake agents</p>
+            <p>folio emits a <code>doc.changed</code> event that wakes subscribed agents — a workflow that reacts to a new version needs no polling loop.</p>
+          </li>
+          <li>
+            <p class="kicker">Ships agent docs</p>
+            <p>An <code>llms.txt</code> and a set of skills ship with folio, so any agent that finds it gets readable docs and ready-to-run operations.</p>
+          </li>
+          <li>
+            <p class="kicker">Verified by identity</p>
+            <p>Every call is signed with your team's <a href="https://awid.ai">AWID</a> certificate; the manifest is public and pinned by a digest — auditable and tamper-evident.</p>
+          </li>
+        </ul>
+        <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw folio</code> commands — create a document, append a version, mint a present link — with no custom code.</p>
+      </div>
+    </section>"""
+
+# "Invariants" — the engineering guarantees as a spec/definition list with mono
+# labels (no cards); the scope/limits line set apart below.
+_INVARIANTS_SECTION = """    <section class="section section--tint" id="engineers">
+      <div class="wrap">
+        <style>
+          .eng-h2 { font-size: var(--step-3); margin-top: var(--s3); }
+          .eng-lede { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 52ch; }
+          .eng-specs { margin: var(--s5) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
+          .eng-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
+          .eng-specs > div:first-child { border-top-color: var(--accent); }
+          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .eng-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
+          .eng-scope { margin-top: var(--s5); color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
+          .eng-scope .kicker { color: var(--faint); margin-right: 0.6rem; }
+          @media (max-width: 640px) { .eng-specs { grid-template-columns: 1fr; } }
+        </style>
+        <p class="kicker">For engineers</p>
+        <h2 class="eng-h2">Invariants</h2>
+        <p class="eng-lede">These hold at every version, for every team.</p>
+        <dl class="eng-specs">
+          <div>
+            <dt>append-only</dt>
+            <dd>A document version, once written, is never modified — the version number is its identity.</dd>
+          </div>
+          <div>
+            <dt>awid-signed</dt>
+            <dd>Every write is signed by the team's <a href="https://awid.ai">AWID</a> certificate, and the signer is recorded with each version.</dd>
+          </div>
+          <div>
+            <dt>capability-links</dt>
+            <dd>Present URLs are opaque tokens granting access to exactly one version, revocable by the team that minted them.</dd>
+          </div>
+          <div>
+            <dt>sanitized-output</dt>
+            <dd>The server generates all rendered HTML; team-supplied HTML and JavaScript are stripped before storage.</dd>
+          </div>
+        </dl>
+        <p class="eng-scope"><span class="kicker">Scope</span>folio stores and presents documents — it does not run agents, route messages, or manage compute. Content is server-readable, not end-to-end encrypted. A <code>folio/doc.changed</code> metadata event (no content) can wake subscribed agents.</p>
+      </div>
+    </section>"""
+
+
 def render_landing_page(*, public_origin: str) -> str:
     origin = escape(public_origin.rstrip("/"), quote=True)
     copy = naapp.COPY_BTN
@@ -126,8 +328,8 @@ def render_landing_page(*, public_origin: str) -> str:
     body = f"""    <section class="hero-center">
       <div class="wrap">
         <p class="kicker">Native Agentic App · folio.aweb.ai</p>
-        <h1>Where agents write the documents and mint the links humans open.</h1>
-        <p class="lede">folio.aweb.ai is the Native Agentic App for documents and presentations: agents author append-only Markdown, brand it with a team theme, embed safe media, and mint revocable no-login links for the human moments. No app accounts — the team's AWID certificate is the login.</p>
+        <h1>Where teams of agents work on shared documents</h1>
+{_FOLIO_DIAGRAM}
         <div class="cta-row">
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
@@ -135,36 +337,9 @@ def render_landing_page(*, public_origin: str) -> str:
       </div>
     </section>
 
-    <section class="section section--tint">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">What it is</p>
-          <h2>A Native Agentic App</h2>
-          <p>A Native Agentic App (naapp) is an aweb app designed for agents to operate directly: it publishes a canonical manifest that turns its API into native <code>aw</code> verbs, can declare event emitters that wake subscribed agents, and ships agent-readable llms.txt and skills. The manifest is public; what is signed is each verb call, with your team certificate.</p>
-        </div>
-        <p class="prose-outro">In practice: you do not write an integration or click around a console. You install folio into <code>aw</code> once (below), and from then on an agent runs the same <code>aw folio</code> commands — create a document, append a version, mint a present link — with no custom code.</p>
-      </div>
-    </section>
+{_WHY_SECTION}
 
-    <section class="section" id="model">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">What folio does</p>
-          <h2>Documents, presentations, and the links between them</h2>
-          <p>Agents author content; folio versions it, renders it safely, and hands humans a link — without ever accepting team-supplied HTML or JavaScript.</p>
-        </div>
-        <div class="card-grid card-grid--auto">
-          <article class="card"><h3>Documents</h3><p>Create a document from raw Markdown or a declarative template. Each one is private to your team and addressed by a slug.</p></article>
-          <article class="card"><h3>Append-only versions</h3><p>Every edit is a new version; history is never rewritten. Present links pin a specific version.</p></article>
-          <article class="card"><h3>Declarative templates</h3><p>Schema-validated slots (pitch, memo, metrics) render to ordinary Markdown before storage — structure without hand-written HTML.</p></article>
-          <article class="card"><h3>Presentation links</h3><p>Mint opaque, revocable capability URLs for the human moment. Present pages and assets are <code>noindex</code> and need no login.</p></article>
-          <article class="card"><h3>Safe media</h3><p>Raster images and Cloudflare Stream video render inside themed pages; team-supplied HTML and scripts are stripped.</p></article>
-          <article class="card"><h3>Team themes</h3><p>Brand every presentation with the team's tokens, logo, header, and footer — set once, applied everywhere.</p></article>
-        </div>
-      </div>
-    </section>
-
-    <section class="section section--tint" id="use">
+    <section class="section" id="use">
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
@@ -187,19 +362,18 @@ def render_landing_page(*, public_origin: str) -> str:
       </div>
     </section>
 
-    <section class="section" id="engineers">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">For engineers</p>
-          <h2>What's actually real</h2>
-          <p>No magic words — concrete, versioned, signed behavior you can reproduce.</p>
-        </div>
-        <div class="card-grid card-grid--auto">
-          <article class="card"><h3>Append-only history</h3><p>Versions are immutable and append-only; an edit creates a new version and a present link pins the one you chose.</p></article>
-          <article class="card"><h3>Signed, no accounts</h3><p>There are no app accounts or API keys. Every write is a request signed by your team's AWID identity, scoped to the verified team.</p></article>
-          <article class="card"><h3>Capability links</h3><p>Present links are opaque, revocable URLs. Present pages and assets are <code>noindex</code> and reachable only from a link you minted.</p></article>
-          <article class="card"><h3>No team HTML or JS</h3><p>Team Markdown is sanitized; raw iframes are stripped. Only the server generates Cloudflare Stream embeds for ready videos.</p></article>
-          <article class="card"><h3>Honest boundary</h3><p>folio stores server-readable text and media metadata — it is not end-to-end encrypted. It emits <code>folio/doc.changed</code> (metadata only) to wake subscribed agents.</p></article>
+{_WHATFOLIO_SECTION}
+
+{_WHATIS_SECTION}
+
+{_INVARIANTS_SECTION}
+
+    <section class="section">
+      <div class="wrap" style="text-align:center">
+        <p style="font-size:var(--step-2);font-weight:650;letter-spacing:-0.02em;max-width:28ch;margin:0 auto var(--s4)">Give your agent team a place to write.</p>
+        <div class="cta-row" style="justify-content:center">
+          <a class="btn primary btn--lg" href="#use">Get started</a>
+          <a class="btn secondary btn--lg" href="/reference">API reference</a>
         </div>
       </div>
     </section>"""
