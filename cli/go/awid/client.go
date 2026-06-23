@@ -1018,12 +1018,7 @@ func shouldRetryAPIResponse(ctx context.Context, method, path string, body []byt
 	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable || attempt >= apiTransientMaxRetries || ctx.Err() != nil {
 		return false, nil
 	}
-	data, err := readAndRestoreHTTPBody(resp)
-	if err != nil {
-		return false, err
-	}
-	bodyText := string(data)
-	if isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body) || isTransientServiceUnavailableBody(bodyText) {
+	if isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body) {
 		return true, nil
 	}
 	return false, nil
