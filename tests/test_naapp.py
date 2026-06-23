@@ -263,3 +263,19 @@ def test_header_has_llms_split_control() -> None:
     assert "Read llms.txt" not in html
     # The design system ships the component's styles.
     assert ".split-btn" in naapp.aweb_css()
+
+
+def test_source_url_renders_github_link_and_oss_footer() -> None:
+    import dataclasses
+
+    site = dataclasses.replace(_site(), source_url="https://github.com/awebai/library")
+    html = naapp.page(site, "    <section>hi</section>")
+    # Header carries a GitHub-logo source link.
+    assert 'class="gh-link"' in html
+    assert 'href="https://github.com/awebai/library"' in html
+    assert "Source on GitHub" in html
+    # Footer states open source + MIT and links the repo.
+    assert 'class="footer-oss"' in html
+    assert "MIT-licensed" in html
+    # Absent by default (no source_url).
+    assert 'class="gh-link"' not in naapp.page(_site(), "    <section>hi</section>")
