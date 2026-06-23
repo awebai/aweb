@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -36,6 +37,8 @@ from aweb.messaging.messages import (
     utc_iso,
 )
 from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/federation", tags=["aweb-federation"])
 
@@ -136,8 +139,15 @@ async def _verify_sender_current_key(registry_client, envelope: FederationEnvelo
         ):
             resolution = await registry_client.resolve_key_fresh(envelope.sender_did_aw)
     except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning(
+            "AWID registry dependency failed for federation sender key verification",
+            exc_info=True,
+        )
         raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
     except Exception as exc:
+        logger.exception(
+            "Unexpected AWID registry dependency error for federation sender key verification"
+        )
         raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
     if not resolution or resolution.current_did_key != envelope.sender_current_did_key:
         raise HTTPException(status_code=422, detail="Federation sender current key mismatch")
@@ -159,8 +169,15 @@ async def _resolve_target_identity(
     except HTTPException:
         raise
     except AWID_DEPENDENCY_ERRORS as exc:
+        logger.warning(
+            "AWID registry dependency failed for federation target identity resolution",
+            exc_info=True,
+        )
         raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
     except Exception as exc:
+        logger.exception(
+            "Unexpected AWID registry dependency error for federation target identity resolution"
+        )
         raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
     if resolved is None:
         raise HTTPException(status_code=404, detail="Federation target identity not found")
