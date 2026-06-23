@@ -98,6 +98,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
         source_url="https://github.com/awebai/folio",
+        og_image="/og-card.png",
     )
 
 

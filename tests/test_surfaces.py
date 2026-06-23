@@ -26,8 +26,10 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    # Adopted the shared aweb design system and the Native Agentic App framing.
-    assert '<link rel="stylesheet" href="/css/aweb.css">' in response.text
+    # Adopted the shared aweb design system, at the fingerprinted css URL.
+    from aweb_naapp import CSS_SHA256
+
+    assert f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">' in response.text
     assert "Native Agentic App" in response.text
     assert "anapp" not in response.text
     assert "documents and presentations" in response.text
@@ -53,6 +55,21 @@ def test_landing_brand_marks_and_nav_cleanup() -> None:
     # The open-source / MIT line is prominent in the hero, linking the repo.
     assert "Open source, MIT-licensed" in text
     assert "github.com/awebai/folio" in text
+
+
+def test_seo_meta_and_social_card() -> None:
+    client = _client()
+    text = client.get("/").text
+    # SEO + social-card meta for link previews (WhatsApp, Slack, X).
+    assert '<link rel="canonical" href="https://folio.aweb.ai/">' in text
+    assert '<meta property="og:title"' in text
+    assert '<meta name="twitter:card" content="summary_large_image">' in text
+    assert '<meta property="og:image" content="https://folio.aweb.ai/og-card.png">' in text
+    # The social card image is served as a real PNG.
+    og = client.get("/og-card.png")
+    assert og.status_code == 200
+    assert og.headers["content-type"] == "image/png"
+    assert og.content[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
