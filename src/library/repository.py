@@ -427,16 +427,25 @@ async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[
     return {"profiles": profiles}
 
 
-async def get_shelf_profile(db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str) -> dict[str, Any]:
+async def get_shelf_profile(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, include_files: bool = False
+) -> dict[str, Any]:
+    # The latest shelf version is the one approve() minted, so a refresh that reads
+    # this picks up the team's own learning. include_files adds the profile content
+    # for a local materialize; the digest stays the stored canonical profile digest.
+    columns = _SHELF_SUMMARY_COLUMNS + (", files" if include_files else "")
     row = await db.fetch_one(
-        "SELECT " + _SHELF_SUMMARY_COLUMNS + " FROM {{tables.shelf_profiles}}"
+        "SELECT " + columns + " FROM {{tables.shelf_profiles}}"
         " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
         principal.team_id,
         profile_ref,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Shelf profile not found")
-    return _shelf_summary(row)
+    summary = _shelf_summary(row)
+    if include_files:
+        summary["files"] = _json_value(dict(row).get("files")) or []
+    return summary
 
 
 async def set_profile_tags(

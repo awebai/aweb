@@ -214,10 +214,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/profiles/{profile_id}")
     async def get_shelf_profile_route(
         profile_id: str,
+        request: Request,
         actor: Annotated[Principal, Depends(principal)],
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_shelf_profile(database, principal=actor, profile_ref=profile_id)
+        # Default is the lighter summary; ?include=files adds the profile's
+        # content (path/content_utf8/sha256) so a consumer can materialize the
+        # shelf version locally. Opt-in keeps the summary contract back-compatible.
+        include_files = request.query_params.get("include") == "files"
+        return await get_shelf_profile(
+            database, principal=actor, profile_ref=profile_id, include_files=include_files
+        )
 
     @app.post("/v1/profiles")
     async def create_shelf_profile_route(
