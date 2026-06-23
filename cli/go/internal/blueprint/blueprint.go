@@ -630,14 +630,14 @@ var (
 	privateKeyPEMRe         = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	didKeyCandidateRe       = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
 	didAWCandidateRe        = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
-	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?[^\s"'<>][^\s"'<>]{3,}`)
+	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?([^\s"'<>]{4,})`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
-	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{80,}\b`)
+	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
 )
 
 func unsafeContent(s string) bool {
-	if privateKeyPEMRe.MatchString(s) || credentialAssignmentRe.MatchString(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
+	if privateKeyPEMRe.MatchString(s) || hasCredentialAssignment(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
 		return true
 	}
 	for _, candidate := range didKeyCandidateRe.FindAllString(s, -1) {
@@ -657,6 +657,58 @@ func unsafeContent(s string) bool {
 	return false
 }
 
+func hasCredentialAssignment(s string) bool {
+	for _, m := range credentialAssignmentRe.FindAllStringSubmatch(s, -1) {
+		if len(m) >= 3 && credentialAssignmentIsMaterial(m[1], m[2]) {
+			return true
+		}
+	}
+	return false
+}
+
+// credentialAssignmentIsMaterial decides whether a `<key>: <value>` match is a
+// real credential or documentation prose, after stripping trailing prose
+// punctuation ("secret: none." -> "none"). High-confidence keys (api_key,
+// access_token, secret_key, client_secret, password, team_certificate, ...) are
+// material for ANY value - an all-lowercase api_key/password value is still a
+// leaked credential. Only the generic bare keys that genuinely appear in prose
+// (bare "token", bare "secret") get the prose exception: they are material only
+// when the value carries entropy (a digit, uppercase, or structural char), so
+// "token: bearer", "secret: none", "token: false" pass while
+// token=secret_token_value is still caught.
+func credentialAssignmentIsMaterial(key, value string) bool {
+	value = strings.TrimRight(value, `.,;:!?)]}`)
+	if len(value) < 4 {
+		return false
+	}
+	if !isProseAmbiguousCredentialKey(key) {
+		return true
+	}
+	return credentialValueHasEntropy(value)
+}
+
+// isProseAmbiguousCredentialKey reports the bare keys generic enough to occur in
+// natural prose (bare "token", bare "secret"); every other credential key
+// (api_key, access_token, secret_key, client_secret, password, team_certificate)
+// is high-confidence and flagged for any value.
+func isProseAmbiguousCredentialKey(key string) bool {
+	switch strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key)) {
+	case "token", "secret":
+		return true
+	default:
+		return false
+	}
+}
+
+func credentialValueHasEntropy(value string) bool {
+	for _, r := range value {
+		if r < 'a' || r > 'z' {
+			return true
+		}
+	}
+	return false
+}
+
 func hasLongBase64Blob(s string) bool {
 	for _, candidate := range longBase64BlobRe.FindAllString(s, -1) {
 		if decodesAsMaterialBase64(candidate) {
@@ -668,7 +720,7 @@ func hasLongBase64Blob(s string) bool {
 
 func decodesAsMaterialBase64(candidate string) bool {
 	candidate = strings.Trim(candidate, "'\"`.,;:()[]{}")
-	if len(candidate) < 80 || !hasMixedBase64TokenShape(candidate) {
+	if len(candidate) < 64 || !hasMixedBase64TokenShape(candidate) {
 		return false
 	}
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
