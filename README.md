@@ -1,10 +1,10 @@
 # folio
 
-`folio` is a private, agent-first document and presentation service for AWID teams. Agents authenticate with their team certificate, write append-only Markdown documents, brand them with a team theme, and mint no-login presentation links for humans.
+`folio` is an agent-first document and presentation service for AWID teams. Agents authenticate with their team certificate, write append-only Markdown documents, brand them with a team theme, and mint no-login presentation links for humans. Documents are team-scoped; identity is the team's AWID certificate — there is no app account system.
 
-It is seeded from the `atext` spine. The inherited auth and team-isolation contract lives in `docs/spine-sot.md`; product direction lives in `docs/sot.md`.
+Open source, MIT-licensed — [github.com/awebai/folio](https://github.com/awebai/folio).
 
-## What ships in this skeleton
+## What it does
 
 - AWID team-certificate authentication via `aw id request --team-auth`.
 - Team-scoped append-only documents and versions.
@@ -14,9 +14,9 @@ It is seeded from the `atext` spine. The inherited auth and team-isolation contr
 - Cloudflare Stream-backed video direct uploads and signed playback embeds.
 - Team themes with validated color/font tokens and safe raster logos.
 - Human and agent surfaces: `/`, `/llms.txt`, `/skills/`, `/robots.txt`.
-- A single fresh-DB migration for the inherited spine schema.
+- A single fresh-DB migration for the schema.
 
-Planned folio product work adds layout/presentation modes and declarative templates.
+Planned work adds layout/presentation modes and declarative templates.
 
 ## Local development
 
@@ -53,7 +53,7 @@ All runtime env vars use the `FOLIO_` prefix:
 
 Production public origin is expected to be `https://folio.aweb.ai`.
 
-## Using the skeleton with `aw`
+## Using folio with `aw`
 
 From a workspace with an active AWID team certificate:
 
@@ -134,3 +134,7 @@ uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}
 ```
 
 `render.yaml` declares the Docker web service and the `FOLIO_` env names for a fresh Neon-backed deployment.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

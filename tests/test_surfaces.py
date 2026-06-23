@@ -33,7 +33,10 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert "documents and presentations" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
-    assert "https://github.com/awebai/folio" not in response.text
+    # Open source: a GitHub source link in the header and the MIT footer line.
+    assert "https://github.com/awebai/folio" in response.text
+    assert 'class="gh-link"' in response.text
+    assert "MIT-licensed" in response.text
     assert 'href="/llms.txt"' in response.text
     assert 'href="/reference"' in response.text
     assert 'href="/skills/"' in response.text
