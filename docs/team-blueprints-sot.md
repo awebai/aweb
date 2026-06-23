@@ -490,27 +490,31 @@ aw blueprint inspect aweb/engineering-dev-team
 The hosted catalog is discovery, not ownership. A catalog entry points to a
 source, version, digest, required apps, capability requests, and docs.
 
-### Install/apply
+### Inspect/create/add
 
-Applying a blueprint copies a pinned snapshot into the target team/repo.
+Inspecting a blueprint/profile pack shows the plan. Creating a team and adding
+profile-bound agents use the shipped team and agent runtime verbs.
 
 Recommended dev-team flow:
 
 ```bash
 aw blueprint inspect github.com/awebai/aweb-team-dev-simple
-aw blueprint apply github.com/awebai/aweb-team-dev-simple --team eng
-aw agent start coordinator
+aw team create eng
+aw team add coordinator@aweb.engineering-pack/coordinator --runtime claude-code
+aw agent start coordinator --runtime claude-code
 ```
 
-Or:
+A roster can also be seeded during create:
 
 ```bash
-aw team create eng --from github.com/awebai/aweb-team-dev-simple
+aw team create eng \
+  --profile aweb.engineering-pack/coordinator=claude-code \
+  --profile aweb.engineering-pack/developer=claude-code \
+  --profile aweb.engineering-pack/reviewer=pi
 ```
 
-`aw team create --from` is allowed as a convenience wrapper only if it shows the
-same plan and composes explicit primitives. The recoverable lower-level verbs
-must exist.
+These commands must show or rely on an inspectable plan and compose explicit
+primitives. The recoverable lower-level verbs must exist.
 
 Those primitives must reuse existing authority rails:
 
@@ -572,7 +576,7 @@ expanding core.
 The first product wedge is still excellent team creation:
 
 ```text
-good blueprint -> aw inspect/apply/team-create -> aw agent add/start
+good blueprint -> aw inspect -> aw team create/add -> aw agent start
 ```
 
 The library app is the learning and reuse loop that follows. It should not
@@ -707,14 +711,15 @@ The commands are orchestration over existing primitives. They are product UX,
 not a second source of truth for teams, identities, apps, grants, or installed
 runtime facts.
 
-### Blueprint commands
+### Blueprint/profile-pack commands
 
 ```bash
 aw blueprint inspect <source>
-aw blueprint apply <source> --team <team> [--target <dir>]
-aw blueprint diff <source> [--installed <path>]
-aw blueprint update <installed> --from <source>
-aw blueprint list
+aw blueprint materialize <source> --profile <profile> --target <dir>
+aw team create <team> [--profile <blueprint>/<profile>[=<runtime>]]...
+aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
+aw agent start <name> --runtime <runtime>
+aw agent status <name>
 ```
 
 `inspect` prints:
@@ -730,26 +735,19 @@ aw blueprint list
 - commands that would be run;
 - required human decisions.
 
-`apply` must:
+`team create` / `team add` with profile selectors must:
 
-- validate the blueprint schema;
-- copy a pinned snapshot of profiles/resources into the target;
+- validate the blueprint/profile source fetched through Library or a local source;
+- copy/adopt a pinned shelf snapshot of profiles/resources into the team;
 - write no `.aw` keys/certs/tokens into committed profile resources;
 - create or update a reviewable local layout;
 - record blueprint source/version/digest;
-- show app/capability/subscription requests;
-- stop before any team app grant that needs human approval;
+- show app/capability/subscription requests as setup hints, not grants;
+- stop before any app action that needs human approval;
 - be idempotent enough that a failed run can be resumed or inspected.
 
-For the dev-team happy path, this wrapper should be allowed:
-
-```bash
-aw team create eng --from ./aweb-team-dev-simple
-aw team create eng --from github.com/awebai/aweb-team-dev-simple
-```
-
-It may compose lower-level primitives, but it must print a plan and leave the
-same recoverable state as `aw blueprint inspect` + `aw blueprint apply`.
+The shipped vocabulary is `aw team create` plus `aw team add NAME@BLUEPRINT/PROFILE`;
+there is no separate `aw blueprint apply` or `aw agent add` alias in the launch path.
 
 ### Profile commands
 
@@ -793,22 +791,24 @@ aw library propose profile-change <profile> --patch-file <patch>
 ### Agent commands
 
 ```bash
-aw agent create <name> --profile <profile>
-aw agent start <name> [--runtime claude-code|codex|mcp]
-aw agent spawn <profile> --name <name> [--worktree]
+aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
+aw agent start <name> --runtime claude-code|codex|pi|local-shell
+aw agent status <name>
+aw agent logs <name>
 aw agent stop <name>
-aw agent retire <name>
+aw agent restart <name> --runtime <runtime>
 ```
 
-Adding an agent must be trivial. The target UX:
+Adding an agent must be trivial. The launch UX:
 
 ```bash
-aw agent add reviewer --profile reviewer --runtime claude-code --worktree --start
-aw agent add researcher --profile researcher --runtime pi --start
-aw agent add coordinator --profile coordinator --runtime chatgpt-mcp
+aw team add reviewer@aweb.engineering-pack/reviewer --runtime claude-code
+aw agent start reviewer --runtime claude-code
+aw team add researcher@aweb.engineering-pack/researcher --runtime pi
+aw agent start researcher --runtime pi
 ```
 
-For local runtimes, `aw agent add` should be able to:
+For local runtimes, `aw team add NAME@BLUEPRINT/PROFILE` should be able to:
 
 - create/admit the agent identity into the team;
 - create the instance home;
@@ -821,9 +821,9 @@ For local runtimes, `aw agent add` should be able to:
 - show the exact start command;
 - optionally start the runtime immediately.
 
-For hosted MCP runtimes, `aw agent add` should create or select the hosted
-custodial identity, bind it to the profile and effective app grants, and print
-the connection instructions for the external client.
+For hosted MCP runtimes, the dashboard/Team Builder flow should create or select
+the hosted custodial identity, bind it to the profile and effective app grants,
+and print the connection instructions for the external client.
 
 Existing `spawn-instance` and `retire-instance` skills remain useful as
 documentation and compatibility while CLI support lands, but they should not be
@@ -1099,9 +1099,9 @@ Near-term migration:
 3. Add `profile.yaml` to each existing soul/profile directory.
 4. Add `required_apps`, `subscriptions`, and `artifacts` fields where useful.
 5. Add `aw blueprint inspect` for local dirs first.
-6. Add `aw blueprint apply` that copies a snapshot and shows a plan.
-7. Keep existing `spawn-instance`/`retire-instance` skills as the runtime
-   implementation while CLI commands mature.
+6. Add `aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` that copy/adopt a snapshot and show a plan.
+7. Keep existing `spawn-instance`/`retire-instance` skills as compatibility
+   documentation while CLI commands mature.
 8. Add dashboard read-only visualization of installed blueprint/profile state.
 9. Add remote git source support.
 10. Specify `library.aweb.ai` as an app that reuses app installs/grants and
@@ -1123,8 +1123,8 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
   compatibility migration?
 - First blueprint source syntax: GitHub shorthand, full URL, local dir, or all
   three?
-- How much of `aw team create --from` is v1 vs lower-level
-  `aw blueprint inspect/apply`?
+- How much local-dir materialization is needed beyond `aw blueprint inspect` and
+  the Library-backed `aw team create` / `aw team add` launch path?
 - Which app is first for external capabilities: GitHub, Tasks, Messages, or Dev?
 - What is the minimal signed audit trail in v1?
 - How hosted MCP profile binding appears in the dashboard.
@@ -1137,9 +1137,10 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
 - Whether community catalog lives in a repo first or in hosted aweb.ai.
 
 The default answers are: keep compatibility with current soul layout, support
-local dir first, make `inspect/apply` the primitive and `team create --from` the
-wrapper, prove with engineering blueprint, prioritize native `aw` team creation
-and agent add/start support, specify `library.aweb.ai` as an app rather than a
+local dir first, make `aw blueprint inspect` the read-only primitive and use
+`aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` for the launch setup path,
+prove with engineering blueprint, prioritize native `aw` team creation and
+`aw agent start/status/logs`, specify `library.aweb.ai` as an app rather than a
 core layer, prove the learning loop with memory before broadening it, and defer
 public hosted catalog until the git/local flow and library-app promotion loop
 work.
