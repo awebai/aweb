@@ -456,6 +456,40 @@ func TestRunTeamRemoveMemberHostedRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestIsAwebHostedNamespaceRequiresAwebAILabelBoundary(t *testing.T) {
+	t.Parallel()
+
+	for _, domain := range []string{"aweb.ai", " Alice.AWEB.AI. ", "foo.bar.aweb.ai"} {
+		if !isAwebHostedNamespace(domain) {
+			t.Fatalf("%q should be treated as hosted", domain)
+		}
+	}
+	for _, domain := range []string{"evil-aweb.ai", "aweb.ai.example.com", "example.com", ".aweb.ai", "foo..aweb.ai", ""} {
+		if isAwebHostedNamespace(domain) {
+			t.Fatalf("%q should not be treated as hosted", domain)
+		}
+	}
+}
+
+func TestNewTeamCloudHTTPClientUsesAwebAPITransport(t *testing.T) {
+	t.Parallel()
+
+	client := newTeamCloudHTTPClient()
+	if client.Timeout != awid.APITimeout() {
+		t.Fatalf("timeout=%v want %v", client.Timeout, awid.APITimeout())
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type=%T want *http.Transport", client.Transport)
+	}
+	if transport == http.DefaultTransport {
+		t.Fatal("team cloud client must not use http.DefaultTransport")
+	}
+	if transport.ResponseHeaderTimeout != awid.APITimeout() {
+		t.Fatalf("response header timeout=%v want %v", transport.ResponseHeaderTimeout, awid.APITimeout())
+	}
+}
+
 func TestTeamKeyLoadErrorHostedNamespacePointsToDashboard(t *testing.T) {
 	err := teamKeyLoadError("aweb:juan.aweb.ai", "juan.aweb.ai", errors.New("open missing: no such file or directory"))
 	got := err.Error()
@@ -2137,6 +2171,96 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "refusing to overwrite existing") || !strings.Contains(string(out), "identity.yaml") {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestHostedTeamAcceptInviteRetryAllowsPendingKeyWithSavedCertificateNoIdentity(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hostedAcceptPendingMarkerPath(tmp), []byte("pending hosted accept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID := "default:partial.aweb.ai"
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          teamID,
+		MemberDIDKey:  awid.ComputeDIDKey(pub),
+		MemberDIDAW:   awid.ComputeStableID(pub),
+		MemberAddress: "partial.aweb.ai/recover",
+		Alias:         "recover",
+		Lifetime:      awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, teamID, cert); err != nil {
+		t.Fatal(err)
+	}
+
+	reusedPub, _, err := hostedAcceptSigningKey(tmp)
+	if err != nil {
+		t.Fatalf("hostedAcceptSigningKey should allow marked partial cert recovery: %v", err)
+	}
+	if got, want := awid.ComputeDIDKey(reusedPub), awid.ComputeDIDKey(pub); got != want {
+		t.Fatalf("reused DID=%q want %q", got, want)
+	}
+}
+
+func TestHostedTeamAcceptInvitePartialCertWithoutMarkerGivesRecoveryGuidance(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID := "default:partial.aweb.ai"
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          teamID,
+		MemberDIDKey:  awid.ComputeDIDKey(pub),
+		MemberDIDAW:   awid.ComputeStableID(pub),
+		MemberAddress: "partial.aweb.ai/recover",
+		Alias:         "recover",
+		Lifetime:      awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, teamID, cert); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = hostedAcceptSigningKey(tmp)
+	if err == nil {
+		t.Fatal("expected unmarked partial cert state to be refused")
+	}
+	for _, want := range []string{
+		"not a pending hosted accept",
+		".aw/team-certs",
+		".aw/identity.yaml",
+		"back up/remove",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
 	}
 }
 
