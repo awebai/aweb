@@ -1,0 +1,31 @@
+# CI-only overlay for .github/workflows/cli-e2e.yml.
+#
+# Routes the awid/aweb/library image builds through the GitHub Actions buildx
+# layer cache (type=gha) so a cold runner does not rebuild all three images from
+# scratch every run - the build time that, with the sequential health waits, can
+# approach the job timeout (default-aabq.33).
+#
+# This overlay is applied ONLY in CI, via LIBRARY_E2E_COMPOSE_OVERLAY in the
+# stack script. It MUST NOT be used for local runs: type=gha requires the GitHub
+# Actions cache backend (ACTIONS_CACHE_URL/RUNTIME_TOKEN) and a buildx builder,
+# neither of which exists locally. Per-service cache scope keeps the three
+# images' layer caches independent.
+services:
+  awid:
+    build:
+      cache_from:
+        - type=gha,scope=cli-e2e-awid
+      cache_to:
+        - type=gha,mode=max,scope=cli-e2e-awid
+  aweb:
+    build:
+      cache_from:
+        - type=gha,scope=cli-e2e-aweb
+      cache_to:
+        - type=gha,mode=max,scope=cli-e2e-aweb
+  library:
+    build:
+      cache_from:
+        - type=gha,scope=cli-e2e-library
+      cache_to:
+        - type=gha,mode=max,scope=cli-e2e-library
