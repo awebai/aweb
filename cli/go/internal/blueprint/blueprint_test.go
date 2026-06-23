@@ -112,6 +112,25 @@ and {"X-AWID-Team-Certificate":"<certificate>"}.
 	}
 }
 
+func TestLoadLocalDirAllowsCredentialKeywordProse(t *testing.T) {
+	root := t.TempDir()
+	writeValidPack(t, root)
+	// Documentation prose that mentions credential keywords must load: the value
+	// is an English word, not a secret. Before aabq.28 the bare token/secret
+	// keywords plus a 4+-char value rejected all of these. (aabq.28)
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/auth-notes.md"), `# Auth notes
+
+token: bearer authentication is required for the API.
+secret: none is needed for the public read endpoints.
+password: must be 8 characters or longer.
+token: false disables the optional auth header.
+`)
+
+	if _, err := LoadLocalDir(root); err != nil {
+		t.Fatalf("credential-keyword documentation prose should load: %v", err)
+	}
+}
+
 func TestLoadLocalDirAllowsPublicCryptoVectors(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
@@ -224,6 +243,31 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 				t.Fatalf("error=%v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadLocalDirRejectsNakedEd25519KeyBlobUnderEightyChars(t *testing.T) {
+	// A 48-byte Ed25519 PKCS8 key base64-encodes to 64 chars, under the old
+	// 80-char blob threshold. A naked headerless key on one line must still be
+	// caught - the DER-parse gate keeps this from false-positiving. (aabq.28)
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := base64.StdEncoding.EncodeToString(pkcs8)
+	if len(blob) >= 80 {
+		t.Fatalf("expected a sub-80-char blob to exercise the lowered threshold, got %d chars", len(blob))
+	}
+
+	root := t.TempDir()
+	writeValidPack(t, root)
+	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/naked-key.md"), blob+"\n")
+	if _, err := LoadLocalDir(root); err == nil || !strings.Contains(err.Error(), "unexpected identity material") {
+		t.Fatalf("a naked Ed25519 PKCS8 key blob should be rejected: err=%v", err)
 	}
 }
 

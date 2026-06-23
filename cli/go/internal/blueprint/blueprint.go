@@ -630,14 +630,14 @@ var (
 	privateKeyPEMRe         = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	didKeyCandidateRe       = regexp.MustCompile(`\bdid:key:z[1-9A-HJ-NP-Za-km-z]+\b`)
 	didAWCandidateRe        = regexp.MustCompile(`\bdid:aw:([1-9A-HJ-NP-Za-km-z]{20,})\b`)
-	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?[^\s"'<>][^\s"'<>]{3,}`)
+	credentialAssignmentRe  = regexp.MustCompile(`(?i)(?:\b|["'])(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)(?:\b|["'])\s*[:=]\s*["']?([^\s"'<>]{4,})`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
-	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{80,}\b`)
+	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
 )
 
 func unsafeContent(s string) bool {
-	if privateKeyPEMRe.MatchString(s) || credentialAssignmentRe.MatchString(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
+	if privateKeyPEMRe.MatchString(s) || hasCredentialAssignment(s) || teamCertificateHeaderRe.MatchString(s) || jwtCandidateRe.MatchString(s) || hasLongBase64Blob(s) {
 		return true
 	}
 	for _, candidate := range didKeyCandidateRe.FindAllString(s, -1) {
@@ -657,6 +657,30 @@ func unsafeContent(s string) bool {
 	return false
 }
 
+// hasCredentialAssignment reports a credential assignment only when the value
+// carries credential-like entropy. A bare keyword followed by a natural-language
+// word ("token: bearer authentication...", "secret: none", "password: must be 8
+// characters", "token: false") is documentation prose, not a secret, so it is
+// allowed; a value with a digit, uppercase letter, or structural char (e.g. an
+// underscore, as in api_key=aw_sk_secret_value) is treated as material.
+func hasCredentialAssignment(s string) bool {
+	for _, m := range credentialAssignmentRe.FindAllStringSubmatch(s, -1) {
+		if len(m) >= 3 && credentialValueHasEntropy(m[2]) {
+			return true
+		}
+	}
+	return false
+}
+
+func credentialValueHasEntropy(value string) bool {
+	for _, r := range value {
+		if r < 'a' || r > 'z' {
+			return true
+		}
+	}
+	return false
+}
+
 func hasLongBase64Blob(s string) bool {
 	for _, candidate := range longBase64BlobRe.FindAllString(s, -1) {
 		if decodesAsMaterialBase64(candidate) {
@@ -668,7 +692,7 @@ func hasLongBase64Blob(s string) bool {
 
 func decodesAsMaterialBase64(candidate string) bool {
 	candidate = strings.Trim(candidate, "'\"`.,;:()[]{}")
-	if len(candidate) < 80 || !hasMixedBase64TokenShape(candidate) {
+	if len(candidate) < 64 || !hasMixedBase64TokenShape(candidate) {
 		return false
 	}
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
