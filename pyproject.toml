@@ -49,7 +49,7 @@ packages = ["src/folio"]
 # development still imports the sibling checkouts via the pytest pythonpath below.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "d0baafa389b600c8b0a12525797d6e38726c5252" }
-aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "3ab30fce92337cfa70aca43a592348c5de48ab02" }
+aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "6ca377c81e2900304132614aefc7eb016e007a67" }
 
 [dependency-groups]
 dev = [

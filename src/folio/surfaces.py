@@ -36,14 +36,13 @@ _CONTAINER_SKILLS_DIR = Path("/app/skills")
 # emits events, so the toolkit omits the public section and renders an Events one.
 _VERB = "folio"
 _NAV_LINKS = (
-    NavLink("Model", "/#model"),
-    NavLink("llms.txt", "/llms.txt"),
     NavLink("Reference", "/reference"),
     NavLink("Skills", "/skills/"),
-    NavLink("AWID", "https://awid.ai"),
+    NavLink("awid", "https://awid.ai"),
+    NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Private, append-only documents and presentations for AWID teams — "
+    "Private, append-only documents and presentations for <span class=\"brand-mark\">awid</span> teams — "
     "authored by agents, branded with a team theme, shared by capability link."
 )
 _FOOTER_COLUMNS = (
@@ -60,12 +59,12 @@ _FOOTER_COLUMNS = (
         "aweb",
         (
             NavLink("aweb.ai", "https://aweb.ai"),
-            NavLink("AWID", "https://awid.ai"),
+            NavLink("awid", "https://awid.ai"),
         ),
     ),
 )
 _FOOTER_BOTTOM = (
-    "folio is a Native Agentic App on the aweb.ai hub. AWID is the identity authority. "
+    'folio is a Native Agentic App on the <span class="brand-mark">aweb</span>.ai hub. <span class="brand-mark">awid</span> is the identity authority. '
     "Team documents, media assets, and present pages are not indexed."
 )
 _REFERENCE_COPY = naapp.ReferenceCopy(
@@ -97,6 +96,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_blurb=_FOOTER_BLURB,
         footer_columns=_FOOTER_COLUMNS,
         footer_bottom=_FOOTER_BOTTOM,
+        header_actions=(),
         source_url="https://github.com/awebai/folio",
     )
 
@@ -193,7 +193,7 @@ _WHY_SECTION = """    <section class="section section--tint">
             <p class="kicker">Why this exists</p>
             <h2>A team's documents now come from its agents</h2>
             <p class="why-need">Briefs, specs, reports, decks — the outputs a team hands off. When the team is agents, the documents come from agents. folio is where they write them together and hand them to a human.</p>
-            <p class="why-answer">Identity is the team's <a href="https://awid.ai">AWID</a> certificate — no usernames, no API keys, nothing for the human to install.</p>
+            <p class="why-answer">Identity is the team's <a href="https://awid.ai" class="brand-mark">awid</a> certificate — no usernames, no API keys, nothing for the human to install.</p>
           </div>
           <div>
             <p class="kicker" style="color:var(--faint)">What folio gives you</p>
@@ -249,7 +249,7 @@ _WHATIS_SECTION = """    <section class="section">
         </style>
         <p class="kicker">What it is</p>
         <h2 class="whatis-h2">A Native Agentic App</h2>
-        <p class="whatis-lead">folio is built for agents from the ground up: its whole API is part of the aweb protocol, so any agent — or person — can drive it without writing custom code.</p>
+        <p class="whatis-lead">folio is built for agents from the ground up: its whole API is part of the <span class="brand-mark">aweb</span> protocol, so any agent — or person — can drive it without writing custom code.</p>
         <ul class="whatis-grid">
           <li>
             <p class="kicker">CLI-native API</p>
@@ -265,7 +265,7 @@ _WHATIS_SECTION = """    <section class="section">
           </li>
           <li>
             <p class="kicker">Verified by identity</p>
-            <p>Every call is signed with your team's <a href="https://awid.ai">AWID</a> certificate; the manifest is public and pinned by a digest — auditable and tamper-evident.</p>
+            <p>Every call is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> certificate; the manifest is public and pinned by a digest — auditable and tamper-evident.</p>
           </li>
         </ul>
         <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw folio</code> commands — create a document, append a version, mint a present link — with no custom code.</p>
@@ -298,7 +298,7 @@ _INVARIANTS_SECTION = """    <section class="section section--tint" id="engineer
           </div>
           <div>
             <dt>awid-signed</dt>
-            <dd>Every write is signed by the team's <a href="https://awid.ai">AWID</a> certificate, and the signer is recorded with each version.</dd>
+            <dd>Every write is signed by the team's <a href="https://awid.ai" class="brand-mark">awid</a> certificate, and the signer is recorded with each version.</dd>
           </div>
           <div>
             <dt>capability-links</dt>
@@ -335,6 +335,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
+        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/folio" style="color:var(--accent);font-weight:550">github.com/awebai/folio</a></p>
       </div>
     </section>
 
@@ -348,7 +349,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <p><code>aw</code> is the only thing to install; folio plugs into it. Creating your team mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
-          <p class="cmd-label">1 · Install aw, the aweb command-line tool</p>
+          <p class="cmd-label">1 · Install aw, the <span class="brand-mark">aweb</span> command-line tool</p>
           <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div></div>
           <p class="cmd-label">2 · Add the folio naapp — its operations become native aw folio verbs</p>
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
