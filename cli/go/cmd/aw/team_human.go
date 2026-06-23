@@ -692,6 +692,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		createdProfileIdentity := false
+		var acceptedProfileIdentity *acceptedTeamInvite
 		if plans[i].Profile != nil {
 			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
@@ -705,6 +706,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 					return err
 				}
 				createdProfileIdentity = true
+				acceptedProfileIdentity = accepted
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
@@ -724,12 +726,15 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				agentID = plans[i].Name
 			}
 			rollbackOnErr := func(err error) error {
-				if createdProfileIdentity && rollback != nil {
-					if rbErr := rollback.Rollback(); rbErr != nil {
-						return fmt.Errorf("%w; rollback failed: %v", err, rbErr)
-					}
+				if !createdProfileIdentity {
+					return err
 				}
-				return err
+				memberRollbackErr := rollbackJustCreatedTeamMember(wd, acceptedProfileIdentity)
+				var homeRollbackErr error
+				if rollback != nil {
+					homeRollbackErr = rollback.Rollback()
+				}
+				return addPostJoinRollbackError(err, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr)
 			}
 			// Materialize the profile home, connect the member to the aweb service,
 			// then run the coordination configure step. Connect sits between the two:
@@ -764,6 +769,133 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	}
 	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+type justCreatedTeamMemberRollbackTarget struct {
+	TeamID        string
+	Domain        string
+	TeamName      string
+	RegistryURL   string
+	AwebURL       string
+	CertificateID string
+	MemberAddress string
+}
+
+func rollbackJustCreatedTeamMember(anchorDir string, accepted *acceptedTeamInvite) error {
+	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), awid.APITimeout())
+	defer cancel()
+	if isAwebHostedNamespace(target.Domain) {
+		awebURL, apiKey, err := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, "")
+		if err != nil {
+			return err
+		}
+		_, err = postHostedTeamRemoveMember(ctx, awebURL, apiKey, target.TeamID, hostedTeamRemoveMemberRequest{CertificateID: target.CertificateID})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := strings.TrimSpace(target.RegistryURL)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
+		}
+	} else {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	teamKey, err := awconfig.LoadTeamKey(target.Domain, target.TeamName)
+	if err != nil {
+		return fmt.Errorf("load team key for %s/%s: %w", target.Domain, target.TeamName, err)
+	}
+	if err := registry.RevokeCertificate(ctx, registryURL, target.Domain, target.TeamName, target.CertificateID, teamKey); err != nil {
+		return fmt.Errorf("revoke certificate %s: %w", target.CertificateID, err)
+	}
+	return nil
+}
+
+func justCreatedTeamMemberRollbackTargetFromAccepted(accepted *acceptedTeamInvite) (justCreatedTeamMemberRollbackTarget, error) {
+	if accepted == nil || accepted.Certificate == nil {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: accepted certificate is missing")
+	}
+	target := justCreatedTeamMemberRollbackTarget{
+		CertificateID: strings.TrimSpace(accepted.Certificate.CertificateID),
+		MemberAddress: strings.TrimSpace(accepted.Certificate.MemberAddress),
+		RegistryURL:   strings.TrimSpace(accepted.RegistryURL),
+		AwebURL:       strings.TrimSpace(accepted.AwebURL),
+	}
+	if accepted.Output != nil {
+		target.TeamID = strings.TrimSpace(accepted.Output.TeamID)
+	}
+	if target.TeamID == "" {
+		target.TeamID = strings.TrimSpace(accepted.Certificate.Team)
+	}
+	target.Domain = awconfig.NormalizeDomain(accepted.Domain)
+	target.TeamName = strings.TrimSpace(accepted.TeamName)
+	if target.Domain == "" || target.TeamName == "" {
+		if domain, teamName, err := awid.ParseTeamID(target.TeamID); err == nil {
+			if target.Domain == "" {
+				target.Domain = domain
+			}
+			if target.TeamName == "" {
+				target.TeamName = teamName
+			}
+		}
+	}
+	if target.TeamID == "" && target.Domain != "" && target.TeamName != "" {
+		target.TeamID = awid.BuildTeamID(target.Domain, target.TeamName)
+	}
+	if target.TeamID == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: team id is missing")
+	}
+	if target.Domain == "" || target.TeamName == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: team domain/name is missing", target.TeamID)
+	}
+	if target.CertificateID == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: certificate_id is missing", target.TeamID)
+	}
+	return target, nil
+}
+
+func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberRollbackErr, homeRollbackErr error) error {
+	if memberRollbackErr == nil && homeRollbackErr == nil {
+		return cause
+	}
+	target, targetErr := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
+	var b strings.Builder
+	if memberRollbackErr != nil {
+		b.WriteString("server-side member rollback failed")
+		if targetErr == nil {
+			fmt.Fprintf(&b, " for team_id %s certificate_id %s", target.TeamID, target.CertificateID)
+			if target.MemberAddress != "" {
+				fmt.Fprintf(&b, " member_address %s", target.MemberAddress)
+			}
+		}
+		fmt.Fprintf(&b, ": %v", memberRollbackErr)
+		if targetErr == nil {
+			fmt.Fprintf(&b, "; dirty server-side member may remain; clean it from an owner/admin workspace with `aw id team remove-member --team %s --namespace %s --cert-id %s`", target.TeamName, target.Domain, target.CertificateID)
+			if target.MemberAddress != "" {
+				fmt.Fprintf(&b, " or `aw team remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
+			}
+		} else {
+			fmt.Fprintf(&b, "; rollback target details unavailable: %v", targetErr)
+		}
+	}
+	if homeRollbackErr != nil {
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "local home rollback failed: %v", homeRollbackErr)
+	}
+	return fmt.Errorf("%w; %s", cause, b.String())
 }
 
 func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {

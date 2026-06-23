@@ -1887,7 +1887,11 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 }
 
 func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey string, err error) {
-	awebURL = strings.TrimSpace(teamRemoveAwebURL)
+	return resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, teamRemoveAwebURL)
+}
+
+func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL string) (awebURL, apiKey string, err error) {
+	awebURL = strings.TrimSpace(explicitAwebURL)
 	apiKey = strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
 	workspace, teamState, _, loadErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if loadErr == nil && workspace != nil {

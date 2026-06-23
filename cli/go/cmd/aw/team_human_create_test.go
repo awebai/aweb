@@ -684,6 +684,8 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	}
 	teamDID := awid.ComputeDIDKey(teamPub)
 	var certCalls int
+	var registeredCertID string
+	var revokedCertID string
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -693,7 +695,19 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "team_did_key": teamDID})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates":
 			certCalls++
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			registeredCertID, _ = body["certificate_id"].(string)
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates/revoke":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			revokedCertID, _ = body["certificate_id"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": revokedCertID})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
 		default:
@@ -713,9 +727,185 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	if certCalls != 1 {
 		t.Fatalf("cert calls=%d want 1 to prove identity was created before materialize failure", certCalls)
 	}
+	if registeredCertID == "" {
+		t.Fatal("registered certificate id was not captured")
+	}
+	if revokedCertID != registeredCertID {
+		t.Fatalf("revoked certificate_id=%q want just-created %q", revokedCertID, registeredCertID)
+	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
 	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
 		t.Fatalf("failed profile add left agent home state at %s: %v", agentHome, statErr)
+	}
+}
+
+func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(root)
+
+	teamID := "default:rollback.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	justCreatedCertID := ""
+	preExistingCertID := "cert-pre-existing-do-not-touch"
+	removeCertID := ""
+	removeAuth := ""
+	removeCalls := 0
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": server.URL, "registry_url": server.URL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID {
+				t.Fatalf("create-invite cert team=%q want %q", cert.Team, teamID)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_token", "server_url": server.URL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			justCreatedCertID = cert.CertificateID
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "server-team-id", "team_slug": "default", "namespace": "rollback.aweb.ai",
+				"identity_id": "agent-developer", "alias": "developer", "server_url": server.URL,
+				"did": didKey, "custody": "self", "lifetime": "ephemeral", "access_mode": "open", "created": true,
+				"team_cert": encoded,
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback.aweb.ai/agents/remove-member":
+			removeCalls++
+			removeAuth = r.Header.Get("Authorization")
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			removeCertID, _ = body["certificate_id"].(string)
+			if removeCertID == preExistingCertID {
+				t.Fatalf("rollback targeted pre-existing cert %q", preExistingCertID)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "removed", "canonical_team_id": teamID, "certificate_id": removeCertID})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+	oldInitAwebURL := initAwebURL
+	initAwebURL = server.URL
+	t.Cleanup(func() { initAwebURL = oldInitAwebURL })
+	workspace := workspaceBinding(server.URL, teamID, "owner", "workspace-owner")
+	workspace.APIKey = "aw_sk_owner"
+	writeWorkspaceBindingForTest(t, root, workspace)
+
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
+	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
+		t.Fatalf("error=%v", err)
+	}
+	if justCreatedCertID == "" {
+		t.Fatal("hosted accept did not create a cert")
+	}
+	if removeCalls != 1 {
+		t.Fatalf("remove-member calls=%d want 1", removeCalls)
+	}
+	if removeCertID != justCreatedCertID {
+		t.Fatalf("remove certificate_id=%q want just-created %q", removeCertID, justCreatedCertID)
+	}
+	if removeAuth != "Bearer aw_sk_owner" {
+		t.Fatalf("remove auth=%q want owner workspace bearer key", removeAuth)
+	}
+	agentHome := filepath.Join(root, "agents", "instances", "developer")
+	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
+		t.Fatalf("failed hosted profile add left agent home state at %s: %v", agentHome, statErr)
+	}
+}
+
+func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(root)
+
+	teamID := "default:rollback-fail.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	justCreatedCertID := ""
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": server.URL, "registry_url": server.URL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_fail_token", "server_url": server.URL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			justCreatedCertID = cert.CertificateID
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "server-team-id", "team_slug": "default", "namespace": "rollback-fail.aweb.ai",
+				"identity_id": "agent-developer", "alias": "developer", "server_url": server.URL,
+				"did": didKey, "custody": "self", "lifetime": "ephemeral", "access_mode": "open", "created": true,
+				"team_cert": encoded,
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":
+			http.Error(w, `{"detail":"remove failed"}`, http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+	oldInitAwebURL := initAwebURL
+	initAwebURL = server.URL
+	t.Cleanup(func() { initAwebURL = oldInitAwebURL })
+	workspace := workspaceBinding(server.URL, teamID, "owner", "workspace-owner")
+	workspace.APIKey = "aw_sk_owner"
+	writeWorkspaceBindingForTest(t, root, workspace)
+
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
+	if err == nil {
+		t.Fatal("expected materialize + rollback failure")
+	}
+	text := err.Error()
+	for _, want := range []string{"aw library plugin is not installed", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error missing %q:\n%s", want, text)
+		}
 	}
 }
 
