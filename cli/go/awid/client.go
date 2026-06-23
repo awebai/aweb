@@ -1024,18 +1024,6 @@ func shouldRetryAPIResponse(ctx context.Context, method, path string, body []byt
 	return false, nil
 }
 
-func readAndRestoreHTTPBody(resp *http.Response) ([]byte, error) {
-	if resp == nil || resp.Body == nil {
-		return nil, nil
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
-	if err != nil {
-		return nil, err
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(data))
-	return data, nil
-}
-
 func reportAndSleepAPIRetry(ctx context.Context, attempt int, method, path string) error {
 	retry := attempt + 1
 	fmt.Fprintf(os.Stderr, "service temporarily unavailable, retrying %d/%d (%s %s)\n", retry, apiTransientMaxRetries, strings.ToUpper(strings.TrimSpace(method)), path)

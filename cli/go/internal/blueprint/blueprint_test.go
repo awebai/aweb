@@ -105,6 +105,11 @@ Example placeholders: api_key: <value>, token=<value>, secret=<redacted>,
 client_secret: <secret>, {"access_token":"<token>"}, {"api_key":""},
 'api_key': '', "X-AWID-Team-Certificate": "", 'X-AWID-Team-Certificate': '',
 and {"X-AWID-Team-Certificate":"<certificate>"}.
+
+In prose, operators rotate the api_key when a teammate leaves, watch the
+access_token and refresh_token expire, keep the client_secret and password in a
+vault, and never paste a token or secret into chat - none of these keyword
+mentions is a credential assignment, so the doc must load.
 `)
 
 	if _, err := LoadLocalDir(root); err != nil {
@@ -206,7 +211,7 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	didKey := awid.ComputeDIDKey(pub)
-	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}

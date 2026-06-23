@@ -9,9 +9,13 @@ from awid.registry import RegistryError
 AWID_DEPENDENCY_ERRORS = (DnsVerificationError, httpx.RequestError, RegistryError)
 
 
-def awid_registry_not_configured_exception(*, operation: str = "AWID registry") -> HTTPException:
+def awid_registry_not_configured_detail(*, operation: str = "AWID registry") -> str:
     operation = (operation or "AWID registry").strip()
-    return HTTPException(status_code=500, detail=f"{operation} registry client not configured")
+    return f"{operation} registry client not configured"
+
+
+def awid_registry_not_configured_exception(*, operation: str = "AWID registry") -> HTTPException:
+    return HTTPException(status_code=500, detail=awid_registry_not_configured_detail(operation=operation))
 
 
 def awid_dependency_http_exception(exc: Exception, *, operation: str = "AWID registry") -> HTTPException:
