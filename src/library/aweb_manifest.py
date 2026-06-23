@@ -404,6 +404,23 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["library:write"],
             "mutation": True,
         },
+        {
+            "name": "get-shelf-profile",
+            "description": "Get the team's private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.",
+            "method": "GET",
+            "path": "/v1/profiles/{profile_ref}",
+            "input_schema": {
+                "type": "object",
+                "properties": {"profile_ref": {"type": "string"}, "include": {"type": "string"}},
+                "required": ["profile_ref"],
+            },
+            "params": [
+                {"name": "profile_ref", "in": "path"},
+                {"name": "include", "in": "query"},
+            ],
+            "scopes": ["library:read"],
+            "mutation": False,
+        },
     ],
 }
 

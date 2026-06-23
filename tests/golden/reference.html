@@ -101,6 +101,7 @@
           <a href="#op-proposals">proposals</a>
           <a href="#op-approve">approve</a>
           <a href="#op-reject">reject</a>
+          <a href="#op-get-shelf-profile">get-shelf-profile</a>
         </div>
           <div class="ref-nav-divider"></div>
           <a class="ref-nav-link" href="#auth">Authentication</a>
@@ -169,7 +170,7 @@
           <div class="cmd ref-cmd-primary"><pre>aw library get-profile --blueprint_ref aweb.engineering --profile_ref coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><p class="ref-wire-note">Raw HTTP, no auth — copy-paste runnable.</p><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering/profiles/coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
         </article>
-        <div class="ref-section-label"><h2>Shelf, bindings, materialize, proposals — AWID team certificate</h2><span class="count">17</span></div>
+        <div class="ref-section-label"><h2>Shelf, bindings, materialize, proposals — AWID team certificate</h2><span class="count">18</span></div>
         <p class="ref-section-note">aw signs every team-certificate request for you. The HTTP wire format under each operation is only needed to port a signer — see <a href="#auth">Authentication</a>.</p>
         <article class="ref-op" id="op-publish-blueprint">
           <div class="ref-op-sig">
@@ -628,6 +629,31 @@ Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alp
 X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
 X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
 X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals/{proposal_id}/reject</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-get-shelf-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-get-shelf-profile" aria-label="Link to get-shelf-profile">#</a>
+              <code class="ref-op-verb">aw library get-shelf-profile</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Get the team&#x27;s private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>include</code></td><td>query</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library get-shelf-profile --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>GET /v1/profiles/{profile_ref}
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/profiles/{profile_ref}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
         </article>
         <div class="ref-section-label" id="auth"><h2>Authentication</h2></div>
         <p class="ref-op-desc">The three public catalog reads take no auth. Every other operation is team-scoped and authenticated with your AWID team certificate. Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), aw signs each request for you — you never assemble these headers by hand. Build your own client only if you are porting the signer to another language.</p>

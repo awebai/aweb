@@ -165,6 +165,11 @@ aw library reject  (POST /v1/proposals/{proposal_id}/reject)
     Reject a profile learning proposal.
     required: proposal_id
 
+aw library get-shelf-profile  (GET /v1/profiles/{profile_ref})
+    Get the team's private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.
+    required: profile_ref
+    optional: include
+
 
 ## Invariants
 
