@@ -1831,7 +1831,7 @@ func TestClientDoesNotRetryUnsafeGeneric503(t *testing.T) {
 	}
 }
 
-func TestClientRetriesUnsafeRegistryUnavailable503(t *testing.T) {
+func TestClientDoesNotRetryUnsafeTransientBody503(t *testing.T) {
 	oldBaseDelay := apiTransientRetryBaseDelay
 	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
 	apiTransientRetryBaseDelay = 0
@@ -1839,12 +1839,8 @@ func TestClientRetriesUnsafeRegistryUnavailable503(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if calls == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"detail":"AWID registry unavailable"}`))
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"detail":"service temporarily unavailable"}`))
 	}))
 	defer server.Close()
 
@@ -1852,15 +1848,17 @@ func TestClientRetriesUnsafeRegistryUnavailable503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out map[string]any
 	stderr := captureStderrForTest(t, func() {
-		err = client.Post(context.Background(), "/v1/tasks", map[string]any{"status": "done"}, &out)
+		err = client.Post(context.Background(), "/v1/tasks", map[string]any{"status": "done"}, nil)
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected APIError")
 	}
-	if calls != 2 || !strings.Contains(stderr, "retrying 1/3") {
-		t.Fatalf("calls=%d stderr=%q", calls, stderr)
+	if calls != 1 {
+		t.Fatalf("calls=%d want 1", calls)
+	}
+	if strings.Contains(stderr, "retrying") {
+		t.Fatalf("unsafe transient-body 503 should not retry; stderr=%q", stderr)
 	}
 }
 
