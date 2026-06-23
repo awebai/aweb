@@ -1,21 +1,24 @@
 //go:build e2e
 
 // Full consumer learning-loop refresh against the real stack (default-aaas.14.8).
-// A profile is adopted + materialized from the Library; a NEW version is minted on
-// the team's PRIVATE shelf; `aw team refresh` re-materializes the member home from
-// that new shelf version and `aw agent profile show` reflects it. The new shelf
-// version stands in for the propose->approve outcome (the changeset's per-asset
-// base digests make a full propose fiddly to build here; the refresh logic - read
-// the latest shelf version via get-shelf-profile and re-materialize - is identical
-// regardless of how the version was minted).
+// The real demo chain: a profile is adopted + materialized; the team improves it
+// via an APPROVED proposal (a new shelf version is minted); `aw team refresh`
+// re-materializes the member home from that new shelf version and `aw agent
+// profile show` reflects it - so an agent picks up the team's own learning.
 //
-// This exercises Layers 1-3 end to end: the get-shelf-profile ?include=files
-// endpoint, the manifest tool aw dispatches, and the aw-side refresh + ref-inspect.
+// This exercises Layers 1-3 end to end: refresh dispatches the get-shelf-profile
+// manifest tool (Layer 2) against the ?include=files endpoint (Layer 1) and
+// re-materializes (Layer 3).
+//
+// The proposal is submitted via `aw id request POST /v1/proposals` rather than
+// `aw library propose`: the latter cannot pass the changeset OBJECT through the
+// CLI today (interpret.go convertBodyValue rejects a string for an object body
+// param) - a known demo-verb bug surfaced separately. The fallback validates the
+// CHAIN (approve mints the version, refresh picks it up); it does not paper over
+// the verb bug.
 package e2e
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -24,7 +27,7 @@ import (
 	"testing"
 )
 
-func TestRealStackLibraryProfileRefreshPicksUpNewShelfVersion(t *testing.T) {
+func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	requireE2E(t)
 	bin := awBinary(t)
 
@@ -36,10 +39,6 @@ func TestRealStackLibraryProfileRefreshPicksUpNewShelfVersion(t *testing.T) {
 	}
 	installLibraryPlugin(t, home)
 	gitInit(t, repo)
-
-	// The get-shelf-profile call in mintNewShelfVersion below is the implicit
-	// fail-fast: a stale/pre-deploy manifest lacking the verb errors there, before
-	// the refresh, with a clear "unknown library verb".
 
 	env := append(os.Environ(),
 		"HOME="+home,
@@ -55,42 +54,53 @@ func TestRealStackLibraryProfileRefreshPicksUpNewShelfVersion(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
+	// `aw id request --raw` writes the body to stdout and the `HTTP <code>` status
+	// line to stderr, so the JSON parse must read stdout only.
+	awStdout := func(args ...string) (string, error) {
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = repo
+		cmd.Env = env
+		out, err := cmd.Output()
+		return string(out), err
+	}
 
-	// select + materialize: adopt profiles and materialize roster homes under
-	// agents/instances/<name> (the proven roster shape; coordinator is the one we
-	// refresh).
+	// select + materialize: adopt profiles and materialize roster homes.
 	if out, err := awInRepo("team", "create", "eng",
 		"--profile", "aweb.engineering/coordinator=claude-code",
 		"--profile", "aweb.engineering/reviewer=pi"); err != nil {
 		t.Fatalf("aw team create --profile failed: %v\n%s", err, out)
 	}
 
-	// ref-inspect: the recorded profile ref before refresh.
 	before := profileRefShow(t, awInRepo, "coordinator")
 	if before.SourceBlueprintRef != "aweb.engineering" || before.ProfileRef != "coordinator" || before.ProfileVersion == "" {
 		t.Fatalf("unexpected recorded ref before refresh: %+v", before)
 	}
 
-	// Mint a NEW shelf version (the approve outcome): re-use the current shelf
-	// content, bump profile.yaml's version, and POST it as a new version. The shelf
-	// content comes from the new get-shelf-profile content endpoint itself.
-	newVersion := bumpProfileVersion(t, before.ProfileVersion)
-	mintNewShelfVersion(t, awInRepo, "coordinator", newVersion)
+	// The team improves its profile: propose a new file asset, then approve it,
+	// minting a new private-shelf version.
+	marker := proposeApproveInstructionsChange(t, awInRepo, awStdout)
 
-	// refresh: re-materialize from the latest shelf version.
+	// refresh: re-materialize from the latest shelf version (the approved one).
 	if out, err := awInRepo("team", "refresh", "coordinator"); err != nil {
 		t.Fatalf("aw team refresh failed: %v\n%s", err, out)
 	}
 
-	// ref-inspect again: the recorded ref now reflects the new shelf version.
 	after := profileRefShow(t, awInRepo, "coordinator")
 	if after.ProfileVersion == before.ProfileVersion {
-		t.Fatalf("refresh did not pick up a new shelf version (still %s)", after.ProfileVersion)
+		t.Fatalf("refresh did not pick up the approved version (still %s)", after.ProfileVersion)
 	}
 	if after.ProfileDigest == before.ProfileDigest {
-		t.Fatalf("refresh kept the old profile digest %s; the new shelf version should change the content", after.ProfileDigest)
+		t.Fatalf("refresh kept the old profile digest %s; the approved proposal changed the content", after.ProfileDigest)
 	}
-	t.Logf("refresh picked up the new shelf version: %s@%s -> @%s", after.ProfileRef, before.ProfileVersion, after.ProfileVersion)
+	// The approved change is visible in the re-materialized instructions.
+	instr, err := os.ReadFile(filepath.Join(repo, "agents", "instances", "coordinator", ".aw", "profile", "instructions.md"))
+	if err != nil {
+		t.Fatalf("re-materialized instructions.md missing: %v", err)
+	}
+	if !strings.Contains(string(instr), marker) {
+		t.Fatalf("refresh did not propagate the approved instructions change (marker %q absent):\n%s", marker, instr)
+	}
+	t.Logf("refresh picked up the approved proposal: %s@%s -> @%s", after.ProfileRef, before.ProfileVersion, after.ProfileVersion)
 }
 
 type e2eRecordedRef struct {
@@ -114,68 +124,74 @@ func profileRefShow(t *testing.T, awInRepo func(...string) (string, error), name
 	return ref
 }
 
-// mintNewShelfVersion reads the current shelf content (get-shelf-profile content),
-// bumps the profile.yaml version, and posts it as a new shelf version via a signed
-// team-auth request - the real path an approved proposal's mint takes.
-func mintNewShelfVersion(t *testing.T, awInRepo func(...string) (string, error), profileRef, newVersion string) {
+// proposeApproveInstructionsChange mints a new shelf version via the real
+// propose->approve chain: a proposal that MODIFIES instructions.md (a materialized
+// asset, so the change is visible in the home). A file asset's base_asset_digest
+// is just its sha256, which get-shelf-profile --include files returns - so the
+// changeset is self-contained without reimplementing the canonical asset hash.
+// Returns the marker text the approved instructions must contain.
+func proposeApproveInstructionsChange(t *testing.T, awInRepo, awStdout func(...string) (string, error)) string {
 	t.Helper()
-	out, err := awInRepo("library", "get-shelf-profile", "--profile_ref", profileRef, "--include", "files")
+	out, err := awInRepo("library", "get-shelf-profile", "--profile_ref", "coordinator", "--include", "files")
 	if err != nil {
 		t.Fatalf("aw library get-shelf-profile failed: %v\n%s", err, out)
 	}
 	var shelf struct {
-		Files []map[string]any `json:"files"`
+		Files []map[string]string `json:"files"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &shelf); err != nil {
 		t.Fatalf("get-shelf-profile response not JSON: %v\n%s", err, out)
 	}
-	if len(shelf.Files) == 0 {
-		t.Fatalf("get-shelf-profile returned no files (Layer 1 ?include=files not serving?): %s", out)
-	}
-	swapped := false
+	var content, baseDigest string
 	for _, f := range shelf.Files {
-		if f["path"] == "profile.yaml" {
-			content, _ := f["content_utf8"].(string)
-			updated := swapYAMLVersion(content, newVersion)
-			f["content_utf8"] = updated
-			// The content changed, so its sha256 must be recomputed - the
-			// materialize verifies each file's content against this hash.
-			sum := sha256.Sum256([]byte(updated))
-			f["sha256"] = "sha256:" + hex.EncodeToString(sum[:])
-			swapped = true
+		if f["path"] == "instructions.md" {
+			content, baseDigest = f["content_utf8"], f["sha256"]
 		}
 	}
-	if !swapped {
-		t.Fatalf("shelf content has no profile.yaml to bump: %v", shelf.Files)
+	if baseDigest == "" {
+		t.Fatalf("shelf content has no instructions.md to evolve: %v", shelf.Files)
 	}
 
-	bodyPath := filepath.Join(t.TempDir(), "shelf-version.json")
-	body, _ := json.Marshal(map[string]any{"files": shelf.Files})
-	if err := os.WriteFile(bodyPath, body, 0o644); err != nil {
+	marker := "Remember to re-test the refresh path after a proposal."
+	changeset := map[string]any{
+		"schema": "aweb.library.profile-asset-changeset.v1",
+		"assets": []map[string]any{
+			{"path": "instructions.md", "content_utf8": content + "\n\n" + marker + "\n", "base_asset_digest": baseDigest},
+		},
+	}
+	pid := awPostJSON(t, awStdout, libraryURL()+"/v1/proposals", map[string]any{
+		"target":      "profile",
+		"profile_ref": "coordinator",
+		"content":     changeset,
+		"summary":     "sharpen coordinator instructions",
+	}, "proposal_id")
+	if pid == "" {
+		t.Fatal("propose returned no proposal_id")
+	}
+	awPostJSON(t, awStdout, libraryURL()+"/v1/proposals/"+pid+"/approve", map[string]any{}, "")
+	return marker
+}
+
+// awPostJSON does a signed team-auth POST and returns the named top-level string
+// field of the response (or "" when key is empty).
+func awPostJSON(t *testing.T, awStdout func(...string) (string, error), url string, body map[string]any, key string) string {
+	t.Helper()
+	bodyPath := filepath.Join(t.TempDir(), "body.json")
+	data, _ := json.Marshal(body)
+	if err := os.WriteFile(bodyPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := awInRepo("id", "request", "POST",
-		libraryURL()+"/v1/profiles/"+profileRef+"/versions", "--team-auth", "--raw", "--body-file", bodyPath); err != nil {
-		t.Fatalf("mint shelf version failed: %v\n%s", err, out)
+	out, err := awStdout("id", "request", "POST", url, "--team-auth", "--raw", "--body-file", bodyPath)
+	if err != nil {
+		t.Fatalf("POST %s failed: %v\n%s", url, err, out)
 	}
-}
-
-func bumpProfileVersion(t *testing.T, v string) string {
-	t.Helper()
-	parts := strings.Split(strings.TrimSpace(v), ".")
-	if len(parts) != 3 {
-		return v + ".1"
+	if key == "" {
+		return ""
 	}
-	// bump the patch deterministically without arithmetic edge cases
-	return parts[0] + "." + parts[1] + ".99"
-}
-
-func swapYAMLVersion(content, newVersion string) string {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, "version:") {
-			lines[i] = "version: " + newVersion
-		}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("POST %s response not JSON: %v\n%s", url, err, out)
 	}
-	return strings.Join(lines, "\n")
+	s, _ := resp[key].(string)
+	return s
 }
