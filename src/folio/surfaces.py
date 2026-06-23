@@ -211,9 +211,9 @@ _WHY_SECTION = """    <section class="section section--tint">
 _WHATFOLIO_SECTION = """    <section class="section section--tint">
       <div class="wrap">
         <style>
-          .ff-do-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4) var(--s6); }
-          .ff-do-grid > li { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
-          .ff-do-grid > li:first-child { border-top-color: var(--accent); }
+          .ff-do-grid { margin: var(--s5) 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4) var(--s6); }
+          .ff-do-grid > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
+          .ff-do-grid > div:first-child { border-top-color: var(--accent); }
           .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
           .ff-do-grid dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step--1); }
           @media (max-width: 760px) { .ff-do-grid { grid-template-columns: 1fr 1fr; } }
@@ -221,14 +221,14 @@ _WHATFOLIO_SECTION = """    <section class="section section--tint">
         </style>
         <p class="kicker">What folio does</p>
         <h2 style="font-size:var(--step-3);margin-top:var(--s3)">Documents, versions, and the links between them</h2>
-        <ul class="ff-do-grid">
-          <li><dt>documents</dt><dd>Markdown, or schema-validated template slots; team-private, addressed by a slug.</dd></li>
-          <li><dt>append-only</dt><dd>Each edit is a new version; present links pin a version — nothing is overwritten.</dd></li>
-          <li><dt>templates</dt><dd>Declarative slots in a schema; the server validates and renders to Markdown.</dd></li>
-          <li><dt>present links</dt><dd>Opaque, revocable, no-login, noindex — a capability URL, not a share link.</dd></li>
-          <li><dt>safe media</dt><dd>Images and Cloudflare Stream video; team-supplied HTML and JS are stripped.</dd></li>
-          <li><dt>team themes</dt><dd>CSS tokens, logo, header, footer — applied server-side on every page.</dd></li>
-        </ul>
+        <dl class="ff-do-grid">
+          <div><dt>documents</dt><dd>Markdown, or schema-validated template slots; team-private, addressed by a slug.</dd></div>
+          <div><dt>append-only</dt><dd>Each edit is a new version; present links pin a version — nothing is overwritten.</dd></div>
+          <div><dt>templates</dt><dd>Declarative slots in a schema; the server validates and renders to Markdown.</dd></div>
+          <div><dt>present links</dt><dd>Opaque, revocable, no-login, noindex — a capability URL, not a share link.</dd></div>
+          <div><dt>safe media</dt><dd>Images and Cloudflare Stream video; team-supplied HTML and JS are stripped.</dd></div>
+          <div><dt>team themes</dt><dd>CSS tokens, logo, header, footer — applied server-side on every page.</dd></div>
+        </dl>
       </div>
     </section>"""
 
