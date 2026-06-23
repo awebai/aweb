@@ -66,8 +66,10 @@ def test_landing_page_is_served() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "library" in response.text
     assert "https://awid.ai" in response.text
-    # Styled with the shared aweb design system.
-    assert '<link rel="stylesheet" href="/css/aweb.css">' in response.text
+    # Styled with the shared aweb design system, at the fingerprinted css URL.
+    from aweb_naapp import CSS_SHA256
+
+    assert f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">' in response.text
 
 
 def test_aweb_css_served_verbatim() -> None:
@@ -80,6 +82,21 @@ def test_aweb_css_served_verbatim() -> None:
     assert "text/css" in response.headers["content-type"]
     # Byte-for-byte the aweb design system the toolkit ships (its own sha pin).
     assert hashlib.sha256(response.content).hexdigest() == CSS_SHA256
+
+
+def test_og_card_and_fingerprinted_css_served() -> None:
+    from aweb_naapp import CSS_SHA256
+
+    client = TestClient(_app())
+    og = client.get("/og-card.png")
+    assert og.status_code == 200
+    assert og.headers["content-type"] == "image/png"
+    assert og.content[:8] == b"\x89PNG\r\n\x1a\n"
+    # The fingerprinted css URL serves the same stylesheet, cached immutably.
+    css = client.get(f"/css/aweb.{CSS_SHA256[:12]}.css")
+    assert css.status_code == 200
+    assert "text/css" in css.headers["content-type"]
+    assert "immutable" in css.headers["cache-control"]
 
 
 def test_health_endpoints_are_public() -> None:

@@ -77,7 +77,9 @@ def test_reference_page_documents_every_operation_dual() -> None:
     response = _client().get("/reference")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert '<link rel="stylesheet" href="/css/aweb.css">' in response.text
+    from aweb_naapp import CSS_SHA256
+
+    assert f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">' in response.text
     text = response.text
     for tool in MANIFEST["tools"]:
         assert f"aw library {tool['name']}" in text, tool["name"]

@@ -1,6 +1,7 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -54,6 +55,8 @@ from library.surfaces import (
     skills_index,
 )
 
+_OG_CARD_BYTES = (Path(__file__).resolve().parent / "assets" / "og-card.png").read_bytes()
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
@@ -100,12 +103,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def landing_route() -> HTMLResponse:
         return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
 
-    @app.get("/css/aweb.css")
-    async def aweb_css_route() -> Response:
+    def _aweb_css_response(immutable: bool) -> Response:
+        # The fingerprinted URL is content-addressed, so it can be cached forever;
+        # the legacy /css/aweb.css keeps a short TTL.
+        cache = "public, max-age=31536000, immutable" if immutable else "public, max-age=3600"
         return Response(
             content=aweb_css(),
             media_type="text/css",
-            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=3600"},
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": cache},
+        )
+
+    @app.get("/css/aweb.css")
+    async def aweb_css_route() -> Response:
+        return _aweb_css_response(immutable=False)
+
+    @app.get("/css/aweb.{fingerprint}.css")
+    async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
+        return _aweb_css_response(immutable=True)
+
+    @app.get("/og-card.png")
+    async def og_card_route() -> Response:
+        return Response(
+            content=_OG_CARD_BYTES,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
         )
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
