@@ -634,7 +634,14 @@ var (
 	// A credential key opening a YAML block scalar (key: | or key: >, with optional
 	// indent/chomp modifiers and a trailing comment). The value is on the indented
 	// lines that follow; hasBlockScalarCredentialAssignment walks those lines.
-	blockScalarHeaderRe     = regexp.MustCompile(`(?i)^[ \t]*["']?(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)["']?[ \t]*[:=][ \t]*[|>][0-9+-]*[ \t]*(?:#.*)?$`)
+	blockScalarHeaderRe = regexp.MustCompile(`(?i)^[ \t]*["']?(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|password|team[_-]?certificate|token|secret)["']?[ \t]*[:=][ \t]*[|>][0-9+-]*[ \t]*(?:#.*)?$`)
+	// Well-known secret token shapes (distinctive prefixes with no English-word
+	// overlap): aweb keys, GitHub tokens, Slack, Stripe. Used to catch a secret
+	// that is not the leading token on a block-scalar line, where the prose-safe
+	// leading-token rule does not reach - without the prose false positives a
+	// broad entropy scan would cause. PEM private keys are already caught by
+	// privateKeyPEMRe across the whole content.
+	knownSecretTokenRe      = regexp.MustCompile(`(?i)^(?:aw_sk_|gh[oprsu]_|github_pat_|xox[abprs]-|sk_(?:live|test)_)[A-Za-z0-9_-]{6,}`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
 	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
@@ -678,7 +685,10 @@ func hasCredentialAssignment(s string) bool {
 // leading token is extracted like an inline value (quote-stripped, placeholder
 // excluded) and run through the same credentialAssignmentIsMaterial rules, so a
 // quoted secret or a secret with trailing text is caught while a placeholder or
-// bare-keyword prose word passes.
+// bare-keyword prose word passes. A secret that is a non-leading token (a bullet-
+// or comment-style line) is caught by knownSecretTokenRe shape, which the
+// leading-token rule does not reach and which a prose-FP-prone entropy scan would
+// not be safe for.
 func hasBlockScalarCredentialAssignment(s string) bool {
 	// Normalize line endings first: a CRLF/CR file would otherwise leave a \r on
 	// each line and defeat the per-line header anchors - an easy evasion.
@@ -711,6 +721,14 @@ func hasBlockScalarCredentialAssignment(s string) bool {
 			}
 			if v := leadingCredentialValue(fields[0]); v != "" && credentialAssignmentIsMaterial(key, v) {
 				return true
+			}
+			// A known-shape secret can also hide as a non-leading token (a bullet-
+			// or comment-style line); catch those by shape, which the prose-safe
+			// leading-token rule above does not reach.
+			for _, f := range fields {
+				if knownSecretTokenRe.MatchString(leadingCredentialValue(f)) {
+					return true
+				}
 			}
 		}
 	}

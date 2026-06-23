@@ -177,6 +177,27 @@ func TestLoadLocalDirRejectsBlockScalarCredential(t *testing.T) {
 	}
 }
 
+func TestLoadLocalDirRejectsBlockScalarLaterTokenSecret(t *testing.T) {
+	// A known-shape secret as a NON-leading token on a block line (bullet/comment
+	// style) must be caught: the prose-safe leading-token rule does not reach it,
+	// so a narrow secret-shape predicate (known prefixes) covers it. (aabq.36)
+	cases := []struct{ name, path, body string }{
+		{"aw-sk-mid-line", "profiles/coordinator/docs/bs-lt-one.md", "api_key: |\n  use this aw_sk_real_secret_value\n"},
+		{"ghp-bullet", "profiles/coordinator/docs/bs-lt-two.md", "token: |\n  - ghp_AbC123def456\n"},
+		{"github-pat-mid-line", "profiles/coordinator/docs/bs-lt-three.md", "secret: |\n  rotate to github_pat_AbC123def456 today\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValidPack(t, root)
+			writeFile(t, filepath.Join(root, tc.path), tc.body)
+			if _, err := LoadLocalDir(root); err == nil || !strings.Contains(err.Error(), "unexpected identity material") {
+				t.Fatalf("later-token block-scalar secret should be rejected: err=%v", err)
+			}
+		})
+	}
+}
+
 func TestLoadLocalDirAllowsBlockScalarPlaceholderAndProse(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
@@ -192,6 +213,7 @@ api_key: |
   <your-key-here>
 token: |
   bearer authentication is required for the API
+  see RFC7519 and version 1.2.3 for the token format
 secret: >
   none is needed for the public read endpoints
 `)
