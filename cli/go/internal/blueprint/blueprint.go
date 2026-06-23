@@ -657,19 +657,47 @@ func unsafeContent(s string) bool {
 	return false
 }
 
-// hasCredentialAssignment reports a credential assignment only when the value
-// carries credential-like entropy. A bare keyword followed by a natural-language
-// word ("token: bearer authentication...", "secret: none", "password: must be 8
-// characters", "token: false") is documentation prose, not a secret, so it is
-// allowed; a value with a digit, uppercase letter, or structural char (e.g. an
-// underscore, as in api_key=aw_sk_secret_value) is treated as material.
 func hasCredentialAssignment(s string) bool {
 	for _, m := range credentialAssignmentRe.FindAllStringSubmatch(s, -1) {
-		if len(m) >= 3 && credentialValueHasEntropy(m[2]) {
+		if len(m) >= 3 && credentialAssignmentIsMaterial(m[1], m[2]) {
 			return true
 		}
 	}
 	return false
+}
+
+// credentialAssignmentIsMaterial decides whether a `<key>: <value>` match is a
+// real credential or documentation prose, after stripping trailing prose
+// punctuation ("secret: none." -> "none"). High-confidence keys (api_key,
+// access_token, secret_key, client_secret, password, team_certificate, ...) are
+// material for ANY value - an all-lowercase api_key/password value is still a
+// leaked credential. Only the generic bare keys that genuinely appear in prose
+// (bare "token", bare "secret") get the prose exception: they are material only
+// when the value carries entropy (a digit, uppercase, or structural char), so
+// "token: bearer", "secret: none", "token: false" pass while
+// token=secret_token_value is still caught.
+func credentialAssignmentIsMaterial(key, value string) bool {
+	value = strings.TrimRight(value, `.,;:!?)]}`)
+	if len(value) < 4 {
+		return false
+	}
+	if !isProseAmbiguousCredentialKey(key) {
+		return true
+	}
+	return credentialValueHasEntropy(value)
+}
+
+// isProseAmbiguousCredentialKey reports the bare keys generic enough to occur in
+// natural prose (bare "token", bare "secret"); every other credential key
+// (api_key, access_token, secret_key, client_secret, password, team_certificate)
+// is high-confidence and flagged for any value.
+func isProseAmbiguousCredentialKey(key string) bool {
+	switch strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key)) {
+	case "token", "secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func credentialValueHasEntropy(value string) bool {

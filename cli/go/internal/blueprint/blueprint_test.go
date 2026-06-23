@@ -115,15 +115,18 @@ and {"X-AWID-Team-Certificate":"<certificate>"}.
 func TestLoadLocalDirAllowsCredentialKeywordProse(t *testing.T) {
 	root := t.TempDir()
 	writeValidPack(t, root)
-	// Documentation prose that mentions credential keywords must load: the value
-	// is an English word, not a secret. Before aabq.28 the bare token/secret
-	// keywords plus a 4+-char value rejected all of these. (aabq.28)
+	// Documentation prose that mentions the bare token/secret keywords must load:
+	// the value is an English word, not a secret. Before aabq.28 the bare keyword
+	// plus a 4+-char value rejected all of these, including the ones with terminal
+	// prose punctuation. (aabq.28) (High-confidence keys like password are not
+	// prose-exempt - see the reject coverage.)
 	writeFile(t, filepath.Join(root, "profiles/coordinator/docs/auth-notes.md"), `# Auth notes
 
 token: bearer authentication is required for the API.
 secret: none is needed for the public read endpoints.
-password: must be 8 characters or longer.
 token: false disables the optional auth header.
+secret: none.
+token: false,
 `)
 
 	if _, err := LoadLocalDir(root); err != nil {
@@ -224,6 +227,10 @@ func TestLoadLocalDirRejectsRuntimeStateAndIdentityMaterial(t *testing.T) {
 		{name: "quoted-access-token-assignment", path: "profiles/coordinator/docs/oauth-json.md", body: `{"access_token":"secret_token_value"}`, want: "unexpected identity material"},
 		{name: "bare-token-assignment", path: "profiles/coordinator/docs/oauth-assignment.md", body: `token=secret_token_value`, want: "unexpected identity material"},
 		{name: "bare-secret-assignment", path: "profiles/coordinator/docs/value-assignment.md", body: `secret=secret_value`, want: "unexpected identity material"},
+		{name: "all-lowercase-api-key", path: "profiles/coordinator/docs/lc-one.md", body: `api_key=abcdefghijklmnop`, want: "unexpected identity material"},
+		{name: "all-lowercase-access-token", path: "profiles/coordinator/docs/lc-two.md", body: `access_token=abcdefghijklmnop`, want: "unexpected identity material"},
+		{name: "all-lowercase-client-secret", path: "profiles/coordinator/docs/lc-three.md", body: `client_secret=abcdefghijklmnop`, want: "unexpected identity material"},
+		{name: "all-lowercase-password", path: "profiles/coordinator/docs/lc-four.md", body: `password=huntertwo`, want: "unexpected identity material"},
 		{name: "client-secret-assignment", path: "profiles/coordinator/docs/client-oauth.md", body: `client_secret=secret_value`, want: "unexpected identity material"},
 		{name: "team-certificate-header", path: "profiles/coordinator/docs/header.md", body: "X-AWID-Team-Certificate: abcdefghijklmnop", want: "unexpected identity material"},
 		{name: "quoted-team-certificate-header", path: "profiles/coordinator/docs/header-json.md", body: `{"X-AWID-Team-Certificate":"abcdefghijklmnop"}`, want: "unexpected identity material"},
