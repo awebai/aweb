@@ -151,10 +151,11 @@ Required commands:
 
 ```bash
 aw blueprint inspect <source>
-aw blueprint apply <source> --team <team> [--target <dir>]
-aw team create <team> --from <source>
-aw agent add <name> --profile <profile> --runtime <runtime> [--worktree] [--start]
-aw agent status
+aw team create <team> [--profile <blueprint>/<profile>[=<runtime>]]...
+aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
+aw agent start <name> --runtime <runtime>
+aw agent status <name>
+aw agent logs <name>
 ```
 
 Required behavior:
@@ -171,8 +172,8 @@ Required behavior:
 
 Acceptance criteria:
 
-- one command creates the engineering team from the first-party blueprint;
-- one command adds a new local developer/reviewer agent;
+- one `aw team create` command creates the team and can optionally seed the first-party engineering profiles;
+- one `aw team add <name>@<blueprint>/<profile>` command adds a new local developer/reviewer agent from the engineering pack;
 - failure leaves inspectable state and a clear recovery path;
 - no second team-setup system is introduced.
 
@@ -194,9 +195,9 @@ Required:
 
 Acceptance criteria:
 
-- `aw agent add developer --runtime claude-code --worktree --start` lands the
-  runtime in the right home/worktree;
-- `aw agent status` shows useful runtime state;
+- `aw team add developer@aweb.engineering-pack/developer --runtime claude-code` materializes the right home/worktree layout;
+- `aw agent start developer --runtime claude-code` starts the selected local runtime from that home;
+- `aw agent status developer` shows useful runtime state;
 - launcher is local-only and thin; no hosted runtime service is implied.
 
 ### L5. Workroom dashboard
@@ -404,9 +405,9 @@ Acceptance criteria:
 
 1. Freeze the launch demo narrative and exact first task.
 2. Build the engineering blueprint/blueprints to product quality.
-3. Implement `aw blueprint inspect/apply` for local dirs.
-4. Implement `aw team create --from` as a wrapper over existing primitives.
-5. Implement `aw agent add/start/status` for local runtime.
+3. Implement `aw blueprint inspect` and local materialization for local dirs.
+4. Implement `aw team create` and `aw team add <name>@<blueprint>/<profile>` over existing primitives.
+5. Implement `aw agent start/status/logs` for local runtime.
 6. Make tasks/messages/dev or GitHub sufficient for one real workflow.
 7. Build the workroom view around the demo path.
 8. Expose the signed audit trail in the workroom.

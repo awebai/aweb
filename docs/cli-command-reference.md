@@ -14,7 +14,7 @@ to refresh it.
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Obsolete / Legacy Compatibility | `agents` |
-| Utility | `completion`, `doctor`, `help`, `upgrade`, `version` |
+| Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 
 ## Global Flags
 
@@ -22,6 +22,7 @@ to refresh it.
 - `-h, --help help for aw`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
+- `--trace Trace redacted HTTP requests and responses to stderr`
 
 ## `check`
 
@@ -843,7 +844,8 @@ checking or switching this identity's installed team memberships. Protocol/admin
 controller operations remain under `aw id team`.
 
 Subcommands:
-- `create` Create a team or get the hosted create-team entrypoint
+- `add` Add empty-profile agents to this team's agents/instances layout
+- `create` Create a local empty-profile team workspace
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
@@ -854,23 +856,42 @@ Subcommands:
 Flags:
 - `-h, --help help for team`
 
+## `team add`
+
+### `team add`
+
+Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home. Use --runtime to choose the materialization runtime; omitted --runtime defaults to claude-code.
+
+Flags:
+- `--global Add a global AWID identity/address-backed agent`
+- `-h, --help help for add`
+- `--home string Agent home directory override for a single added agent (default: agents/instances/<name>)`
+- `--layout-only Only create agents/instances/<name>; do not create identity state`
+- `--local Add a local team-scoped agent identity (default)`
+- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
+
 ## `team create`
 
 ### `team create`
 
-Create a team or get the hosted create-team entrypoint.
+Create a local empty-profile team workspace.
 
-Hosted team creation is dashboard-first in this release because it depends on
-the signed-in human account and organization. Customer-controlled BYOT teams
-can be created from the CLI by passing --byot with --name and --namespace.
+This wraps aw init for the aw-local path. No --profile means no Library call
+and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME]
+adopts from Library, binds the local identity, and materializes the home.
+The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix, or default claude-code.
 
 Flags:
+- `--alias string Initial local workspace alias (defaults to <name>)`
 - `--byot Create a customer-controlled AWID team with local namespace controller authority`
 - `--display-name string Team display name`
 - `-h, --help help for create`
+- `--home string Agent home directory override for single-agent --profile create`
 - `--name string Team name`
 - `--namespace string Namespace domain for --byot`
+- `--profile stringArray Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME] to adopt and materialize`
 - `--registry string Registry origin override for --byot`
+- `--runtime string Materialization runtime for --profile homes (claude-code|codex|pi|local-shell; default claude-code)`
 - `--service string Hosted service URL for dashboard guidance`
 
 ## `team invite`
@@ -879,8 +900,9 @@ Flags:
 
 Invite an agent or workspace to the active team.
 
-This is the everyday add-agent entrypoint. It creates an invite token using
-the current team's authority, then the joining workspace runs `aw team join <token>`.
+This creates an invite token using the current team's authority for a separate
+workspace or machine, then the joining workspace runs `aw team join <token>`.
+For local empty-profile homes under agents/instances/, use `aw team add`.
 
 Flags:
 - `--global Create global member invite`
@@ -2362,6 +2384,72 @@ Simply type aw help [path to command] for full details.
 
 Flags:
 - `-h, --help help for help`
+
+## `plugin`
+
+### `plugin`
+
+Manage aw plugins
+
+Subcommands:
+- `install` Install a plugin into the trusted aw plugin directory
+- `list` List installed plugins
+- `remove` Remove an installed plugin
+- `reserved-names` Emit reserved top-level aw app ids
+- `update` Update an installed manifest plugin
+
+Flags:
+- `-h, --help help for plugin`
+
+## `plugin install`
+
+### `plugin install`
+
+Install a plugin into the trusted aw plugin directory
+
+Flags:
+- `--app-id string App id to record in plugin provenance`
+- `--app-version string App version to record in plugin provenance`
+- `--dev-origin string Override the app origin to this base URL for a self-hosted or dev service; the request base URL becomes this, bypassing the manifest origin self-consistency check`
+- `-h, --help help for install`
+- `--manifest-version string Manifest version to record in plugin provenance`
+- `--origin string App origin to record in plugin provenance`
+
+## `plugin list`
+
+### `plugin list`
+
+List installed plugins
+
+Flags:
+- `-h, --help help for list`
+
+## `plugin remove`
+
+### `plugin remove`
+
+Remove an installed plugin
+
+Flags:
+- `-h, --help help for remove`
+
+## `plugin reserved-names`
+
+### `plugin reserved-names`
+
+Emit reserved top-level aw app ids
+
+Flags:
+- `-h, --help help for reserved-names`
+
+## `plugin update`
+
+### `plugin update`
+
+Update an installed manifest plugin
+
+Flags:
+- `-h, --help help for update`
 
 ## `upgrade`
 
