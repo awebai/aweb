@@ -163,6 +163,14 @@ def _publish(workspace: Path, env: dict[str, str], payload_file: Path) -> int:
     return result.returncode
 
 
+def _source_version() -> str:
+    """The pack's top-level version, used to detect a stale catalog entry."""
+    for line in (BLUEPRINT_SRC / "blueprint.yaml").read_text(encoding="utf-8").splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip().strip("\"'")
+    raise SystemExit(f"no top-level version in {BLUEPRINT_SRC / 'blueprint.yaml'}")
+
+
 def main() -> int:
     if not BLUEPRINT_SRC.is_dir():
         raise SystemExit(
@@ -171,7 +179,8 @@ def main() -> int:
             "LIBRARY_E2E_BLUEPRINT_SRC to the engineering pack directory."
         )
 
-    print(f"Seeding {BLUEPRINT_ID} from {BLUEPRINT_SRC}")
+    source_version = _source_version()
+    print(f"Seeding {BLUEPRINT_ID} v{source_version} from {BLUEPRINT_SRC}")
     print(f"  awid={AWID_URL}  library={LIBRARY_URL}")
 
     files = _collect_files(BLUEPRINT_SRC)
@@ -202,11 +211,21 @@ def main() -> int:
 
         rc = _publish(workspace, env, payload_file)
         if rc != 0:
-            # Already-seeded stack: tolerate if the catalog already has the pack.
-            if any(bp.get("blueprint_ref") == BLUEPRINT_ID for bp in _get_blueprints()):
-                print(f"  {BLUEPRINT_ID} already present in catalog; treating as seeded")
+            # Tolerate ONLY a genuinely already-seeded stack: the catalog must
+            # already hold THIS pack version. A failure with a stale/older version
+            # present (or none) is a real failure - the new pack did not land - and
+            # must not be swallowed as an idempotent no-op.
+            existing = next(
+                (bp for bp in _get_blueprints() if bp.get("blueprint_ref") == BLUEPRINT_ID),
+                None,
+            )
+            if existing is not None and existing.get("version") == source_version:
+                print(f"  {BLUEPRINT_ID} v{source_version} already present in catalog; treating as seeded")
             else:
-                raise SystemExit("publish failed and blueprint is not in the catalog")
+                raise SystemExit(
+                    f"publish failed and the catalog does not hold {BLUEPRINT_ID} "
+                    f"v{source_version} (found: {existing.get('version') if existing else 'none'})"
+                )
 
     catalog = _get_blueprints()
     match = next((bp for bp in catalog if bp.get("blueprint_ref") == BLUEPRINT_ID), None)
@@ -216,6 +235,11 @@ def main() -> int:
             f"catalog refs: {[bp.get('blueprint_ref') for bp in catalog]}"
         )
     version = match.get("version", "?")
+    if version != source_version:
+        raise SystemExit(
+            f"{BLUEPRINT_ID} in catalog is v{version}, expected source v{source_version} "
+            "(a stale or failed publish was silently tolerated)"
+        )
     print(f"OK: {BLUEPRINT_ID} v{version} is live in Library's public catalog")
     return 0
 

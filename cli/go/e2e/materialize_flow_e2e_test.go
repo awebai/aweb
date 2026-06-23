@@ -211,10 +211,19 @@ func TestRealStackFoldedScalarMissionMaterializes(t *testing.T) {
 // filed as default-aabq.21; see the file header.)
 func TestRealStackMaterializeFailureLeavesNoPartialState(t *testing.T) {
 	requireE2E(t)
-	tm := newThrowawayTeam(t)
+	bin := awBinary(t)
 
-	// A structurally invalid blueprint: materialize must reject it and write
-	// nothing. (Missing required top-level fields; aw validates before writing.)
+	// `aw blueprint materialize` is purely local - it contacts no remote service -
+	// so the atomicity guarantee needs no identity, team, or live stack: a bare
+	// binary under a throwaway HOME exercises it directly.
+	//
+	// The blueprint is schema-invalid for one explicit class of reason:
+	// blueprint.yaml omits required top-level fields (summary, description), so
+	// the failure is a blueprint.yaml schema-validation error rather than an
+	// incidental missing-file error. We assert on that reason below so the
+	// "wrote nothing" check can only pass for the right cause. (Which required
+	// field is reported first is not pinned - the validator's field order is not
+	// guaranteed - only that it is a blueprint.yaml required-field error.)
 	broken := filepath.Join(realDir(t, t.TempDir()), "broken-blueprint")
 	if err := os.MkdirAll(filepath.Join(broken, "profiles", "dev"), 0o755); err != nil {
 		t.Fatalf("mkdir broken blueprint: %v", err)
@@ -225,13 +234,18 @@ func TestRealStackMaterializeFailureLeavesNoPartialState(t *testing.T) {
 		"id: dev\nname: dev\nversion: 0.0.1\nmission: A mission.\naccepted_work: [x]\ninstructions: instructions.md\n")
 
 	target := filepath.Join(realDir(t, t.TempDir()), "out")
-	_, stderr, err := tm.exec("blueprint", "materialize", broken, "--profile", "dev", "--target", target)
+	cmd := exec.Command(bin, "blueprint", "materialize", broken, "--profile", "dev", "--target", target)
+	cmd.Env = append(os.Environ(), "HOME="+realDir(t, t.TempDir()), "NO_COLOR=1")
+	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("materialize of a broken blueprint unexpectedly succeeded")
+		t.Fatalf("materialize of a schema-invalid blueprint unexpectedly succeeded:\n%s", out)
+	}
+	if !strings.Contains(string(out), "blueprint.yaml:") || !strings.Contains(string(out), "required") {
+		t.Fatalf("expected a blueprint.yaml required-field validation failure, got:\n%s", out)
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
-		t.Fatalf("materialize failure left partial state at %s (stat err=%v); stderr:\n%s",
-			target, statErr, stderr)
+		t.Fatalf("materialize failure left partial state at %s (stat err=%v); output:\n%s",
+			target, statErr, out)
 	}
 }
 

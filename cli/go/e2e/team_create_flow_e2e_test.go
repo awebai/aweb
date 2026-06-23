@@ -18,6 +18,8 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +76,52 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(repo, "agents", "instances", "reviewer", "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Errorf("reviewer (pi) unexpectedly has CLAUDE.md (stat err=%v)", err)
+	}
+
+	// Server-side roster: aweb must actually hold the team, not just files on
+	// disk. `aw workspace status` reads live coordination state from aweb; a
+	// connect-but-not-configured bug (the Wall 2 failure this regresses) would
+	// leave a member unregistered, so file existence alone is not enough.
+	var statusOut, statusErr bytes.Buffer
+	statusCmd := exec.Command(bin, "--json", "workspace", "status")
+	statusCmd.Dir = filepath.Join(repo, "agents", "instances", "coordinator")
+	statusCmd.Env = env
+	statusCmd.Stdout = &statusOut
+	statusCmd.Stderr = &statusErr
+	if err := statusCmd.Run(); err != nil {
+		t.Fatalf("aw workspace status from coordinator home failed: %v\nstdout:\n%s\nstderr:\n%s",
+			err, statusOut.String(), statusErr.String())
+	}
+	var status struct {
+		Workspace struct {
+			Alias       string `json:"alias"`
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"workspace"`
+		Team []struct {
+			Alias       string `json:"alias"`
+			Role        string `json:"role"`
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"team"`
+	}
+	if err := json.Unmarshal(statusOut.Bytes(), &status); err != nil {
+		t.Fatalf("decode workspace status JSON: %v\noutput:\n%s", err, statusOut.String())
+	}
+	// Self (coordinator) carries an aweb-assigned workspace_id - it is connected.
+	if status.Workspace.Alias != "coordinator" || status.Workspace.WorkspaceID == "" {
+		t.Fatalf("coordinator not registered with aweb: workspace=%+v\noutput:\n%s",
+			status.Workspace, statusOut.String())
+	}
+	// The reviewer is in aweb's team roster with its own workspace_id and role -
+	// connected and configured, not merely materialized.
+	reviewerConnected := false
+	for _, w := range status.Team {
+		if w.Alias == "reviewer" && w.Role == "reviewer" && w.WorkspaceID != "" {
+			reviewerConnected = true
+		}
+	}
+	if !reviewerConnected {
+		t.Fatalf("reviewer missing/misconfigured in aweb team roster (connect-but-not-configured?); team=%+v\noutput:\n%s",
+			status.Team, statusOut.String())
 	}
 }
 
