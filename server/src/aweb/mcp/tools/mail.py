@@ -7,7 +7,7 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import cast
 
-from aweb.awid_error_handling import awid_registry_not_configured_exception
+from aweb.awid_error_handling import awid_registry_not_configured_detail
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
@@ -379,9 +379,9 @@ async def send_mail(
                 if registry_client is None:
                     return json.dumps(
                         {
-                            "error": awid_registry_not_configured_exception(
+                            "error": awid_registry_not_configured_detail(
                                 operation="AWID MCP mail recipient address lookup",
-                            ).detail,
+                            ),
                         }
                     )
                 return json.dumps({"error": f"Address '{recipient_ref}' not found"})

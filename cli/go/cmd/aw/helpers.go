@@ -464,7 +464,9 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 		return liveTeamMemberAliasTarget{}, false, err
 	}
 	registryURL := ""
-	if state, stateErr := awconfig.LoadTeamState(sel.WorkingDir); stateErr == nil && state != nil {
+	if state, stateErr := awconfig.LoadTeamState(sel.WorkingDir); stateErr != nil {
+		debugLog("load team state for alias fallback registry %s: %v", strings.TrimSpace(sel.TeamID), stateErr)
+	} else if state != nil {
 		if membership := state.Membership(sel.TeamID); membership != nil {
 			registryURL = registryURLForTeamMembersMembership(membership)
 		}
