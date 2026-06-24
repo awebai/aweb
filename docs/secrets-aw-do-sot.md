@@ -198,3 +198,20 @@ runner fleet, secret rotation workflows, HSM custody, multi-party approval.
 Short-lived scoped leases; named-operation templates everywhere; per-operation
 egress/network controls; runner attestations; HSM/KMS-backed custody; break-glass
 policy; rotation workflows; richer output redaction and leak detection.
+
+## 12. Self-contained
+
+`secrets.aweb.ai` manages everything in its own db — secrets, grants, approvals,
+runners, templates, and its operational record of brokered uses. The only thing it
+requires from outside its own scope is the **aw hook** it fires. Three boundary
+touches, none of which is the aweb coordination server:
+
+1. **Identity** — it verifies the agent's team cert cryptographically (against the
+   team DID) and checks its own grant table. Its one external dependency is the
+   **identity layer** (awid) for current-key / revocation — the shared naapp trust
+   root, not the aweb app server.
+2. **Grants are DID / app-local-role based**, resolved from the cert, not the core
+   role/membership system — so `secrets` stays self-contained.
+3. **Approval** — prefer `secrets`' own notify + approve surface (`aw secrets
+   approve`), so approval is end-to-end inside the app; reach for team chat only
+   if you accept that coupling.

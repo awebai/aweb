@@ -141,19 +141,20 @@ change (and, where it crosses the conformance suite, a coordinated landing).
 
 ## 7. Reliability and the failure mode
 
-Separate the **durable fact** from **delivery**:
+The audit record lives in the consuming naapp (`logs`), in its own db — **there is
+no core audit ledger.** Reliability is a property of **delivery**, not core storage:
 
-- The effecting layer **writes the canonical, provenance-signed event to the
-  durable team audit ledger as part of the action** (see `audit-logs-app-sot`).
-  This write is the non-losable record and happens once, at the point of effect.
-- Firing the hook **delivers** that event to registered targets (push to the
-  registered tool, with the pull export feed as backstop). Delivery is
-  **at-least-once with retry + dedup**; if `logs` is down it catches up from the
-  ledger feed. The audit guarantee does **not** depend on the HTTP call to `logs`
-  succeeding — it depends on the ledger write.
-- For audit-critical hooks (`post-secret-use-hook`), the ledger write is in the
-  action's transaction: if it cannot be recorded, the effecting layer fails
-  closed (the action does not silently happen unlogged).
+- Firing the hook **durably enqueues** the canonical, provenance-signed event for
+  **at-least-once delivery** to each registered target (a delivery outbox at the
+  firing layer, drained on ack, retry + dedup on `event_id`). The outbox is
+  transient delivery infrastructure, not an audit store.
+- If `logs` is down, the outbox retries until delivered; nothing is lost without
+  core holding a copy.
+- For audit-critical hooks (`post-secret-use-hook`), the **effecting naapp**
+  (`secrets`) records the use in **its own** db as part of brokering and enqueues
+  delivery to `logs`; if it cannot durably enqueue, it fails closed (the action
+  does not silently happen undelivered). The durable record is the naapp's own db
+  plus `logs`' chain — never a core ledger.
 
 ## 8. aw-core changes required
 

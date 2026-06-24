@@ -46,23 +46,22 @@ Aweb authority surface (a server mediation point) or a non-bypassable `aw` path.
 
 ## 2. The audit event lifecycle
 
-One action produces one ledger entry, at the point of effect (see the
-no-duplicate rule, `aw-hooks-sot` §3–4):
+One action produces one log entry, at the point of effect (see the no-duplicate
+rule, `aw-hooks-sot` §3–4). There is **no core audit ledger** — the record lives
+in `logs`, in its own db:
 
 ```text
 1. action effected at one layer (aw for local-only; a server for server effects)
 2. that layer builds the canonical, REDACTED event and PROVENANCE-signs it
      (effecting server signs with its key; aw signs with the agent cert)
-3. it writes the event to the durable team audit ledger
-     (ordered by team_seq, hash-chained)              <- the non-losable FACT, once
-4. it fires the relevant hook -> delivers to registered consumers (logs)
-5. logs verifies provenance signature + team hash chain,
-     stores its immutable copy + views, counter-signs checkpoints
+3. it fires the relevant hook -> durable at-least-once delivery to logs.ingest
+4. logs verifies the provenance signature, assigns team_seq, hash-chains, and
+     stores in ITS OWN db; counter-signs checkpoints
 ```
 
-This preserves **core owns facts, logs owns views**: the ledger write (step 3) is
-the authoritative single record; the hook (step 4) is delivery; `logs` is a
-registered consumer that also keeps the rich, queryable, verifiable record.
+`logs` owns the durable, ordered, verifiable record **end to end** — core stores
+no audit events. An effecting naapp may keep its own operational record (e.g.
+`secrets` records what it brokered, in its db), but the audit log is `logs`'.
 
 ### Two-layer integrity
 
@@ -74,10 +73,10 @@ A verifier checks both. `logs` counter-signs periodic checkpoints (a signed
 chain-head root) so a whole range verifies in O(1) against a checkpoint, and so
 the record can be externally anchored later.
 
-## 3. Core ledger event shape
+## 3. Event shape (stored by `logs`)
 
-The existing `aweb.audit_log` is insufficient (generic, unsigned, not chained,
-unused, GC'd). The ledger event:
+The legacy core `aweb.audit_log` table is unused and **not part of this design** —
+`logs` owns its store. The event `logs` stores and hash-chains in its own db:
 
 ```text
 event_id                  stable, idempotency key
@@ -157,28 +156,27 @@ of audit).
 
 `logs.aweb.ai` is a **separate app repo**, not part of core `aweb`, with an
 OSS/self-hostable core (customers may need to own their compliance archive). The
-`aweb` repo holds the core ledger contract, schemas, hook catalog, verification
-helpers, conformance vectors, and fixtures — not the product repo for every app.
+`aweb` repo holds only the cross-app contracts — the hook catalog, the event/
+payload schema, verification helpers, and conformance vectors — **not** a core
+audit store and not the product repo for every app.
 
-A customer can self-host `logs.aweb.ai` while using hosted Aweb core:
+A customer can self-host `logs.aweb.ai` while using hosted Aweb core. Because core
+stores no audit, self-hosting is just **registering the self-hosted logs URL as
+the hook target**: the hosted core's and naapps' mediation points fire their hooks
+and deliver signed events directly to the customer's logs instance. Nothing is
+pulled from a core audit store, because there is none.
 
 ```text
-hosted aweb core
-  writes signed/hash-chained team audit events
-  exposes scoped audit export/read feed; grants the audit app audit:read
+hosted aweb core / naapps
+  fire hooks at the point of effect -> durable delivery of signed events to the
+  registered logs target (hosted, or the customer's self-hosted URL)
 self-hosted logs app
-  pulls/receives events, verifies signature + chain
-  stores its immutable archive, renders search/reports/export
+  receives, verifies the provenance signature, hash-chains, stores its immutable
+  archive in its own db, renders search/reports/export
 ```
 
-Pull export contract (v1 prefers pull; webhook push later):
-
-```http
-GET /v1/audit/events?team_id=<team>&since_seq=<n>&limit=<n>
-```
-
-returning `{ events: [{team_seq, event_id, event_hash, prev_event_hash,
-server_signature, event}], next_since_seq, checkpoint }`.
+The only thing a self-hosted `logs` needs from outside its own scope is to be a
+registered hook target. No core export feed, no core audit table.
 
 ## 6. Why this is the user's record, not the agents'
 
@@ -211,3 +209,12 @@ grade exports.
 Periodic external timestamp anchoring; customer-controlled storage / WORM; SIEM
 export; retention policy UI; per-app audit scopes; webhook push with retry/dedup;
 richer leak-detection redaction; cross-server federation of the log.
+
+## 9. Self-contained
+
+`logs.aweb.ai` manages everything in its own db — the signed, hash-chained record,
+checkpoints, queries, retention. It receives events solely via the **aw hook** (it
+registers as a target); it pulls nothing from core and stores nothing in core. Its
+one external touch is the same **identity layer** (awid) used to verify event
+provenance signatures and to gate owner / human-principal reads — the shared naapp
+trust root, not the aweb app server. Everything else is `logs`'.
