@@ -114,10 +114,13 @@ honestly labeled as reduced-blast-radius, not confidentiality.
 ## 5. Data model
 
 - `secret`: `ref`, description, `kind`, **`allowed_uris`**, sealed value, version,
-  owner, rotation metadata.
+  owner, rotation metadata, **`approve_only`** (every use needs a fresh one-off
+  human approval — §13).
 - `secret_grant`: which agents/roles may use which secret, with policy
   (`approval_required`, rate limit, time window, optional operation allow-list).
-- `use_request` / `approval`: pending → approver → scoped, time-limited decision.
+- `use_request` / `approval`: pending → one-off approval link minted → human
+  decision → scoped, time-limited. Carries the link `token`, expiry, and the
+  redacted request the human sees.
 - `operation_template`: a named parameterized operation bound to a secret.
 - `runner`, `runner_job`: a user executor and its defined job set.
 
@@ -164,8 +167,8 @@ local tools that cannot be brokered or run as a defined job.
    `secrets.aweb.ai` (or the runner); the agent's environment is deliberately
    credential-empty. The "gate important things ⇒ guaranteed logging" property
    holds only if the broker is the agent's *sole* path to the resource.
-6. **Grant + approval** — per-agent/role grants; sensitive secrets require a
-   human approval (scoped, time-limited).
+6. **Grant + approval** — per-agent/role grants; sensitive secrets are tagged
+   `approve_only` and require a fresh **one-off human approval link** per use (§13).
 7. **Sealed at rest** (KMS now, HSM later).
 
 ## 9. The audit relationship
@@ -212,6 +215,37 @@ touches, none of which is the aweb coordination server:
    root, not the aweb app server.
 2. **Grants are DID / app-local-role based**, resolved from the cert, not the core
    role/membership system — so `secrets` stays self-contained.
-3. **Approval** — prefer `secrets`' own notify + approve surface (`aw secrets
-   approve`), so approval is end-to-end inside the app; reach for team chat only
-   if you accept that coupling.
+3. **Approval** — `approve_only` secrets approve through a one-off human link
+   (§13), end-to-end inside the app; no team-chat coupling.
+
+## 13. Approve-only secrets and one-off human links
+
+A secret can be tagged **`approve_only`**: it cannot be used until a human approves
+*that specific use*. The mechanism is the same one-off human-link pattern folio
+uses to let a human view or edit a doc (`mint_presentation_link` — a scoped,
+revocable, expiring token URL the human opens without an account; same family as
+passwordless magic-link auth).
+
+Flow:
+
+```text
+agent requests use of an approve_only secret
+  -> secrets does NOT proceed; it MINTS a one-off approval link (signed, expiring,
+       single-use), bound to this exact pending request, and emits it to the
+       designated approver (their registered contact / the owner surface)
+  -> the human opens the link and sees the REDACTED request:
+       which secret ref (never the value), what action / target host or operation,
+       which agent, when
+  -> human approves or denies, authenticated by the link itself (no account)
+  -> on approve: the pending use proceeds, once, within the approval's scope/expiry
+     on deny / expiry: refused
+```
+
+Properties: the link is **single-use and request-scoped** (approving authorizes
+*that* use, not a standing grant), **expiring**, **revocable**, and **unguessable**
+(signed token). The human gives **informed consent** — they see exactly what is
+being requested before approving. The mint, the human decision, and the resulting
+use each fire `post-secret-use-hook` into the audit log. Who may approve is set by
+the secret's grant/policy. This is the concrete answer to the approval boundary
+touch in §12: approval is end-to-end inside `secrets`, reusing the folio human-link
+primitive.
