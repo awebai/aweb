@@ -70,7 +70,6 @@ AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
 Flags:
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
-- `--alias string Local workspace routing alias (optional; default: server-suggested)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`
@@ -81,6 +80,7 @@ Flags:
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
+- `--local-name string Local workspace routing name (optional; default: server-suggested)`
 - `--name string Global identity name (required with --global unless .aw/identity.yaml already exists)`
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
@@ -158,8 +158,8 @@ Legacy convenience for existing users: create a sibling git worktree and initial
 New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
 
 Flags:
-- `--alias string Override the default alias`
 - `-h, --help help for add-worktree`
+- `--name string Override the default workspace/member name`
 
 ## `workspace connect`
 
@@ -585,8 +585,8 @@ joining machine.
 
 Flags:
 - `--address string Registered address to place in the global member certificate`
-- `--alias string Alias for the accepting agent (defaults to identity name)`
 - `-h, --help help for accept-invite`
+- `--name string Member name for the accepting agent (defaults to identity name)`
 
 ## `id team add`
 
@@ -596,8 +596,8 @@ Join another team with the current identity
 
 Flags:
 - `--address string Registered address to place in the global member certificate`
-- `--alias string Alias for the added team membership (defaults to the current identity name)`
 - `-h, --help help for add`
+- `--name string Member name for the added team membership (defaults to the current identity name)`
 
 ## `id team add-member`
 
@@ -607,13 +607,13 @@ Protocol/admin: add a member by signing a team certificate
 
 Flags:
 - `--address string Global member address when using --did; must resolve to --did-aw`
-- `--alias string Alias to use with --did`
 - `--did string Member did:key for direct certificate issuance`
 - `--did-aw string Optional stable did:aw when using --did`
 - `--global Issue a global member certificate for --did`
 - `-h, --help help for add-member`
 - `--local Issue a local workspace member certificate for --did (default)`
 - `--member string Member address (e.g. acme.com/alice)`
+- `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
 
@@ -801,8 +801,8 @@ Flags:
 Protocol/admin bridge: print the add-member command the team owner should run
 
 Flags:
-- `--alias string Suggested alias for the new team membership`
 - `-h, --help help for request`
+- `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
 
 ## `id team switch`
@@ -882,9 +882,9 @@ adopts from Library, binds the local identity, and materializes the home.
 The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix, or default claude-code.
 
 Flags:
-- `--alias string Initial local workspace alias (defaults to <name>)`
 - `--byot Create a customer-controlled AWID team with local namespace controller authority`
 - `--display-name string Team display name`
+- `--first-agent-name string Initial local workspace member name (defaults to <name>)`
 - `-h, --help help for create`
 - `--home string Agent home directory override for single-agent --profile create`
 - `--name string Team name`
@@ -922,8 +922,8 @@ workspace still needs to be connected to the service.
 
 Flags:
 - `--address string Registered address to place in the global member certificate`
-- `--alias string Alias for the accepting agent (defaults to identity name)`
 - `-h, --help help for join`
+- `--name string Member name for the accepting agent (defaults to identity name)`
 
 ## `team leave`
 
@@ -1064,7 +1064,7 @@ Real-time chat
 
 Subcommands:
 - `extend-wait` Ask the other party to wait longer
-- `history` Show chat history with alias
+- `history` Show chat history with a recipient name or address
 - `listen` Wait for a message without sending
 - `open` Open a chat session
 - `pending` List pending chat sessions
@@ -1072,7 +1072,7 @@ Subcommands:
 - `send` Send a message to an exact chat session
 - `send-and-leave` Send a message and leave the conversation
 - `send-and-wait` Send a message and wait for a reply
-- `show-pending` Show pending messages for alias
+- `show-pending` Show pending messages for a recipient name or address
 
 Flags:
 - `-h, --help help for chat`
@@ -1093,13 +1093,13 @@ Flags:
 
 ### `chat history`
 
-Show chat history with alias
+Show chat history with a recipient name or address
 
 Flags:
 - `-h, --help help for history`
 - `--limit int Maximum messages to fetch (default 1000)`
 - `--message-id string Fetch one message by id when using --session-id`
-- `--session-id string Fetch chat history by session id instead of alias`
+- `--session-id string Fetch chat history by session id instead of recipient`
 - `--unread-only Fetch unread messages only`
 
 ## `chat listen`
@@ -1185,7 +1185,7 @@ Flags:
 
 ### `chat show-pending`
 
-Show pending messages for alias
+Show pending messages for a recipient name or address
 
 Flags:
 - `-h, --help help for show-pending`
@@ -1255,7 +1255,7 @@ Flags:
 Send interrupt signal to an agent
 
 Flags:
-- `--agent string Agent alias to send signal to`
+- `--agent string Agent name to send signal to`
 - `-h, --help help for interrupt`
 
 ## `control pause`
@@ -1265,7 +1265,7 @@ Flags:
 Send pause signal to an agent
 
 Flags:
-- `--agent string Agent alias to send signal to`
+- `--agent string Agent name to send signal to`
 - `-h, --help help for pause`
 
 ## `control resume`
@@ -1275,7 +1275,7 @@ Flags:
 Send resume signal to an agent
 
 Flags:
-- `--agent string Agent alias to send signal to`
+- `--agent string Agent name to send signal to`
 - `-h, --help help for resume`
 
 ## `directory`
@@ -1415,7 +1415,7 @@ Flags:
 - `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
-- `--to string Recipient alias within the active team`
+- `--to string Recipient name within the active team, or a routable address`
 - `--to-address string Recipient address (domain/name)`
 - `--to-did string Recipient stable identity (did:aw:...)`
 
@@ -1532,7 +1532,7 @@ List active locks
 
 Flags:
 - `-h, --help help for list`
-- `--mine Show only locks held by the current workspace alias`
+- `--mine Show only locks held by the current workspace name`
 - `--prefix string Prefix filter`
 
 ## `lock release`
@@ -1825,7 +1825,7 @@ Flags:
 Create a new task
 
 Flags:
-- `--assignee string Assignee agent alias`
+- `--assignee string Assignee agent name`
 - `--description string Task description`
 - `-h, --help help for create`
 - `--labels string Comma-separated labels`
@@ -1892,7 +1892,7 @@ Flags:
 List tasks
 
 Flags:
-- `--assignee string Filter by assignee agent alias`
+- `--assignee string Filter by assignee agent name`
 - `-h, --help help for list`
 - `--labels string Filter by labels (comma-separated)`
 - `--priority string Filter by priority 0-4 (accepts P0-P4)`
@@ -1933,7 +1933,7 @@ Flags:
 Update a task
 
 Flags:
-- `--assignee string Assignee agent alias`
+- `--assignee string Assignee agent name`
 - `--description string Description`
 - `-h, --help help for update`
 - `--labels string Comma-separated labels`
@@ -2028,7 +2028,7 @@ Flags:
 - `--dry-run Validate and print the provisioning plan without changing files or team roles`
 - `--global Add a global AWID identity/address-backed agent`
 - `-h, --help help for add`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--identity-prefix string Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--layout-only Only update the shared agents layout; do not create local identity state`
 - `--local Add a local team-scoped agent identity (default)`
@@ -2049,9 +2049,9 @@ Obsolete compatibility: create a repo-local git worktree agent
 
 Flags:
 - `--agents-dir string Project-local agents directory to read (default "agents")`
-- `--alias string Override the default generated alias/worktree name`
 - `--dry-run Validate and print the worktree plan without changing files or team state`
 - `-h, --help help for add-worktree`
+- `--name string Override the default generated member/worktree name`
 - `--role string Existing team role for the new worktree agent`
 
 ## `agents bootstrap`
@@ -2087,7 +2087,7 @@ agents/ convention directory:
 Use --agents-dir to choose a different project-local convention directory.
 Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
 
-Bootstrap allocates per-human aliases and global addresses from the template
+Bootstrap allocates per-human names and global addresses from the template
 naming policy. If the layout uses {user}, pass --identity-prefix or set
 AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
 Pass --ask-for-agent-names only when you want an interactive prompt to override
@@ -2101,7 +2101,7 @@ Flags:
 - `--fork Fork the template repository with gh and clone the fork into the destination directory`
 - `-h, --help help for bootstrap`
 - `--home-root string Legacy mode: directory where agent workspaces are created (default: <template-dir>/agents)`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--identity-prefix string Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--layout-only Only create the shared agents layout; do not create identities, team memberships, roles, or instructions`
 - `--namespace string BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)`
@@ -2123,14 +2123,14 @@ Flags:
 Plan repo-local agent names and paths.
 
 For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
-registry to fail closed on existing team aliases and namespace addresses.
+registry to fail closed on existing team names and namespace addresses.
 
 Flags:
 - `--agents-dir string Project-local agents directory to read (default "agents")`
 - `--aweb-url string Aweb server base URL to connect each generated agent workspace`
 - `--dry-run Validate and print the provisioning plan without changing files or team roles`
 - `-h, --help help for plan`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--identity-prefix string Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--namespace string BYOT team namespace domain to create/use`
 - `--registry string AWID registry URL override`
@@ -2151,7 +2151,7 @@ Flags:
 - `--aweb-url string Aweb server base URL to connect each generated agent workspace`
 - `--dry-run Validate and print the provisioning plan without changing files or team roles`
 - `-h, --help help for provision`
-- `--identity-prefix string Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
+- `--identity-prefix string Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)`
 - `--invite-token string Team invite token to accept into the first generated agent workspace`
 - `--namespace string BYOT team namespace domain to create/use`
 - `--registry string AWID registry URL override`

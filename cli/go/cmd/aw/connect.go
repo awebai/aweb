@@ -133,7 +133,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 func validateConnectAddress(address string) error {
 	domain, alias, ok := strings.Cut(strings.TrimSpace(address), "/")
 	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(alias) == "" {
-		return usageError("invalid --address %q; expected <domain>/<alias>", address)
+		return usageError("invalid --address %q; expected <domain>/<name>", address)
 	}
 	return nil
 }

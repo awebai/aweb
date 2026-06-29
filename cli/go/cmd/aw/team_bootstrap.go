@@ -76,7 +76,7 @@ agents/ convention directory:
 Use --agents-dir to choose a different project-local convention directory.
 Passing --work-directory or --work-repo-url selects the legacy out-of-repo mode.
 
-Bootstrap allocates per-human aliases and global addresses from the template
+Bootstrap allocates per-human names and global addresses from the template
 naming policy. If the layout uses {user}, pass --identity-prefix or set
 AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER before running non-interactively.
 Pass --ask-for-agent-names only when you want an interactive prompt to override
@@ -91,7 +91,7 @@ var agentsPlanCmd = &cobra.Command{
 	Long: `Plan repo-local agent names and paths.
 
 For BYOT planning with --namespace/--team, aw agents plan contacts the AWID
-registry to fail closed on existing team aliases and namespace addresses.`,
+registry to fail closed on existing team names and namespace addresses.`,
 	Args: cobra.NoArgs,
 	RunE: runAgentsPlan,
 }
@@ -376,7 +376,7 @@ func init() {
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapRefreshTemplate, "refresh-template", false, "Re-clone the template into the destination directory before using it")
 	teamBootstrapCmd.Flags().BoolVar(&teamBootstrapForkTemplate, "fork", false, "Fork the template repository with gh and clone the fork into the destination directory")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Hosted onboarding username to create/use (prompts when omitted and onboarding is used)")
-	teamBootstrapCmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
+	teamBootstrapCmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use (required for one-step BYOT agents bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use (required for one-step BYOT agents bootstrap)")
 	teamBootstrapCmd.Flags().StringVar(&teamBootstrapTeamDisplayName, "team-display-name", "", "Optional team display name when creating a new BYOT team")
@@ -401,7 +401,9 @@ func init() {
 	agentsAddWorktreeCmd.Flags().StringVar(&teamBootstrapAgentsDir, "agents-dir", "agents", "Project-local agents directory to read")
 	agentsAddWorktreeCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Validate and print the worktree plan without changing files or team state")
 	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddRole, "role", "", "Existing team role for the new worktree agent")
-	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddWorktreeAlias, "alias", "", "Override the default generated alias/worktree name")
+	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddWorktreeAlias, "name", "", "Override the default generated member/worktree name")
+	agentsAddWorktreeCmd.Flags().StringVar(&agentsAddWorktreeAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(agentsAddWorktreeCmd, "alias", "name")
 
 	agentsRemoveCmd.Flags().BoolVar(&teamBootstrapDryRun, "dry-run", false, "Show the remove/deprovision plan without mutating local, git, or registry state")
 	agentsRemoveCmd.Flags().BoolVar(&agentsRemoveDeprovisionLocal, "deprovision-local", false, "Revoke this local agent membership where authority is available, move aside local .aw state, and remove generated worktree checkout")
@@ -423,7 +425,7 @@ func init() {
 
 func bindAgentsProvisionFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&teamBootstrapAgentsDir, "agents-dir", "agents", "Project-local agents directory to read")
-	cmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global aliases and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
+	cmd.Flags().StringVar(&agentsIdentityPrefix, "identity-prefix", "", "Human-specific prefix for generated global names and addresses (default: AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER)")
 	cmd.Flags().StringVar(&teamBootstrapUsername, "username", "", "Not supported for existing agents layouts; use aw agents bootstrap --username for first-time hosted setup, or join with AWEB_API_KEY, --invite-token, --namespace/--team, or current workspace forwarding")
 	cmd.Flags().StringVar(&teamBootstrapNamespace, "namespace", "", "BYOT team namespace domain to create/use")
 	cmd.Flags().StringVar(&teamBootstrapTeamName, "team", "", "BYOT team name/slug to create/use")
@@ -741,25 +743,25 @@ func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
 	alias := strings.TrimSpace(agentsAddWorktreeAlias)
 	if alias != "" {
 		if !isValidWorkspaceAlias(alias) {
-			return usageError("invalid alias %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
+			return usageError("invalid name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
 		}
 		teamAliases, err := fetchWorkspaceTeamAliases(client, strings.TrimSpace(activeMembership.WorkspaceID))
 		if err != nil {
 			return err
 		}
 		if teamAliases[strings.ToLower(alias)] {
-			return usageError("alias %q is already in use by this team", alias)
+			return usageError("name %q is already in use by this team", alias)
 		}
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		suggestion, err := client.SuggestAliasPrefix(ctx)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("suggest next alias from server: %w", err)
+			return fmt.Errorf("suggest next name from server: %w", err)
 		}
 		alias = strings.TrimSpace(suggestion.NamePrefix)
 		if !isValidSuggestedAliasPrefix(alias) {
-			return fmt.Errorf("server returned invalid alias suggestion %q", alias)
+			return fmt.Errorf("server returned invalid name suggestion %q", alias)
 		}
 	}
 
@@ -796,7 +798,7 @@ func runAgentsAddWorktree(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  Main repo: %s\n", layout.CustomerRepoRoot)
 		fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
 		fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
-		fmt.Fprintf(os.Stderr, "  Alias:     %s\n\n", alias)
+		fmt.Fprintf(os.Stderr, "  Name:      %s\n\n", alias)
 		fmt.Fprintln(os.Stderr, "Creating git worktree...")
 	}
 	branchCreated, err := createWorkspaceGitWorktree(layout.CustomerRepoRoot, worktreePath, branchName, jsonFlag)
@@ -2661,7 +2663,7 @@ func assessAgentsProvisionState(plans []teamBootstrapAgentPlan, expectedTeamID s
 			alias = sanitizeSlug(plan.Name)
 		}
 		if !strings.EqualFold(strings.TrimSpace(sel.Alias), alias) {
-			return agentsProvisionStateClean, usageError("agent workspace %s already belongs to alias %q, but this layout plans alias %q. aw agents provision does not merge mismatched identity state; inspect and back up %s, then move it aside or use a different identity prefix.", workspaceDir, sel.Alias, alias, awDir)
+			return agentsProvisionStateClean, usageError("agent workspace %s already belongs to name %q, but this layout plans name %q. aw agents provision does not merge mismatched identity state; inspect and back up %s, then move it aside or use a different identity prefix.", workspaceDir, sel.Alias, alias, awDir)
 		}
 		if expectedTeamID != "" && !strings.EqualFold(strings.TrimSpace(sel.TeamID), expectedTeamID) {
 			return agentsProvisionStateClean, usageError("agent workspace %s already belongs to team %q, but this provision targets %q. Move aside %s or run with the matching team source.", workspaceDir, sel.TeamID, expectedTeamID, awDir)
@@ -3490,11 +3492,11 @@ func bootstrapTeamBootstrapWorktreeAgents(cmd *cobra.Command, templateDir, workD
 			alias = strings.TrimSpace(suggestion.NamePrefix)
 		}
 		if !isValidWorkspaceAlias(alias) {
-			return usageError("invalid worktree agent alias %q", alias)
+			return usageError("invalid worktree agent name %q", alias)
 		}
 		aliasLower := strings.ToLower(alias)
 		if teamAliases[aliasLower] {
-			return usageError("worktree agent alias %q is already in use by this team", alias)
+			return usageError("worktree agent name %q is already in use by this team", alias)
 		}
 		teamAliases[aliasLower] = true
 		planned = append(planned, plannedWorktreeAgent{Name: name, RoleName: strings.TrimSpace(wt.RoleName), Alias: alias})
@@ -3956,7 +3958,7 @@ func addWorktreeViaPrimaryInvite(
 	}
 	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
+		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
 	}
 	return connectResult, nil
 }
@@ -4457,7 +4459,7 @@ func plannedInitCommands(plans []teamBootstrapAgentPlan) []string {
 			"--do-not-touch-agents-md",
 		}
 		if plan.Alias != "" {
-			initParts = append(initParts, "--alias", plan.Alias)
+			initParts = append(initParts, "--local-name", plan.Alias)
 		}
 		commands = append(commands, "cd "+shellQuote(teamBootstrapAgentWorkspaceDir(plan))+" && "+formatShellCommand(initParts))
 	}
@@ -4529,8 +4531,8 @@ func formatTeamBootstrapOutput(v any) string {
 	b.WriteString("\nAgents:\n")
 	for _, agent := range out.Agents {
 		alias := ""
-		if agent.Alias != "" {
-			alias = " alias=" + agent.Alias
+		if agent.Alias != "" && agent.Alias != agent.Name {
+			alias = " member_name=" + agent.Alias
 		}
 		scope := strings.TrimSpace(agent.IdentityScope)
 		if scope == "" {
@@ -4556,7 +4558,7 @@ func formatTeamBootstrapOutput(v any) string {
 			if check.Responsibility != agent.Responsibility {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
+			b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", displayAgentsAvailabilityField(check.Field), check.Status, check.Source, check.Value))
 		}
 	}
 	if len(out.NextCommands) > 0 {
@@ -4584,8 +4586,8 @@ func formatAgentsProvisionOutput(v any) string {
 	b.WriteString("\nAgents:\n")
 	for _, agent := range out.Agents {
 		alias := ""
-		if agent.Alias != "" {
-			alias = " alias=" + agent.Alias
+		if agent.Alias != "" && agent.Alias != agent.Name {
+			alias = " member_name=" + agent.Alias
 		}
 		scope := strings.TrimSpace(agent.IdentityScope)
 		if scope == "" {
@@ -4611,7 +4613,7 @@ func formatAgentsProvisionOutput(v any) string {
 			if check.Responsibility != agent.Responsibility {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
+			b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", displayAgentsAvailabilityField(check.Field), check.Status, check.Source, check.Value))
 		}
 	}
 	if len(out.NextCommands) > 0 {
@@ -4667,11 +4669,18 @@ func formatAgentsAddOutput(v any) string {
 	if dir := teamBootstrapAgentWorkspaceDir(agent); dir != "" && dir != agent.HomeDir {
 		workspace = " workspace=" + dir
 	}
-	b.WriteString(fmt.Sprintf("- %s: scope=%s alias=%s%s home=%s%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, workspace, agent.WorkDir))
+	b.WriteString(fmt.Sprintf("- %s: scope=%s name=%s%s home=%s%s work=%s\n", agent.Responsibility, scope, agent.Alias, address, agent.HomeDir, workspace, agent.WorkDir))
 	for _, check := range out.Availability {
-		b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value))
+		b.WriteString(fmt.Sprintf("    %s: %s (%s: %s)\n", displayAgentsAvailabilityField(check.Field), check.Status, check.Source, check.Value))
 	}
 	return b.String()
+}
+
+func displayAgentsAvailabilityField(field string) string {
+	if strings.TrimSpace(field) == "team_alias" {
+		return "team_name"
+	}
+	return field
 }
 
 func formatAgentsRemoveOutput(v any) string {

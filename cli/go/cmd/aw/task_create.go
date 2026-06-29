@@ -22,7 +22,7 @@ func init() {
 	taskCreateCmd.Flags().String("type", "", "Task type (task, bug, feature, epic)")
 	taskCreateCmd.Flags().String("priority", "", "Priority 0-4 (accepts P0-P4)")
 	taskCreateCmd.Flags().String("labels", "", "Comma-separated labels")
-	taskCreateCmd.Flags().String("assignee", "", "Assignee agent alias")
+	taskCreateCmd.Flags().String("assignee", "", "Assignee agent name")
 	taskCreateCmd.Flags().String("parent", "", "Parent task ref")
 	taskCmd.AddCommand(taskCreateCmd)
 }
@@ -41,8 +41,8 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	const defaultPriority = 2
 
 	req := &aweb.TaskCreateRequest{
-		Title:       title,
-		Priority:    defaultPriority,
+		Title:    title,
+		Priority: defaultPriority,
 	}
 
 	if v, _ := cmd.Flags().GetString("description"); v != "" {

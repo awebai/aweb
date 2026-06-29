@@ -42,7 +42,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 	alias := strings.TrimSpace(req.Alias)
 	if alias == "" {
-		return connectOutput{}, usageError("--alias is required when aw init targets a localhost awid registry")
+		return connectOutput{}, usageError("--local-name is required when aw init targets a localhost awid registry")
 	}
 	if err := ensureConnectTargetClean(req.WorkingDir); err != nil {
 		return connectOutput{}, err

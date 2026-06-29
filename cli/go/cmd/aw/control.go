@@ -46,7 +46,7 @@ func controlSignalCmd(signal awid.ControlSignal) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agentAlias, "agent", "", "Agent alias to send signal to")
+	cmd.Flags().StringVar(&agentAlias, "agent", "", "Agent name to send signal to")
 	return cmd
 }
 

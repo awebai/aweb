@@ -566,9 +566,9 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected ambiguous alias error:\n%s", string(out))
+		t.Fatalf("expected ambiguous name error:\n%s", string(out))
 	}
-	if got := string(out); !containsAll(got, `alias "randy" exists in multiple local team memberships`, "ops:acme.com", "qa:acme.com", "pass --team") {
+	if got := string(out); !containsAll(got, `name "randy" exists in multiple local team memberships`, "ops:acme.com", "qa:acme.com", "pass --team") {
 		t.Fatalf("unexpected output:\n%s", got)
 	}
 	if chatPosts != 0 {

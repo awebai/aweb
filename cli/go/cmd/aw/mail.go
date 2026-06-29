@@ -990,7 +990,7 @@ var mailShowCmd = &cobra.Command{
 }
 
 func init() {
-	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient alias within the active team")
+	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient name within the active team, or a routable address")
 	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
 	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
 	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")

@@ -70,7 +70,9 @@ type countingRoundTripper struct {
 
 type fakeTimeoutError struct{}
 
-func (fakeTimeoutError) Error() string   { return "context deadline exceeded (Client.Timeout exceeded while awaiting headers)" }
+func (fakeTimeoutError) Error() string {
+	return "context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
+}
 func (fakeTimeoutError) Timeout() bool   { return true }
 func (fakeTimeoutError) Temporary() bool { return true }
 

@@ -227,7 +227,7 @@ func TestFormatTeamMembersPrintsRosterColumns(t *testing.T) {
 		IssuedAt:      "2026-06-22T00:00:00Z",
 		RevokedAt:     "-",
 	}}})
-	for _, want := range []string{"ALIAS", "MEMBER", "DID", "IDENTITY", "ISSUED", "REVOKED", "alice", "acme.com/alice", "did:key:alice", "global"} {
+	for _, want := range []string{"NAME", "MEMBER", "DID", "IDENTITY", "ISSUED", "REVOKED", "alice", "acme.com/alice", "did:key:alice", "global"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
@@ -1435,7 +1435,7 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 		t.Fatalf("invite output did not include accept command with token:\n%s", string(inviteOut))
 	}
 
-	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--alias", "bob", "--json")
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--name", "bob", "--json")
 	runAccept.Env = testCommandEnv(home)
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
@@ -1666,7 +1666,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 		t.Fatal("hosted create-invite did not use certificate auth")
 	}
 
-	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_hosted_test_token", "--alias", "bob", "--json")
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_hosted_test_token", "--name", "bob", "--json")
 	runAccept.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL)
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
@@ -2162,7 +2162,7 @@ func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_refuse_existing", "--alias", "bob")
+	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_refuse_existing", "--name", "bob")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -2286,7 +2286,7 @@ func TestHostedTeamAcceptInviteRefusesStrayBareKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_stray", "--alias", "bob")
+	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_stray", "--name", "bob")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -2445,7 +2445,7 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 	}
 
 	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
-		"--alias", "gsk",
+		"--name", "gsk",
 		"--address", "local/gsk")
 	runAccept.Env = idCreateCommandEnv(tmp)
 	runAccept.Dir = tmp
@@ -2453,7 +2453,7 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
 	}
-	if !strings.Contains(string(acceptOut), "--address is only valid for persistent/global team invites") {
+	if !strings.Contains(string(acceptOut), "--address is only valid for global team invites") {
 		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
@@ -3107,7 +3107,7 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 		"--team", "backend",
 		"--namespace", "acme.com",
 		"--did", memberDID,
-		"--alias", "laptop",
+		"--name", "laptop",
 		"--json")
 	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
@@ -3200,7 +3200,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		"--team", "backend",
 		"--namespace", "acme.com",
 		"--did", memberDID,
-		"--alias", "alice",
+		"--name", "alice",
 		"--lifetime", awid.LifetimePersistent,
 		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
@@ -3284,7 +3284,7 @@ func TestTeamAddMemberByDIDRejectsAddressForDifferentDID(t *testing.T) {
 		"--team", "backend",
 		"--namespace", "acme.com",
 		"--did", memberDID,
-		"--alias", "alice",
+		"--name", "alice",
 		"--lifetime", awid.LifetimePersistent,
 		"--did-aw", "did:aw:alice",
 		"--address", "acme.com/alice")
@@ -3317,7 +3317,7 @@ func TestTeamAddMemberRejectsDidAndMemberTogether(t *testing.T) {
 		"--namespace", "acme.com",
 		"--member", "acme.com/alice",
 		"--did", "did:key:z6Mkexample",
-		"--alias", "alice")
+		"--name", "alice")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -3355,7 +3355,7 @@ func TestTeamAddMemberByDIDRequiresAlias(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected add-member to fail:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "--alias is required when using --did") {
+	if !strings.Contains(string(out), "--name is required when using --did") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

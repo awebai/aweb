@@ -434,7 +434,7 @@ func (r *doctorRunner) addWorkspaceRowChecks(state *doctorAwebState, teamResp *a
 		"server_alias": strings.TrimSpace(self.Alias),
 	}
 	if strings.TrimSpace(self.Alias) != alias {
-		r.add(awebCheck(doctorCheckWorkspaceIdentityMatch, doctorStatusFail, &doctorTarget{Type: "workspace", ID: workspaceID}, "Server workspace alias does not match local active membership.", "Reinitialize or repair the workspace binding before coordinating.", detail))
+		r.add(awebCheck(doctorCheckWorkspaceIdentityMatch, doctorStatusFail, &doctorTarget{Type: "workspace", ID: workspaceID}, "Server workspace name does not match local active membership.", "Reinitialize or repair the workspace binding before coordinating.", detail))
 	} else {
 		r.add(awebCheck(doctorCheckWorkspaceIdentityMatch, doctorStatusOK, &doctorTarget{Type: "workspace", ID: workspaceID}, "Server workspace identity matches local active membership.", "", detail))
 	}

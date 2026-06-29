@@ -177,7 +177,7 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 		}
 	}
 
-	existingAliases, err := normalizeAgentsNameSet("existing team alias", input.ExistingAliases)
+	existingAliases, err := normalizeAgentsNameSet("existing team name", input.ExistingAliases)
 	if err != nil {
 		return agentsNamingPlan{}, err
 	}
@@ -241,7 +241,7 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			aliasSequence = policy.GlobalAliasSequence
 		}
 		alias, err := nextAvailableAgentsName(agentsNameRequest{
-			Field:        "team alias",
+			Field:        "team name",
 			Pattern:      aliasPattern,
 			SequenceName: aliasSequence,
 			Fields:       fields,
@@ -281,7 +281,7 @@ func buildAgentsNamingPlan(input agentsNamingInput) (agentsNamingPlan, error) {
 			WorkBinding:    workBinding,
 			WorkPath:       ".",
 			Availability: []agentsNamingAvailabilityCheck{
-				agentsAvailableCheck("team_alias", alias, "existing team aliases and current plan"),
+				agentsAvailableCheck("team_alias", alias, "existing team names and current plan"),
 				agentsAvailableCheck("home", responsibility, "existing home paths and current plan"),
 			},
 		}
@@ -336,7 +336,7 @@ func renderAgentsNamingPlanHuman(plan agentsNamingPlan) string {
 	for _, agent := range plan.Agents {
 		fmt.Fprintf(&out, "%s\n", agent.Responsibility)
 		fmt.Fprintf(&out, "  Scope:      %s\n", agent.IdentityScope)
-		fmt.Fprintf(&out, "  Alias:      %s\n", agent.TeamAlias)
+		fmt.Fprintf(&out, "  Name:       %s\n", agent.TeamAlias)
 		if agent.GlobalAddress != "" {
 			fmt.Fprintf(&out, "  Address:    %s\n", agent.GlobalAddress)
 		}
@@ -344,7 +344,11 @@ func renderAgentsNamingPlanHuman(plan agentsNamingPlan) string {
 		fmt.Fprintf(&out, "  Work:       %s\n", agent.WorkPath)
 		fmt.Fprintf(&out, "  Availability:\n")
 		for _, check := range agent.Availability {
-			fmt.Fprintf(&out, "    %s: %s (%s: %s)\n", check.Field, check.Status, check.Source, check.Value)
+			field := check.Field
+			if field == "team_alias" {
+				field = "team_name"
+			}
+			fmt.Fprintf(&out, "    %s: %s (%s: %s)\n", field, check.Status, check.Source, check.Value)
 		}
 	}
 	return strings.TrimRight(out.String(), "\n")

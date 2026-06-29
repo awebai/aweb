@@ -469,7 +469,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 	}
 
 	for _, alias := range []string{"bob", "carol"} {
-		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", alias)
+		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", alias)
 		cmd.Env = testCommandEnv(tmp)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -763,7 +763,7 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		"--json",
 		"init",
 		"--username", "juanre",
-		"--alias", "laptop",
+		"--local-name", "laptop",
 		"--url", server.URL,
 	)
 	run.Env = testCommandEnv(tmp)

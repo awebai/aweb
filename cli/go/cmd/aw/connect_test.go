@@ -350,7 +350,7 @@ func TestConnectBootstrapLocal(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", filepath.FromSlash(activeMembershipForTest(t, workspace).CertPath))); err != nil {
 		t.Fatalf("team certificate missing: %v", err)
 	}
-	if !strings.Contains(string(out), "Alias:       ci-runner-01") {
+	if !strings.Contains(string(out), "Name:        ci-runner-01") {
 		t.Fatalf("output=%q", string(out))
 	}
 }

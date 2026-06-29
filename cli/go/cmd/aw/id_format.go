@@ -61,7 +61,7 @@ func formatIDShow(v any) string {
 	out := v.(idShowOutput)
 	var sb strings.Builder
 	if strings.TrimSpace(out.Alias) != "" {
-		sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+		sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	}
 	if strings.TrimSpace(out.Address) != "" {
 		sb.WriteString(fmt.Sprintf("Address:     %s\n", out.Address))

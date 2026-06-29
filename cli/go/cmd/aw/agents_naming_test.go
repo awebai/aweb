@@ -102,12 +102,12 @@ func TestBuildAgentsNamingPlanDefaults(t *testing.T) {
 	for _, want := range []string{
 		"coordinator",
 		"  Scope:      global",
-		"  Alias:      juan-alice",
+		"  Name:       juan-alice",
 		"  Address:    juanreyero.com/juan-coordinator",
 		"  Home:       agents/home/coordinator",
 		"  Work:       agents/worktrees/developer",
 		"  Availability:",
-		"    team_alias: available",
+		"    team_name: available",
 		"    worktree: available",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -217,10 +217,10 @@ func TestBuildAgentsNamingPlanRejectsMalformedExistingEntries(t *testing.T) {
 		ExistingAliases: map[string]bool{"Bob": true},
 	})
 	if err == nil {
-		t.Fatal("expected malformed existing alias to fail")
+		t.Fatal("expected malformed existing name to fail")
 	}
-	if !strings.Contains(err.Error(), "existing team alias") || !strings.Contains(err.Error(), "must be a slug") {
-		t.Fatalf("error=%q, want existing team alias slug message", err)
+	if !strings.Contains(err.Error(), "existing team name") || !strings.Contains(err.Error(), "must be a slug") {
+		t.Fatalf("error=%q, want existing team name slug message", err)
 	}
 }
 

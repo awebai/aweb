@@ -177,7 +177,7 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 		{
 			name:       "init",
 			args:       []string{"init", "--help"},
-			want:       []string{"--global", "Global identity name", "Local workspace routing alias"},
+			want:       []string{"--global", "Global identity name", "Local workspace routing name"},
 			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity},
 		},
 		{
@@ -212,6 +212,39 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 				if strings.Contains(text, forbidden) {
 					t.Fatalf("%s help still advertises %q:\n%s", tc.name, forbidden, text)
 				}
+			}
+		})
+	}
+}
+
+func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "persistent to global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --global"},
+		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, bin, tc.args...)
+			cmd.Dir = tmp
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("deprecated flag command failed: %v\n%s", err, string(out))
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Fatalf("missing deprecation warning %q:\n%s", tc.want, string(out))
 			}
 		})
 	}

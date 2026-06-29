@@ -305,7 +305,7 @@ func formatConnect(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
-	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
 	return sb.String()
 }

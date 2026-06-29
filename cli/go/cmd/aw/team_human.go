@@ -135,7 +135,9 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateDisplayName, "display-name", "", "Team display name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "first-agent-name", "", "Initial local workspace member name (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
+	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for --profile homes (claude-code|codex|pi|local-shell; default claude-code)")
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME] to adopt and materialize")
@@ -153,7 +155,9 @@ func init() {
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
-	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamHumanJoinCmd, "alias", "name")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the global member certificate")
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 
@@ -570,7 +574,7 @@ func formatTeamHumanCreate(v any) string {
 		fmt.Fprintf(&b, " (%s)", out.TeamID)
 	}
 	if out.Alias != "" {
-		fmt.Fprintf(&b, " as alias %s", out.Alias)
+		fmt.Fprintf(&b, " as name %s", out.Alias)
 	}
 	b.WriteString("\n")
 	if out.HomeDir != "" {

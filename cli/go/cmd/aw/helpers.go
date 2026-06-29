@@ -382,7 +382,7 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		for _, candidate := range candidates {
 			teamIDs = append(teamIDs, strings.TrimSpace(candidate.selection.TeamID))
 		}
-		return nil, nil, usageError("alias %q exists in multiple local team memberships (%s); pass --team to choose one", strings.TrimSpace(targetAlias), strings.Join(teamIDs, ", "))
+		return nil, nil, usageError("name %q exists in multiple local team memberships (%s); pass --team to choose one", strings.TrimSpace(targetAlias), strings.Join(teamIDs, ", "))
 	}
 	lastClient = c
 	return c, sel, nil

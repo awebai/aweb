@@ -455,17 +455,21 @@ func init() {
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
 	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
 	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
-	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Compatibility alias for --local")
-	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Compatibility alias for --global")
-	_ = teamInviteCmd.Flags().MarkHidden("ephemeral")
-	_ = teamInviteCmd.Flags().MarkHidden("persistent")
+	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Deprecated alias for --local")
+	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Deprecated alias for --global")
+	markDeprecatedHiddenFlag(teamInviteCmd, "ephemeral", "local")
+	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "global")
 	teamCmd.AddCommand(teamInviteCmd)
 
-	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
+	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
+	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamAcceptInviteCmd, "alias", "name")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the global member certificate")
 	teamCmd.AddCommand(teamAcceptInviteCmd)
 
-	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Alias for the added team membership (defaults to the current identity name)")
+	teamAddCmd.Flags().StringVar(&teamAddAlias, "name", "", "Member name for the added team membership (defaults to the current identity name)")
+	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamAddCmd, "alias", "name")
 	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the global member certificate")
 	teamCmd.AddCommand(teamAddCmd)
 	teamCmd.AddCommand(teamSwitchCmd)
@@ -476,11 +480,13 @@ func init() {
 	teamAddMemberCmd.Flags().StringVar(&teamAddNamespace, "namespace", "", "Namespace domain")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMember, "member", "", "Member address (e.g. acme.com/alice)")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDID, "did", "", "Member did:key for direct certificate issuance")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "alias", "", "Alias to use with --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "name", "", "Member name to use with --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamAddMemberCmd, "alias", "name")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberLocal, "local", false, "Issue a local workspace member certificate for --did (default)")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberGlobal, "global", false, "Issue a global member certificate for --did")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Compatibility alias: certificate storage lifetime for --did")
-	_ = teamAddMemberCmd.Flags().MarkHidden("lifetime")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Deprecated compatibility scope for --did; use --local or --global")
+	markDeprecatedHiddenFlag(teamAddMemberCmd, "lifetime", "local/--global")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Global member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
@@ -1102,13 +1108,13 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 		alias = resolveAliasFromIdentity(workingDir)
 	}
 	if alias == "" {
-		return nil, usageError("--alias is required (no identity found to derive alias from)")
+		return nil, usageError("--name is required (no identity found to derive name from)")
 	}
 
 	lifetime := awid.LifetimePersistent
 	if invite.Ephemeral {
 		if strings.TrimSpace(addressOverride) != "" {
-			return nil, usageError("--address is only valid for persistent/global team invites")
+			return nil, usageError("--address is only valid for global team invites")
 		}
 		lifetime = awid.LifetimeEphemeral
 	}
@@ -1194,13 +1200,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOver
 			return nil, usageError("invalid --address %q; expected <domain>/<name>", memberAddress)
 		}
 		if alias != "" && alias != name {
-			return nil, usageError("--alias %q does not match global address name %q; omit --alias or use --alias %s", alias, name, name)
+			return nil, usageError("--name %q does not match global address name %q; omit --name or use --name %s", alias, name, name)
 		}
 		alias = name
 		addressName = name
 	}
 	if alias == "" {
-		return nil, usageError("--alias is required for hosted team invites")
+		return nil, usageError("--name is required for hosted team invites")
 	}
 
 	var pub ed25519.PublicKey
@@ -1400,7 +1406,7 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 		return nil, "", fmt.Errorf("hosted team invite certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
 	}
 	if strings.TrimSpace(cert.Alias) != strings.TrimSpace(requestedAlias) {
-		return nil, "", fmt.Errorf("hosted team invite certificate alias %q does not match requested alias %q", cert.Alias, requestedAlias)
+		return nil, "", fmt.Errorf("hosted team invite certificate member name %q does not match requested name %q", cert.Alias, requestedAlias)
 	}
 	expectedScope := awid.IdentityModeLocal
 	if strings.TrimSpace(expectedAddress) != "" {
@@ -1532,11 +1538,7 @@ func resolveTeamAddMemberLifetime(cmd *cobra.Command) (string, error) {
 		case awid.LifetimeEphemeral:
 			return awid.LifetimeEphemeral, nil
 		default:
-			return "", usageError("invalid --lifetime %q (compatibility values: %q or %q; canonical flags: --global or --local)",
-				teamAddMemberLifetime,
-				awid.LifetimePersistent,
-				awid.LifetimeEphemeral,
-			)
+			return "", usageError("invalid deprecated --lifetime value %q; use --global or --local", teamAddMemberLifetime)
 		}
 	}
 	return awid.LifetimeEphemeral, nil
@@ -1568,7 +1570,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 	if memberDID != "" {
 		if memberAlias == "" {
-			return usageError("--alias is required when using --did")
+			return usageError("--name is required when using --did")
 		}
 		if memberAddress != "" {
 			if lifetime != awid.LifetimePersistent {

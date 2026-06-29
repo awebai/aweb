@@ -551,7 +551,7 @@ func TestTeamBootstrapDryRunUsesTemplateNamingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(out)
-	if !strings.Contains(text, "coordinator: scope=local name=sirius role=coordinator alias=sirius") {
+	if !strings.Contains(text, "coordinator: scope=local name=sirius role=coordinator") {
 		t.Fatalf("bootstrap output did not use star-name naming policy:\n%s", text)
 	}
 	expectedRepoDir, err := filepath.EvalSymlinks(repoDir)
@@ -561,7 +561,7 @@ func TestTeamBootstrapDryRunUsesTemplateNamingPolicy(t *testing.T) {
 	if !strings.Contains(text, "work="+filepath.Join(expectedRepoDir, "agents", "worktrees", "implementation")+" (git_worktree)") {
 		t.Fatalf("bootstrap output did not use responsibility worktree naming policy:\n%s", text)
 	}
-	if !strings.Contains(text, "team_alias: available") {
+	if !strings.Contains(text, "team_name: available") {
 		t.Fatalf("bootstrap output missing availability checks:\n%s", text)
 	}
 	assertPathMissing(t, filepath.Join(repoDir, "agents"))
@@ -600,10 +600,10 @@ func TestAgentsProvisionPlanReadsExistingLayoutAndUsesIdentityPrefix(t *testing.
 		byResponsibility[plan.Responsibility] = plan
 	}
 	if got := byResponsibility["coordinator"].Alias; got != "alice" {
-		t.Fatalf("coordinator alias=%q, want alice", got)
+		t.Fatalf("coordinator name=%q, want alice", got)
 	}
 	if got := byResponsibility["implementation"].Alias; got != "bob" {
-		t.Fatalf("implementation alias=%q, want bob", got)
+		t.Fatalf("implementation name=%q, want bob", got)
 	}
 	if got := byResponsibility["coordinator"].HomeDir; got != filepath.Join(expectedRepoDir, "agents", "home", "coordinator") {
 		t.Fatalf("coordinator home=%q", got)
@@ -818,7 +818,7 @@ func TestAgentsProvisionRefusesMismatchedExistingAWState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mismatched .aw state to fail")
 	}
-	if !strings.Contains(err.Error(), "already belongs to alias") ||
+	if !strings.Contains(err.Error(), "already belongs to name") ||
 		!strings.Contains(err.Error(), "does not merge mismatched identity state") {
 		t.Fatalf("error=%q, want mismatch guidance", err)
 	}
@@ -942,7 +942,7 @@ func TestAgentsAddUsesTemplateNamingPolicy(t *testing.T) {
 		t.Fatalf("buildAgentsAddOutput: %v", err)
 	}
 	if plan.Alias != "sirius" {
-		t.Fatalf("alias=%q want template star-name policy first candidate sirius", plan.Alias)
+		t.Fatalf("name=%q want template star-name policy first candidate sirius", plan.Alias)
 	}
 	if !agentsProvisionHasCheck(agentsProvisionOutput{Availability: out.Availability}, "support", "team_alias", "sirius", "available") {
 		t.Fatalf("availability missing sirius team_alias check: %+v", out.Availability)

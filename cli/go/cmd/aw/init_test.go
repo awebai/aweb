@@ -929,9 +929,9 @@ func TestRunImplicitLocalInitRequiresAlias(t *testing.T) {
 		RegistryURL: "http://localhost:8010",
 	})
 	if err == nil {
-		t.Fatal("expected alias requirement error")
+		t.Fatal("expected local-name requirement error")
 	}
-	if !strings.Contains(err.Error(), "--alias is required") {
+	if !strings.Contains(err.Error(), "--local-name is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
