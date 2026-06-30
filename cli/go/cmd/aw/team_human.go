@@ -33,6 +33,7 @@ var (
 	teamHumanCreateBlueprint   string
 	teamHumanCreateFirstLocal  bool
 	teamHumanCreateFirstGlobal bool
+	teamHumanAddSpecOverride   []teamAgentSpec
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
@@ -185,13 +186,14 @@ func init() {
 }
 
 type teamAgentSpec struct {
-	Raw          string
-	Name         string
-	Scope        string
-	Profile      *libraryProfileSelector
-	LayoutOnly   bool
-	RuntimeKind  string
-	ResolvedName string
+	Raw               string
+	Name              string
+	Scope             string
+	Profile           *libraryProfileSelector
+	LocalBlueprintDir string
+	LayoutOnly        bool
+	RuntimeKind       string
+	ResolvedName      string
 }
 
 func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
@@ -215,14 +217,20 @@ func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
 			raws = append(raws, compat)
 		}
 	}
+	localBlueprintDir := ""
 	if strings.TrimSpace(teamHumanCreateBlueprint) != "" {
 		if len(raws) > 0 {
 			return nil, usageError("--blueprint cannot be combined with --agent/--profile")
 		}
-		bp, err := blueprintpkg.LoadLocalDir(strings.TrimSpace(teamHumanCreateBlueprint))
+		absBlueprint, err := filepath.Abs(strings.TrimSpace(teamHumanCreateBlueprint))
+		if err != nil {
+			return nil, err
+		}
+		bp, err := blueprintpkg.LoadLocalDir(absBlueprint)
 		if err != nil {
 			return nil, fmt.Errorf("load blueprint: %w", err)
 		}
+		localBlueprintDir = absBlueprint
 		for _, profile := range bp.LoadedProfiles {
 			spec := bp.ID + "/" + profile.ID
 			if scope := strings.TrimSpace(profile.Scope); scope != "" {
@@ -239,6 +247,9 @@ func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
 		spec, err := parseTeamAgentSpec(raw)
 		if err != nil {
 			return nil, err
+		}
+		if localBlueprintDir != "" {
+			spec.LocalBlueprintDir = localBlueprintDir
 		}
 		if spec.Profile != nil {
 			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanCreateRuntime)
@@ -300,6 +311,9 @@ func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
 	if name != "" {
 		return teamAgentSpec{}, usageError("profile selector is required after @")
 	}
+	if runtimeKind != "" {
+		return teamAgentSpec{}, usageError("=RUNTIME is only valid with BLUEPRINT/PROFILE agent specs")
+	}
 	emptyName := profilePart
 	scope := ""
 	if before, after, ok := strings.Cut(profilePart, ":"); ok {
@@ -317,7 +331,7 @@ func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
 	if !isValidWorkspaceAlias(emptyName) {
 		return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", emptyName)
 	}
-	return teamAgentSpec{Raw: trimmed, Name: emptyName, Scope: scope, RuntimeKind: runtimeKind}, nil
+	return teamAgentSpec{Raw: trimmed, Name: emptyName, Scope: scope}, nil
 }
 
 type teamHumanCreateOutput struct {
@@ -516,7 +530,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	return runTeamHumanCreateRosterAdd(rosterSpecs)
 }
 
-func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]string, error) {
+func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]teamAgentSpec, error) {
 	seenExplicit := map[string]bool{}
 	for _, agent := range agents {
 		name := strings.TrimSpace(agent.Name)
@@ -532,14 +546,12 @@ func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]string, error) {
 	if len(agents) <= 1 {
 		return nil, nil
 	}
-	specs := make([]string, 0, len(agents))
-	for _, agent := range agents[1:] {
-		specs = append(specs, agent.Raw)
-	}
+	specs := make([]teamAgentSpec, 0, len(agents)-1)
+	specs = append(specs, agents[1:]...)
 	return specs, nil
 }
 
-func runTeamHumanCreateRosterAdd(specs []string) error {
+func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	if len(specs) == 0 {
 		return nil
 	}
@@ -547,17 +559,24 @@ func runTeamHumanCreateRosterAdd(specs []string) error {
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	oldAddHome := teamHumanAddHome
+	oldAddSpecOverride := teamHumanAddSpecOverride
 	defer func() {
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 		teamHumanAddHome = oldAddHome
+		teamHumanAddSpecOverride = oldAddSpecOverride
 	}()
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
 	teamHumanAddHome = ""
-	return runTeamHumanAdd(nil, specs)
+	teamHumanAddSpecOverride = append([]teamAgentSpec(nil), specs...)
+	args := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		args = append(args, spec.Raw)
+	}
+	return runTeamHumanAdd(nil, args)
 }
 
 func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) error {
@@ -819,25 +838,33 @@ type teamHumanAddOutput struct {
 }
 
 type teamHumanAddedAgent struct {
-	Name        string                  `json:"name"`
-	HomeDir     string                  `json:"home_dir"`
-	ProfileMode string                  `json:"profile_mode"`
-	Profile     *libraryProfileSelector `json:"-"`
-	Scope       string                  `json:"scope,omitempty"`
-	Alias       string                  `json:"alias,omitempty"`
-	TeamID      string                  `json:"team_id,omitempty"`
-	CertPath    string                  `json:"cert_path,omitempty"`
+	Name              string                  `json:"name"`
+	HomeDir           string                  `json:"home_dir"`
+	ProfileMode       string                  `json:"profile_mode"`
+	Profile           *libraryProfileSelector `json:"-"`
+	LocalBlueprintDir string                  `json:"-"`
+	Scope             string                  `json:"scope,omitempty"`
+	Alias             string                  `json:"alias,omitempty"`
+	TeamID            string                  `json:"team_id,omitempty"`
+	CertPath          string                  `json:"cert_path,omitempty"`
 }
 
 func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, error) {
 	var client *aweb.Client
 	used := map[string]bool{}
-	resolved := make([]teamAgentSpec, 0, len(args))
-	for _, raw := range args {
-		spec, err := parseTeamAgentSpec(raw)
-		if err != nil {
-			return nil, err
+	inputSpecs := append([]teamAgentSpec(nil), teamHumanAddSpecOverride...)
+	if inputSpecs == nil {
+		inputSpecs = make([]teamAgentSpec, 0, len(args))
+		for _, raw := range args {
+			spec, err := parseTeamAgentSpec(raw)
+			if err != nil {
+				return nil, err
+			}
+			inputSpecs = append(inputSpecs, spec)
 		}
+	}
+	resolved := make([]teamAgentSpec, 0, len(inputSpecs))
+	for _, spec := range inputSpecs {
 		scope := strings.TrimSpace(spec.Scope)
 		if spec.Profile != nil {
 			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanAddRuntime)
@@ -846,12 +873,16 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 			}
 			spec.Profile = &parsed
 			if scope == "" {
-				scope, err = resolveLibraryProfileScope(parsed)
-				if err != nil {
-					if !strings.Contains(err.Error(), "aw library plugin is not installed") {
-						return nil, err
-					}
+				if strings.TrimSpace(spec.LocalBlueprintDir) != "" {
 					scope = awid.IdentityModeLocal
+				} else {
+					scope, err = resolveLibraryProfileScope(parsed)
+					if err != nil {
+						if !strings.Contains(err.Error(), "aw library plugin is not installed") {
+							return nil, err
+						}
+						scope = awid.IdentityModeLocal
+					}
 				}
 			}
 		}
@@ -867,6 +898,7 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 			return nil, usageError("scope %q is not supported; use local or global", scope)
 		}
 		name := strings.TrimSpace(spec.Name)
+		var err error
 		if name == "" {
 			if client == nil {
 				var err error
@@ -984,7 +1016,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 		if explicitHome != "" {
 			homeDir = explicitHome
 		}
-		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope})
+		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope, LocalBlueprintDir: spec.LocalBlueprintDir})
 	}
 	for _, plan := range plans {
 		if plan.Profile != nil {
@@ -1065,7 +1097,11 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			// install the awid certificate but not the aweb connection. Connecting only
 			// after materialize succeeds avoids an orphaned aweb connection on a
 			// materialize failure. (default-aabq.21)
-			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+			if strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
+				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
+					return rollbackOnErr(err)
+				}
+			} else if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
 				return rollbackOnErr(err)
 			}
 			if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {

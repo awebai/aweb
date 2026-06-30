@@ -13,10 +13,11 @@ import (
 )
 
 type MaterializeOptions struct {
-	SourceDir string
-	ProfileID string
-	TargetDir string
-	Force     bool
+	SourceDir   string
+	ProfileID   string
+	TargetDir   string
+	Force       bool
+	RuntimeKind string
 }
 
 type MaterializeResult struct {
@@ -54,7 +55,11 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if err != nil {
 		return nil, err
 	}
-	return materializeLoadedProfile(bp, opts.ProfileID, opts.TargetDir, opts.Force, "claude-code", materializeProvenance{SourceBlueprint: true})
+	runtimeKind := strings.TrimSpace(opts.RuntimeKind)
+	if runtimeKind == "" {
+		runtimeKind = "claude-code"
+	}
+	return materializeLoadedProfile(bp, opts.ProfileID, opts.TargetDir, opts.Force, runtimeKind, materializeProvenance{SourceBlueprint: true})
 }
 
 func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force bool, runtimeKind string, provenance materializeProvenance) (*MaterializeResult, error) {

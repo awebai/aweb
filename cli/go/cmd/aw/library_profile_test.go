@@ -37,6 +37,33 @@ func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
 	}
 }
 
+func TestApplyLocalBlueprintProfileToHomeUsesLocalSourceAndRuntime(t *testing.T) {
+	fixture := filepath.Join(engineeringBlueprintFixtureRoot(t), "source")
+	home := t.TempDir()
+	selector := libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "developer", RuntimeKind: "pi"}
+
+	result, written, err := applyLocalBlueprintProfileToHome(home, selector, fixture, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceBlueprintRef != "aweb.engineering" || result.ProfileRef != "developer" {
+		t.Fatalf("result=%+v", result)
+	}
+	if len(written) == 0 {
+		t.Fatalf("no files written")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("pi runtime should not create CLAUDE.md symlink, err=%v", err)
+	}
+	profileYAML, err := os.ReadFile(filepath.Join(home, ".aw", "profile", "profile.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(profileYAML), "id: developer") {
+		t.Fatalf("profile.yaml did not come from local developer profile:\n%s", string(profileYAML))
+	}
+}
+
 func TestApplyMaterializeRuntimePolicyDefaultsAndHonorsFlag(t *testing.T) {
 	selector := libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator"}
 	got, err := applyMaterializeRuntimePolicy(selector, "")

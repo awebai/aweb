@@ -41,6 +41,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	oldAddHome := teamHumanAddHome
 	oldAddRuntime := teamHumanAddRuntime
+	oldAddSpecOverride := teamHumanAddSpecOverride
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -66,6 +67,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 		teamHumanAddHome = oldAddHome
 		teamHumanAddRuntime = oldAddRuntime
+		teamHumanAddSpecOverride = oldAddSpecOverride
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
@@ -89,6 +91,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddLayoutOnly = false
 	teamHumanAddHome = ""
 	teamHumanAddRuntime = ""
+	teamHumanAddSpecOverride = nil
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
@@ -144,8 +147,30 @@ func TestTeamHumanCreateAgentSpecsTreatsAgentAsRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roster) != 1 || roster[0] != "developer@aweb.engineering/developer:local" {
+	if len(roster) != 1 || roster[0].Raw != "developer@aweb.engineering/developer:local" {
 		t.Fatalf("roster=%v specs=%+v", roster, specs)
+	}
+}
+
+func TestTeamHumanCreateBlueprintSpecsCarryLocalSource(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	fixture := filepath.Join(engineeringBlueprintFixtureRoot(t), "source")
+	teamHumanCreateBlueprint = fixture
+
+	specs, err := teamHumanCreateAgentSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) < 2 {
+		t.Fatalf("specs=%+v", specs)
+	}
+	for _, spec := range specs[1:] {
+		if spec.Profile == nil {
+			t.Fatalf("missing profile in spec %+v", spec)
+		}
+		if spec.LocalBlueprintDir != fixture {
+			t.Fatalf("LocalBlueprintDir=%q want %q", spec.LocalBlueprintDir, fixture)
+		}
 	}
 }
 
@@ -166,6 +191,12 @@ func TestParseTeamAgentSpecSupportsNameScopeAndRejectsVersion(t *testing.T) {
 	}
 	if _, err := parseTeamAgentSpec("aweb.engineering/coordinator@0.2.0"); err == nil || !strings.Contains(err.Error(), "@ now separates NAME") {
 		t.Fatalf("version error=%v", err)
+	}
+	if _, err := parseTeamAgentSpec("bob=pi"); err == nil || !strings.Contains(err.Error(), "=RUNTIME is only valid") {
+		t.Fatalf("empty runtime error=%v", err)
+	}
+	if _, err := parseTeamAgentSpec("bob:global=pi"); err == nil || !strings.Contains(err.Error(), "=RUNTIME is only valid") {
+		t.Fatalf("empty scoped runtime error=%v", err)
 	}
 }
 
@@ -290,8 +321,12 @@ func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"aweb.engineering/reviewer=pi"}
-	if strings.Join(specs, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("specs=%v want %v", specs, want)
+	got := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		got = append(got, spec.Raw)
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("specs=%v want %v", got, want)
 	}
 }
 

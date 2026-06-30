@@ -256,6 +256,27 @@ func applyLibraryProfileToHomeAndConfigure(homeDir, agentID string, selector lib
 	return materialized, written, nil
 }
 
+func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {
+	if strings.TrimSpace(sourceDir) == "" {
+		return nil, nil, fmt.Errorf("local blueprint source is required")
+	}
+	runtimeKind, err := materializeRuntimeKindForSelector(selector)
+	if err != nil {
+		return nil, nil, err
+	}
+	materialized, err := blueprint.MaterializeLocalProfile(blueprint.MaterializeOptions{
+		SourceDir:   sourceDir,
+		ProfileID:   selector.ProfileRef,
+		TargetDir:   homeDir,
+		RuntimeKind: runtimeKind,
+		Force:       force,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("local profile materialize: %w", err)
+	}
+	return materialized, materialized.FilesWritten, nil
+}
+
 func configureMaterializedAgentHome(homeDir string) error {
 	if result := InjectAgentDocs(homeDir); result != nil && len(result.Errors) > 0 {
 		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
