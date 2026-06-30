@@ -4452,14 +4452,15 @@ func copyDir(src, dst string) error {
 func plannedInitCommands(plans []teamBootstrapAgentPlan) []string {
 	commands := make([]string, 0, len(plans))
 	for _, plan := range plans {
+		initName := plan.Name
+		if strings.TrimSpace(plan.Alias) != "" {
+			initName = plan.Alias
+		}
 		initParts := []string{
 			"aw", "init",
-			"--name", plan.Name,
+			"--name", initName,
 			"--role-name", plan.RoleName,
 			"--do-not-touch-agents-md",
-		}
-		if plan.Alias != "" {
-			initParts = append(initParts, "--local-name", plan.Alias)
 		}
 		commands = append(commands, "cd "+shellQuote(teamBootstrapAgentWorkspaceDir(plan))+" && "+formatShellCommand(initParts))
 	}

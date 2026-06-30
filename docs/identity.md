@@ -153,9 +153,11 @@ Current and planned surfaces:
 - `aw team create NAME` is the everyday workflow wrapper.
 - `aw id team create --namespace DOMAIN --name NAME` is the controller/admin
   primitive for creating the AWID team record and remains controller-only.
-- Planned first-member flags should name the scoped subject, for example
-  `--first-agent-local` or `--first-agent-global`, rather than implying that the
-  team itself is local or global.
+- `aw team create` accepts `--first-agent-local` (default) and
+  `--first-agent-global`; these flags scope only the enrolled creator, not the
+  team itself. For CREATE, `--first-agent-global` may reuse an existing global
+  identity or create/publish the founding global identity when hosted or
+  namespace-authority context is available.
 
 ### 3. Join team
 

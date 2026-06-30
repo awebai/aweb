@@ -225,6 +225,30 @@ type teamAcceptInviteOptions struct {
 	NoAddress bool
 }
 
+type teamMemberEnrollmentResolveOptions struct {
+	WorkingDir        string
+	TeamDomain        string
+	Name              string
+	Address           string
+	Scope             string
+	NoAddress         bool
+	RegistryURL       string
+	Registry          *awid.RegistryClient
+	AllowLocalMint    bool
+	AllowDefaultClaim bool
+}
+
+type teamMemberEnrollmentPlan struct {
+	Name               string
+	Scope              string
+	Lifetime           string
+	MemberDIDKey       string
+	MemberDIDAW        string
+	MemberAddress      string
+	IdentitySigningKey ed25519.PrivateKey
+	DefaultClaim       *awid.AtomicAddressClaimParams
+}
+
 // --- flags ---
 
 var (
@@ -1183,18 +1207,6 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, fmt.Errorf("local team controller key for %s not found: %w (cross-machine joins should use `aw id team request`, controller-side `aw id team add-member`, then invitee-side `aw id team fetch-cert`)", teamID, err)
 	}
 
-	alias := strings.TrimSpace(opts.Name)
-	if alias == "" {
-		alias = resolveAliasFromIdentity(workingDir)
-	}
-	if alias == "" {
-		return nil, usageError("--name is required (no identity found to derive name from)")
-	}
-	alias, err = normalizeIDCreateName(alias)
-	if err != nil {
-		return nil, err
-	}
-
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		return nil, err
@@ -1206,72 +1218,35 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	lifetime := awid.LifetimeEphemeral
-	var memberDIDKey, memberDIDAW, memberAddress string
-	var identitySigningKey ed25519.PrivateKey
-	var defaultClaim *awid.AtomicAddressClaimParams
-
-	if scope == awid.IdentityModeLocal {
-		memberDIDKey, err = resolveOrGenerateMemberDIDKey(workingDir, true)
-		if err != nil {
-			return nil, err
+	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
+		WorkingDir:        workingDir,
+		TeamDomain:        invite.Domain,
+		Name:              opts.Name,
+		Address:           opts.Address,
+		Scope:             scope,
+		NoAddress:         opts.NoAddress,
+		RegistryURL:       registryURL,
+		Registry:          registry,
+		AllowLocalMint:    true,
+		AllowDefaultClaim: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if plan.DefaultClaim != nil {
+		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
+			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
 		}
-	} else {
-		lifetime = awid.LifetimePersistent
-		identity, signingKey, err := resolveGlobalIdentityForTeamAccept(workingDir)
-		if err != nil {
-			return nil, err
-		}
-		identitySigningKey = signingKey
-		memberDIDKey = strings.TrimSpace(identity.DID)
-		memberDIDAW = strings.TrimSpace(identity.StableID)
-		memberAddress = strings.TrimSpace(opts.Address)
-		if memberAddress != "" {
-			lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
-			if err != nil {
-				return nil, err
-			}
-			if err := validateMemberAddressForCertificate(ctx, registry, registryURL, memberAddress, memberDIDAW, memberDIDKey, lookupSigningKey); err != nil {
-				return nil, err
-			}
-		} else if !opts.NoAddress {
-			controllerKey, ok, err := loadOptionalNamespaceControllerKey(invite.Domain)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				return nil, usageError("cannot default-claim %s/%s: no namespace authority for %s; use --address with an address this identity already owns, or --no-address", awconfig.NormalizeDomain(invite.Domain), alias, awconfig.NormalizeDomain(invite.Domain))
-			}
-			memberAddress = awconfig.NormalizeDomain(invite.Domain) + "/" + alias
-			claim := awid.AtomicAddressClaimParams{
-				Domain:                        awconfig.NormalizeDomain(invite.Domain),
-				AddressName:                   alias,
-				DIDAW:                         memberDIDAW,
-				CurrentDIDKey:                 memberDIDKey,
-				IdentitySigningKey:            identitySigningKey,
-				NamespaceControllerSigningKey: controllerKey,
-				DryRun:                        true,
-				IdentityCustody:               string(awid.AddressClaimCustodySelf),
-				NamespaceCustody:              string(awid.AddressClaimCustodySelf),
-			}
-			if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, claim); err != nil {
-				return nil, idAddressClaimAtomicError(memberAddress, registryURL, err)
-			}
-			claim.DryRun = false
-			defaultClaim = &claim
-		}
-		if strings.TrimSpace(memberDIDAW) == "" {
-			return nil, usageError("--global accept-invite requires an existing did:aw; run `aw id create` first")
-		}
+		plan.DefaultClaim.DryRun = false
 	}
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team:          teamID,
-		MemberDIDKey:  memberDIDKey,
-		MemberDIDAW:   memberDIDAW,
-		MemberAddress: memberAddress,
-		Alias:         alias,
-		Lifetime:      lifetime,
+		MemberDIDKey:  plan.MemberDIDKey,
+		MemberDIDAW:   plan.MemberDIDAW,
+		MemberAddress: plan.MemberAddress,
+		Alias:         plan.Name,
+		Lifetime:      plan.Lifetime,
 	})
 	if err != nil {
 		return nil, err
@@ -1280,10 +1255,10 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
-	if defaultClaim != nil {
-		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *defaultClaim); err != nil {
+	if plan.DefaultClaim != nil {
+		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
 			accepted := &acceptedTeamInvite{Certificate: cert, RegistryURL: registryURL, Domain: invite.Domain, TeamName: invite.TeamName}
-			return nil, rollbackAddedTeamCertificate(workingDir, accepted, idAddressClaimAtomicError(memberAddress, registryURL, err))
+			return nil, rollbackAddedTeamCertificate(workingDir, accepted, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err))
 		}
 	}
 
@@ -1300,7 +1275,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		Output: &teamAcceptInviteOutput{
 			Status:   "accepted",
 			TeamID:   teamID,
-			Alias:    alias,
+			Alias:    plan.Name,
 			CertPath: certPath,
 		},
 		Certificate: cert,
@@ -2998,6 +2973,105 @@ func bootstrapLocalTeamMemberWithLifetime(
 	}, nil
 }
 
+func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentResolveOptions) (teamMemberEnrollmentPlan, error) {
+	scope := strings.TrimSpace(opts.Scope)
+	if scope == "" {
+		scope = awid.IdentityModeLocal
+	}
+	if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
+		return teamMemberEnrollmentPlan{}, usageError("identity scope must be --local or --global")
+	}
+	alias := strings.TrimSpace(opts.Name)
+	if alias == "" {
+		alias = resolveAliasFromIdentity(opts.WorkingDir)
+	}
+	if alias == "" {
+		return teamMemberEnrollmentPlan{}, usageError("--name is required (no identity found to derive name from)")
+	}
+	var err error
+	alias, err = normalizeIDCreateName(alias)
+	if err != nil {
+		return teamMemberEnrollmentPlan{}, err
+	}
+	plan := teamMemberEnrollmentPlan{Name: alias, Scope: scope, Lifetime: awid.LifetimeEphemeral}
+	if scope == awid.IdentityModeLocal {
+		if strings.TrimSpace(opts.Address) != "" {
+			return teamMemberEnrollmentPlan{}, usageError("--address requires --global")
+		}
+		if opts.NoAddress {
+			return teamMemberEnrollmentPlan{}, usageError("--no-address requires --global")
+		}
+		teamState, err := loadOptionalTeamState(opts.WorkingDir)
+		if err != nil {
+			return teamMemberEnrollmentPlan{}, err
+		}
+		if teamState != nil && len(teamState.Memberships) > 0 {
+			return teamMemberEnrollmentPlan{}, usageError("local identities can only enroll in one team; use --first-agent-global/--global to reuse a global identity across teams, or use a fresh workspace for local")
+		}
+		if identity, err := awconfig.ResolveIdentity(opts.WorkingDir); err == nil && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
+			return teamMemberEnrollmentPlan{}, usageError("this workspace already has a global identity; use --global/--first-agent-global to reuse it, or use a fresh workspace for local")
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return teamMemberEnrollmentPlan{}, err
+		}
+		memberDIDKey, err := resolveOrGenerateMemberDIDKey(opts.WorkingDir, opts.AllowLocalMint)
+		if err != nil {
+			return teamMemberEnrollmentPlan{}, err
+		}
+		plan.MemberDIDKey = memberDIDKey
+		return plan, nil
+	}
+
+	plan.Lifetime = awid.LifetimePersistent
+	identity, signingKey, err := resolveGlobalIdentityForTeamAccept(opts.WorkingDir)
+	if err != nil {
+		return teamMemberEnrollmentPlan{}, err
+	}
+	plan.IdentitySigningKey = signingKey
+	plan.MemberDIDKey = strings.TrimSpace(identity.DID)
+	plan.MemberDIDAW = strings.TrimSpace(identity.StableID)
+	plan.MemberAddress = strings.TrimSpace(opts.Address)
+	if opts.NoAddress && plan.MemberAddress != "" {
+		return teamMemberEnrollmentPlan{}, usageError("--address and --no-address cannot be used together")
+	}
+	if plan.MemberAddress != "" {
+		lookupSigningKey, err := loadOptionalWorktreeSigningKey(opts.WorkingDir)
+		if err != nil {
+			return teamMemberEnrollmentPlan{}, err
+		}
+		if err := validateMemberAddressForCertificate(ctx, opts.Registry, opts.RegistryURL, plan.MemberAddress, plan.MemberDIDAW, plan.MemberDIDKey, lookupSigningKey); err != nil {
+			return teamMemberEnrollmentPlan{}, err
+		}
+	} else if !opts.NoAddress {
+		if !opts.AllowDefaultClaim {
+			return teamMemberEnrollmentPlan{}, usageError("cannot default-claim %s/%s: no namespace authority for %s; use --address with an address this identity already owns, or --no-address", awconfig.NormalizeDomain(opts.TeamDomain), alias, awconfig.NormalizeDomain(opts.TeamDomain))
+		}
+		controllerKey, ok, err := loadOptionalNamespaceControllerKey(opts.TeamDomain)
+		if err != nil {
+			return teamMemberEnrollmentPlan{}, err
+		}
+		if !ok {
+			return teamMemberEnrollmentPlan{}, usageError("cannot default-claim %s/%s: no namespace authority for %s; use --address with an address this identity already owns, or --no-address", awconfig.NormalizeDomain(opts.TeamDomain), alias, awconfig.NormalizeDomain(opts.TeamDomain))
+		}
+		plan.MemberAddress = awconfig.NormalizeDomain(opts.TeamDomain) + "/" + alias
+		claim := awid.AtomicAddressClaimParams{
+			Domain:                        awconfig.NormalizeDomain(opts.TeamDomain),
+			AddressName:                   alias,
+			DIDAW:                         plan.MemberDIDAW,
+			CurrentDIDKey:                 plan.MemberDIDKey,
+			IdentitySigningKey:            signingKey,
+			NamespaceControllerSigningKey: controllerKey,
+			DryRun:                        true,
+			IdentityCustody:               string(awid.AddressClaimCustodySelf),
+			NamespaceCustody:              string(awid.AddressClaimCustodySelf),
+		}
+		plan.DefaultClaim = &claim
+	}
+	if strings.TrimSpace(plan.MemberDIDAW) == "" {
+		return teamMemberEnrollmentPlan{}, usageError("--global/--first-agent-global requires an existing did:aw; run `aw id create` first")
+	}
+	return plan, nil
+}
+
 func ensureTeamAcceptScopeAllowed(workingDir, scope string) error {
 	teamState, err := loadOptionalTeamState(workingDir)
 	if err != nil {
@@ -3023,15 +3097,15 @@ func resolveGlobalIdentityForTeamAccept(workingDir string) (*awconfig.ResolvedId
 	identity, err := awconfig.ResolveIdentity(workingDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, usageError("--global accept-invite requires an existing global identity; run `aw id create` first")
+			return nil, nil, usageError("--global/--first-agent-global requires an existing global identity; run `aw id create` first")
 		}
 		return nil, nil, err
 	}
 	if strings.TrimSpace(identity.IdentityScope) != awid.IdentityModeGlobal || strings.TrimSpace(identity.StableID) == "" {
-		return nil, nil, usageError("--global accept-invite requires an existing global identity; run `aw id create` first")
+		return nil, nil, usageError("--global/--first-agent-global requires an existing global identity; run `aw id create` first")
 	}
 	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
-		return nil, nil, usageError("--global accept-invite requires a self-custodial global identity")
+		return nil, nil, usageError("--global/--first-agent-global requires a self-custodial global identity")
 	}
 	signingKey, err := awid.LoadSigningKey(identity.SigningKeyPath)
 	if err != nil {

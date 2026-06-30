@@ -80,8 +80,7 @@ Flags:
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--local-name string Local workspace routing name (optional; default: server-suggested)`
-- `--name string Global identity name (required with --global unless .aw/identity.yaml already exists)`
+- `--name string Identity/member name (global address name with --global, local routing name otherwise)`
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
@@ -917,7 +916,9 @@ The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix
 Flags:
 - `--byot Create a customer-controlled AWID team with local namespace controller authority`
 - `--display-name string Team display name`
-- `--first-agent-name string Initial local workspace member name (defaults to <name>)`
+- `--first-agent-global Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority`
+- `--first-agent-local Enroll the first agent as a local team-scoped identity (default)`
+- `--first-agent-name string Initial workspace member name (defaults to <name>)`
 - `-h, --help help for create`
 - `--home string Agent home directory override for single-agent --profile create`
 - `--name string Team name`
@@ -954,9 +955,12 @@ Run this in a clean target directory. It refuses to overwrite an existing
 workspace still needs to be connected to the service.
 
 Flags:
-- `--address string Registered address to place in the global member certificate`
+- `--address string Advanced: existing owned address to place in the global member certificate`
+- `--global Join by reusing the existing global identity in this workspace`
 - `-h, --help help for join`
+- `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
+- `--no-address For --global, join with did:aw continuity but no member address`
 
 ## `team leave`
 

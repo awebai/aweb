@@ -177,8 +177,8 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 		{
 			name:       "init",
 			args:       []string{"init", "--help"},
-			want:       []string{"--global", "Global identity name", "Local workspace routing name"},
-			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity},
+			want:       []string{"--global", "Identity/member name"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity, "Local workspace routing name"},
 		},
 		{
 			name:       "team invite",
@@ -234,6 +234,7 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 	}{
 		{name: "persistent to global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --global"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
+		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

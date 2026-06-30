@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os"
@@ -28,6 +27,8 @@ var (
 	teamHumanCreateHome        string
 	teamHumanCreateRuntime     string
 	teamHumanCreateProfiles    []string
+	teamHumanCreateFirstLocal  bool
+	teamHumanCreateFirstGlobal bool
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
@@ -135,7 +136,9 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateDisplayName, "display-name", "", "Team display name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "first-agent-name", "", "Initial local workspace member name (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "first-agent-name", "", "Initial workspace member name (defaults to <name>)")
+	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstLocal, "first-agent-local", false, "Enroll the first agent as a local team-scoped identity (default)")
+	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstGlobal, "first-agent-global", false, "Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
 	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
@@ -158,7 +161,10 @@ func init() {
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
 	markDeprecatedHiddenFlag(teamHumanJoinCmd, "alias", "name")
-	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the global member certificate")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptLocal, "local", false, "Join with a local workspace identity (default)")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 
 	teamHumanCmd.AddCommand(teamHumanListCmd)
@@ -232,6 +238,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		createHomeOverride = homeDir
 	}
+	firstAgentScope, err := resolveTeamHumanCreateFirstAgentScope()
+	if err != nil {
+		return err
+	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
 	if alias == "" {
 		alias = strings.ToLower(teamName)
@@ -248,7 +258,18 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if domain == "" {
 			return usageError("aw team create --byot requires --namespace")
 		}
-		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), nil)
+		if firstAgentScope == awid.IdentityModeGlobal {
+			identityExists, err := teamCreateHasIdentityMaterial(wd)
+			if err != nil {
+				return err
+			}
+			if !identityExists {
+				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL)); err != nil {
+					return err
+				}
+			}
+		}
+		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
@@ -277,7 +298,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if identityExists {
-		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector); err != nil {
+		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope, selector); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
@@ -291,12 +312,21 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if apiKey := resolveInitAPIKey(); apiKey != "" {
+		firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
+		apiAlias := alias
+		apiName := ""
+		if firstAgentGlobal {
+			apiAlias = ""
+			apiName = alias
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:  wd,
 			AwebURL:     awebURL,
 			RegistryURL: registryURL,
 			APIKey:      apiKey,
-			Alias:       alias,
+			Name:        apiName,
+			Alias:       apiAlias,
+			Persistent:  firstAgentGlobal,
 			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
@@ -317,10 +347,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector); err != nil {
+		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope, selector); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
+	}
+	if firstAgentScope == awid.IdentityModeGlobal {
+		return usageError("--first-agent-global requires an existing global identity or namespace/hosted context; run `aw id create`, pass --namespace with --byot, or use hosted onboarding")
 	}
 	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 		WorkingDir:  wd,
@@ -397,6 +430,27 @@ func runTeamHumanCreateRosterAdd(specs []string) error {
 	return runTeamHumanAdd(nil, specs)
 }
 
+func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) error {
+	domain = awconfig.NormalizeDomain(domain)
+	if domain == "" {
+		return usageError("--first-agent-global requires --namespace with --byot when no global identity exists")
+	}
+	exists, err := awconfig.ControllerKeyExists(domain)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
+	}
+	_, err = executeIDCreate(wd, idCreateOptions{
+		Name:        alias,
+		Domain:      domain,
+		RegistryURL: registryURL,
+		Now:         time.Now,
+	})
+	return err
+}
+
 func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	if _, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil {
 		return true, nil
@@ -411,9 +465,16 @@ func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	return false, nil
 }
 
-func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, selector *libraryProfileSelector) error {
+func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope string, selector *libraryProfileSelector) error {
 	canPrompt := initIsTTY() && !jsonFlag
 	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
+	firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
+	requestAlias := alias
+	requestName := ""
+	if firstAgentGlobal {
+		requestAlias = ""
+		requestName = alias
+	}
 	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir:         wd,
 		PromptIn:           os.Stdin,
@@ -424,12 +485,12 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 		BYOD:               false,
 		Username:           strings.TrimSpace(initUsername),
 		Domain:             strings.TrimSpace(initDomain),
-		Alias:              alias,
-		Name:               strings.TrimSpace(initName),
+		Alias:              requestAlias,
+		Name:               requestName,
 		HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-		Persistent:         initPersistent,
+		Persistent:         firstAgentGlobal,
 		InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 		InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 		DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
@@ -458,30 +519,37 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 	return nil
 }
 
-func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector *libraryProfileSelector) error {
-	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), selector)
+func resolveTeamHumanCreateFirstAgentScope() (string, error) {
+	if teamHumanCreateFirstLocal && teamHumanCreateFirstGlobal {
+		return "", usageError("--first-agent-local and --first-agent-global cannot be used together")
+	}
+	if teamHumanCreateFirstGlobal {
+		return awid.IdentityModeGlobal, nil
+	}
+	return awid.IdentityModeLocal, nil
 }
 
-func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName string, selector *libraryProfileSelector) error {
+func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) error {
+	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector)
+}
+
+func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector) error {
 	if selector != nil {
 		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
-	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(wd)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if strings.TrimSpace(explicitDomain) != "" {
-				return usageError("aw team create --byot requires a local member identity to enroll; use aw id team create for a controller-only team, or run aw init / aw id create first")
-			}
-			return usageError("current workspace has local signing state but no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
-		}
-		return err
-	}
-	identityDomain, _, ok := awconfig.CutIdentityAddress(identity.Address)
-	if !ok {
-		return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
-	}
 	domain := awconfig.NormalizeDomain(explicitDomain)
+	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if domain == "" {
+		if identityErr != nil {
+			if errors.Is(identityErr, os.ErrNotExist) {
+				return usageError("current workspace has no identity namespace; use --byot/--namespace for a domain you control, or run aw init first")
+			}
+			return identityErr
+		}
+		identityDomain, _, ok := awconfig.CutIdentityAddress(identity.Address)
+		if !ok {
+			return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
+		}
 		domain = identityDomain
 	}
 	exists, err := awconfig.ControllerKeyExists(domain)
@@ -496,7 +564,7 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 		return fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
 	registryURL := strings.TrimSpace(explicitRegistryURL)
-	if registryURL == "" {
+	if registryURL == "" && identityErr == nil && identity != nil {
 		registryURL = strings.TrimSpace(identity.RegistryURL)
 	}
 	if registryURL == "" {
@@ -514,23 +582,45 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 			return err
 		}
 	}
-	memberKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(wd))
-	if err != nil {
-		return fmt.Errorf("load local signing key: %w", err)
-	}
-	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
-	if strings.TrimSpace(identity.DID) != "" && strings.TrimSpace(identity.DID) != memberDIDKey {
-		return fmt.Errorf("local signing key did %s does not match identity did %s", memberDIDKey, identity.DID)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), strings.TrimSpace(identity.Address), strings.TrimSpace(identity.StableID), memberDIDKey, memberKey); err != nil {
-		return err
+	firstAgentAddress := ""
+	if firstAgentScope == awid.IdentityModeGlobal && identityErr == nil && identity != nil {
+		firstAgentAddress = strings.TrimSpace(identity.Address)
 	}
-	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, awid.LegacyLifetimeForIdentityScope(identity.IdentityScope))
+	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
+		WorkingDir:        wd,
+		TeamDomain:        domain,
+		Name:              alias,
+		Address:           firstAgentAddress,
+		Scope:             firstAgentScope,
+		RegistryURL:       strings.TrimSpace(registry.DefaultRegistryURL),
+		Registry:          registry,
+		AllowLocalMint:    true,
+		AllowDefaultClaim: false,
+	})
 	if err != nil {
 		return err
 	}
+	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey)
+	if err != nil {
+		return err
+	}
+	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
+		Team:          registration.TeamID,
+		MemberDIDKey:  plan.MemberDIDKey,
+		MemberDIDAW:   strings.TrimSpace(plan.MemberDIDAW),
+		MemberAddress: strings.TrimSpace(plan.MemberAddress),
+		Alias:         strings.TrimSpace(plan.Name),
+		Lifetime:      strings.TrimSpace(plan.Lifetime),
+	})
+	if err != nil {
+		return err
+	}
+	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		return fmt.Errorf("register certificate at registry: %w", err)
+	}
+	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
 	certPath, err := awconfig.SaveTeamCertificateForTeam(wd, bootstrap.TeamID, bootstrap.Certificate)
 	if err != nil {
 		return err

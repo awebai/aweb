@@ -2574,7 +2574,7 @@ func TestTeamBootstrapMaterializesAgentHomes(t *testing.T) {
 		}
 	}
 	commands := plannedInitCommands([]teamBootstrapAgentPlan{{HomeDir: plan.HomeDir, Name: "builder", RoleName: "developer", Alias: "dev"}})
-	if len(commands) != 1 || !strings.Contains(commands[0], "aw init --name builder --role-name developer") {
+	if len(commands) != 1 || !strings.Contains(commands[0], "aw init --name dev --role-name developer") {
 		t.Fatalf("unexpected init command: %#v", commands)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldCreateHome := teamHumanCreateHome
 	oldCreateRuntime := teamHumanCreateRuntime
 	oldProfiles := teamHumanCreateProfiles
+	oldFirstLocal := teamHumanCreateFirstLocal
+	oldFirstGlobal := teamHumanCreateFirstGlobal
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
@@ -52,6 +55,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateHome = oldCreateHome
 		teamHumanCreateRuntime = oldCreateRuntime
 		teamHumanCreateProfiles = oldProfiles
+		teamHumanCreateFirstLocal = oldFirstLocal
+		teamHumanCreateFirstGlobal = oldFirstGlobal
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
@@ -71,6 +76,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateHome = ""
 	teamHumanCreateRuntime = ""
 	teamHumanCreateProfiles = nil
+	teamHumanCreateFirstLocal = false
+	teamHumanCreateFirstGlobal = false
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
@@ -426,6 +433,106 @@ func TestTeamHumanCreateExistingHostedManagedIdentityFailsClearly(t *testing.T) 
 	}
 }
 
+func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv(initAPIKeyEnvVar, "")
+	teamHumanCreateFirstGlobal = true
+	teamHumanCreateServiceURL = "https://app.example"
+	var captured guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		captured = req
+		if err := os.MkdirAll(filepath.Join(req.WorkingDir, ".aw"), 0o755); err != nil {
+			return nil, err
+		}
+		return &guidedOnboardingResult{}, nil
+	}
+
+	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
+	}
+	if !captured.Persistent || captured.Name != "eng" || captured.Alias != "" {
+		t.Fatalf("hosted first-agent-global request = %+v", captured)
+	}
+}
+
+func TestTeamHumanCreateFirstAgentGlobalLocalNoContextFailsClosed(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv(initAPIKeyEnvVar, "")
+	t.Setenv("AWID_REGISTRY_URL", "http://localhost:8010")
+	teamHumanCreateFirstGlobal = true
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		t.Fatal("implicit local bootstrap should not run for --first-agent-global")
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"Eng"})
+	if err == nil || !strings.Contains(err.Error(), "--first-agent-global requires an existing global identity or namespace/hosted context") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf("local state created despite fail-closed first-agent-global: %v", statErr)
+	}
+}
+
+func TestTeamHumanCreateLocalExistingMembershipFailsBeforeRegistry(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{ActiveTeam: "old:acme.com", Memberships: []awconfig.TeamMembership{{TeamID: "old:acme.com", Alias: "alice", CertPath: ".aw/team-certs/old_acme_com.json", JoinedAt: "2026-01-01T00:00:00Z"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	var calledRegistry bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledRegistry = true
+		t.Fatalf("registry should not be called when local workspace already has a team: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	teamHumanCreateBYOT = true
+	teamHumanCreateNamespace = "acme.com"
+	teamHumanCreateRegistryURL = server.URL
+
+	err = runTeamHumanCreate(nil, []string{"Ops"})
+	if err == nil || !strings.Contains(err.Error(), "local identities can only enroll in one team") {
+		t.Fatalf("error=%v", err)
+	}
+	if calledRegistry {
+		t.Fatal("registry called despite local one-team guard")
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".awid", "team-keys", "acme.com", "ops.key")); !os.IsNotExist(statErr) {
+		t.Fatalf("team key created despite local one-team guard: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, ".aw", "team-certs", "ops_acme_com.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("team cert created despite local one-team guard: %v", statErr)
+	}
+}
+
 func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
@@ -483,6 +590,7 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	teamHumanCreateFirstGlobal = true
 
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
@@ -515,7 +623,39 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	}
 }
 
-func TestTeamHumanCreateBYOTWithoutIdentityFailsBeforeRegisterOnly(t *testing.T) {
+func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	var calledRegistry bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledRegistry = true
+		t.Fatalf("registry should not be called for --byot --first-agent-global without namespace authority: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	teamHumanCreateBYOT = true
+	teamHumanCreateNamespace = "acme.com"
+	teamHumanCreateRegistryURL = server.URL
+	teamHumanCreateFirstGlobal = true
+
+	err := runTeamHumanCreate(nil, []string{"Ops"})
+	if err == nil || !strings.Contains(err.Error(), "requires namespace controller authority") || !strings.Contains(err.Error(), "aw id create") {
+		t.Fatalf("error=%v", err)
+	}
+	if calledRegistry {
+		t.Fatal("registry called despite fail-closed --byot without namespace authority")
+	}
+	if _, statErr := os.Lstat(filepath.Join(home, ".awid", "team-keys", "acme.com", "ops.key")); !os.IsNotExist(statErr) {
+		t.Fatalf("team key created despite fail-closed --byot without namespace authority: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, ".aw", "teams.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("team state created despite fail-closed --byot without namespace authority: %v", statErr)
+	}
+}
+
+func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -525,31 +665,88 @@ func TestTeamHumanCreateBYOTWithoutIdentityFailsBeforeRegisterOnly(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
 		t.Fatal(err)
 	}
-	var calledRegistry bool
+	var createdDIDAW, createdDIDKey string
+	var namespaceCreated bool
+	var claimCalls, certCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calledRegistry = true
-		t.Fatalf("registry should not be called for --byot without member identity: %s %s", r.Method, r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			if !namespaceCreated {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": controllerDID, "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["domain"] != "acme.com" || body["controller_did"] != controllerDID {
+				t.Fatalf("namespace body=%v", body)
+			}
+			namespaceCreated = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": controllerDID, "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses/claims":
+			claimCalls++
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["address_name"] != "ops" {
+				t.Fatalf("address_name=%v", body["address_name"])
+			}
+			createdDIDAW, _ = body["did_aw"].(string)
+			createdDIDKey, _ = body["current_did_key"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "claimed", "domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey, "did_status": "created", "address_status": "created"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+createdDIDAW+"/encryption-key":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/ops":
+			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "ops" {
+				t.Fatalf("team name=%v", body["name"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "ops:acme.com", "domain": "acme.com", "name": "ops", "team_did_key": body["team_did_key"], "created_at": "2026-06-20T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/ops/certificates":
+			certCalls++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer server.Close()
 	teamHumanCreateBYOT = true
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
+	teamHumanCreateFirstGlobal = true
 
-	err = runTeamHumanCreate(nil, []string{"Ops"})
-	if err == nil || !strings.Contains(err.Error(), "requires a local member identity") || !strings.Contains(err.Error(), "aw id team create") {
-		t.Fatalf("error=%v", err)
+	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
-	if calledRegistry {
-		t.Fatal("registry called despite fail-closed --byot without identity")
+	if claimCalls != 1 || certCalls != 1 {
+		t.Fatalf("claim calls=%d cert calls=%d", claimCalls, certCalls)
 	}
-	if _, statErr := os.Lstat(filepath.Join(home, ".awid", "team-keys", "acme.com", "ops.key")); !os.IsNotExist(statErr) {
-		t.Fatalf("team key created despite fail-closed --byot without identity: %v", statErr)
+	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Lstat(filepath.Join(root, ".aw", "teams.yaml")); !os.IsNotExist(statErr) {
-		t.Fatalf("team state created despite fail-closed --byot without identity: %v", statErr)
+	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "acme.com/ops" || identity.StableID != createdDIDAW {
+		t.Fatalf("identity=%+v created=%s", identity, createdDIDAW)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(root, "ops:acme.com")
+	if err != nil {
+		t.Fatalf("cert missing: %v", err)
+	}
+	if cert.MemberDIDAW != createdDIDAW || cert.MemberDIDKey != createdDIDKey || cert.MemberAddress != "acme.com/ops" || cert.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("cert fields did_aw=%q did_key=%q address=%q lifetime=%q", cert.MemberDIDAW, cert.MemberDIDKey, cert.MemberAddress, cert.Lifetime)
 	}
 }
 
@@ -617,6 +814,7 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateAlias = "captain"
+	teamHumanCreateFirstGlobal = true
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)

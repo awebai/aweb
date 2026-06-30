@@ -205,7 +205,7 @@ func validateHostedNonInteractiveRequired(req guidedOnboardingRequest) error {
 		return nil
 	}
 	if strings.TrimSpace(req.Alias) == "" && strings.TrimSpace(req.Name) == "" {
-		return usageError("missing required flag: --local-name")
+		return usageError("missing required flag: --name")
 	}
 	return nil
 }
@@ -366,7 +366,7 @@ func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string
 			if persistent {
 				return "", usageError("missing required flag: --name")
 			}
-			return "", usageError("missing required flag: --local-name")
+			return "", usageError("missing required flag: --name")
 		}
 		prompted, err := promptRequiredStringWithIO(label, "", req.PromptIn, req.PromptOut)
 		if err != nil {
@@ -566,12 +566,12 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 		if req.Persistent {
 			return "", usageError("missing required flag: --name")
 		}
-		return "", usageError("missing required flag: --local-name")
+		return "", usageError("missing required flag: --name")
 	}
 	// "alice" is the canonical first-agent name from cli-tutorial.md. The
 	// developer who hits Enter at the prompt lands at <username>.aweb.ai/alice
 	// for global identity or inside the local team for local workspaces. Sibling worktrees
-	// for a second identity pass --local-name explicitly (e.g., "bob"). $USER is
+	// for a second identity pass --name explicitly (e.g., "bob"). $USER is
 	// deliberately not used as a default — that previous behavior silently
 	// bound the developer's OS login name to a public did:aw address.
 	if req.Persistent {
