@@ -2368,13 +2368,13 @@ func TestTeamAcceptInviteGlobalWithoutIdentityErrorsToIDCreate(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
-	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
+	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, Address: "globalhosted.aweb.ai/alice"})
 	if err == nil || !strings.Contains(err.Error(), "aw id create") {
 		t.Fatalf("expected aw id create guidance, got %v", err)
 	}
 }
 
-func TestHostedGlobalAcceptRequiresAddressOrNoAddressUntilDefaultClaimSupported(t *testing.T) {
+func TestHostedGlobalAcceptRequiresAddressUntilContractSupported(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
@@ -2404,8 +2404,12 @@ func TestHostedGlobalAcceptRequiresAddressOrNoAddressUntilDefaultClaimSupported(
 	}
 
 	_, err = acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_default_claim", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
-	if err == nil || !strings.Contains(err.Error(), "requires --address or --no-address") {
+	if err == nil || !strings.Contains(err.Error(), "requires --address") {
 		t.Fatalf("expected hosted default-claim guard, got %v", err)
+	}
+	_, err = acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_address", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
+	if err == nil || !strings.Contains(err.Error(), "requires --address") {
+		t.Fatalf("expected hosted no-address guard, got %v", err)
 	}
 	if serverCalls != 0 {
 		t.Fatalf("server calls=%d want 0", serverCalls)
