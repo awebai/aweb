@@ -22,12 +22,15 @@ func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
 	if selector.SourceBlueprintRef != "aweb.engineering" || selector.ProfileRef != "reviewer" || selector.RuntimeKind != "pi" {
 		t.Fatalf("selector=%+v", selector)
 	}
-	versioned, err := parseLibraryProfileSelector("aweb.engineering/reviewer@0.2.0=local-shell")
+	scoped, err := parseLibraryProfileSelector("aweb.engineering/reviewer:global=codex")
 	if err != nil {
-		t.Fatalf("parse versioned selector: %v", err)
+		t.Fatalf("parse scoped selector: %v", err)
 	}
-	if versioned.SourceBlueprintVersion != "0.2.0" || versioned.RuntimeKind != "local-shell" {
-		t.Fatalf("versioned selector=%+v", versioned)
+	if scoped.IdentityScope != awid.IdentityModeGlobal || scoped.RuntimeKind != "codex" {
+		t.Fatalf("scoped selector=%+v", scoped)
+	}
+	if _, err := parseLibraryProfileSelector("aweb.engineering/reviewer@0.2.0=local-shell"); err == nil || !strings.Contains(err.Error(), "@ now separates NAME") {
+		t.Fatalf("versioned selector error=%v", err)
 	}
 	if _, err := parseLibraryProfileSelector("aweb.engineering/reviewer=python"); err == nil || !strings.Contains(err.Error(), "supported runtimes") {
 		t.Fatalf("bad runtime error=%v", err)
@@ -150,13 +153,9 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	}
 }
 
-func TestApplyLibraryProfileToHomeRejectsVersionedSelectorUntilVersionedSourceFetch(t *testing.T) {
+func TestParseLibraryProfileSelectorRejectsVersionedSelector(t *testing.T) {
 	home := t.TempDir()
-	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator@0.1.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+	_, err := parseLibraryProfileSelector("aweb.engineering/coordinator@0.1.0")
 	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
 		t.Fatalf("error=%v", err)
 	}

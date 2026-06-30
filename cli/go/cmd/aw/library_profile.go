@@ -8,7 +8,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
+	"gopkg.in/yaml.v3"
 )
 
 const defaultMaterializeRuntimeKind = "claude-code"
@@ -18,6 +20,7 @@ type libraryProfileSelector struct {
 	SourceBlueprintVersion string
 	ProfileRef             string
 	RuntimeKind            string
+	IdentityScope          string
 }
 
 type libraryProfileDetailResponse struct {
@@ -54,9 +57,9 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 		return libraryProfileSelector{}, usageError("profile selector is required")
 	}
 	runtimeKind := ""
-	blueprintProfileVersion := trimmed
+	blueprintProfileScope := trimmed
 	if before, after, ok := strings.Cut(trimmed, "="); ok {
-		blueprintProfileVersion = strings.TrimSpace(before)
+		blueprintProfileScope = strings.TrimSpace(before)
 		runtimeKind = strings.TrimSpace(after)
 		if runtimeKind == "" {
 			return libraryProfileSelector{}, usageError("runtime is required after =")
@@ -67,32 +70,81 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 			return libraryProfileSelector{}, err
 		}
 	}
-	blueprintAndProfile := blueprintProfileVersion
-	version := ""
-	if before, after, ok := strings.Cut(blueprintProfileVersion, "@"); ok {
+	if strings.Contains(blueprintProfileScope, "@") {
+		return libraryProfileSelector{}, usageError("versioned Library profile selectors are not supported; @ now separates NAME from BLUEPRINT/PROFILE, use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
+	}
+	identityScope := ""
+	blueprintAndProfile := blueprintProfileScope
+	if before, after, ok := strings.Cut(blueprintProfileScope, ":"); ok {
 		blueprintAndProfile = strings.TrimSpace(before)
-		version = strings.TrimSpace(after)
-		if version == "" {
-			return libraryProfileSelector{}, usageError("blueprint version is required after @")
+		var err error
+		identityScope, err = normalizeTeamAgentScope(after)
+		if err != nil {
+			return libraryProfileSelector{}, err
 		}
 	}
 	blueprintRef, profileRef, ok := strings.Cut(blueprintAndProfile, "/")
 	if !ok {
-		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]", raw)
+		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[:local|global][=RUNTIME]", raw)
 	}
-	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), SourceBlueprintVersion: version, ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind}
+	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind, IdentityScope: identityScope}
 	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
 	if err := validateLibraryRef("profile ref", selector.ProfileRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
-	if selector.SourceBlueprintVersion != "" {
-		if err := validateLibraryRef("source blueprint version", selector.SourceBlueprintVersion, true); err != nil {
-			return libraryProfileSelector{}, err
-		}
-	}
 	return selector, nil
+}
+
+func normalizeTeamAgentScope(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "", usageError("scope is required after :")
+	case awid.IdentityModeLocal:
+		return awid.IdentityModeLocal, nil
+	case awid.IdentityModeGlobal:
+		return awid.IdentityModeGlobal, nil
+	default:
+		return "", usageError("scope %q is not supported; use local or global", raw)
+	}
+}
+
+func resolveLibraryProfileScope(selector libraryProfileSelector) (string, error) {
+	if scope := strings.TrimSpace(selector.IdentityScope); scope != "" {
+		return normalizeTeamAgentScope(scope)
+	}
+	profile, err := callLibraryGetProfile(selector)
+	if err != nil {
+		return "", err
+	}
+	scope, err := profileScopeFromLibraryPayload(profile)
+	if err != nil {
+		return "", err
+	}
+	if scope == "" {
+		return awid.IdentityModeLocal, nil
+	}
+	return normalizeTeamAgentScope(scope)
+}
+
+func profileScopeFromLibraryPayload(profile *libraryProfileDetailResponse) (string, error) {
+	if profile == nil {
+		return "", fmt.Errorf("library profile is required")
+	}
+	for _, file := range profile.Files {
+		if filepath.ToSlash(strings.TrimSpace(file.Path)) != "profile.yaml" {
+			continue
+		}
+		var doc struct {
+			Scope string `yaml:"scope"`
+		}
+		if err := yaml.Unmarshal([]byte(file.ContentUTF8), &doc); err != nil {
+			return "", fmt.Errorf("library profile %s/profile.yaml: parse scope: %w", profile.ProfileRef, err)
+		}
+		return strings.TrimSpace(doc.Scope), nil
+	}
+	return "", nil
 }
 
 func rejectUnsupportedVersionedLibrarySelector(selector libraryProfileSelector) error {

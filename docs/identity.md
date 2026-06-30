@@ -159,6 +159,19 @@ Current and planned surfaces:
   identity or create/publish the founding global identity when hosted or
   namespace-authority context is available.
 
+### Agent naming contract
+
+When an `aw team create --agent` or `aw team add` spec omits `NAME`, aw resolves
+it at commit time through the server-authoritative
+`POST /api/v1/agents/suggest-alias-prefix` endpoint, which queries the live team
+roster. The shared preview sequence for UI clients is the classic list
+`alice`, `bob`, `charlie`, ..., `zoe`, then numbered continuations such as
+`alice-01`. Local agent names use the returned prefix directly. Global agent
+names apply the user's identity prefix to that server prefix:
+`{user}-{suggested-prefix}` (for example `maria-alice`). Commit-time CLI
+resolution remains authoritative; previews are advisory and must tolerate a
+new suggestion if another actor claims the name first.
+
 ### 3. Join team
 
 **Join team** enrolls an identity into a team and installs a team certificate.
@@ -188,7 +201,7 @@ terms are `local` and `global`.
 | Create team | Create `name:domain` and enroll the first member | `aw team create NAME`; controller primitive `aw id team create --namespace DOMAIN --name NAME` | Team scope is not local/global; first-member scope is local/global. |
 | Invite to team | Produce a join capability for a future member | `aw team invite`; `aw id team invite` | The invite scopes the future member, not the team. |
 | Join team | Enroll a fresh local identity or an existing global identity | `aw team join <token>`; primitive `aw id team accept-invite <token>` | Scope must be explicit; reuse is global-only. |
-| Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add NAME[@BLUEPRINT/PROFILE]` | Workflow wrapper, not a separate identity model. |
+| Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
 | Remove member | Revoke a team certificate | `aw team remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |

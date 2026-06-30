@@ -32,6 +32,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldCreateHome := teamHumanCreateHome
 	oldCreateRuntime := teamHumanCreateRuntime
 	oldProfiles := teamHumanCreateProfiles
+	oldAgents := teamHumanCreateAgents
+	oldBlueprint := teamHumanCreateBlueprint
 	oldFirstLocal := teamHumanCreateFirstLocal
 	oldFirstGlobal := teamHumanCreateFirstGlobal
 	oldAddLocal := teamHumanAddLocal
@@ -55,6 +57,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateHome = oldCreateHome
 		teamHumanCreateRuntime = oldCreateRuntime
 		teamHumanCreateProfiles = oldProfiles
+		teamHumanCreateAgents = oldAgents
+		teamHumanCreateBlueprint = oldBlueprint
 		teamHumanCreateFirstLocal = oldFirstLocal
 		teamHumanCreateFirstGlobal = oldFirstGlobal
 		teamHumanAddLocal = oldAddLocal
@@ -76,6 +80,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateHome = ""
 	teamHumanCreateRuntime = ""
 	teamHumanCreateProfiles = nil
+	teamHumanCreateAgents = nil
+	teamHumanCreateBlueprint = ""
 	teamHumanCreateFirstLocal = false
 	teamHumanCreateFirstGlobal = false
 	teamHumanAddLocal = false
@@ -124,6 +130,42 @@ func TestFormatTeamHumanAddKeepsBareAgentEmptyProfileWording(t *testing.T) {
 	})
 	if !strings.Contains(out, "Added 1 empty-profile agent(s) under /repo/agents/instances") {
 		t.Fatalf("bare output missing empty-profile wording:\n%s", out)
+	}
+}
+
+func TestTeamHumanCreateAgentSpecsTreatsAgentAsRoster(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	teamHumanCreateAgents = []string{"developer@aweb.engineering/developer:local"}
+	specs, err := teamHumanCreateAgentSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	roster, err := teamHumanCreateRosterSpecs(specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roster) != 1 || roster[0] != "developer@aweb.engineering/developer:local" {
+		t.Fatalf("roster=%v specs=%+v", roster, specs)
+	}
+}
+
+func TestParseTeamAgentSpecSupportsNameScopeAndRejectsVersion(t *testing.T) {
+	spec, err := parseTeamAgentSpec("ada@aweb.engineering/coordinator:global=pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Name != "ada" || spec.Profile == nil || spec.Profile.SourceBlueprintRef != "aweb.engineering" || spec.Profile.ProfileRef != "coordinator" || spec.Scope != awid.IdentityModeGlobal || spec.RuntimeKind != "pi" {
+		t.Fatalf("spec=%+v profile=%+v", spec, spec.Profile)
+	}
+	empty, err := parseTeamAgentSpec("bob:local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Name != "bob" || empty.Profile != nil || empty.Scope != awid.IdentityModeLocal {
+		t.Fatalf("empty=%+v", empty)
+	}
+	if _, err := parseTeamAgentSpec("aweb.engineering/coordinator@0.2.0"); err == nil || !strings.Contains(err.Error(), "@ now separates NAME") {
+		t.Fatalf("version error=%v", err)
 	}
 }
 
@@ -240,14 +282,14 @@ func TestTeamHumanCreateHomeRejectsRoster(t *testing.T) {
 
 func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
-	specs, err := teamHumanCreateRosterSpecs([]libraryProfileSelector{
-		{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "claude-code"},
-		{SourceBlueprintRef: "aweb.engineering", ProfileRef: "reviewer", RuntimeKind: "pi"},
+	specs, err := teamHumanCreateRosterSpecs([]teamAgentSpec{
+		{Raw: "aweb.engineering/coordinator=claude-code", Profile: &libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "claude-code"}},
+		{Raw: "aweb.engineering/reviewer=pi", Profile: &libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "reviewer", RuntimeKind: "pi"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"coordinator@aweb.engineering/coordinator=claude-code", "reviewer@aweb.engineering/reviewer=pi"}
+	want := []string{"aweb.engineering/reviewer=pi"}
 	if strings.Join(specs, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("specs=%v want %v", specs, want)
 	}
@@ -255,11 +297,11 @@ func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
 
 func TestTeamHumanCreateRosterRejectsDuplicateDerivedAgentNames(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
-	_, err := teamHumanCreateRosterSpecs([]libraryProfileSelector{
-		{SourceBlueprintRef: "blueprint.one", ProfileRef: "alice"},
-		{SourceBlueprintRef: "blueprint.two", ProfileRef: "Alice"},
+	_, err := teamHumanCreateRosterSpecs([]teamAgentSpec{
+		{Raw: "blueprint.one/alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.one", ProfileRef: "alice"}},
+		{Raw: "blueprint.two/Alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.two", ProfileRef: "Alice"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
+	if err != nil {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -271,7 +313,7 @@ func TestTeamHumanCreateRosterDuplicateNamesFailBeforeInit(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
-	teamHumanCreateProfiles = []string{"aweb.engineering/alice", "other-blueprint/Alice"}
+	teamHumanCreateProfiles = []string{"alice@aweb.engineering/coordinator", "Alice@other-blueprint/reviewer"}
 	initCalled := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		initCalled = true
@@ -300,7 +342,7 @@ func TestTeamHumanCreateRosterInvalidNameFailsBeforeInit(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	root := t.TempDir()
 	t.Chdir(root)
-	teamHumanCreateProfiles = []string{"aweb.engineering/bad name", "aweb.engineering/alice"}
+	teamHumanCreateProfiles = []string{"bad name@aweb.engineering/coordinator", "aweb.engineering/alice"}
 	initCalled := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		initCalled = true
@@ -308,7 +350,7 @@ func TestTeamHumanCreateRosterInvalidNameFailsBeforeInit(t *testing.T) {
 	}
 
 	err := runTeamHumanCreate(nil, []string{"eng"})
-	if err == nil || !strings.Contains(err.Error(), "cannot be used as an agent name") {
+	if err == nil || !strings.Contains(err.Error(), "invalid agent name") {
 		t.Fatalf("error=%v", err)
 	}
 	if initCalled {

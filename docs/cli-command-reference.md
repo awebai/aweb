@@ -876,7 +876,7 @@ checking or switching this identity's installed team memberships. Protocol/admin
 controller operations remain under `aw id team`.
 
 Subcommands:
-- `add` Add empty-profile agents to this team's agents/instances layout
+- `add` Add agents to this team's agents/instances layout
 - `create` Create a local empty-profile team workspace
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
@@ -892,7 +892,7 @@ Flags:
 
 ### `team add`
 
-Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home. Use --runtime to choose the materialization runtime; omitted --runtime defaults to claude-code.
+Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
 Flags:
 - `--global Add a global AWID identity/address-backed agent`
@@ -908,12 +908,15 @@ Flags:
 
 Create a local empty-profile team workspace.
 
-This wraps aw init for the aw-local path. No --profile means no Library call
-and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME]
-adopts from Library, binds the local identity, and materializes the home.
-The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix, or default claude-code.
+This wraps aw init for the aw-local path. No --agent/--profile means no Library call
+and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]
+(or NAME[:local|global] for an empty-profile agent). Omitted names use the
+server-authoritative next classic name; omitted scope comes from profile.yaml.
+Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 
 Flags:
+- `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
+- `--blueprint string Materialize all profiles in a local blueprint directory`
 - `--byot Create a customer-controlled AWID team with local namespace controller authority`
 - `--display-name string Team display name`
 - `--first-agent-global Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority`
@@ -923,9 +926,9 @@ Flags:
 - `--home string Agent home directory override for single-agent --profile create`
 - `--name string Team name`
 - `--namespace string Namespace domain for --byot`
-- `--profile stringArray Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME] to adopt and materialize`
+- `--profile stringArray Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`
 - `--registry string Registry origin override for --byot`
-- `--runtime string Materialization runtime for --profile homes (claude-code|codex|pi|local-shell; default claude-code)`
+- `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
 - `--service string Hosted service URL for dashboard guidance`
 
 ## `team invite`
