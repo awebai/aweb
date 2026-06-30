@@ -368,8 +368,8 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"create a fresh local signing key and refuse to overwrite completed local\n" +
 		"state. Global hosted accepts reuse identity.yaml's stored did:aw and signing\n" +
 		"key; they do not mint a new did:aw just because this identity joins another\n" +
-		"team. Until hosted no-address/default-address support lands, hosted --global\n" +
-		"requires --address for an owned address.\n" +
+		"team. Hosted --global accepts may use --address for an owned address or\n" +
+		"--no-address for did:aw-only membership.\n" +
 		"After accepting, run `aw init` in that directory to connect the\n" +
 		"workspace.\n\n" +
 		"Local-controller invite tokens are same-machine helpers: they require the\n" +
@@ -1329,9 +1329,6 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 	if opts.NoAddress && strings.TrimSpace(opts.Address) != "" {
 		return nil, usageError("--address and --no-address cannot be used together")
-	}
-	if scope == awid.IdentityModeGlobal && strings.TrimSpace(opts.Address) == "" {
-		return nil, usageError("hosted --global accept-invite currently requires --address until hosted no-address/default-address claim support lands")
 	}
 	if err := ensureTeamAcceptScopeAllowed(workingDir, scope); err != nil {
 		return nil, err

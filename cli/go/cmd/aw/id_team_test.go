@@ -2402,45 +2402,134 @@ func TestTeamAcceptInviteGlobalWithoutIdentityErrorsToIDCreate(t *testing.T) {
 	}
 }
 
-func TestHostedGlobalAcceptRequiresAddressUntilContractSupported(t *testing.T) {
+func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
-	serverCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serverCalls++
-		t.Fatalf("unexpected hosted accept call without --address/--no-address: %s %s", r.Method, r.URL.Path)
-	}))
-	defer server.Close()
-	t.Setenv("AWEB_URL", server.URL)
-
-	pub, key, err := awid.GenerateKeypair()
+	teamID := "default:globalhosted.aweb.ai"
+	globalPub, globalKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
+	globalDID := awid.ComputeDIDKey(globalPub)
+	globalStableID := awid.ComputeStableID(globalPub)
 	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
-		DID:            awid.ComputeDIDKey(pub),
-		StableID:       awid.ComputeStableID(pub),
+		DID:            globalDID,
+		StableID:       globalStableID,
 		Address:        "globalhosted.aweb.ai/alice",
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-06-30T00:00:00Z",
 	})
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), key); err != nil {
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), globalKey); err != nil {
+		t.Fatal(err)
+	}
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_default_claim", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
-	if err == nil || !strings.Contains(err.Error(), "requires --address") {
-		t.Fatalf("expected hosted default-claim guard, got %v", err)
+	var acceptVerifiedDID bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reqMap map[string]any
+		if err := json.Unmarshal(body, &reqMap); err != nil {
+			t.Fatal(err)
+		}
+		if reqMap["did"] != globalDID {
+			t.Fatalf("did=%v want %s", reqMap["did"], globalDID)
+		}
+		if reqMap["stable_id"] != globalStableID {
+			t.Fatalf("stable_id=%v want %s", reqMap["stable_id"], globalStableID)
+		}
+		if reqMap["identity_scope"] != awid.IdentityModeGlobal {
+			t.Fatalf("identity_scope=%v", reqMap["identity_scope"])
+		}
+		if reqMap["name"] != "alice" {
+			t.Fatalf("name=%v", reqMap["name"])
+		}
+		if _, ok := reqMap["alias"]; ok {
+			t.Fatalf("global hosted no-address accept should not send alias: %v", reqMap["alias"])
+		}
+		if _, ok := reqMap["atomic_address_claim"]; ok {
+			t.Fatalf("global hosted no-address accept should not send atomic_address_claim: %v", reqMap["atomic_address_claim"])
+		}
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+		if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != globalDID {
+			t.Fatalf("bad accept auth header %q", r.Header.Get("Authorization"))
+		}
+		if !verifyCloudDIDPayload(t, globalPub, http.MethodPost, "/api/v1/spawn/accept-invite", timestamp, body, parts[2]) {
+			t.Fatal("accept invite signature did not verify")
+		}
+		acceptVerifiedDID = true
+
+		cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
+			Team:          teamID,
+			MemberDIDKey:  globalDID,
+			MemberDIDAW:   globalStableID,
+			Alias:         "alice",
+			Lifetime:      awid.LifetimePersistent,
+			IdentityScope: awid.IdentityModeGlobal,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "server-team-id",
+			"team_slug":      "default",
+			"namespace_slug": "globalhosted",
+			"namespace":      "globalhosted.aweb.ai",
+			"identity_id":    "agent-alice",
+			"name":           "alice",
+			"api_key":        "aw_sk_child_not_printed",
+			"server_url":     server.URL,
+			"did":            globalDID,
+			"stable_id":      globalStableID,
+			"custody":        "self",
+			"identity_scope": awid.IdentityModeGlobal,
+			"access_mode":    "open",
+			"created":        true,
+			"team_cert":      encoded,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+
+	accepted, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_address", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
+	if err != nil {
+		t.Fatalf("hosted global no-address accept: %v", err)
 	}
-	_, err = acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_address", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
-	if err == nil || !strings.Contains(err.Error(), "requires --address") {
-		t.Fatalf("expected hosted no-address guard, got %v", err)
+	if !acceptVerifiedDID {
+		t.Fatal("hosted global no-address accept did not prove DID possession")
 	}
-	if serverCalls != 0 {
-		t.Fatalf("server calls=%d want 0", serverCalls)
+	if accepted.Certificate.MemberDIDAW != globalStableID {
+		t.Fatalf("cert member_did_aw=%q want %q", accepted.Certificate.MemberDIDAW, globalStableID)
+	}
+	if accepted.Certificate.MemberAddress != "" {
+		t.Fatalf("cert member_address=%q want empty", accepted.Certificate.MemberAddress)
+	}
+	storedCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(workingDir, teamID))
+	if err != nil {
+		t.Fatalf("load persisted no-address cert: %v", err)
+	}
+	if storedCert.MemberDIDAW != globalStableID || storedCert.MemberAddress != "" {
+		t.Fatalf("persisted cert did_aw/address=%q/%q", storedCert.MemberDIDAW, storedCert.MemberAddress)
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
+		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
 	}
 }
 
