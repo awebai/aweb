@@ -317,6 +317,7 @@ func resolveIdentityForEncryptionKeyForDir(workingDir string) (*awconfig.Resolve
 		SigningKeyPath: signingKeyPath,
 		DID:            didKey,
 		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeLocal,
 		Lifetime:       awid.LifetimeEphemeral,
 	}, nil
 }
@@ -364,13 +365,11 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 	if certDID != didKey {
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
-	lifetime := strings.TrimSpace(cert.IdentityScope)
-	if lifetime == "" {
-		lifetime = strings.TrimSpace(cert.Lifetime)
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
+		identityScope = awid.IdentityModeLocal
 	}
-	if lifetime == "" {
-		lifetime = awid.LifetimeEphemeral
-	}
+	lifetime := awid.LegacyLifetimeForIdentityScope(identityScope)
 	if registryURL == "" {
 		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
 			registryURL = strings.TrimSpace(identity.RegistryURL)
@@ -383,6 +382,7 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 		StableID:       strings.TrimSpace(cert.MemberDIDAW),
 		Address:        strings.TrimSpace(cert.MemberAddress),
 		Custody:        awid.CustodySelf,
+		IdentityScope:  identityScope,
 		Lifetime:       lifetime,
 		RegistryURL:    registryURL,
 	}

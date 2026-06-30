@@ -164,6 +164,7 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		Handle:         "",
 		Domain:         "",
 		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeLocal,
 		Lifetime:       awid.LifetimeEphemeral,
 		RegistryURL:    "",
 		RegistryStatus: "",
@@ -178,15 +179,18 @@ func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {
 	if strings.TrimSpace(identity.DID) == "" {
 		return usageError("current identity is invalid: .aw/identity.yaml is missing did")
 	}
-	lifetime := strings.TrimSpace(identity.Lifetime)
-	if lifetime == "" {
-		return usageError("current identity is invalid: .aw/identity.yaml is missing lifetime")
+	identityScope := strings.TrimSpace(identity.IdentityScope)
+	if identityScope == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing identity_scope")
+	}
+	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
+		return usageError("current identity is invalid: .aw/identity.yaml has unsupported identity_scope %q", identityScope)
 	}
 	custody := strings.TrimSpace(identity.Custody)
 	if custody == "" {
 		return usageError("current identity is invalid: .aw/identity.yaml is missing custody")
 	}
-	if lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) == "" {
+	if identityScope == awid.IdentityModeGlobal && strings.TrimSpace(identity.StableID) == "" {
 		return usageError("current identity is invalid: global .aw/identity.yaml is missing stable_id")
 	}
 	if custody != awid.CustodySelf {
@@ -527,14 +531,14 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	}
 	c.SetAddress(selectionAddress(sel))
 	e2eeAddress := ""
-	if awid.IdentityHasPublicAddress(sel.Lifetime) {
+	if strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal {
 		e2eeAddress = strings.TrimSpace(sel.Address)
 	}
 	c.SetE2EESenderAddress(e2eeAddress)
 	if sel.StableID != "" {
 		c.SetStableID(sel.StableID)
 	}
-	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.Lifetime) == awid.LifetimePersistent || strings.TrimSpace(sel.StableID) != "")
+	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal || strings.TrimSpace(sel.StableID) != "")
 
 	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {

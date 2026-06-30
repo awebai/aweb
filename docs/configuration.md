@@ -108,8 +108,11 @@ Global identities store their durable identity state in:
 .aw/identity.yaml
 ```
 
+Current schema version: `2`.
+
 Typical fields include:
 
+- `schema_version: 2`
 - `did`
 - `stable_id`
 - `address`
@@ -126,8 +129,9 @@ registry state, not aweb coordination binding.
 
 Compatibility note: older `.aw/identity.yaml` files may still store the
 identity class in a `lifetime` field with `persistent`/`ephemeral` values. New
-docs and normal output use `identity_scope=global|local`; the old field is a
-compatibility input until the aapj cleanup removes or fully quarantines it.
+writes use `schema_version: 2` and `identity_scope=global|local`; they do not
+write `lifetime`. The old `lifetime` field is deprecated-read-compat only until
+the cleanup window removes or fully quarantines it.
 
 ## Local Signing Key: `.aw/signing.key`
 

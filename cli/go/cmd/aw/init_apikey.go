@@ -685,7 +685,7 @@ func persistAPIKeyBootstrapState(
 		StableID:       strings.TrimSpace(stableID),
 		Address:        strings.TrimSpace(cert.MemberAddress),
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    strings.TrimSpace(registryURL),
 		RegistryStatus: "registered",
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),

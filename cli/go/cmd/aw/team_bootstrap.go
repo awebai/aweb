@@ -1788,7 +1788,7 @@ func saveAgentsAddGlobalLocalState(homeDir string, pending *agentsAddGlobalPendi
 		StableID:       pending.DIDAW,
 		Address:        pending.GlobalAddress,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    pending.RegistryURL,
 		RegistryStatus: "registered",
 		CreatedAt:      pending.CreatedAt,

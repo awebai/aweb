@@ -795,7 +795,7 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 		identityDID := strings.TrimSpace(identity.DID)
 		if identityDID != "" && (did == "" || identityDID == did) {
 			did = identityDID
-			if stableID == "" && (strings.TrimSpace(sel.Lifetime) == "" || awid.NormalizeIdentityScope(sel.Lifetime) != awid.IdentityModeLocal) {
+			if stableID == "" && strings.TrimSpace(sel.IdentityScope) != awid.IdentityModeLocal {
 				stableID = strings.TrimSpace(identity.StableID)
 			}
 		}

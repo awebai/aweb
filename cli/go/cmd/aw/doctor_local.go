@@ -595,7 +595,7 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 		return
 	}
 
-	identityLifetime := strings.TrimSpace(identity.Lifetime)
+	identityLifetime := awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
 	if identityLifetime != lifetime {
 		r.add(localPathCheck(
 			doctorCheckIdentityScope,

@@ -42,8 +42,8 @@ The registry invariants are:
 
 The team-certificate scope column is the canonical `identity_scope` added by
 `awid/src/awid_service/migrations/004_team_certificate_identity_scope.sql:5`.
-Legacy storage or wire fields named `lifetime` are compatibility inputs only and
-must be normalized to `identity_scope=local|global` at boundaries.
+Legacy storage or wire fields named `lifetime` are deprecated-read-compat inputs
+only and must be normalized to `identity_scope=local|global` at boundaries.
 
 ### Identity
 
@@ -259,7 +259,7 @@ Do not collapse lifecycle actions into a generic "identity reset":
 - **Replace**: owner-authorized replacement of a global public address.
 - **Rotate key**: cryptographic continuity signed by the old key.
 
-Global identity lifetime is distinct from workspace path lifetime. A missing or
+Global identity lifecycle is distinct from workspace path lifecycle. A missing or
 deleted local workspace path is not evidence that a global identity should be
 deleted, archived, replaced, unclaimed, or reassigned. OSS aweb only treats
 confirmed gone local workspaces as cleanup candidates; global lifecycle actions

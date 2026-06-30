@@ -351,8 +351,21 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if identity.Custody != awid.CustodySelf {
 		t.Fatalf("identity custody=%q", identity.Custody)
 	}
+	if identity.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", identity.IdentityScope)
+	}
 	if identity.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("identity lifetime=%q", identity.Lifetime)
+		t.Fatalf("deprecated-read-compat identity lifetime=%q", identity.Lifetime)
+	}
+	identityRaw, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatalf("read identity.yaml: %v", err)
+	}
+	if !strings.Contains(string(identityRaw), "identity_scope: global") || !strings.Contains(string(identityRaw), "schema_version: 2") {
+		t.Fatalf("identity.yaml must write schema v2 identity_scope: %s", string(identityRaw))
+	}
+	if strings.Contains(string(identityRaw), "lifetime:") {
+		t.Fatalf("identity.yaml must not write deprecated lifetime: %s", string(identityRaw))
 	}
 	if identity.RegistryURL != server.URL {
 		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, server.URL)

@@ -75,7 +75,7 @@ Raw app/plugin prerequisite path today, matching the brief's `AW_HELPER` idea:
 Local files and selection:
 
 - Workspace binding schema is `WorktreeWorkspace` with `aweb_url`, memberships, repo/canonical origin, hostname, and workspace path (`awconfig/workspace.go:23`).
-- Identity state is `WorktreeIdentity` with `did`, `stable_id`, address, custody, lifetime, registry URL/status, created-at (`awconfig/identity.go:28`).
+- Identity state is `WorktreeIdentity` with `schema_version`, `did`, `stable_id`, address, custody, canonical `identity_scope`, deprecated-read-compat `lifetime`, registry URL/status, created-at (`awconfig/identity.go`).
 - Local signing key path is `.aw/signing.key` (`awconfig/identity.go:35`, `awconfig/identity.go:47`).
 - Active team is read from `.aw/teams.yaml`; `ActiveMembershipFor` chooses the workspace membership whose team id matches team state (`awconfig/team_state.go:125`, `awconfig/team_state.go:275`).
 - `ResolveWorkspace` merges workspace, team state, identity, certificate, env URL override, and optional `--team` override into an `awconfig.Selection` (`awconfig/selection.go:26`, `awconfig/selection.go:59`, `awconfig/selection.go:137`).

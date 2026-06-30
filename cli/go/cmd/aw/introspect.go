@@ -45,7 +45,7 @@ var introspectCmd = &cobra.Command{
 			DID:      sel.DID,
 			StableID: sel.StableID,
 			Custody:  sel.Custody,
-			Lifetime: sel.Lifetime,
+			Lifetime: awid.LegacyLifetimeForIdentityScope(sel.IdentityScope),
 		}
 		if out.Address == "" {
 			out.Address = deriveIdentityAddress(sel.Domain, alias)

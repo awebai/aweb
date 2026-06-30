@@ -2,12 +2,16 @@ package awconfig
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
+
+const WorktreeIdentitySchemaVersion = 2
 
 type ResolvedIdentity struct {
 	WorkingDir     string
@@ -19,6 +23,10 @@ type ResolvedIdentity struct {
 	Handle         string
 	Domain         string
 	Custody        string
+	IdentityScope  string
+	// Lifetime is a deprecated-read-compat mirror of IdentityScope. New identity
+	// config writes identity_scope; keep this populated while downstream callers
+	// migrate from persistent/ephemeral helpers.
 	Lifetime       string
 	RegistryURL    string
 	RegistryStatus string
@@ -26,11 +34,16 @@ type ResolvedIdentity struct {
 }
 
 type WorktreeIdentity struct {
-	DID            string `yaml:"did"`
-	StableID       string `yaml:"stable_id"`
-	Address        string `yaml:"address,omitempty"`
-	Custody        string `yaml:"custody"`
-	Lifetime       string `yaml:"lifetime"`
+	SchemaVersion int    `yaml:"schema_version,omitempty"`
+	DID           string `yaml:"did"`
+	StableID      string `yaml:"stable_id,omitempty"`
+	Address       string `yaml:"address,omitempty"`
+	Custody       string `yaml:"custody"`
+	IdentityScope string `yaml:"identity_scope,omitempty"`
+	// Lifetime is deprecated-read-compat for pre-v2 identity.yaml files. Loaders
+	// accept lifetime=persistent/ephemeral and normalize it to identity_scope;
+	// writers intentionally omit lifetime.
+	Lifetime       string `yaml:"lifetime,omitempty"`
 	RegistryURL    string `yaml:"registry_url,omitempty"`
 	RegistryStatus string `yaml:"registry_status,omitempty"`
 	CreatedAt      string `yaml:"created_at"`
@@ -65,6 +78,9 @@ func LoadWorktreeIdentityFrom(path string) (*WorktreeIdentity, error) {
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
+	if err := normalizeWorktreeIdentityScope(&state); err != nil {
+		return nil, err
+	}
 	return &state, nil
 }
 
@@ -84,11 +100,54 @@ func SaveWorktreeIdentityTo(path string, state *WorktreeIdentity) error {
 	if state == nil {
 		return errors.New("nil identity state")
 	}
-	data, err := yaml.Marshal(state)
+	out := *state
+	if err := normalizeWorktreeIdentityScope(&out); err != nil {
+		return err
+	}
+	if strings.TrimSpace(out.IdentityScope) == "" {
+		return errors.New("identity_scope is required")
+	}
+	out.SchemaVersion = WorktreeIdentitySchemaVersion
+	out.Lifetime = ""
+	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return err
 	}
 	return atomicWriteFile(path, append(bytesTrimRightNewlines(data), '\n'))
+}
+
+func normalizeWorktreeIdentityScope(state *WorktreeIdentity) error {
+	if state == nil {
+		return errors.New("nil identity state")
+	}
+	rawScope := strings.TrimSpace(state.IdentityScope)
+	rawLifetime := strings.TrimSpace(state.Lifetime)
+	if rawScope == "" && rawLifetime == "" {
+		return nil
+	}
+	scope := ""
+	if rawScope != "" {
+		scope = awid.NormalizeIdentityScope(rawScope)
+		if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
+			return fmt.Errorf("identity_scope must be %q or %q", awid.IdentityModeLocal, awid.IdentityModeGlobal)
+		}
+	}
+	if rawLifetime != "" {
+		legacyLifetime := awid.NormalizeLifetime(rawLifetime)
+		if legacyLifetime != awid.LifetimeEphemeral && legacyLifetime != awid.LifetimePersistent {
+			return fmt.Errorf("deprecated lifetime must be %q or %q", awid.LifetimeEphemeral, awid.LifetimePersistent)
+		}
+		compatScope := awid.NormalizeIdentityScope(legacyLifetime)
+		if scope != "" && scope != compatScope {
+			return fmt.Errorf("identity_scope %q conflicts with deprecated lifetime %q", rawScope, rawLifetime)
+		}
+		if scope == "" {
+			scope = compatScope
+		}
+	}
+	state.IdentityScope = scope
+	state.Lifetime = awid.LegacyLifetimeForIdentityScope(scope)
+	return nil
 }
 
 func WorktreeRootFromIdentityPath(path string) string {
@@ -117,6 +176,7 @@ func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 		root = workingDir
 	}
 
+	identityScope := strings.TrimSpace(identity.IdentityScope)
 	resolved := &ResolvedIdentity{
 		WorkingDir:     root,
 		IdentityPath:   identityPath,
@@ -125,6 +185,7 @@ func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 		StableID:       strings.TrimSpace(identity.StableID),
 		Address:        strings.TrimSpace(identity.Address),
 		Custody:        strings.TrimSpace(identity.Custody),
+		IdentityScope:  identityScope,
 		Lifetime:       strings.TrimSpace(identity.Lifetime),
 		RegistryURL:    strings.TrimSpace(identity.RegistryURL),
 		RegistryStatus: strings.TrimSpace(identity.RegistryStatus),

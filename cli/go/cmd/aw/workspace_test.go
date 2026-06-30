@@ -2787,9 +2787,11 @@ func TestResolveWorkspaceTeamRegistryURLPrefersControllerRegistryOverIdentity(t 
 
 	workingDir := t.TempDir()
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         "did:key:z6MkMember",
-		RegistryURL: "https://member-registry.example",
-		CreatedAt:   "2026-04-08T00:00:00Z",
+		DID:           "did:key:z6MkMember",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		RegistryURL:   "https://member-registry.example",
+		CreatedAt:     "2026-04-08T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("save identity: %v", err)
 	}

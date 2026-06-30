@@ -90,7 +90,7 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if identity != nil && strings.TrimSpace(identity.Lifetime) == awid.LifetimePersistent {
+	if identity != nil && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
 		stableID := strings.TrimSpace(identity.StableID)
 		address := strings.TrimSpace(identity.Address)
 		if stableID == "" || address == "" {

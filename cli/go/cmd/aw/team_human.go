@@ -527,7 +527,7 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 	if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), strings.TrimSpace(identity.Address), strings.TrimSpace(identity.StableID), memberDIDKey, memberKey); err != nil {
 		return err
 	}
-	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, strings.TrimSpace(identity.Lifetime))
+	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, awid.LegacyLifetimeForIdentityScope(identity.IdentityScope))
 	if err != nil {
 		return err
 	}
