@@ -143,15 +143,15 @@ func executeIDAddressClaim(ctx context.Context, workingDir string, opts idAddres
 }
 
 func loadAddressClaimNamespaceController(domain string) (ed25519.PrivateKey, string, error) {
+	if isHostedAddressClaimDomain(domain) {
+		return nil, "", usageError("namespace authority is required to claim %s; standalone hosted address claims are not supported. Join a hosted team with `aw id team accept-invite` or `aw team join` so aweb Cloud can claim the hosted address during accept.", domain)
+	}
 	exists, err := awconfig.ControllerKeyExists(domain)
 	if err != nil {
 		return nil, "", err
 	}
 	if !exists {
 		keyPath, _ := awconfig.ControllerKeyPath(domain)
-		if isHostedAddressClaimDomain(domain) {
-			return nil, "", usageError("namespace authority is required to claim %s; standalone hosted address claims are not supported. Join a hosted team with `aw id team accept-invite` or `aw team join` so aweb Cloud can claim the hosted address during accept.", domain)
-		}
 		return nil, "", usageError("namespace authority is required to claim %s; no local controller key found at %s", domain, keyPath)
 	}
 	key, err := awconfig.LoadControllerKey(domain)

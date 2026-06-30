@@ -179,7 +179,7 @@ func TestIDAddressClaimFailsClosedWithoutNamespaceAuthority(t *testing.T) {
 	}
 }
 
-func TestIDAddressClaimHostedNamespaceFailsClosedWithJoinGuidance(t *testing.T) {
+func TestIDAddressClaimHostedNamespaceFailsClosedWithJoinGuidanceEvenWithLocalControllerKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
@@ -191,6 +191,7 @@ func TestIDAddressClaimHostedNamespaceFailsClosedWithJoinGuidance(t *testing.T) 
 	defer server.Close()
 
 	writeGlobalIdentityForAddressClaimTest(t, workingDir, server.URL, "acme.com/alice")
+	writeControllerForAddressClaimTest(t, "team.aweb.ai", server.URL)
 	_, err := executeIDAddressClaim(context.Background(), workingDir, idAddressClaimOptions{Address: "team.aweb.ai/bob", RegistryURL: server.URL})
 	if err == nil || !strings.Contains(err.Error(), "standalone hosted address claims are not supported") || !strings.Contains(err.Error(), "aw team join") {
 		t.Fatalf("expected hosted join guidance, got %v", err)
