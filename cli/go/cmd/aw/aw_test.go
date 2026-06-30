@@ -181,6 +181,12 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity, "Local workspace routing name"},
 		},
 		{
+			name:       "id create",
+			args:       []string{"id", "create", "--help"},
+			want:       []string{"Create a self-custodial global identity", "claiming DOMAIN/NAME", "Global identity name", "Namespace domain"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity},
+		},
+		{
 			name:       "team invite",
 			args:       []string{"id", "team", "invite", "--help"},
 			want:       []string{"--member-global", "--member-local", "global member invite", "local workspace member invite"},

@@ -214,7 +214,7 @@ Subcommands:
 - `address` Manage addresses for the current global identity
 - `addresses` List registry addresses for a did:aw (defaults to the current global identity)
 - `cert` Team certificate operations
-- `create` Create a standalone global identity with a DNS-backed address in .aw/
+- `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `log` Show an identity log
 - `namespace` Protocol/admin namespace controller and address operations
@@ -286,12 +286,14 @@ Flags:
 
 ### `id create`
 
-Create a standalone global identity with a DNS-backed address in .aw/
+Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME
+in a namespace you control. This mints a did:aw, stores the local signing
+key material, and atomically claims the global address in AWID.
 
 Flags:
-- `--domain string Global identity domain`
+- `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
-- `--name string Global identity name`
+- `--name string Global identity name (address name under --domain)`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 

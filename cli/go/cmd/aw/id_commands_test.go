@@ -28,6 +28,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {
+	out := formatIDCreate(idCreateOutput{
+		Status:         "created",
+		Address:        "acme.com/alice",
+		DIDAW:          "did:aw:alice",
+		DIDKey:         "did:key:alice",
+		ControllerDID:  "did:key:controller",
+		IdentityPath:   ".aw/identity.yaml",
+		SigningKeyPath: ".aw/signing.key",
+		RegistryStatus: "registered",
+	})
+	for _, want := range []string{"Scope:       global", "Address:     acme.com/alice", "Global ID:   .aw/identity.yaml", "Signing Key: .aw/signing.key"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Identity:    .aw/identity.yaml") || strings.Contains(out, "Key:         .aw/signing.key") {
+		t.Fatalf("legacy identity/key labels remain:\n%s", out)
+	}
+}
+
 func TestAwIDCommandsHappyPath(t *testing.T) {
 	t.Parallel()
 
