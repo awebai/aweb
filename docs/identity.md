@@ -182,7 +182,7 @@ terms are `local` and `global`.
 
 | Verb | Canonical model action | Current command surface | Notes |
 | --- | --- | --- | --- |
-| Claim address | Birth a global identity in a namespace by claiming `domain/name` | `aw id create --domain DOMAIN --name NAME` | Global-only. Additional-address claim for an existing identity is planned separately. |
+| Claim address | Birth a global identity in a namespace by claiming `domain/name`, or claim an additional address for an existing global identity | `aw id create --domain DOMAIN --name NAME`; `aw id address claim DOMAIN/NAME` | Global-only. Additional-address claims require namespace authority and use the atomic AWID claim primitive. The standalone `aw id address claim` path is for self-controlled namespaces; hosted addresses are claimed during hosted team accept/join. |
 | Create team | Create `name:domain` and enroll the first member | `aw team create NAME`; controller primitive `aw id team create --namespace DOMAIN --name NAME` | Team scope is not local/global; first-member scope is local/global. |
 | Invite to team | Produce a join capability for a future member | `aw team invite`; `aw id team invite` | The invite scopes the future member, not the team. |
 | Join team | Enroll a fresh local identity or an existing global identity | `aw team join <token>`; primitive `aw id team accept-invite <token>` | Scope must be explicit; reuse is global-only. |

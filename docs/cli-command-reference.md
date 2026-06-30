@@ -212,7 +212,8 @@ Flags:
 Identity lifecycle, registry, settings, and key management
 
 Subcommands:
-- `addresses` List registry addresses for a did:aw
+- `address` Manage addresses for the current global identity
+- `addresses` List registry addresses for a did:aw (defaults to the current global identity)
 - `cert` Team certificate operations
 - `create` Create a standalone global identity with a DNS-backed address in .aw/
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
@@ -230,11 +231,33 @@ Subcommands:
 Flags:
 - `-h, --help help for id`
 
+## `id address`
+
+### `id address`
+
+Manage addresses for the current global identity
+
+Subcommands:
+- `claim` Claim an additional address for the current global identity
+
+Flags:
+- `-h, --help help for address`
+
+## `id address claim`
+
+### `id address claim`
+
+Claim an additional address for the current global identity
+
+Flags:
+- `-h, --help help for claim`
+- `--registry string Registry origin override`
+
 ## `id addresses`
 
 ### `id addresses`
 
-List registry addresses for a did:aw
+List registry addresses for a did:aw (defaults to the current global identity)
 
 Flags:
 - `-h, --help help for addresses`
