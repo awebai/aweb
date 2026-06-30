@@ -599,8 +599,8 @@ Hosted aw_inv_ tokens are redeemed through the cloud. Local hosted accepts
 create a fresh local signing key and refuse to overwrite completed local
 state. Global hosted accepts reuse identity.yaml's stored did:aw and signing
 key; they do not mint a new did:aw just because this identity joins another
-team. Until hosted no-address/default-address support lands, hosted --global
-requires --address for an owned address.
+team. Hosted --global accepts may use --address for an owned address or
+--no-address for did:aw-only membership.
 After accepting, run `aw init` in that directory to connect the
 workspace.
 

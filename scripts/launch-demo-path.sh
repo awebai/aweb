@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_NAME="${AW_LAUNCH_TEAM:-launch-demo}"
-TEAM_ALIAS="${AW_LAUNCH_ALIAS:-owner}"
-PACK_REF="${AW_LAUNCH_PACK:-aweb.engineering-pack}"
+TEAM_OWNER_NAME="${AW_LAUNCH_NAME:-${AW_LAUNCH_ALIAS:-owner}}"
+SUPPORT_PACK_REF="${AW_LAUNCH_SUPPORT_PACK:-aweb.support}"
+DEVELOPMENT_PACK_REF="${AW_LAUNCH_DEVELOPMENT_PACK:-aweb.development}"
 RUNTIME="${AW_LAUNCH_RUNTIME:-local-shell}"
 LIBRARY_MANIFEST_URL="${AW_LAUNCH_LIBRARY_MANIFEST_URL:-https://library.aweb.ai/.well-known/aweb-app.json}"
 
@@ -16,7 +17,7 @@ Usage: AWEB_API_KEY=... scripts/launch-demo-path.sh
 Runs the launch demo path from a clean temporary HOME/workspace:
   1. install/update the Library plugin
   2. aw team create
-  3. aw team add coordinator/developer/reviewer from the live engineering pack
+  3. aw team add coordinator from aweb.support and developer/reviewer from aweb.development
   4. aw agent start/status/logs for each agent
 
 Environment:
@@ -28,8 +29,9 @@ Environment:
   AW_LAUNCH_WORK_ROOT            Optional parent for a script-owned work root (default: mktemp)
   AW_LAUNCH_KEEP                 Set to 1 to keep the temp HOME/workspace and leave agents running
   AW_LAUNCH_TEAM                 Team name label passed to aw team create (default: launch-demo)
-  AW_LAUNCH_ALIAS                Initial workspace alias (default: owner)
-  AW_LAUNCH_PACK                 Library pack ref (default: aweb.engineering-pack)
+  AW_LAUNCH_NAME                 Initial workspace member name (default: owner; AW_LAUNCH_ALIAS still accepted as fallback)
+  AW_LAUNCH_SUPPORT_PACK         Support Library pack ref (default: aweb.support)
+  AW_LAUNCH_DEVELOPMENT_PACK     Development Library pack ref (default: aweb.development)
   AW_LAUNCH_RUNTIME              Runtime used for materialize/start (default: local-shell)
   AW_LAUNCH_LIBRARY_MANIFEST_URL Library manifest URL (default: live Library manifest)
 EOF
@@ -134,10 +136,13 @@ echo "workspace: $WORKSPACE" >&2
 echo "HOME: $DEMO_HOME" >&2
 
 run_aw plugin install "$LIBRARY_MANIFEST_URL"
-run_aw team create "$TEAM_NAME" --alias "$TEAM_ALIAS" --json
+run_aw team create "$TEAM_NAME" --first-agent-name "$TEAM_OWNER_NAME" --json
 
-for agent in coordinator developer reviewer; do
-  run_aw team add "${agent}@${PACK_REF}/${agent}" --runtime "$RUNTIME" --json
+run_aw team add "coordinator@${SUPPORT_PACK_REF}/coordinator=${RUNTIME}" --json
+test -f "$WORKSPACE/agents/instances/coordinator/AGENTS.md"
+test -f "$WORKSPACE/agents/instances/coordinator/.aw/profile/ref.json"
+for agent in developer reviewer; do
+  run_aw team add "${agent}@${DEVELOPMENT_PACK_REF}/${agent}=${RUNTIME}" --json
   test -f "$WORKSPACE/agents/instances/$agent/AGENTS.md"
   test -f "$WORKSPACE/agents/instances/$agent/.aw/profile/ref.json"
 done
@@ -156,7 +161,8 @@ work_root=$WORK_ROOT
 workspace=$WORKSPACE
 home=$DEMO_HOME
 team=$TEAM_NAME
-pack=$PACK_REF
+support_pack=$SUPPORT_PACK_REF
+development_pack=$DEVELOPMENT_PACK_REF
 runtime=$RUNTIME
 agents=coordinator,developer,reviewer
 EOF

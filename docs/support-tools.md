@@ -171,7 +171,7 @@ For direct DID approvals, use the values from the member's request:
 
 ```bash
 aw id team add-member --namespace <domain> --team <team> \
-  --did <did:key> --alias <alias> \
+  --did <did:key> --name <name> \
   --global --did-aw <did:aw> --address <domain>/<name>
 ```
 

@@ -1115,7 +1115,7 @@ relies on are:
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite [--team X --namespace Y] [--global]` | Create invite token; defaults to the active team and a local invite |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate |
-| `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
+| `aw id team add <token>` | Deprecated alias for `aw id team accept-invite --global <token>`; use `aw team join --global <token>` or `aw id team accept-invite --global <token>` |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |

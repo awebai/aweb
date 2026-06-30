@@ -82,7 +82,7 @@ Key points:
 
 Multi-team commands:
 
-- `aw id team add <invite-token>` adds another team membership to the same local identity without switching `active_team`
+- `aw id team accept-invite --global <invite-token>` (or `aw team join --global <invite-token>`) adds another team membership to the same global identity; the old `aw id team add <invite-token>` form is deprecated
 - `aw id team switch <team_id>` changes `active_team`
 - `aw id team list` shows all local memberships for the current worktree
 - `aw id team leave <team_id>` removes one local membership and its certificate from this worktree only

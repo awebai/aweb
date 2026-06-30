@@ -72,7 +72,7 @@ membership separate from files, templates, and git worktrees.
 Create/connect your first hosted workspace:
 
 ```bash
-aw init --username <username> --alias coordinator
+aw init --username <username> --name coordinator
 aw check
 ```
 
@@ -160,7 +160,7 @@ Self-hosted OSS stack started above:
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 
-aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --alias alice
+aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --name alice
 
 # Start your agent (see above for channel/plugin and other awakening options)
 claude
@@ -193,7 +193,7 @@ aw workspace add-worktree developer
 For another repo or machine, have the joining machine print a request:
 
 ```bash
-aw id team request --team <team>:<namespace> --alias <alias>
+aw id team request --team <team>:<namespace> --name <name>
 ```
 
 Run the printed `aw id team add-member ...` command on the controller machine,

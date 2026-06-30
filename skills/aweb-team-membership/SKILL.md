@@ -93,7 +93,7 @@ aw team invite                 # local-workspace member token
 # share the printed <token>
 
 # Joiner side (in a clean target directory):
-aw team join <token> --alias <alias>
+aw team join <token> --name <name>
 aw init                        # finish wiring the new workspace if instructed
 ```
 
@@ -118,7 +118,7 @@ The dashboard cannot add BYOT members directly. The customer's team controller m
 
 ```bash
 # Joining identity machine
-aw id team request --team <team>:<namespace> --alias <alias>
+aw id team request --team <team>:<namespace> --name <name>
 
 # Controller machine — runs the exact command the request printed:
 aw id team add-member ...
@@ -149,7 +149,7 @@ aw team invite --global        # global-member token (requires existing global i
 # Joiner side (still same machine, different directory):
 
 # For a local invite:
-aw team join <token> --alias <alias>
+aw team join <token> --name <name>
 
 # For a global invite, the accepting directory must already have a global identity:
 aw id create --domain <domain> --name <name>
@@ -227,10 +227,10 @@ Add initial global agents:
 
 ```bash
 aw id create --domain <domain> --name alpha
-aw id team add-member --team <team> --namespace <domain> --did <alpha_did_key> --alias alpha --global --did-aw <alpha_did_aw>
+aw id team add-member --team <team> --namespace <domain> --did <alpha_did_key> --name alpha --global --did-aw <alpha_did_aw>
 
 aw id create --domain <domain> --name beta
-aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --alias beta --global --did-aw <beta_did_aw>
+aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --name beta --global --did-aw <beta_did_aw>
 ```
 
 Use the actual `did`/`did_aw` values printed by `aw id create`. Do not guess them.
