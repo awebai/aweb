@@ -62,6 +62,9 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
         self._proxy()
 
+    def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
+        self._proxy()
+
     def log_message(self, _format: str, *_args: object) -> None:
         return
 

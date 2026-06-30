@@ -59,7 +59,10 @@ MANIFEST: dict[str, Any] = {
             "path": "/v1/blueprints/{blueprint_ref}/profiles/{profile_ref}",
             "input_schema": {
                 "type": "object",
-                "properties": {"blueprint_ref": {"type": "string"}, "profile_ref": {"type": "string"}},
+                "properties": {
+                    "blueprint_ref": {"type": "string"},
+                    "profile_ref": {"type": "string"},
+                },
             },
             "params": [
                 {"name": "blueprint_ref", "in": "path"},
@@ -421,6 +424,34 @@ MANIFEST: dict[str, Any] = {
             "scopes": ["library:read"],
             "mutation": False,
         },
+        {
+            "name": "delete-blueprint",
+            "description": "Hard-delete a public blueprint your team owns (all versions). Shelf profiles that source-track it are detached, not orphaned. Irreversible.",
+            "method": "DELETE",
+            "path": "/v1/blueprints/{blueprint_ref}",
+            "input_schema": {
+                "type": "object",
+                "properties": {"blueprint_ref": {"type": "string"}},
+                "required": ["blueprint_ref"],
+            },
+            "params": [{"name": "blueprint_ref", "in": "path"}],
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
+        {
+            "name": "delete-shelf-profile",
+            "description": "Hard-delete one of your team's private shelf profiles (all versions), and its bindings and proposals. Irreversible.",
+            "method": "DELETE",
+            "path": "/v1/profiles/{profile_ref}",
+            "input_schema": {
+                "type": "object",
+                "properties": {"profile_ref": {"type": "string"}},
+                "required": ["profile_ref"],
+            },
+            "params": [{"name": "profile_ref", "in": "path"}],
+            "scopes": ["library:write"],
+            "mutation": True,
+        },
     ],
 }
 
@@ -431,7 +462,9 @@ def canonical_bytes(obj: Any) -> bytes:
     Matches the awid signing CanonicalJSON convention so the committed manifest and
     any consumer's serialization are byte-identical.
     """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def manifest_for_origin(public_origin: str) -> dict[str, Any]:

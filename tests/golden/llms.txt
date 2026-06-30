@@ -170,6 +170,14 @@ aw library get-shelf-profile  (GET /v1/profiles/{profile_ref})
     required: profile_ref
     optional: include
 
+aw library delete-blueprint  (DELETE /v1/blueprints/{blueprint_ref})
+    Hard-delete a public blueprint your team owns (all versions). Shelf profiles that source-track it are detached, not orphaned. Irreversible.
+    required: blueprint_ref
+
+aw library delete-shelf-profile  (DELETE /v1/profiles/{profile_ref})
+    Hard-delete one of your team's private shelf profiles (all versions), and its bindings and proposals. Irreversible.
+    required: profile_ref
+
 
 ## Invariants
 

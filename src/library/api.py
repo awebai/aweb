@@ -27,6 +27,8 @@ from library.repository import (
     create_proposal,
     create_shelf_profile,
     create_shelf_version,
+    delete_blueprint,
+    delete_shelf_profile,
     get_blueprint,
     get_blueprint_profile,
     get_profile_binding,
@@ -200,7 +202,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile_id: str,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
-        return await get_blueprint_profile(database, blueprint_ref=blueprint_id, profile_ref=profile_id)
+        return await get_blueprint_profile(
+            database, blueprint_ref=blueprint_id, profile_ref=profile_id
+        )
 
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
@@ -261,7 +265,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         raw = await request.body()
         payload = UpdateFromSourceRequest.model_validate(json.loads(raw) if raw.strip() else {})
-        return await update_from_source(database, principal=actor, profile_ref=profile_ref, request=payload)
+        return await update_from_source(
+            database, principal=actor, profile_ref=profile_ref, request=payload
+        )
 
     # publish-profile: a team publishes a private shelf profile into a PUBLIC blueprint
     # (new blueprint, or a new version of an owned blueprint). blueprint.yaml is library-generated
@@ -275,7 +281,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         raw = await request.body()
         payload = ProfilePublishRequest.model_validate(json.loads(raw) if raw.strip() else {})
-        return await publish_profile(database, principal=actor, profile_ref=profile_ref, request=payload)
+        return await publish_profile(
+            database, principal=actor, profile_ref=profile_ref, request=payload
+        )
 
     # --- Team-scoped, cert-auth-gated routes --------------------------------------
     # The principal dependency enforces AWID team-certificate auth (401 without a
@@ -289,7 +297,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         raw = await request.body()
         payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
-        return await register_team(database, principal=actor, owner=payload.owner, display_name=payload.display_name)
+        return await register_team(
+            database, principal=actor, owner=payload.owner, display_name=payload.display_name
+        )
 
     # publish-blueprint: a producer uploads/updates a PUBLIC blueprint (the former import,
     # wire-unchanged: canonical import-payload -> import-return).
@@ -329,7 +339,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         binding = ProfileBindingRequest.model_validate(await request.json())
-        return await set_profile_binding(database, principal=actor, agent_id=agent_id, binding=binding)
+        return await set_profile_binding(
+            database, principal=actor, agent_id=agent_id, binding=binding
+        )
 
     @app.get("/v1/agents/{agent_id}/profile-binding")
     async def get_profile_binding_route(
@@ -357,7 +369,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
-        return await set_profile_tags(database, principal=actor, profile_ref=profile_ref, tags=payload.tags)
+        return await set_profile_tags(
+            database, principal=actor, profile_ref=profile_ref, tags=payload.tags
+        )
 
     @app.put("/v1/blueprints/{blueprint_ref}/tags")
     async def set_blueprint_tags_route(
@@ -367,7 +381,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
-        return await set_blueprint_tags(database, principal=actor, blueprint_ref=blueprint_ref, tags=payload.tags)
+        return await set_blueprint_tags(
+            database, principal=actor, blueprint_ref=blueprint_ref, tags=payload.tags
+        )
+
+    @app.delete("/v1/blueprints/{blueprint_ref}")
+    async def delete_blueprint_route(
+        blueprint_ref: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await delete_blueprint(database, principal=actor, blueprint_ref=blueprint_ref)
+
+    @app.delete("/v1/profiles/{profile_id}")
+    async def delete_shelf_profile_route(
+        profile_id: str,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> dict:
+        return await delete_shelf_profile(database, principal=actor, profile_ref=profile_id)
 
     @app.post("/v1/proposals")
     async def create_proposal_route(

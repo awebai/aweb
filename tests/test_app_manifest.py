@@ -25,6 +25,8 @@ _EXPECTED_TOOLS = {
     "get-blueprint",
     "get-profile",
     "get-shelf-profile",
+    "delete-blueprint",
+    "delete-shelf-profile",
     "publish-blueprint",
     "register",
     "create-shelf-profile",
@@ -50,6 +52,8 @@ _MUTATIONS = {
     "get-blueprint": False,
     "get-profile": False,
     "get-shelf-profile": False,
+    "delete-blueprint": True,
+    "delete-shelf-profile": True,
     "publish-blueprint": True,
     "register": True,
     "create-shelf-profile": True,
@@ -158,7 +162,11 @@ def _manifest_errors(m: dict) -> list[str]:
                 errors.append(f"{name}: raw body requires an explicit content_type")
 
         scopes = tool.get("scopes")
-        if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) for s in scopes):
+        if (
+            not isinstance(scopes, list)
+            or not scopes
+            or not all(isinstance(s, str) for s in scopes)
+        ):
             errors.append(f"{name}: scopes must be a non-empty list of strings")
 
         if not isinstance(tool.get("mutation"), bool):
@@ -174,7 +182,9 @@ def _coerce(value: object, prop: dict) -> object:
     if kind == "number":
         return float(value)  # type: ignore[arg-type]
     if kind == "boolean":
-        return value if isinstance(value, bool) else {"true": True, "false": False}[str(value).lower()]
+        return (
+            value if isinstance(value, bool) else {"true": True, "false": False}[str(value).lower()]
+        )
     return str(value)
 
 
@@ -191,13 +201,20 @@ def _interpret(manifest: dict, verb: str, args: dict) -> dict:
         fields = [p["name"] for p in tool["params"] if p["in"] == "body"]
         coerced = {name: _coerce(args[name], props[name]) for name in fields if name in args}
         body_bytes = (
-            json.dumps(coerced, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            json.dumps(coerced, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
             if coerced
             else b""
         )
     else:
         body_bytes = b""
-    return {"method": tool["method"], "path": path, "body": body_bytes, "mutation": tool["mutation"]}
+    return {
+        "method": tool["method"],
+        "path": path,
+        "body": body_bytes,
+        "mutation": tool["mutation"],
+    }
 
 
 def test_committed_manifest_is_canonical_and_matches_source() -> None:
@@ -256,7 +273,10 @@ def test_interpreted_spec_bind() -> None:
     )
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/agents/agent-1/profile-binding"
-    assert spec["body"] == b'{"profile_digest":"sha256:abc","profile_ref":"blueprint/dev@1","profile_version":"1"}'
+    assert (
+        spec["body"]
+        == b'{"profile_digest":"sha256:abc","profile_ref":"blueprint/dev@1","profile_version":"1"}'
+    )
     assert spec["mutation"] is True
 
 
@@ -282,7 +302,9 @@ def test_interpreted_spec_import_to_shelf() -> None:
     )
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/shelf/import"
-    assert spec["body"] == b'{"profile_ref":"coordinator","source_blueprint_ref":"aweb.engineering"}'
+    assert (
+        spec["body"] == b'{"profile_ref":"coordinator","source_blueprint_ref":"aweb.engineering"}'
+    )
     assert spec["mutation"] is True
 
 

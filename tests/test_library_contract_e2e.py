@@ -62,7 +62,9 @@ def _payload_blueprint(payload: dict[str, Any]) -> ParsedBlueprint:
 
 
 def _fixture_blueprint() -> ParsedBlueprint:
-    return parse_import_payload({"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA})
+    return parse_import_payload(
+        {"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+    )
 
 
 def _expected_import_return() -> dict[str, Any]:
@@ -74,12 +76,18 @@ def _expected_import_return() -> dict[str, Any]:
 def _profile_from_blueprint(blueprint: ParsedBlueprint, profile_ref: str) -> dict[str, str]:
     for profile in blueprint.profiles:
         if profile.profile_ref == profile_ref:
-            return {"profile_ref": profile.profile_ref, "version": profile.version, "digest": profile.digest}
+            return {
+                "profile_ref": profile.profile_ref,
+                "version": profile.version,
+                "digest": profile.digest,
+            }
     raise AssertionError(f"blueprint missing profile {profile_ref!r}")
 
 
 def _profile_payload_files(profile_ref: str) -> list[dict[str, str]]:
-    profile = next(profile for profile in _fixture_blueprint().profiles if profile.profile_ref == profile_ref)
+    profile = next(
+        profile for profile in _fixture_blueprint().profiles if profile.profile_ref == profile_ref
+    )
     return list(profile.files)
 
 
@@ -188,7 +196,9 @@ def _expected_shelf_profile(
     return base
 
 
-def _expected_shelf_read_profile(blueprint: ParsedBlueprint, profile_ref: str, *, tags: list[str], update_available: bool) -> dict[str, Any]:
+def _expected_shelf_read_profile(
+    blueprint: ParsedBlueprint, profile_ref: str, *, tags: list[str], update_available: bool
+) -> dict[str, Any]:
     profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
     return {
         "profile_ref": profile.profile_ref,
@@ -207,7 +217,9 @@ def _expected_shelf_read_profile(blueprint: ParsedBlueprint, profile_ref: str, *
     }
 
 
-def _expected_home_entries(profile_ref: str, *, created: bool = False, blueprint: ParsedBlueprint | None = None) -> list[dict[str, str]]:
+def _expected_home_entries(
+    profile_ref: str, *, created: bool = False, blueprint: ParsedBlueprint | None = None
+) -> list[dict[str, str]]:
     root_name = "materialized-home-created" if created else "materialized-home"
     root = _EXPECTED / root_name / profile_ref
     entries: list[dict[str, str]] = []
@@ -275,7 +287,10 @@ def _blueprint_payload(
                 doc["mission"] = coordinator_mission
             file["content_utf8"] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
             file["sha256"] = _sha(file["content_utf8"])
-        if coordinator_instructions_suffix and file["path"] == "profiles/coordinator/instructions.md":
+        if (
+            coordinator_instructions_suffix
+            and file["path"] == "profiles/coordinator/instructions.md"
+        ):
             file["content_utf8"] += coordinator_instructions_suffix
             file["sha256"] = _sha(file["content_utf8"])
         if mutate_developer and file["path"] == "profiles/developer/instructions.md":
@@ -309,7 +324,11 @@ def _profile_files_with_changes(
 
 
 def _profile_files_with_version(profile_ref: str, version: str) -> list[dict[str, str]]:
-    base_doc = yaml.safe_load(next(file for file in _profile_payload_files(profile_ref) if file["path"] == "profile.yaml")["content_utf8"])
+    base_doc = yaml.safe_load(
+        next(
+            file for file in _profile_payload_files(profile_ref) if file["path"] == "profile.yaml"
+        )["content_utf8"]
+    )
     return _profile_files_with_changes(
         profile_ref,
         version,
@@ -325,7 +344,9 @@ def _put_json(team: Any, url: str, payload: Any) -> subprocess.CompletedProcess[
     return _aw_request(team, "PUT", url, body=_json_body(payload))
 
 
-def _publish_blueprint(team: Any, library: RunningLibrary, payload: dict[str, Any]) -> dict[str, Any]:
+def _publish_blueprint(
+    team: Any, library: RunningLibrary, payload: dict[str, Any]
+) -> dict[str, Any]:
     blueprint = _payload_blueprint(payload)
     result = _aw_json(
         _post_json(team, f"{library.origin}/v1/blueprints/import", payload),
@@ -417,7 +438,9 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
     runtime_hints = {"coordinator": ["claude-code"], "reviewer": ["pi", "claude-code"]}
-    payload = _blueprint_payload(blueprint_ref=f"aweb.e2e-{unique}-blueprint", profile_runtime_hints=runtime_hints)
+    payload = _blueprint_payload(
+        blueprint_ref=f"aweb.e2e-{unique}-blueprint", profile_runtime_hints=runtime_hints
+    )
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
 
@@ -431,9 +454,13 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     )
     assert tags == {"blueprint_ref": blueprint.blueprint_ref, "tags": [f"e2e-{unique}", "starter"]}
 
-    catalog = httpx.get(f"{library.origin}/v1/blueprints", params={"tags": f"e2e-{unique}"}, timeout=10.0)
+    catalog = httpx.get(
+        f"{library.origin}/v1/blueprints", params={"tags": f"e2e-{unique}"}, timeout=10.0
+    )
     assert catalog.status_code == 200, catalog.text
-    assert catalog.json() == [_expected_blueprint_summary(blueprint, tags=[f"e2e-{unique}", "starter"])]
+    assert catalog.json() == [
+        _expected_blueprint_summary(blueprint, tags=[f"e2e-{unique}", "starter"])
+    ]
 
     missing = httpx.get(f"{library.origin}/v1/blueprints", params={"tags": "missing"}, timeout=10.0)
     assert missing.status_code == 200, missing.text
@@ -443,17 +470,22 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     assert detail.status_code == 200, detail.text
     assert detail.json() == _expected_blueprint_detail(blueprint, tags=[f"e2e-{unique}", "starter"])
 
-    preview = httpx.get(f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/developer", timeout=10.0)
+    preview = httpx.get(
+        f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/developer", timeout=10.0
+    )
     assert preview.status_code == 200, preview.text
     assert preview.json() == _expected_blueprint_profile(blueprint, "developer")
 
     coordinator_preview = httpx.get(
-        f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator", timeout=10.0
+        f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator",
+        timeout=10.0,
     )
     assert coordinator_preview.status_code == 200, coordinator_preview.text
     assert coordinator_preview.json()["runtime_hints"] == ["claude-code"]
 
-    reviewer_preview = httpx.get(f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/reviewer", timeout=10.0)
+    reviewer_preview = httpx.get(
+        f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/reviewer", timeout=10.0
+    )
     assert reviewer_preview.status_code == 200, reviewer_preview.text
     assert reviewer_preview.json()["runtime_hints"] == ["pi", "claude-code"]
 
@@ -479,28 +511,46 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
 
     _import_to_shelf(team, library, blueprint=blueprint, tags=["First", "first"])
     shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf")
-    assert shelf == {"profiles": [_expected_shelf_read_profile(blueprint, "developer", tags=["first"], update_available=False)]}
+    assert shelf == {
+        "profiles": [
+            _expected_shelf_read_profile(
+                blueprint, "developer", tags=["first"], update_available=False
+            )
+        ]
+    }
 
     updated_tags = _aw_json(
-        _put_json(team, f"{library.origin}/v1/profiles/developer/tags", {"tags": ["local", "first"]}),
+        _put_json(
+            team, f"{library.origin}/v1/profiles/developer/tags", {"tags": ["local", "first"]}
+        ),
         context="set shelf profile tags",
     )
     assert updated_tags == {"profile_ref": "developer", "tags": ["first", "local"]}
 
     # Same source profile is a pure no-op and never clobbers local shelf metadata.
     _import_to_shelf(team, library, blueprint=blueprint, tags=["ignored"], created=False)
-    shelf_after_noop = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after noop")
+    shelf_after_noop = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after noop"
+    )
     assert shelf_after_noop["profiles"][0]["tags"] == ["first", "local"]
     assert shelf_after_noop["profiles"][0]["update_available"] is False
 
     # Publishing a newer source blueprint version does not auto-update the shelf copy;
     # the read only exposes update_available until a future update-from-source act.
-    newer_payload = _blueprint_payload(blueprint_ref=blueprint.blueprint_ref, blueprint_version="0.2.0", mutate_developer=True)
+    newer_payload = _blueprint_payload(
+        blueprint_ref=blueprint.blueprint_ref, blueprint_version="0.2.0", mutate_developer=True
+    )
     _publish_blueprint(team, library, newer_payload)
     _import_to_shelf(team, library, blueprint=blueprint, created=False)
-    shelf_with_update = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf with update")
+    shelf_with_update = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf with update"
+    )
     assert shelf_with_update == {
-        "profiles": [_expected_shelf_read_profile(blueprint, "developer", tags=["first", "local"], update_available=True)]
+        "profiles": [
+            _expected_shelf_read_profile(
+                blueprint, "developer", tags=["first", "local"], update_available=True
+            )
+        ]
     }
 
     # Same target shelf ref from a different source blueprint is a conflict.
@@ -524,22 +574,34 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     payload = _blueprint_payload(blueprint_ref=f"aweb.update-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
-    base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator", tags=["Update"])
+    base = _import_to_shelf(
+        team, library, blueprint=blueprint, profile_ref="coordinator", tags=["Update"]
+    )
     assert base["version"] == "0.1.0"
 
-    local_instructions = "\nLocal-only coordinator instruction: preserve team-specific triage notes.\n"
-    local_files = _profile_files_with_changes("coordinator", "0.1.1", instructions_suffix=local_instructions)
+    local_instructions = (
+        "\nLocal-only coordinator instruction: preserve team-specific triage notes.\n"
+    )
+    local_files = _profile_files_with_changes(
+        "coordinator", "0.1.1", instructions_suffix=local_instructions
+    )
     local_profile = parse_profile_payload(local_files)
     local = _aw_json(
-        _post_json(team, f"{library.origin}/v1/profiles/coordinator/versions", {"files": local_files}),
+        _post_json(
+            team, f"{library.origin}/v1/profiles/coordinator/versions", {"files": local_files}
+        ),
         context="create locally evolved coordinator version",
     )
     assert local["version"] == "0.1.1"
     assert local["digest"] == local_profile.digest
     assert local["source_blueprint_version"] == "0.1.0"
 
-    upstream_mission = "Coordinate upstream work, keep blockers visible, and preserve crisp evidence."
-    upstream_instructions = "\nUpstream coordinator instruction: summarize reviewer handoffs explicitly.\n"
+    upstream_mission = (
+        "Coordinate upstream work, keep blockers visible, and preserve crisp evidence."
+    )
+    upstream_instructions = (
+        "\nUpstream coordinator instruction: summarize reviewer handoffs explicitly.\n"
+    )
     newer_payload = _blueprint_payload(
         blueprint_ref=blueprint.blueprint_ref,
         blueprint_version="0.2.0",
@@ -564,8 +626,12 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert update["source_blueprint_version"] == "0.2.0"
     assert update["source_blueprint_digest"] == newer_blueprint.digest
 
-    shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after update")
-    coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
+    shelf = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after update"
+    )
+    coordinator = next(
+        profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator"
+    )
     assert coordinator["version"] == "0.2.0"
     assert coordinator["digest"] == update["digest"]
     assert coordinator["summary"] == upstream_mission
@@ -589,7 +655,9 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert materialized["source_blueprint_ref"] == blueprint.blueprint_ref
     assert materialized["source_blueprint_version"] == "0.2.0"
     assert materialized["source_blueprint_digest"] == newer_blueprint.digest
-    profile_yaml = yaml.safe_load(_home_file(materialized["home_files"], ".aw/profile/profile.yaml"))
+    profile_yaml = yaml.safe_load(
+        _home_file(materialized["home_files"], ".aw/profile/profile.yaml")
+    )
     assert profile_yaml["version"] == "0.2.0"
     assert profile_yaml["mission"] == upstream_mission
     instructions = _home_file(materialized["home_files"], ".aw/profile/instructions.md")
@@ -625,7 +693,12 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     missing_noop_version = _post_json(
         team,
         f"{library.origin}/v1/materialize",
-        {"profile_ref": "coordinator", "profile_version": "0.2.1", "runtime_kind": "claude-code", "target": "local"},
+        {
+            "profile_ref": "coordinator",
+            "profile_version": "0.2.1",
+            "runtime_kind": "claude-code",
+            "target": "local",
+        },
     )
     _assert_aw_status(missing_noop_version, 404, context="no-op does not mint target version")
 
@@ -658,7 +731,9 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         context="create direct shelf profile",
     )
     direct_blueprint = _fixture_blueprint()
-    assert created == _expected_shelf_profile(direct_blueprint, "developer", tags=["direct"], source=False)
+    assert created == _expected_shelf_profile(
+        direct_blueprint, "developer", tags=["direct"], source=False
+    )
 
     binding = _bind_profile(
         team,
@@ -747,13 +822,19 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         timeout=10.0,
     )
     assert public_blueprint.status_code == 200, public_blueprint.text
-    assert public_blueprint.json() == [_expected_blueprint_summary(expected_blueprint, tags=[f"e2e-{unique}", "published"])]
+    assert public_blueprint.json() == [
+        _expected_blueprint_summary(expected_blueprint, tags=[f"e2e-{unique}", "published"])
+    ]
 
     existing_publish = _aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/developer/publish",
-            {"profile_version": "0.1.0", "blueprint_version": "1.0.1", "target_blueprint_ref": expected_blueprint.blueprint_ref},
+            {
+                "profile_version": "0.1.0",
+                "blueprint_version": "1.0.1",
+                "target_blueprint_ref": expected_blueprint.blueprint_ref,
+            },
         ),
         context="publish shelf profile into existing blueprint",
     )
@@ -785,8 +866,12 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
     _publish_blueprint(team, library, payload)
     shelf_copy = _import_to_shelf(team, library, blueprint=blueprint)
 
-    first_register = _aw_json(_post_json(team, f"{library.origin}/v1/team/register", {}), context="team register")
-    second_register = _aw_json(_post_json(team, f"{library.origin}/v1/team/register", {}), context="team register again")
+    first_register = _aw_json(
+        _post_json(team, f"{library.origin}/v1/team/register", {}), context="team register"
+    )
+    second_register = _aw_json(
+        _post_json(team, f"{library.origin}/v1/team/register", {}), context="team register again"
+    )
     assert second_register == first_register
     assert first_register["team_id"] == team.team_id
     assert first_register["owner"] is None
@@ -816,7 +901,9 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         ),
         context="materialize bound blueprint-copy profile",
     )
-    inspect_profile = next(profile for profile in _fixture_blueprint().profiles if profile.profile_ref == "developer")
+    inspect_profile = next(
+        profile for profile in _fixture_blueprint().profiles if profile.profile_ref == "developer"
+    )
     assert materialized == {
         "profile_ref": "developer",
         "profile_version": "0.1.0",
@@ -828,8 +915,13 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         "memory_policy": inspect_profile.memory_policy,
         "home_files": _expected_home_entries("developer", blueprint=blueprint),
     }
-    assert any(entry == {"path": "CLAUDE.md", "kind": "symlink", "target": "AGENTS.md"} for entry in materialized["home_files"])
-    ref_entry = next(entry for entry in materialized["home_files"] if entry["path"] == ".aw/profile/ref.json")
+    assert any(
+        entry == {"path": "CLAUDE.md", "kind": "symlink", "target": "AGENTS.md"}
+        for entry in materialized["home_files"]
+    )
+    ref_entry = next(
+        entry for entry in materialized["home_files"] if entry["path"] == ".aw/profile/ref.json"
+    )
     ref = json.loads(ref_entry["content_utf8"])
     assert ref == {
         "profile_ref": "developer",
@@ -891,14 +983,18 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
     reject_candidate, reject_content = create_proposal("Rejected experiment")
     assert approve_candidate["proposal_id"] != reject_candidate["proposal_id"]
 
-    listed = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/proposals"), context="list proposals")
+    listed = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/proposals"), context="list proposals"
+    )
     assert {proposal["proposal_id"]: proposal for proposal in listed} == {
         approve_candidate["proposal_id"]: approve_candidate,
         reject_candidate["proposal_id"]: reject_candidate,
     }
 
     approved = _aw_json(
-        _post_json(team, f"{library.origin}/v1/proposals/{approve_candidate['proposal_id']}/approve", {}),
+        _post_json(
+            team, f"{library.origin}/v1/proposals/{approve_candidate['proposal_id']}/approve", {}
+        ),
         context="approve proposal",
     )
     assert_proposal_shape(approved, status="approved", content=approve_content)
@@ -929,12 +1025,18 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
     base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator")
 
     base_profile = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator"),
+        _aw_request(
+            team,
+            "GET",
+            f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator",
+        ),
         context="get coordinator profile for asset digests",
     )
     base_files = base_profile["files"]
     base_asset_digests = profile_asset_digests(base_files)
-    base_mission = next(file for file in base_files if file["path"] == "profile.yaml")["content_utf8"]
+    base_mission = next(file for file in base_files if file["path"] == "profile.yaml")[
+        "content_utf8"
+    ]
     base_mission = (yaml.safe_load(base_mission) or {})["mission"]
     minted_mission = f"{base_mission} Updated in an asset-scoped proposal."
     minted_files = _profile_files_with_changes("coordinator", "0.1.1", mission=minted_mission)
@@ -1003,8 +1105,12 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
         "supersedes_profile_digest": base["digest"],
     }
 
-    shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after mint")
-    coordinator = next(profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator")
+    shelf = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after mint"
+    )
+    coordinator = next(
+        profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator"
+    )
     assert coordinator["version"] == "0.1.1"
     assert coordinator["digest"] == minted_profile.digest
     assert coordinator["source_blueprint_ref"] == blueprint.blueprint_ref
@@ -1091,7 +1197,9 @@ def test_empty_profile_invariant_never_requires_reachable_library(
 
 def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> None:
     payload = _canonical_payload()
-    unauth_publish = httpx.post(f"{library.origin}/v1/blueprints/import", json=payload, timeout=10.0)
+    unauth_publish = httpx.post(
+        f"{library.origin}/v1/blueprints/import", json=payload, timeout=10.0
+    )
     assert unauth_publish.status_code == 401, unauth_publish.text
     unauth_register = httpx.post(f"{library.origin}/v1/team/register", json={}, timeout=10.0)
     assert unauth_register.status_code == 401, unauth_register.text
@@ -1114,8 +1222,48 @@ def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> N
 def test_contract_fixture_contains_materialized_profile_refs() -> None:
     blueprint_ref = _fixture_blueprint().blueprint_ref
     for profile_ref in ("coordinator", "developer", "reviewer"):
-        ref = _load_json(_EXPECTED / "materialized-home" / profile_ref / ".aw" / "profile" / "ref.json")
+        ref = _load_json(
+            _EXPECTED / "materialized-home" / profile_ref / ".aw" / "profile" / "ref.json"
+        )
         assert ref["profile_ref"] == profile_ref
         assert ref["source_blueprint_ref"] == blueprint_ref
-    created_ref = _load_json(_EXPECTED / "materialized-home-created" / "developer" / ".aw" / "profile" / "ref.json")
+    created_ref = _load_json(
+        _EXPECTED / "materialized-home-created" / "developer" / ".aw" / "profile" / "ref.json"
+    )
     assert set(created_ref) == {"profile_digest", "profile_ref", "profile_version"}
+
+
+def test_delete_blueprint_removes_from_catalog_and_requires_auth(
+    library: RunningLibrary,
+    aw_workspace: AWWorkspace,
+) -> None:
+    """The HTTP/auth walk for the destructive delete: an unsigned DELETE is rejected
+    (auth gates it), and the signed owner DELETE removes the blueprint + cascades to
+    its catalog profile."""
+    team = _provision_team(aw_workspace)
+    unique = uuid.uuid4().hex[:8]
+    payload = _blueprint_payload(blueprint_ref=f"aweb.e2e-{unique}-del")
+    blueprint = _payload_blueprint(payload)
+    _publish_blueprint(team, library, payload)
+
+    ref = blueprint.blueprint_ref
+    assert httpx.get(f"{library.origin}/v1/blueprints/{ref}", timeout=10.0).status_code == 200
+
+    # an UNSIGNED delete is rejected and does NOT remove the blueprint.
+    unauth = httpx.request("DELETE", f"{library.origin}/v1/blueprints/{ref}", timeout=10.0)
+    assert unauth.status_code in (401, 403), unauth.text
+    assert httpx.get(f"{library.origin}/v1/blueprints/{ref}", timeout=10.0).status_code == 200
+
+    # the signed OWNER delete succeeds, removes it, and cascades to its profile.
+    deleted = _aw_json(
+        _aw_request(team, "DELETE", f"{library.origin}/v1/blueprints/{ref}"),
+        context="delete blueprint",
+    )
+    assert deleted["blueprint_ref"] == ref
+    assert httpx.get(f"{library.origin}/v1/blueprints/{ref}", timeout=10.0).status_code == 404
+    assert (
+        httpx.get(
+            f"{library.origin}/v1/blueprints/{ref}/profiles/coordinator", timeout=10.0
+        ).status_code
+        == 404
+    )

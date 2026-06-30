@@ -68,7 +68,9 @@ async def publish_blueprint(
     return import_return(blueprint)
 
 
-async def _persist_blueprint(db: AsyncDatabaseManager, *, principal: Principal, blueprint: ParsedBlueprint) -> None:
+async def _persist_blueprint(
+    db: AsyncDatabaseManager, *, principal: Principal, blueprint: ParsedBlueprint
+) -> None:
     async with db.transaction() as tx:
         await tx.execute(
             """
@@ -82,9 +84,18 @@ async def _persist_blueprint(db: AsyncDatabaseManager, *, principal: Principal, 
                 runtime_hints = EXCLUDED.runtime_hints, expected_apps = EXCLUDED.expected_apps,
                 first_mission_examples = EXCLUDED.first_mission_examples, payload = EXCLUDED.payload
             """,
-            principal.team_id, blueprint.blueprint_ref, blueprint.version, blueprint.digest, blueprint.name, blueprint.summary,
-            blueprint.description, _dumps(blueprint.recommendations), blueprint.runtime_hints, blueprint.expected_apps,
-            blueprint.first_mission_examples, _dumps(blueprint.files),
+            principal.team_id,
+            blueprint.blueprint_ref,
+            blueprint.version,
+            blueprint.digest,
+            blueprint.name,
+            blueprint.summary,
+            blueprint.description,
+            _dumps(blueprint.recommendations),
+            blueprint.runtime_hints,
+            blueprint.expected_apps,
+            blueprint.first_mission_examples,
+            _dumps(blueprint.files),
         )
         for profile in blueprint.profiles:
             await tx.execute(
@@ -103,11 +114,20 @@ async def _persist_blueprint(db: AsyncDatabaseManager, *, principal: Principal, 
                     event_subscriptions = EXCLUDED.event_subscriptions,
                     approval_required = EXCLUDED.approval_required, files = EXCLUDED.files
                 """,
-                principal.team_id, blueprint.blueprint_ref, blueprint.version, profile.profile_ref, profile.version,
-                profile.digest, profile.name, profile.mission, profile.accepted_work,
+                principal.team_id,
+                blueprint.blueprint_ref,
+                blueprint.version,
+                profile.profile_ref,
+                profile.version,
+                profile.digest,
+                profile.name,
+                profile.mission,
+                profile.accepted_work,
                 profile.runtime_assumptions,
                 _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
-                profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
+                profile.expected_apps,
+                _dumps(profile.event_subscriptions),
+                profile.approval_required,
                 _dumps(profile.files),
             )
 
@@ -122,7 +142,9 @@ def _profile_runtime_hints(recommendations: Any, profile_ref: str) -> list[str]:
     for recommendation in _json_value(recommendations) or []:
         if not isinstance(recommendation, dict):
             continue
-        recommendation_ref = str(recommendation.get("id") or recommendation.get("profile_ref") or "")
+        recommendation_ref = str(
+            recommendation.get("id") or recommendation.get("profile_ref") or ""
+        )
         if recommendation_ref == profile_ref:
             value = recommendation.get("runtime_hints")
             return [str(item) for item in value] if isinstance(value, list) else []
@@ -152,7 +174,9 @@ _BLUEPRINT_COLUMNS = (
 )
 
 
-async def list_blueprints(db: AsyncDatabaseManager, *, tags: list[str] | None) -> list[dict[str, Any]]:
+async def list_blueprints(
+    db: AsyncDatabaseManager, *, tags: list[str] | None
+) -> list[dict[str, Any]]:
     """The public catalog: latest version of every blueprint, optional ?tags overlap."""
     rows = await db.fetch_all(
         "SELECT DISTINCT ON (owner_team, blueprint_ref) "
@@ -185,7 +209,9 @@ async def get_blueprint(db: AsyncDatabaseManager, *, blueprint_ref: str) -> dict
     return summary
 
 
-async def get_blueprint_profile(db: AsyncDatabaseManager, *, blueprint_ref: str, profile_ref: str) -> dict[str, Any]:
+async def get_blueprint_profile(
+    db: AsyncDatabaseManager, *, blueprint_ref: str, profile_ref: str
+) -> dict[str, Any]:
     """A public profile snapshot from the latest version of a catalog blueprint — the
     full profile content, for previewing before import. No auth (public catalog)."""
     blueprint = await db.fetch_one(
@@ -243,8 +269,80 @@ async def set_blueprint_tags(
     return {"blueprint_ref": blueprint_ref, "tags": normalized}
 
 
+async def delete_blueprint(
+    db: AsyncDatabaseManager, *, principal: Principal, blueprint_ref: str
+) -> dict[str, Any]:
+    """Hard-delete a public blueprint the team owns (all versions), cascading to its
+    catalog profiles via the FK. Shelf profiles that source-track it are DETACHED -
+    their source_* pins NULLed - so they survive as rootless profiles rather than
+    orphaning (only update-from-source goes N/A, the source being gone). Irreversible."""
+    async with db.transaction() as tx:
+        deleted = await tx.fetch_all(
+            "DELETE FROM {{tables.blueprints}}"
+            " WHERE owner_team = $1 AND blueprint_ref = $2 RETURNING version",
+            principal.team_id,
+            blueprint_ref,
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Blueprint not found")
+        # Detach EVERY dependent shelf profile, across ALL teams - this UPDATE is
+        # intentionally NOT scoped by team_id. A public blueprint can be imported
+        # onto any team's shelf, so deleting it must NULL every adopter's source pin,
+        # not just the owner's, or other teams orphan. Do not add a team_id predicate.
+        # The match is by source_blueprint_ref alone (the shelf row records no source
+        # owner_team): if two teams ever owned the same blueprint_ref, this would
+        # detach all dependents of that ref. Safe today (refs are single-owner);
+        # tracked for a per-owner detach (record source_owner_team) if that changes.
+        await tx.execute(
+            "UPDATE {{tables.shelf_profiles}} SET"
+            " source_blueprint_ref = NULL, source_blueprint_version = NULL, source_blueprint_digest = NULL,"
+            " source_profile_ref = NULL, source_profile_version = NULL, source_profile_digest = NULL"
+            " WHERE source_blueprint_ref = $1",
+            blueprint_ref,
+        )
+    return {
+        "blueprint_ref": blueprint_ref,
+        "deleted_versions": sorted(row["version"] for row in deleted),
+    }
+
+
+async def delete_shelf_profile(
+    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str
+) -> dict[str, Any]:
+    """Hard-delete a team's shelf profile (all versions) and clean its dependents -
+    profile bindings and proposals for that profile_ref (neither has an FK to the
+    shelf row). Team-scoped, irreversible."""
+    async with db.transaction() as tx:
+        deleted = await tx.fetch_all(
+            "DELETE FROM {{tables.shelf_profiles}}"
+            " WHERE team_id = $1 AND profile_ref = $2 RETURNING version",
+            principal.team_id,
+            profile_ref,
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Shelf profile not found")
+        await tx.execute(
+            "DELETE FROM {{tables.profile_bindings}} WHERE team_id = $1 AND profile_ref = $2",
+            principal.team_id,
+            profile_ref,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.proposals}} WHERE team_id = $1 AND profile_ref = $2",
+            principal.team_id,
+            profile_ref,
+        )
+    return {
+        "profile_ref": profile_ref,
+        "deleted_versions": sorted(row["version"] for row in deleted),
+    }
+
+
 async def publish_profile(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: ProfilePublishRequest
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    profile_ref: str,
+    request: ProfilePublishRequest,
 ) -> dict[str, Any]:
     """Publish a private shelf profile into a public blueprint. The blueprint is created
     (``new_blueprint``) or a new version of an owned blueprint (``existing_blueprint_ref``), with
@@ -255,7 +353,8 @@ async def publish_profile(
     new_blueprint = request.new_blueprint
     if bool(existing_blueprint_ref) == bool(new_blueprint):
         raise HTTPException(
-            status_code=422, detail="exactly one of target_blueprint_ref or new_blueprint is required"
+            status_code=422,
+            detail="exactly one of target_blueprint_ref or new_blueprint is required",
         )
 
     version = request.profile_version
@@ -493,12 +592,26 @@ async def _upsert_shelf_profile(
         ON CONFLICT (team_id, profile_ref, version) DO NOTHING
         RETURNING version
         """,
-        team_id, profile.profile_ref, profile.version, profile.digest, tags, profile.name,
-        profile.mission, profile.accepted_work, profile.runtime_assumptions,
+        team_id,
+        profile.profile_ref,
+        profile.version,
+        profile.digest,
+        tags,
+        profile.name,
+        profile.mission,
+        profile.accepted_work,
+        profile.runtime_assumptions,
         _dumps(profile.memory_policy) if profile.memory_policy is not None else None,
-        profile.expected_apps, _dumps(profile.event_subscriptions), profile.approval_required,
-        _dumps(profile.files), source_blueprint_ref, source_blueprint_version,
-        source_blueprint_digest, source_profile_ref, source_profile_version, source_profile_digest,
+        profile.expected_apps,
+        _dumps(profile.event_subscriptions),
+        profile.approval_required,
+        _dumps(profile.files),
+        source_blueprint_ref,
+        source_blueprint_version,
+        source_blueprint_digest,
+        source_profile_ref,
+        source_profile_version,
+        source_profile_digest,
         _dumps(part_baselines),
     )
     if row is None:
@@ -542,7 +655,9 @@ async def create_shelf_version(
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid profile: {exc}") from exc
     if profile.profile_ref != profile_ref:
-        raise HTTPException(status_code=422, detail="profile.yaml id must match the path profile_ref")
+        raise HTTPException(
+            status_code=422, detail="profile.yaml id must match the path profile_ref"
+        )
     prior = await db.fetch_one(
         "SELECT tags, source_blueprint_ref, source_blueprint_version, source_blueprint_digest,"
         " source_profile_ref, source_profile_version, source_profile_digest, part_baselines"
@@ -690,7 +805,11 @@ def _blueprint_profile_files(row: Any) -> list[dict[str, str]]:
 
 
 async def update_from_source(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, request: UpdateFromSourceRequest
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    profile_ref: str,
+    request: UpdateFromSourceRequest,
 ) -> dict[str, Any]:
     """Per-part 3-way merge of a shelf profile against a newer version of its source
     blueprint: pull upstream improvements only into parts the team has not evolved, never
@@ -710,7 +829,9 @@ async def update_from_source(
         raise HTTPException(status_code=404, detail="Shelf profile not found")
     source_blueprint_ref = ours["source_blueprint_ref"]
     if not source_blueprint_ref:
-        raise HTTPException(status_code=422, detail="Shelf profile has no source blueprint to update from")
+        raise HTTPException(
+            status_code=422, detail="Shelf profile has no source blueprint to update from"
+        )
 
     blueprint = await db.fetch_one(
         "SELECT owner_team, version, digest FROM {{tables.blueprints}}"
@@ -915,9 +1036,7 @@ async def materialize(
 PROFILE_ASSET_CHANGESET_SCHEMA = "aweb.library.profile-asset-changeset.v1"
 _FIELD_ASSET_PREFIX = "profile.yaml#"
 
-_PROPOSAL_COLUMNS = (
-    "proposal_id, target, profile_ref, status, content, summary, rationale, created_by_alias, created_at"
-)
+_PROPOSAL_COLUMNS = "proposal_id, target, profile_ref, status, content, summary, rationale, created_by_alias, created_at"
 
 
 def _proposal_row(row: Any) -> dict[str, Any]:
@@ -935,7 +1054,9 @@ def _proposal_row(row: Any) -> dict[str, Any]:
     }
 
 
-async def _get_proposal(db: AsyncDatabaseManager, team_id: str, proposal_id: UUID) -> dict[str, Any]:
+async def _get_proposal(
+    db: AsyncDatabaseManager, team_id: str, proposal_id: UUID
+) -> dict[str, Any]:
     row = await db.fetch_one(
         "SELECT " + _PROPOSAL_COLUMNS + " FROM {{tables.proposals}}"
         " WHERE team_id = $1 AND proposal_id = $2",
@@ -1011,10 +1132,14 @@ def _asset_key(path: str) -> str:
     if path.startswith(_FIELD_ASSET_PREFIX):
         field = path[len(_FIELD_ASSET_PREFIX) :]
         if field not in PROFILE_FIELD_ASSETS:
-            raise HTTPException(status_code=422, detail=f"Unsupported profile.yaml asset field '{field}'")
+            raise HTTPException(
+                status_code=422, detail=f"Unsupported profile.yaml asset field '{field}'"
+            )
         return f"field:{field}"
     if path == "profile.yaml":
-        raise HTTPException(status_code=422, detail="profile.yaml must be changed by profile.yaml#<field> assets")
+        raise HTTPException(
+            status_code=422, detail="profile.yaml must be changed by profile.yaml#<field> assets"
+        )
     if path.startswith("/") or ".." in path.split("/"):
         raise HTTPException(status_code=422, detail=f"Invalid asset path '{path}'")
     return f"file:{path}"
@@ -1031,14 +1156,20 @@ def _current_asset_digest(files: list[dict[str, str]], path: str) -> str | None:
     return profile_asset_digests(files).get(key)
 
 
-def _validate_asset_base(*, files: list[dict[str, str]], asset: dict[str, Any], path: str, deleting: bool) -> None:
+def _validate_asset_base(
+    *, files: list[dict[str, str]], asset: dict[str, Any], path: str, deleting: bool
+) -> None:
     current = _current_asset_digest(files, path)
     base = asset.get("base_asset_digest")
     if current is None:
         if deleting:
-            raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale; it does not exist")
+            raise HTTPException(
+                status_code=409, detail=f"Asset '{path}' is stale; it does not exist"
+            )
         if base is not None:
-            raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale; it does not exist")
+            raise HTTPException(
+                status_code=409, detail=f"Asset '{path}' is stale; it does not exist"
+            )
         return
     if base is None:
         raise HTTPException(status_code=409, detail=f"Asset '{path}' already exists")
@@ -1059,11 +1190,14 @@ def _apply_asset_changeset(
 ) -> list[dict[str, str]]:
     if changeset.get("schema") != PROFILE_ASSET_CHANGESET_SCHEMA:
         raise HTTPException(
-            status_code=422, detail=f"proposal content schema must be {PROFILE_ASSET_CHANGESET_SCHEMA}"
+            status_code=422,
+            detail=f"proposal content schema must be {PROFILE_ASSET_CHANGESET_SCHEMA}",
         )
     assets = changeset.get("assets")
     if not isinstance(assets, list) or not assets:
-        raise HTTPException(status_code=422, detail="proposal content assets must be a non-empty list")
+        raise HTTPException(
+            status_code=422, detail="proposal content assets must be a non-empty list"
+        )
 
     files_by_path = {entry["path"]: dict(entry) for entry in prior_files}
     profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
@@ -1079,8 +1213,12 @@ def _apply_asset_changeset(
             raise HTTPException(status_code=422, detail=f"Asset '{path}' delete must be boolean")
         deleting = delete_value
         if deleting and ("content" in raw_asset or "content_utf8" in raw_asset):
-            raise HTTPException(status_code=422, detail=f"Asset '{path}' cannot include content and delete")
-        _validate_asset_base(files=list(files_by_path.values()), asset=raw_asset, path=path, deleting=deleting)
+            raise HTTPException(
+                status_code=422, detail=f"Asset '{path}' cannot include content and delete"
+            )
+        _validate_asset_base(
+            files=list(files_by_path.values()), asset=raw_asset, path=path, deleting=deleting
+        )
 
         if path.startswith(_FIELD_ASSET_PREFIX):
             field = path[len(_FIELD_ASSET_PREFIX) :]
@@ -1089,7 +1227,9 @@ def _apply_asset_changeset(
             elif "content" in raw_asset:
                 profile_doc[field] = raw_asset["content"]
             else:
-                raise HTTPException(status_code=422, detail=f"Field asset '{path}' requires content")
+                raise HTTPException(
+                    status_code=422, detail=f"Field asset '{path}' requires content"
+                )
             profile_doc["version"] = target_version
             files_by_path["profile.yaml"] = _payload_file(
                 "profile.yaml", yaml.safe_dump(profile_doc, sort_keys=False, allow_unicode=True)
@@ -1101,7 +1241,9 @@ def _apply_asset_changeset(
         elif isinstance(raw_asset.get("content_utf8"), str):
             files_by_path[path] = _payload_file(path, raw_asset["content_utf8"])
         else:
-            raise HTTPException(status_code=422, detail=f"File asset '{path}' requires content_utf8")
+            raise HTTPException(
+                status_code=422, detail=f"File asset '{path}' requires content_utf8"
+            )
 
     profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
     profile_doc["version"] = target_version
@@ -1112,7 +1254,9 @@ def _apply_asset_changeset(
     try:
         parse_profile_payload(files)
     except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid minted profile after changeset: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Invalid minted profile after changeset: {exc}"
+        ) from exc
     return files
 
 
@@ -1151,7 +1295,10 @@ async def _mint_from_proposal(
     if profile.profile_ref != profile_ref:
         raise HTTPException(status_code=422, detail="minted profile.yaml id must match profile_ref")
     if profile.version != target_version:
-        raise HTTPException(status_code=422, detail="minted profile.yaml version must match auto-incremented version")
+        raise HTTPException(
+            status_code=422,
+            detail="minted profile.yaml version must match auto-incremented version",
+        )
 
     await _upsert_shelf_profile(
         db,
@@ -1175,7 +1322,9 @@ async def _mint_from_proposal(
     }
 
 
-async def approve_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:
+async def approve_proposal(
+    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str
+) -> dict[str, Any]:
     pid = _parse_proposal_id(proposal_id)
     proposal = await _get_proposal(db, principal.team_id, pid)
     if proposal["status"] != "open":
@@ -1183,11 +1332,17 @@ async def approve_proposal(db: AsyncDatabaseManager, *, principal: Principal, pr
     minted = None
     if proposal["target"] == "profile":
         minted = await _mint_from_proposal(db, principal=principal, proposal=proposal)
-    result = await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="approved")
+    result = await _set_proposal_status(
+        db, principal=principal, proposal_id=proposal_id, status="approved"
+    )
     if minted is not None:
         result["minted"] = minted
     return result
 
 
-async def reject_proposal(db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str) -> dict[str, Any]:
-    return await _set_proposal_status(db, principal=principal, proposal_id=proposal_id, status="rejected")
+async def reject_proposal(
+    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str
+) -> dict[str, Any]:
+    return await _set_proposal_status(
+        db, principal=principal, proposal_id=proposal_id, status="rejected"
+    )
