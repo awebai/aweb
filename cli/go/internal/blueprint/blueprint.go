@@ -650,7 +650,10 @@ var (
 	knownSecretTokenRe      = regexp.MustCompile(`(?i)^(?:aw_sk_|gh[oprsu]_|github_pat_|xox[abprs]-|sk_(?:live|test)_)[A-Za-z0-9_-]{6,}`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
-	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
+	// Base64/base64url key blobs may start or end with non-word alphabet chars
+	// such as + or /. Do not use \b: it misses those edge cases. Instead require
+	// string edges or explicit non-base64 delimiters and capture only the token.
+	longBase64BlobRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9+/=_-])([A-Za-z0-9+/=_-]{64,})(?:[^A-Za-z0-9+/=_-]|$)`)
 )
 
 func unsafeContent(s string) bool {
@@ -803,8 +806,11 @@ func credentialValueHasEntropy(value string) bool {
 }
 
 func hasLongBase64Blob(s string) bool {
-	for _, candidate := range longBase64BlobRe.FindAllString(s, -1) {
-		if decodesAsMaterialBase64(candidate) {
+	for _, match := range longBase64BlobRe.FindAllStringSubmatch(s, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		if decodesAsMaterialBase64(match[1]) {
 			return true
 		}
 	}
