@@ -183,8 +183,8 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 		{
 			name:       "team invite",
 			args:       []string{"id", "team", "invite", "--help"},
-			want:       []string{"--global", "--local", "global member invite", "local workspace member invite"},
-			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralFlag, legacyPersistentInvite, legacyEphemeralInvite},
+			want:       []string{"--member-global", "--member-local", "global member invite", "local workspace member invite"},
+			mustAbsent: []string{"--global", "--local", legacyPersistentFlag, legacyEphemeralFlag, legacyPersistentInvite, legacyEphemeralInvite},
 		},
 		{
 			name:       "team add-member",
@@ -232,7 +232,9 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "persistent to global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --global"},
+		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
+		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
+		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
 		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
 	}

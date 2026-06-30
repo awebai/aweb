@@ -162,8 +162,12 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
+	markDeprecatedHiddenFlag(teamHumanInviteCmd, "local", "member-local")
+	markDeprecatedHiddenFlag(teamHumanInviteCmd, "global", "member-global")
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")

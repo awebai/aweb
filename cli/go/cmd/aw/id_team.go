@@ -257,12 +257,14 @@ var (
 	teamCreateDisplayName string
 	teamCreateRegistryURL string
 
-	teamInviteTeam       string
-	teamInviteNamespace  string
-	teamInviteEphemeral  bool
-	teamInvitePersistent bool
-	teamInviteLocal      bool
-	teamInviteGlobal     bool
+	teamInviteTeam         string
+	teamInviteNamespace    string
+	teamInviteEphemeral    bool
+	teamInvitePersistent   bool
+	teamInviteLocal        bool
+	teamInviteGlobal       bool
+	teamInviteMemberLocal  bool
+	teamInviteMemberGlobal bool
 
 	teamAcceptAlias     string
 	teamAcceptAddress   string
@@ -350,7 +352,7 @@ var teamInviteCmd = &cobra.Command{
 	Short: "Generate an invite token for a team",
 	Long: "Generate an invite token for a team.\n\n" +
 		"Defaults to the active local team when --team and --namespace are omitted.\n" +
-		"Invites create local workspace members unless --global is set. Hosted teams use cloud\n" +
+		"Invites create local workspace members unless --member-global is set. Hosted teams use cloud\n" +
 		"invite authority; local-controller teams use the local team controller key.",
 	RunE: runTeamInvite,
 }
@@ -494,12 +496,16 @@ func init() {
 
 	teamInviteCmd.Flags().StringVar(&teamInviteTeam, "team", "", "Team name")
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
-	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
-	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
-	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Deprecated alias for --local")
-	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Deprecated alias for --global")
-	markDeprecatedHiddenFlag(teamInviteCmd, "ephemeral", "local")
-	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "global")
+	teamInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
+	teamInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
+	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
+	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
+	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Deprecated alias for --member-local")
+	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Deprecated alias for --member-global")
+	markDeprecatedHiddenFlag(teamInviteCmd, "local", "member-local")
+	markDeprecatedHiddenFlag(teamInviteCmd, "global", "member-global")
+	markDeprecatedHiddenFlag(teamInviteCmd, "ephemeral", "member-local")
+	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "member-global")
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
@@ -646,10 +652,10 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	global := teamInviteGlobal || teamInvitePersistent
-	local := teamInviteLocal || teamInviteEphemeral
+	global := teamInviteMemberGlobal || teamInviteGlobal || teamInvitePersistent
+	local := teamInviteMemberLocal || teamInviteLocal || teamInviteEphemeral
 	if global && local {
-		return usageError("--global and --local cannot be used together")
+		return usageError("--member-global and --member-local cannot be used together")
 	}
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(workingDir)
 	if err != nil {
@@ -1135,7 +1141,7 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral 
 
 func createHostedTeamInviteToken(workingDir, teamID string, ephemeral bool) (string, string, error) {
 	if !ephemeral {
-		return "", "", usageError("--global is not supported for hosted team invites")
+		return "", "", usageError("--member-global is not supported for hosted team invites")
 	}
 	client, _, err := resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
 	if err != nil {

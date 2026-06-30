@@ -745,13 +745,13 @@ Flags:
 Generate an invite token for a team.
 
 Defaults to the active local team when --team and --namespace are omitted.
-Invites create local workspace members unless --global is set. Hosted teams use cloud
+Invites create local workspace members unless --member-global is set. Hosted teams use cloud
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
-- `--global Create global member invite`
 - `-h, --help help for invite`
-- `--local Create local workspace member invite (default)`
+- `--member-global Create global member invite`
+- `--member-local Create local workspace member invite (default)`
 - `--namespace string Namespace domain`
 - `--team string Team name`
 
@@ -942,9 +942,9 @@ workspace or machine, then the joining workspace runs `aw team join <token>`.
 For local empty-profile homes under agents/instances/, use `aw team add`.
 
 Flags:
-- `--global Create global member invite`
 - `-h, --help help for invite`
-- `--local Create local workspace member invite (default)`
+- `--member-global Create global member invite`
+- `--member-local Create local workspace member invite (default)`
 - `--team-id string Canonical team id (<name>:<namespace>) to invite from (defaults to active team)`
 
 ## `team join`
