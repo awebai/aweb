@@ -2368,9 +2368,47 @@ func TestTeamAcceptInviteGlobalWithoutIdentityErrorsToIDCreate(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
-	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
 	if err == nil || !strings.Contains(err.Error(), "aw id create") {
 		t.Fatalf("expected aw id create guidance, got %v", err)
+	}
+}
+
+func TestHostedGlobalAcceptRequiresAddressOrNoAddressUntilDefaultClaimSupported(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := t.TempDir()
+	serverCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalls++
+		t.Fatalf("unexpected hosted accept call without --address/--no-address: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:            awid.ComputeDIDKey(pub),
+		StableID:       awid.ComputeStableID(pub),
+		Address:        "globalhosted.aweb.ai/alice",
+		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeGlobal,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-06-30T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), key); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_default_claim", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	if err == nil || !strings.Contains(err.Error(), "requires --address or --no-address") {
+		t.Fatalf("expected hosted default-claim guard, got %v", err)
+	}
+	if serverCalls != 0 {
+		t.Fatalf("server calls=%d want 0", serverCalls)
 	}
 }
 
@@ -2754,20 +2792,13 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 	}
 }
 
-func TestLocalAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
+func TestLocalAcceptInviteRejectsPreseededGlobalIdentity(t *testing.T) {
 	t.Parallel()
 
-	var registeredCert map[string]any
+	registryCalls := 0
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
-			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
-				t.Fatal(err)
-			}
-			w.WriteHeader(http.StatusCreated)
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
+		registryCalls++
+		t.Fatalf("unexpected registry call for local accept with preseeded global identity: %s %s", r.Method, r.URL.Path)
 	}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -2789,12 +2820,12 @@ func TestLocalAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
 	}
 	memberDIDKey := awid.ComputeDIDKey(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  awid.ComputeStableID(memberPub),
-		Address:   "local/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-13T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      awid.ComputeStableID(memberPub),
+		Address:       "local/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-13T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2829,39 +2860,17 @@ func TestLocalAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
 	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runAccept.Dir = tmp
 	acceptOut, err := runAccept.CombinedOutput()
-	if err != nil {
-		t.Fatalf("accept-invite failed: %v\n%s", err, string(acceptOut))
+	if err == nil {
+		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
 	}
-
-	certPath := awconfig.TeamCertificatePath(tmp, "default:local")
-	cert, err := awid.LoadTeamCertificate(certPath)
-	if err != nil {
-		t.Fatalf("load certificate: %v", err)
+	if !strings.Contains(string(acceptOut), "already has a global identity") || !strings.Contains(string(acceptOut), "--global") {
+		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("cert lifetime=%q", cert.Lifetime)
+	if registryCalls != 0 {
+		t.Fatalf("registry calls=%d want 0", registryCalls)
 	}
-	if cert.MemberDIDKey != memberDIDKey {
-		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, memberDIDKey)
-	}
-	if cert.MemberDIDAW != "" {
-		t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
-	}
-	if cert.MemberAddress != "" {
-		t.Fatalf("cert member_address=%q", cert.MemberAddress)
-	}
-	if _, ok := registeredCert["member_did_aw"]; ok {
-		t.Fatalf("registered cert member_did_aw=%v", registeredCert["member_did_aw"])
-	}
-	if _, ok := registeredCert["member_address"]; ok {
-		t.Fatalf("registered cert member_address=%v", registeredCert["member_address"])
-	}
-	teamState, err := awconfig.LoadTeamState(tmp)
-	if err != nil {
-		t.Fatalf("load teams state: %v", err)
-	}
-	if membership := teamState.Membership("default:local"); membership == nil {
-		t.Fatal("expected local team membership in teams.yaml")
+	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
+		t.Fatalf("local cert should not be written, stat err=%v", err)
 	}
 }
 

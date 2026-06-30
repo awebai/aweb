@@ -342,7 +342,9 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"create a fresh local signing key and refuse to overwrite completed local\n" +
 		"state. Global hosted accepts reuse identity.yaml's stored did:aw and signing\n" +
 		"key; they do not mint a new did:aw just because this identity joins another\n" +
-		"team. After accepting, run `aw init` in that directory to connect the\n" +
+		"team. Until hosted default-address support lands, hosted --global requires\n" +
+		"--address for an owned address or --no-address for did:aw-only membership.\n" +
+		"After accepting, run `aw init` in that directory to connect the\n" +
 		"workspace.\n\n" +
 		"Local-controller invite tokens are same-machine helpers: they require the\n" +
 		"local invite record and local team controller key. Local-controller global\n" +
@@ -1327,6 +1329,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 	if opts.NoAddress && strings.TrimSpace(opts.Address) != "" {
 		return nil, usageError("--address and --no-address cannot be used together")
+	}
+	if scope == awid.IdentityModeGlobal && strings.TrimSpace(opts.Address) == "" && !opts.NoAddress {
+		return nil, usageError("hosted --global accept-invite currently requires --address or --no-address until hosted default-address claim support lands")
 	}
 	if err := ensureTeamAcceptScopeAllowed(workingDir, scope); err != nil {
 		return nil, err
@@ -3001,8 +3006,15 @@ func ensureTeamAcceptScopeAllowed(workingDir, scope string) error {
 	if scope == awid.IdentityModeLocal && teamState != nil && len(teamState.Memberships) > 0 {
 		return usageError("local identities can only join one team; use --global to reuse a global identity across teams, or accept this local invite in a fresh workspace")
 	}
-	if _, err := awconfig.ResolveIdentity(workingDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+	identity, err := awconfig.ResolveIdentity(workingDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
+	}
+	if scope == awid.IdentityModeLocal && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
+		return usageError("this workspace already has a global identity; use --global to reuse it, or accept --local in a fresh workspace")
 	}
 	return nil
 }
