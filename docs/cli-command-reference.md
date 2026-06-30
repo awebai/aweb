@@ -592,24 +592,32 @@ Flags:
 
 Accept a team invite and receive a membership certificate.
 
-Hosted aw_inv_ tokens are redeemed through the cloud, generate a fresh local
-identity, and refuse to overwrite an existing .aw identity in the target
-directory. After accepting, run `aw init` in that directory to connect the
-workspace. When a hosted invite is accepted with --address <domain>/<name>,
-the CLI creates a fresh self-custodial global identity for that address,
-registers it through the service, and installs the hosted team certificate.
+Scope is explicit: --local is the default, and --global reuses the existing
+self-custodial global identity in this workspace. --address never selects
+global scope; pass --global when presenting an existing owned address.
+
+Hosted aw_inv_ tokens are redeemed through the cloud. Local hosted accepts
+create a fresh local signing key and refuse to overwrite completed local
+state. Global hosted accepts reuse identity.yaml's stored did:aw and signing
+key; they do not mint a new did:aw just because this identity joins another
+team. After accepting, run `aw init` in that directory to connect the
+workspace.
 
 Local-controller invite tokens are same-machine helpers: they require the
 local invite record and local team controller key. Local-controller global
-invites require an existing global identity plus --address. For cross-machine BYOT
-joins, use `aw id team request`, have the controller run
-`aw id team add-member`, then install with `aw id team fetch-cert` on the
-joining machine.
+accepts default-claim team-domain/name only when the local namespace
+controller key is also present; otherwise use --address for an owned address
+or --no-address for did:aw-only membership. For cross-machine BYOT joins, use
+`aw id team request`, have the controller run `aw id team add-member`, then
+install with `aw id team fetch-cert` on the joining machine.
 
 Flags:
-- `--address string Registered address to place in the global member certificate`
+- `--address string Advanced: existing owned address to place in the global member certificate`
+- `--global Join by reusing the existing global identity in this workspace`
 - `-h, --help help for accept-invite`
+- `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
+- `--no-address For --global, join with did:aw continuity but no member address`
 
 ## `id team add`
 

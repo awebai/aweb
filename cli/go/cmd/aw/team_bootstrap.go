@@ -3793,7 +3793,7 @@ func acceptTeamInviteWithBootstrapAwebURL(homeDir string, invite teamBootstrapIn
 		preferredAwebURL = strings.TrimSpace(teamBootstrapAwebURL)
 	}
 	if preferredAwebURL == "" {
-		return acceptTeamInviteWithDetails(homeDir, invite.Token, alias, addressOverride)
+		return acceptTeamInviteWithDetails(homeDir, invite.Token, teamAcceptInviteOptions{Name: alias, Address: addressOverride, Scope: teamAcceptScopeForAddress(addressOverride)})
 	}
 
 	previous, hadPrevious := os.LookupEnv("AWEB_URL")
@@ -3807,7 +3807,7 @@ func acceptTeamInviteWithBootstrapAwebURL(homeDir string, invite teamBootstrapIn
 			_ = os.Unsetenv("AWEB_URL")
 		}
 	}()
-	return acceptTeamInviteWithDetails(homeDir, invite.Token, alias, addressOverride)
+	return acceptTeamInviteWithDetails(homeDir, invite.Token, teamAcceptInviteOptions{Name: alias, Address: addressOverride, Scope: teamAcceptScopeForAddress(addressOverride)})
 }
 
 func createTeamBootstrapInviteFromCurrentWorkspace() (teamBootstrapInvite, error) {

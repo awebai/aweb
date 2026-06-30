@@ -1265,8 +1265,10 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 		t.Fatal("invite token is empty")
 	}
 
-	// Step 2: Accept invite
-	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--json")
+	// Step 2: Accept invite. This local-controller invite has team-key authority
+	// but no namespace-controller authority, so global reuse must suppress the
+	// default team-domain address claim explicitly.
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--global", "--no-address", "--json")
 	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runAccept.Dir = tmp
 	acceptOut, err := runAccept.CombinedOutput()
@@ -1737,6 +1739,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	}
 
 	var acceptedStableID string
+	var expectedGlobalDID string
+	var expectedGlobalStableID string
 	var acceptBody map[string]any
 	var acceptVerifiedDID bool
 	var server *httptest.Server
@@ -1748,6 +1752,12 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			didKey, _ := acceptBody["did"].(string)
+			if didKey != expectedGlobalDID {
+				t.Fatalf("hosted global accept used did %q, want existing %q", didKey, expectedGlobalDID)
+			}
+			if acceptBody["stable_id"] != expectedGlobalStableID {
+				t.Fatalf("stable_id=%v want %s", acceptBody["stable_id"], expectedGlobalStableID)
+			}
 			pub := mustExtractPublicKey(t, didKey)
 			acceptedStableID = awid.ComputeStableID(pub)
 			if acceptBody["identity_scope"] != awid.IdentityModeGlobal {
@@ -1831,10 +1841,32 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	globalPub, globalKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalDID := awid.ComputeDIDKey(globalPub)
+	globalStableID := awid.ComputeStableID(globalPub)
+	expectedGlobalDID = globalDID
+	expectedGlobalStableID = globalStableID
+	writeIdentityForTest(t, acceptDir, awconfig.WorktreeIdentity{
+		DID:            globalDID,
+		StableID:       globalStableID,
+		Address:        "globalhosted.aweb.ai/durable-child",
+		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeGlobal,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-06-30T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(acceptDir), globalKey); err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(home, "aw")
 	buildAwBinary(t, ctx, bin)
 
 	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_hosted_global_token",
+		"--global",
 		"--address", "globalhosted.aweb.ai/durable-child",
 		"--json")
 	runAccept.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL)
@@ -1885,6 +1917,24 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 		t.Fatal(err)
 	}
 	teamID := "circle:globalhosted.aweb.ai"
+	globalPub, globalKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalDID := awid.ComputeDIDKey(globalPub)
+	globalStableID := awid.ComputeStableID(globalPub)
+	writeIdentityForTest(t, acceptDir, awconfig.WorktreeIdentity{
+		DID:            globalDID,
+		StableID:       globalStableID,
+		Address:        "globalhosted.aweb.ai/retry-child",
+		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeGlobal,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-06-30T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(acceptDir), globalKey); err != nil {
+		t.Fatal(err)
+	}
 	_, hostedTeamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -1956,13 +2006,13 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", "", "globalhosted.aweb.ai/retry-child")
+	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal})
 	if err == nil {
 		t.Fatal("first accept should fail")
 	}
 	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
 
-	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", "", "globalhosted.aweb.ai/retry-child")
+	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal})
 	if err != nil {
 		t.Fatalf("retry accept: %v", err)
 	}
@@ -2044,7 +2094,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", "retry-child", "")
+	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal})
 	if err == nil {
 		t.Fatal("first accept should fail")
 	}
@@ -2052,7 +2102,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	// survives a post-commit failure and the retry presents the same did:key.
 	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
 
-	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", "retry-child", "")
+	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal})
 	if err != nil {
 		t.Fatalf("retry accept: %v", err)
 	}
@@ -2298,6 +2348,149 @@ func TestHostedTeamAcceptInviteRefusesStrayBareKey(t *testing.T) {
 	}
 }
 
+func TestTeamAcceptInviteLocalRejectsSecondTeam(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := t.TempDir()
+	if err := awconfig.SaveTeamState(workingDir, &awconfig.TeamState{
+		ActiveTeam:  "one:acme.com",
+		Memberships: []awconfig.TeamMembership{{TeamID: "one:acme.com", Alias: "alice", CertPath: ".aw/team-certs/one_acme.com.jwt"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_second_local", teamAcceptInviteOptions{Name: "bob", Scope: awid.IdentityModeLocal})
+	if err == nil || !strings.Contains(err.Error(), "local identities can only join one team") {
+		t.Fatalf("expected local one-team guard, got %v", err)
+	}
+}
+
+func TestTeamAcceptInviteGlobalWithoutIdentityErrorsToIDCreate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := t.TempDir()
+	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	if err == nil || !strings.Contains(err.Error(), "aw id create") {
+		t.Fatalf("expected aw id create guidance, got %v", err)
+	}
+}
+
+func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := t.TempDir()
+
+	oldPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(pub)
+	memberDIDAW := awid.ComputeStableID(oldPub)
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:            memberDID,
+		StableID:       memberDIDAW,
+		Address:        "otherco.com/alice",
+		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeGlobal,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-06-30T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, home, "acme.com", "backend", teamKey)
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeControllerKeyForTest(t, home, "acme.com", controllerKey)
+
+	var claimDryRuns []bool
+	var sawCert bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberDIDAW+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          memberDIDAW,
+				"current_did_key": memberDID,
+				"log_head": map[string]any{
+					"seq":              2,
+					"operation":        "rotate_did_key",
+					"previous_did_key": awid.ComputeDIDKey(oldPub),
+					"new_did_key":      memberDID,
+					"prev_entry_hash":  "prevhash",
+					"entry_hash":       "entryhash",
+					"state_hash":       "statehash",
+					"authorized_by":    memberDID,
+					"timestamp":        "2026-06-30T00:00:00Z",
+					"signature":        "sig",
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses/claims":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			claimDryRuns = append(claimDryRuns, payload["dry_run"] == true)
+			if payload["did_aw"] != memberDIDAW || payload["current_did_key"] != memberDID || payload["address_name"] != "alice" {
+				t.Fatalf("claim payload=%+v", payload)
+			}
+			proof, _ := payload["did_log_proof"].(map[string]any)
+			if proof["operation"] != "rotate_did_key" || proof["new_did_key"] != memberDID {
+				t.Fatalf("did_log_proof=%+v", proof)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "claimed", "dry_run": payload["dry_run"], "domain": "acme.com", "name": "alice", "did_aw": memberDIDAW, "current_did_key": memberDID,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/certificates":
+			sawCert = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["member_did_aw"] != memberDIDAW || payload["member_address"] != "acme.com/alice" || payload["identity_scope"] != awid.IdentityModeGlobal {
+				t.Fatalf("cert payload=%+v", payload)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: "2026-06-30T00:00:00Z"}
+	writeTeamInviteForTest(t, home, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatalf("acceptTeamInviteWithDetails: %v", err)
+	}
+	if !sawCert || len(claimDryRuns) != 2 || !claimDryRuns[0] || claimDryRuns[1] {
+		t.Fatalf("sawCert=%v claimDryRuns=%v", sawCert, claimDryRuns)
+	}
+	if accepted.Certificate.MemberDIDAW != memberDIDAW || accepted.Certificate.MemberAddress != "acme.com/alice" {
+		t.Fatalf("cert global fields=%q/%q", accepted.Certificate.MemberDIDAW, accepted.Certificate.MemberAddress)
+	}
+}
+
 func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	t.Parallel()
 
@@ -2382,6 +2575,7 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	}
 
 	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
+		"--global",
 		"--address", "otherco.com/alice",
 		"--json")
 	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -2453,7 +2647,7 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
 	}
-	if !strings.Contains(string(acceptOut), "--address is only valid for global team invites") {
+	if !strings.Contains(string(acceptOut), "--address requires --global") {
 		t.Fatalf("unexpected output:\n%s", string(acceptOut))
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
@@ -2544,6 +2738,7 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 	}
 
 	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
+		"--global",
 		"--address", "otherco.com/alice")
 	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runAccept.Dir = tmp

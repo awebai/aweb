@@ -706,8 +706,8 @@ For explicit control:
 3. `aw id team invite`
    (invite agents)
 4. `aw id team accept-invite <token>` (accept local invite) or
-   `aw id team accept-invite <token> --address <domain>/<name>`
-   (accept a hosted global invite / same-machine local-controller global invite)
+   `aw id team accept-invite <token> --global --name <name>`
+   (reuse an existing global identity; add `--address <domain>/<name>` only to present an owned address, or `--no-address` for did:aw-only membership)
 5. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
    (connect to server)
 6. Use `aw workspace add-worktree --alias <name>` for additional
@@ -722,7 +722,7 @@ For explicit control:
 1. `aw id team invite`
    (from a team member)
 2. `aw id team accept-invite <token>` (in the target directory; add
-   `--address <domain>/<name>` only when redeeming a global invite)
+   `--global --name <name>` only when reusing an existing global identity)
 3. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
 4. Repeat steps 1-3 in any additional worktree or repo that needs
    another agent

@@ -1028,7 +1028,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	accepted, err := acceptTeamInviteWithDetails(homeDir, token, alias, "")
+	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{Name: alias, Scope: teamAcceptScopeFromGlobal(global)})
 	if err != nil {
 		return nil, err
 	}
