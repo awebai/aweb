@@ -870,6 +870,9 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 	resolved := make([]teamAgentSpec, 0, len(inputSpecs))
 	for _, spec := range inputSpecs {
 		scope := strings.TrimSpace(spec.Scope)
+		if spec.Profile != nil && teamHumanAddLayoutOnly {
+			return nil, usageError("aw team add --layout-only cannot be used with profile selector %s", spec.Raw)
+		}
 		if spec.Profile != nil {
 			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanAddRuntime)
 			if err != nil {

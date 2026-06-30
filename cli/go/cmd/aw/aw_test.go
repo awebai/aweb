@@ -242,6 +242,7 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
 		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
+		{name: "id team add to accept-invite", args: []string{"id", "team", "add", "--help"}, want: "Command \"add\" is deprecated, use `aw id team accept-invite --global <token>` or `aw team join --global <token>`"},
 		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
 	}
 	for _, tc := range cases {

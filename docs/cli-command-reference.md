@@ -568,7 +568,6 @@ holders, service projection, or diagnostics.
 
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
-- `add` Join another team with the current identity
 - `add-member` Protocol/admin: add a member by signing a team certificate
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Protocol/admin: create a customer-controlled AWID team
@@ -621,17 +620,6 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
-
-## `id team add`
-
-### `id team add`
-
-Join another team with the current identity
-
-Flags:
-- `--address string Registered address to place in the global member certificate`
-- `-h, --help help for add`
-- `--name string Member name for the added team membership (defaults to the current identity name)`
 
 ## `id team add-member`
 

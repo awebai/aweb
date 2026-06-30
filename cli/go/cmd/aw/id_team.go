@@ -384,10 +384,11 @@ var teamAcceptInviteCmd = &cobra.Command{
 }
 
 var teamAddCmd = &cobra.Command{
-	Use:   "add <invite-token>",
-	Short: "Join another team with the current identity",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runTeamAdd,
+	Use:        "add <invite-token>",
+	Short:      "Deprecated alias for accept-invite with a global identity",
+	Deprecated: "use `aw id team accept-invite --global <token>` or `aw team join --global <token>`",
+	Args:       cobra.ExactArgs(1),
+	RunE:       runTeamAdd,
 }
 
 var teamSwitchCmd = &cobra.Command{
@@ -521,6 +522,7 @@ func init() {
 	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Deprecated alias for --name")
 	markDeprecatedHiddenFlag(teamAddCmd, "alias", "name")
 	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the global member certificate")
+	teamAddCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "Join with did:aw continuity but no member address")
 	teamCmd.AddCommand(teamAddCmd)
 	teamCmd.AddCommand(teamSwitchCmd)
 	teamCmd.AddCommand(teamListCmd)
@@ -786,19 +788,13 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAcceptInviteOptions{
+	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
 		Name:      teamAcceptAlias,
 		Address:   teamAcceptAddress,
 		Scope:     acceptScope,
 		NoAddress: teamAcceptNoAddress,
-	})
+	}, teamInviteStoreOptions{SetActive: true})
 	if err != nil {
-		return err
-	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
-		return err
-	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
 		return err
 	}
 	printOutput(*accepted.Output, formatTeamAcceptInvite)
@@ -831,39 +827,62 @@ func teamAcceptScopeFromGlobal(global bool) string {
 	return awid.IdentityModeLocal
 }
 
+type teamInviteStoreOptions struct {
+	SetActive       bool
+	RejectDuplicate bool
+}
+
+func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOptions, store teamInviteStoreOptions) (*acceptedTeamInvite, error) {
+	var teamState *awconfig.TeamState
+	if store.RejectDuplicate {
+		loaded, err := requireTeamStateForMembership(workingDir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+			loaded = &awconfig.TeamState{}
+		}
+		teamState = loaded
+	}
+	accepted, err := acceptTeamInviteWithDetails(workingDir, token, opts)
+	if err != nil {
+		return nil, err
+	}
+	if teamState != nil && teamState.Membership(accepted.Output.TeamID) != nil {
+		return nil, rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
+	}
+	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, store.SetActive); err != nil {
+		if store.RejectDuplicate {
+			return nil, rollbackAddedTeamCertificate(workingDir, accepted, err)
+		}
+		return nil, err
+	}
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+		if store.RejectDuplicate {
+			return nil, rollbackAddedTeamCertificate(workingDir, accepted, err)
+		}
+		return nil, err
+	}
+	return accepted, nil
+}
+
 func runTeamAdd(cmd *cobra.Command, args []string) error {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	teamState, err := requireTeamStateForMembership(workingDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		teamState = &awconfig.TeamState{}
-	}
-
 	teamAddMemberAddress := strings.TrimSpace(teamAddAddress)
-	if teamAddMemberAddress == "" {
+	if teamAddMemberAddress == "" && !teamAcceptNoAddress {
 		_, teamAddMemberAddress = resolveIdentityFieldsForCert(workingDir)
 	}
-	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAcceptInviteOptions{
-		Name:    teamAddAlias,
-		Address: teamAddMemberAddress,
-		Scope:   awid.IdentityModeGlobal,
-	})
+	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
+		Name:      teamAddAlias,
+		Address:   teamAddMemberAddress,
+		Scope:     awid.IdentityModeGlobal,
+		NoAddress: teamAcceptNoAddress,
+	}, teamInviteStoreOptions{SetActive: false, RejectDuplicate: true})
 	if err != nil {
 		return err
-	}
-	if teamState.Membership(accepted.Output.TeamID) != nil {
-		return rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
-	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, false); err != nil {
-		return rollbackAddedTeamCertificate(workingDir, accepted, err)
-	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
-		return rollbackAddedTeamCertificate(workingDir, accepted, err)
 	}
 	printOutput(teamAddOutput{
 		Status:   "added",
