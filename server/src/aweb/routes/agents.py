@@ -4,11 +4,12 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 from awid.e2ee_keys import validate_encryption_key_assertion
-from aweb.alias_allocator import suggest_next_name_prefix
+from awid.team_ids import parse_team_id
+from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.deps import get_db, get_redis
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -111,9 +112,32 @@ class UpdateAgentInboundModeRequest(BaseModel):
         return value
 
 
+class SuggestAliasPrefixRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    scope: Literal["local", "global"] = "local"
+    exclude: list[str] = Field(default_factory=list, max_length=100)
+    count: int = Field(default=1, ge=1, le=100)
+
+    @field_validator("exclude")
+    @classmethod
+    def validate_exclude(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for value in values or []:
+            item = str(value or "").strip().lower()
+            if item:
+                out.append(item)
+        return out
+
+
+class SuggestAliasPrefixName(BaseModel):
+    name: str
+
+
 class SuggestAliasPrefixResponse(BaseModel):
     team_id: str
     name_prefix: str
+    names: Optional[list[SuggestAliasPrefixName]] = None
 
 
 class PatchWorkspaceRequest(BaseModel):
@@ -166,14 +190,43 @@ class SendControlSignalRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/suggest-alias-prefix", response_model=SuggestAliasPrefixResponse)
+@router.post(
+    "/suggest-alias-prefix",
+    response_model=SuggestAliasPrefixResponse,
+    response_model_exclude_none=True,
+)
 async def suggest_alias_prefix(
     request: Request,
+    payload: SuggestAliasPrefixRequest | None = Body(default=None),
     db=Depends(get_db),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> SuggestAliasPrefixResponse:
-    """Suggest the next available classic alias for the authenticated team."""
+    """Suggest next available agent names for the authenticated team/scope."""
+    include_names = payload is not None
+    request_payload = payload or SuggestAliasPrefixRequest()
     aweb_db = db.get_manager("aweb")
+    if request_payload.scope == "global":
+        existing = await _global_namespace_names(request, aweb_db, identity)
+        user_prefix = _identity_global_name_prefix(identity)
+        names = _suggest_scoped_names(
+            existing,
+            request_payload.exclude,
+            count=request_payload.count,
+            user_prefix=user_prefix,
+        )
+    else:
+        existing = await _local_team_aliases(aweb_db, identity.team_id)
+        names = _suggest_scoped_names(existing, request_payload.exclude, count=request_payload.count)
+    if not names:
+        raise HTTPException(status_code=409, detail="alias_exhausted")
+    return SuggestAliasPrefixResponse(
+        team_id=identity.team_id,
+        name_prefix=names[0],
+        names=[SuggestAliasPrefixName(name=name) for name in names] if include_names else None,
+    )
+
+
+async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     rows = await aweb_db.fetch_all(
         """
         SELECT alias
@@ -188,15 +241,82 @@ async def suggest_alias_prefix(
         ) aliases
         ORDER BY alias
         """,
-        identity.team_id,
+        team_id,
     )
-    name_prefix = suggest_next_name_prefix([str(r.get("alias") or "") for r in rows])
-    if name_prefix is None:
-        raise HTTPException(status_code=409, detail="alias_exhausted")
-    return SuggestAliasPrefixResponse(
-        team_id=identity.team_id,
-        name_prefix=name_prefix,
-    )
+    return [str(r.get("alias") or "") for r in rows]
+
+
+async def _global_namespace_names(request: Request, aweb_db, identity: TeamIdentity) -> list[str]:
+    namespace, _team_name = parse_team_id(identity.team_id)
+    registry_client = getattr(request.app.state, "awid_registry_client", None)
+    if registry_client is None or not hasattr(registry_client, "list_addresses"):
+        raise HTTPException(status_code=503, detail="awid_registry_unavailable")
+    try:
+        addresses = await registry_client.list_addresses(namespace)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="awid_registry_unavailable") from exc
+    names = []
+    for address in addresses or []:
+        if isinstance(address, dict):
+            domain = str(address.get("domain") or "").strip().lower()
+            name = str(address.get("name") or "").strip()
+        else:
+            domain = str(getattr(address, "domain", "") or "").strip().lower()
+            name = str(getattr(address, "name", "") or "").strip()
+        if domain == namespace and name:
+            names.append(name)
+    return names
+
+
+def _suggest_scoped_names(
+    existing_names: list[str],
+    exclude: list[str],
+    *,
+    count: int,
+    user_prefix: str | None = None,
+) -> list[str]:
+    if user_prefix:
+        used = _used_global_names(existing_names, exclude, user_prefix=user_prefix)
+    else:
+        used = used_name_prefixes([*existing_names, *exclude])
+    out: list[str] = []
+    for candidate in candidate_name_prefixes():
+        name = f"{user_prefix}-{candidate}" if user_prefix else candidate
+        key = name.lower() if user_prefix else candidate
+        if key in used:
+            continue
+        used.add(key)
+        out.append(name)
+        if len(out) >= count:
+            return out
+    return out
+
+
+def _used_global_names(existing_names: list[str], exclude: list[str], *, user_prefix: str) -> set[str]:
+    used = {str(name or "").strip().lower() for name in existing_names if str(name or "").strip()}
+    prefix = f"{user_prefix}-"
+    for value in exclude:
+        item = str(value or "").strip().lower()
+        if not item:
+            continue
+        used.add(item)
+        if not item.startswith(prefix):
+            used.add(prefix + item)
+    return used
+
+
+def _identity_global_name_prefix(identity: TeamIdentity) -> str:
+    raw = ""
+    if identity.address and "/" in identity.address:
+        _namespace, raw = identity.address.split("/", 1)
+    raw = (raw or identity.alias or "").strip().lower()
+    if not raw:
+        raise HTTPException(status_code=422, detail="global_scope_requires_identity_prefix")
+    for candidate in candidate_name_prefixes():
+        suffix = f"-{candidate}"
+        if raw.endswith(suffix) and raw[: -len(suffix)].strip("-"):
+            return raw[: -len(suffix)].strip("-")
+    return raw
 
 
 @router.get("", response_model=ListAgentsResponse)
