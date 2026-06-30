@@ -995,7 +995,7 @@ capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id te
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
 assert_not_empty "alice invite token" "$ALICE_INVITE_TOKEN"
 
-capture_success alice_accept_out "alice_accept_out" run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" \
+capture_success alice_accept_out "alice_accept_out" run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" --global \
   --alias alice \
   --json
 
@@ -1093,7 +1093,7 @@ BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
 # Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
-capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" \
+capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" --global \
   --alias bob \
   --json
 
@@ -1340,7 +1340,7 @@ capture_success eve_invite_out "eve_invite_out" run_aw_in "$ALICE_DIR" id team i
 EVE_INVITE_TOKEN="$(echo "$eve_invite_out" | jq_field token)"
 assert_not_empty "eve local invite token" "$EVE_INVITE_TOKEN"
 
-capture_success eve_accept "eve_accept" run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
+capture_success eve_accept "eve_accept" run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" --global \
   --alias eve \
   --json
 EVE_ACCEPT_STATUS="$(echo "$eve_accept" | jq_field status)"
@@ -1641,7 +1641,7 @@ capture_success ops_invite_out "ops_invite_out" run_aw_in "$ALICE_DIR" id team i
 OPS_INVITE_TOKEN="$(echo "$ops_invite_out" | jq_field token)"
 assert_not_empty "ops invite token" "$OPS_INVITE_TOKEN"
 
-capture_success carol_accept "carol_accept" run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" \
+capture_success carol_accept "carol_accept" run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" --global \
   --alias carol \
   --json
 CAROL_ACCEPT_STATUS="$(echo "$carol_accept" | jq_field status)"
@@ -1667,7 +1667,7 @@ capture_success dave_invite_out "dave_invite_out" run_aw_in "$ALICE_DIR" id team
 DAVE_INVITE_TOKEN="$(echo "$dave_invite_out" | jq_field token)"
 assert_not_empty "dave ops invite token" "$DAVE_INVITE_TOKEN"
 
-capture_success dave_accept "dave_accept" run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" \
+capture_success dave_accept "dave_accept" run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" --global \
   --alias dave \
   --json
 DAVE_ACCEPT_STATUS="$(echo "$dave_accept" | jq_field status)"
@@ -1941,7 +1941,7 @@ capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PART
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
 
-capture_success partner_bob_accept "partner_bob_accept" run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" \
+capture_success partner_bob_accept "partner_bob_accept" run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" --global \
   --alias bob \
   --json
 PARTNER_BOB_ACCEPT_STATUS="$(echo "$partner_bob_accept" | jq_field status)"
@@ -1959,7 +1959,7 @@ capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
 
-capture_success partner_alice_accept "partner_alice_accept" run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" \
+capture_success partner_alice_accept "partner_alice_accept" run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" --global \
   --alias alice \
   --address partner.local/alice \
   --json
