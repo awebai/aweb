@@ -189,9 +189,12 @@ Rules:
   claim/create a global identity first.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
-<token>`. Compatibility surfaces may still expose `alias` or `lifetime` wording
-until the scheduled CLI cleanup lands; the model term is `name`, and the scope
-terms are `local` and `global`.
+<token>`. During the alias-to-name transition, CLI JSON output dual-emits
+`alias` and `name` for one release, and emits `identity_scope` beside any
+legacy `lifetime` field. The deprecated `--alias` flag remains accepted as a
+hidden alias for `--name` with a warning during that same compatibility window;
+the later wire/schema cleanup removes the legacy names. The model term is
+`name`, and the scope terms are `local` and `global`.
 
 ## Command-to-verb mapping
 

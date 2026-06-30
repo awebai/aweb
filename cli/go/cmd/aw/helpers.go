@@ -1208,8 +1208,42 @@ func ensureWorktreeContextAt(workingDir string) error {
 }
 
 func printJSON(v any) {
-	data, _ := json.MarshalIndent(v, "", "  ")
+	data, _ := json.Marshal(v)
+	var compat any
+	if err := json.Unmarshal(data, &compat); err == nil {
+		compat = addJSONNameScopeCompat(compat)
+		data, _ = json.MarshalIndent(compat, "", "  ")
+	} else {
+		data, _ = json.MarshalIndent(v, "", "  ")
+	}
 	fmt.Println(string(data))
+}
+
+func addJSONNameScopeCompat(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			typed[key] = addJSONNameScopeCompat(value)
+		}
+		if _, hasName := typed["name"]; !hasName {
+			if alias, ok := typed["alias"].(string); ok && strings.TrimSpace(alias) != "" {
+				typed["name"] = alias
+			}
+		}
+		if _, hasScope := typed["identity_scope"]; !hasScope {
+			if lifetime, ok := typed["lifetime"].(string); ok && strings.TrimSpace(lifetime) != "" {
+				typed["identity_scope"] = awid.NormalizeIdentityScope(lifetime)
+			}
+		}
+		return typed
+	case []any:
+		for i, value := range typed {
+			typed[i] = addJSONNameScopeCompat(value)
+		}
+		return typed
+	default:
+		return v
+	}
 }
 
 func printOutput(v any, formatter func(v any) string) {

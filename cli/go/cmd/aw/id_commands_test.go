@@ -28,6 +28,49 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPrintJSONDualEmitsNameAndIdentityScopeCompat(t *testing.T) {
+	out := captureIDCommandStdout(t, func() {
+		printJSON(map[string]any{
+			"alias":    "alice",
+			"lifetime": "persistent",
+			"nested": []any{map[string]any{
+				"alias":    "bob",
+				"lifetime": "ephemeral",
+			}},
+		})
+	})
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["alias"] != "alice" || got["name"] != "alice" || got["lifetime"] != "persistent" || got["identity_scope"] != "global" {
+		t.Fatalf("top-level compat fields=%v", got)
+	}
+	nested := got["nested"].([]any)[0].(map[string]any)
+	if nested["alias"] != "bob" || nested["name"] != "bob" || nested["lifetime"] != "ephemeral" || nested["identity_scope"] != "local" {
+		t.Fatalf("nested compat fields=%v", nested)
+	}
+}
+
+func captureIDCommandStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+	fn()
+	_ = w.Close()
+	os.Stdout = oldStdout
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
 func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {
 	out := formatIDCreate(idCreateOutput{
 		Status:         "created",
