@@ -6,10 +6,10 @@ allowed-tools: "Bash(aw *)"
 
 # aweb Bootstrap
 
-Use this skill when a human is working with the legacy
-`aw agents` bootstrap/provision/add/remove lifecycle, recovering an existing
-bootstrap-era `agents/` directory, or migrating from old template repos toward
-primitive-first setup and resource packs.
+The `aw agents` bootstrap/provision/add/remove command family has been retired.
+Use this skill only to recognize or manually recover old bootstrap-era
+`agents/` directories and to migrate them toward primitive-first setup and
+resource packs. Do not instruct users to run `aw agents ...` commands.
 
 For a new setup, do **not** start here by default. Prefer:
 

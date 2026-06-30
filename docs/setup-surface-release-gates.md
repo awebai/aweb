@@ -21,11 +21,7 @@ This checks:
 - generated CLI reference is current;
 - resource-pack manifests and paths are valid;
 - root help still exposes the intended command buckets;
-- `aw agents` remains marked obsolete/legacy compatibility;
-- no-source bootstrap/provision failures occur before layout mutation;
-- hosted bootstrap failures roll back newly-created `agents/` layouts when no
-  `.aw` identity state exists;
-- hosted bootstrap failures preserve layouts that contain `.aw` key state;
+- the retired `aw agents` command family stays absent from help;
 - resource-pack role application stays novice-friendly through `aw roles add`.
 
 ## Full CLI gate
@@ -51,11 +47,10 @@ Use this before pushing or asking for review on CLI behavior changes.
   connect`, `aw check`, `aw workspace status`, `aw whoami`.
 - Protocol/admin commands use protocol/admin language, especially BYOT
   namespace/team controller operations.
-- `aw agents bootstrap`, `provision`, `add`, `add-worktree`, and related layout
-  commands are compatibility/legacy, not the hosted happy path.
-- Compatibility commands do not overwrite or delete `.aw` identity state,
-  signing keys, encryption keys, namespace controller keys, or team controller
-  keys.
+- The retired `aw agents bootstrap`, `provision`, `add`, `add-worktree`, and
+  related layout commands are not documented as callable setup paths.
+- Setup commands do not overwrite or delete `.aw` identity state, signing keys,
+  encryption keys, namespace controller keys, or team controller keys.
 - Any command that spans more than one authority boundary has a dry-run, a
   preflight, rollback, or explicit recovery path.
 - Public docs and dashboard copy do not teach bootstrap-era templates as the
@@ -71,5 +66,5 @@ When requesting review, include:
 - commit range;
 - commands run;
 - whether generated CLI reference changed;
-- whether bootstrap/recoverability tests changed;
+- whether retired-bootstrap/recoverability tests changed;
 - any hosted vs BYOT authority decision that was deferred.

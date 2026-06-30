@@ -24,6 +24,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func assertPathExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected path to exist %s: %v", path, err)
+	}
+}
+
+func resetTeamAcceptInviteGlobals(t *testing.T) {
+	t.Helper()
+	oldAlias := teamAcceptAlias
+	oldAddress := teamAcceptAddress
+	oldLocal := teamAcceptLocal
+	oldGlobal := teamAcceptGlobal
+	oldNoAddress := teamAcceptNoAddress
+	t.Cleanup(func() {
+		teamAcceptAlias = oldAlias
+		teamAcceptAddress = oldAddress
+		teamAcceptLocal = oldLocal
+		teamAcceptGlobal = oldGlobal
+		teamAcceptNoAddress = oldNoAddress
+	})
+	teamAcceptAlias = ""
+	teamAcceptAddress = ""
+	teamAcceptLocal = false
+	teamAcceptGlobal = false
+	teamAcceptNoAddress = false
+}
+
 // writeControllerKeyForTest writes a controller key to the test HOME's AWID state directory.
 func writeControllerKeyForTest(t *testing.T, home, domain string, key ed25519.PrivateKey) {
 	t.Helper()
@@ -1909,7 +1937,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 }
 
 func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) {
-	resetTeamBootstrapGlobals(t)
+	resetTeamAcceptInviteGlobals(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	acceptDir := filepath.Join(home, "retry-global")
@@ -2025,7 +2053,7 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 }
 
 func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
-	resetTeamBootstrapGlobals(t)
+	resetTeamAcceptInviteGlobals(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	acceptDir := filepath.Join(home, "retry-local")

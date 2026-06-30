@@ -137,12 +137,8 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		t.Fatalf("expected run in Coordination & Runtime group:\n%s", text)
 	}
 
-	agentsIdx := strings.Index(text, "\n  agents")
-	if agentsIdx < obsoleteIdx || agentsIdx > utilityIdx {
-		t.Fatalf("expected agents in Obsolete / Legacy Compatibility group:\n%s", text)
-	}
-	if !strings.Contains(text, "Obsolete compatibility for repo-local agent layouts") {
-		t.Fatalf("expected agents help to be marked obsolete compatibility:\n%s", text)
+	if strings.Contains(text, "\n  agents") {
+		t.Fatalf("agents command should not appear in top-level help after retirement:\n%s", text)
 	}
 	if strings.Contains(text, "\n  spawn") || strings.Contains(text, "\nspawn") {
 		t.Fatalf("spawn should not appear in top-level help:\n%s", text)

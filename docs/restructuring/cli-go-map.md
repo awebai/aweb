@@ -23,7 +23,7 @@ Evidence:
 - Top-level commands are added by static `rootCmd.AddCommand(...)` calls in `init()` functions, e.g. `cmd/aw/root.go:125`, `cmd/aw/agents.go:13`, `cmd/aw/task.go:18`, `cmd/aw/work.go:58`, `cmd/aw/lock.go:210`, `cmd/aw/roles.go:151`, `cmd/aw/instructions.go:85`.
 - `find . -iname '*plugin*'` finds no aw plugin-management implementation; textual `plugin` hits are Claude plugin setup strings (`cmd/aw/init.go:479`, `cmd/aw/channel_setup.go:131`) or unrelated tests, not `aw plugin`.
 - Runtime check after `make build`: `./aw plugin list` returns `unknown command "plugin" for "aw"`; `./aw definitely-not-a-command` returns `unknown command "definitely-not-a-command" for "aw"`.
-- `exec.Command`/`exec.LookPath` uses are specific integrations, not plugin dispatch: provider execution in `run/loop.go:1490`, shell services in `run/services.go:132`, git worktree helpers in `cmd/aw/workspace.go:999`, macOS codesign in `cmd/aw/upgrade.go:403`, and legacy bootstrap git/GitHub helpers in `cmd/aw/team_bootstrap.go:3209` and `cmd/aw/team_bootstrap.go:3219`.
+- `exec.Command`/`exec.LookPath` uses are specific integrations, not plugin dispatch: provider execution in `run/loop.go`, shell services in `run/services.go`, git worktree helpers in `cmd/aw/workspace.go`, and macOS codesign in `cmd/aw/upgrade.go`. The old `cmd/aw/team_bootstrap.go` helpers were removed with the retired `aw agents` family.
 
 Brief gap for SOT §10 / milestone 2: all plugin mechanics in the brief are absent today. The only current seam to map is Cobra's unknown-command error path plus the existing generic signed-request helper (`aw id request --team-auth`).
 
@@ -97,7 +97,7 @@ Bootstrap / setup commands:
 - `aw id register|show|resolve|verify|namespace` are registry commands (`cmd/aw/id_registry.go:71`, `cmd/aw/id_registry.go:118`).
 - `aw id team ...` covers hosted invite/accept plus BYOT/admin certificate operations (`cmd/aw/id_team.go:251`, `cmd/aw/id_team.go:396`).
 - `aw workspace connect` is an alias to `aw service init`, deliberately not a team/identity creator (`cmd/aw/workspace.go:41`).
-- `aw workspace add-worktree` remains a legacy convenience that shells out to git worktree operations (`cmd/aw/workspace.go:32`, `cmd/aw/workspace.go:999`).
+- `aw workspace add-worktree` remains a legacy convenience that shells out to git worktree operations (`cmd/aw/workspace.go`) and uses the shared invite/connect helper in `cmd/aw/workspace_invite.go`.
 
 ## Coordination surface and SOT movement
 

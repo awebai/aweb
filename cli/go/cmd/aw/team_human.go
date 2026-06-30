@@ -933,56 +933,31 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 }
 
 func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[string]bool) (string, error) {
+	exclude := make([]string, 0, len(used))
+	for name := range used {
+		exclude = append(exclude, name)
+	}
+	sort.Strings(exclude)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	suggestion, err := client.SuggestAliasPrefix(ctx)
+	suggestion, err := client.SuggestAgentNames(ctx, awid.SuggestAgentNamesRequest{
+		Scope:   scope,
+		Exclude: exclude,
+		Count:   1,
+	})
 	cancel()
 	if err != nil {
 		return "", fmt.Errorf("suggest next name from server: %w", err)
 	}
-	classic := strings.TrimSpace(suggestion.NamePrefix)
-	if !isValidSuggestedAliasPrefix(classic) {
-		return "", fmt.Errorf("server returned invalid name suggestion %q", classic)
-	}
-	prefix := ""
-	if scope == awid.IdentityModeGlobal {
-		var err error
-		prefix, err = resolveAgentsIdentityPrefix(nil)
-		if err != nil {
-			return "", err
-		}
-		if prefix == "" {
-			return "", usageError("identity prefix is required for auto-named global agents; set AWEB_IDENTITY_PREFIX, AWEB_HUMAN, or USER, or specify NAME@ explicitly")
-		}
-	}
-	candidates := teamHumanClassicCandidatesFrom(classic)
-	for _, candidate := range candidates {
-		name := candidate
-		if prefix != "" {
-			name = prefix + "-" + candidate
+	for _, suggested := range suggestion.Names {
+		name := strings.TrimSpace(suggested.Name)
+		if name == "" || !isValidWorkspaceAlias(name) {
+			return "", fmt.Errorf("server returned invalid name suggestion %q", name)
 		}
 		if !used[strings.ToLower(name)] {
 			return name, nil
 		}
 	}
-	return "", usageError("auto-name candidates exhausted; specify NAME@ explicitly")
-}
-
-func teamHumanClassicCandidatesFrom(start string) []string {
-	start = strings.ToLower(strings.TrimSpace(start))
-	idx := 0
-	for i, name := range agentsClassicNames {
-		if name == start {
-			idx = i
-			break
-		}
-	}
-	out := make([]string, 0, len(agentsClassicNames)+100)
-	out = append(out, agentsClassicNames[idx:]...)
-	out = append(out, agentsClassicNames[:idx]...)
-	for i := 1; i <= 100; i++ {
-		out = append(out, fmt.Sprintf("%s-%02d", start, i))
-	}
-	return out
+	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
 func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
