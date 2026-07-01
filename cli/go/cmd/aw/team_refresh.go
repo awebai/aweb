@@ -133,7 +133,7 @@ func refreshLibraryProfileInHome(homeDir, agentID string, old recordedProfileRef
 }
 
 func callLibraryGetShelfProfile(profileRef string) (*libraryShelfProfileResponse, error) {
-	body, err := executeLibraryToolBody([]string{"get-shelf-profile", "--profile_ref", profileRef, "--include", "files"})
+	body, err := executeLibraryToolBody([]string{"get-shelf-profile", "--profile_ref", profileRef, "--include", "files"}, nil)
 	if err != nil {
 		return nil, err
 	}
