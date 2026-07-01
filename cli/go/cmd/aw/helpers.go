@@ -990,9 +990,7 @@ func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName
 			return "", "", err
 		}
 	}
-	if baseURL == "" {
-		baseURL = DefaultAwebURL
-	}
+	baseURL = awebURLOrDefault(baseURL)
 	if serverName == "" {
 		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
 		if derr == nil {

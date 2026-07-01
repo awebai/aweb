@@ -806,7 +806,7 @@ func awebURLForTeamInvite(workingDir, teamID string) string {
 		}
 	}
 	if domain, _, err := awid.ParseTeamID(teamID); err == nil && isAwebHostedNamespace(domain) {
-		return DefaultAwebURL
+		return awebURLOrDefault("")
 	}
 	return ""
 }
@@ -1410,10 +1410,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 		didKey = awid.ComputeDIDKey(pub)
 	}
-	awebURL := strings.TrimSpace(resolveInitAwebURLOverride())
-	if awebURL == "" {
-		awebURL = DefaultAwebURL
-	}
+	awebURL := awebURLOrDefault(resolveInitAwebURLOverride())
 	awebURL, err = normalizeAwebBaseURL(awebURL)
 	if err != nil {
 		return nil, err
@@ -2607,9 +2604,7 @@ func executeTeamCleanupCloud(
 	if strings.TrimSpace(timestamp) == "" {
 		return teamCleanupCloudOutput{}, usageError("timestamp is required")
 	}
-	if strings.TrimSpace(awebURL) == "" {
-		awebURL = DefaultAwebURL
-	}
+	awebURL = awebURLOrDefault(awebURL)
 	controllerScope = strings.ToLower(strings.TrimSpace(controllerScope))
 	if controllerScope == "" {
 		controllerScope = "team"

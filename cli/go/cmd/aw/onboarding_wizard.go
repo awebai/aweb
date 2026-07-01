@@ -316,10 +316,7 @@ func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Write
 }
 
 func defaultWizardAwebURL() string {
-	if awebURL := strings.TrimSpace(os.Getenv("AWEB_URL")); awebURL != "" {
-		return awebURL
-	}
-	return DefaultAwebURL
+	return awebURLOrDefault(os.Getenv("AWEB_URL"))
 }
 
 func resolveGuidedOnboardingAwebURL(raw string) (string, error) {

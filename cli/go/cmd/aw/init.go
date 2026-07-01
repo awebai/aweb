@@ -305,11 +305,7 @@ func initHasExplicitOnboardingArgs() bool {
 }
 
 func resolveInitAwebURL() (string, error) {
-	value := resolveInitAwebURLOverride()
-	if value == "" {
-		value = DefaultAwebURL
-	}
-	return normalizeAwebBaseURL(value)
+	return normalizeAwebBaseURL(awebURLOrDefault(resolveInitAwebURLOverride()))
 }
 
 func resolveExplicitInitAwebURL() (string, error) {
@@ -379,7 +375,7 @@ func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, erro
 	if strings.TrimSpace(registryURL) != awid.DefaultAWIDRegistryURL {
 		return "", false, nil
 	}
-	awebURL, err := cleanBaseURL(DefaultAwebURL + "/api")
+	awebURL, err := cleanBaseURL(awebURLOrDefault("") + "/api")
 	if err != nil {
 		return "", false, err
 	}
@@ -395,6 +391,13 @@ func resolveInitAwebURLOverride() string {
 		value = strings.TrimSpace(os.Getenv("AWEB_URL"))
 	}
 	return value
+}
+
+func awebURLOrDefault(raw string) string {
+	if value := strings.TrimSpace(raw); value != "" {
+		return value
+	}
+	return DefaultAwebURL
 }
 
 func resolveInitAWIDRegistryURL() (string, error) {

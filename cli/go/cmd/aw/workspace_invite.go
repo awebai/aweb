@@ -40,9 +40,7 @@ func addWorktreeViaPrimaryInvite(
 	if awebURL == "" {
 		awebURL = strings.TrimSpace(sourceServerURL)
 	}
-	if awebURL == "" {
-		awebURL = DefaultAwebURL
-	}
+	awebURL = awebURLOrDefault(awebURL)
 	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err
