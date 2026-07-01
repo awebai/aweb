@@ -1206,7 +1206,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	}
 
 	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
-	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
+	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
 		t.Fatalf("error=%v", err)
 	}
 	if certCalls != 1 {
@@ -1302,7 +1302,7 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *
 	writeWorkspaceBindingForTest(t, root, workspace)
 
 	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
-	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
+	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
 		t.Fatalf("error=%v", err)
 	}
 	if justCreatedCertID == "" {
@@ -1387,7 +1387,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		t.Fatal("expected materialize + rollback failure")
 	}
 	text := err.Error()
-	for _, want := range []string{"aw library plugin is not installed", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+	for _, want := range []string{"Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q:\n%s", want, text)
 		}
@@ -1424,7 +1424,7 @@ func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) 
 	}
 
 	err := runTeamHumanCreate(nil, []string{"eng"})
-	if err == nil || !strings.Contains(err.Error(), "aw library plugin is not installed") {
+	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
 		t.Fatalf("error=%v", err)
 	}
 	if !called {

@@ -903,7 +903,7 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 				} else {
 					scope, err = resolveLibraryProfileScope(parsed)
 					if err != nil {
-						if !strings.Contains(err.Error(), "aw library plugin is not installed") {
+						if !isMissingLibraryPluginError(err) {
 							return nil, err
 						}
 						scope = awid.IdentityModeLocal

@@ -28,20 +28,26 @@ func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected aw library command resolution to fail actionably")
 	}
-	for _, want := range []string{"aw library plugin is not installed", libraryPluginInstallCommand} {
+	for _, want := range []string{"The aw Library plugin is not installed", "Install it with:", libraryPluginInstallCommand} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("missing plugin error should contain %q, got %v", want, err)
 		}
+	}
+	if strings.Contains(err.Error(), "Adding an agent") {
+		t.Fatalf("direct aw library error should not use team-add wording: %v", err)
 	}
 
 	_, _, err = applyLibraryProfileToHome(t.TempDir(), "developer", libraryProfileSelector{SourceBlueprintRef: "aweb.development", ProfileRef: "developer"}, true)
 	if err == nil {
 		t.Fatal("expected team/profile materialize path to fail without library plugin")
 	}
-	for _, want := range []string{"aw library plugin is not installed", libraryPluginInstallCommand} {
+	for _, want := range []string{"Adding an agent from a Library profile (aweb.development/developer) requires the aw Library plugin", "Install it, then re-run:", libraryPluginInstallCommand} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("profile path missing plugin error should contain %q, got %v", want, err)
 		}
+	}
+	if strings.Contains(err.Error(), "The aw Library plugin is not installed. Install it with:") {
+		t.Fatalf("profile path should use team-add wording, got %v", err)
 	}
 }
 

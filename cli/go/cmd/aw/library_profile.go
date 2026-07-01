@@ -20,8 +20,27 @@ const (
 	libraryPluginInstallCommand   = "aw plugin install " + libraryPluginManifestURL
 )
 
-func missingLibraryPluginError() error {
-	return usageError("aw library plugin is not installed; run `%s`", libraryPluginInstallCommand)
+const missingLibraryPluginMarker = "Library plugin"
+
+func missingLibraryPluginCommandError() error {
+	return usageError("The aw Library plugin is not installed. Install it with:\n    %s", libraryPluginInstallCommand)
+}
+
+func missingLibraryPluginProfileError(selector libraryProfileSelector) error {
+	return usageError("Adding an agent from a Library profile (%s) requires the aw Library plugin, which is not installed. Install it, then re-run:\n    %s", libraryProfileSelectorLabel(selector), libraryPluginInstallCommand)
+}
+
+func isMissingLibraryPluginError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), missingLibraryPluginMarker) && strings.Contains(err.Error(), "not installed")
+}
+
+func libraryProfileSelectorLabel(selector libraryProfileSelector) string {
+	blueprintRef := strings.TrimSpace(selector.SourceBlueprintRef)
+	profileRef := strings.TrimSpace(selector.ProfileRef)
+	if blueprintRef == "" || profileRef == "" {
+		return "NAME@BLUEPRINT/PROFILE"
+	}
+	return blueprintRef + "/" + profileRef
 }
 
 type libraryProfileSelector struct {
@@ -312,7 +331,7 @@ func withWorkingDir(dir string, fn func() error) error {
 }
 
 func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
-	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef})
+	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef}, missingLibraryPluginProfileError(selector))
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +433,7 @@ func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportTo
 	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
 		args = append(args, "--source_blueprint_version", selector.SourceBlueprintVersion)
 	}
-	body, err := executeLibraryToolBody(args)
+	body, err := executeLibraryToolBody(args, missingLibraryPluginProfileError(selector))
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +461,7 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 		"--profile_version", imported.Version,
 		"--profile_digest", imported.Digest,
 		"--source_blueprint_ref", imported.SourceBlueprintRef,
-	})
+	}, missingLibraryPluginProfileError(libraryProfileSelector{SourceBlueprintRef: imported.SourceBlueprintRef, ProfileRef: imported.ProfileRef}))
 	if err != nil {
 		return nil, err
 	}
@@ -453,10 +472,13 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 	return &out, nil
 }
 
-func executeLibraryToolBody(args []string) ([]byte, error) {
+func executeLibraryToolBody(args []string, missingErr error) ([]byte, error) {
 	result, exists, err := executeInstalledManifestTool(libraryPluginName, args)
 	if !exists {
-		return nil, missingLibraryPluginError()
+		if missingErr != nil {
+			return nil, missingErr
+		}
+		return nil, missingLibraryPluginCommandError()
 	}
 	if err != nil {
 		return nil, err

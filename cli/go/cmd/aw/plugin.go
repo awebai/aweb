@@ -1006,7 +1006,7 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 	}
 	if !ok {
 		if strings.TrimSpace(name) == libraryPluginName {
-			return pluginResolution{}, missingLibraryPluginError()
+			return pluginResolution{}, missingLibraryPluginCommandError()
 		}
 		return pluginResolution{}, nil
 	}
