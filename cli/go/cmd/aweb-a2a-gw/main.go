@@ -1213,7 +1213,7 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); did != strings.TrimSpace(cert.MemberDIDKey) {
 		return nil, "", fmt.Errorf("signing key did:key %s does not match certificate member_did_key %s", did, strings.TrimSpace(cert.MemberDIDKey))
 	}
-	baseURL := firstNonEmpty(teamMembership.AwebURL, workspace.AwebURL)
+	baseURL := gatewayBaseURL(workspace, teamMembership)
 	if baseURL == "" {
 		return nil, "", fmt.Errorf("workspace is missing aweb_url")
 	}
@@ -1234,6 +1234,22 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 	client.SetResolver(resolver)
 	gatewayIdentity := firstNonEmpty(gatewayIdentityOverride, cert.MemberAddress, cert.MemberDIDAW, cert.MemberDIDKey, cert.Alias)
 	return client, gatewayIdentity, nil
+}
+
+// gatewayBaseURL resolves the aweb-server base URL for the mail client with the
+// same precedence every other reader uses: the worktree's workspace.yaml
+// top-level aweb_url is primary; the teams.yaml membership aweb_url is a
+// fallback for the migration-leftover spine.
+func gatewayBaseURL(workspace *awconfig.WorktreeWorkspace, teamMembership *awconfig.TeamMembership) string {
+	workspaceURL := ""
+	if workspace != nil {
+		workspaceURL = workspace.AwebURL
+	}
+	membershipURL := ""
+	if teamMembership != nil {
+		membershipURL = teamMembership.AwebURL
+	}
+	return firstNonEmpty(workspaceURL, membershipURL)
 }
 
 type acMailTransport struct {
