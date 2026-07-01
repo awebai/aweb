@@ -282,7 +282,7 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 		WorkingDir:     strings.TrimSpace(sel.WorkingDir),
 		TeamID:         strings.TrimSpace(sel.TeamID),
 		Custody:        strings.TrimSpace(sel.Custody),
-		Lifetime:       strings.TrimSpace(sel.Lifetime),
+		Lifetime:       awid.LegacyLifetimeForIdentityScope(sel.IdentityScope),
 	}, nil
 }
 

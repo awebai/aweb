@@ -28,6 +28,70 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPrintJSONDualEmitsNameAndIdentityScopeCompat(t *testing.T) {
+	out := captureIDCommandStdout(t, func() {
+		printJSON(map[string]any{
+			"alias":    "alice",
+			"lifetime": "persistent",
+			"nested": []any{map[string]any{
+				"alias":    "bob",
+				"lifetime": "ephemeral",
+			}},
+		})
+	})
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["alias"] != "alice" || got["name"] != "alice" || got["lifetime"] != "persistent" || got["identity_scope"] != "global" {
+		t.Fatalf("top-level compat fields=%v", got)
+	}
+	nested := got["nested"].([]any)[0].(map[string]any)
+	if nested["alias"] != "bob" || nested["name"] != "bob" || nested["lifetime"] != "ephemeral" || nested["identity_scope"] != "local" {
+		t.Fatalf("nested compat fields=%v", nested)
+	}
+}
+
+func captureIDCommandStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+	fn()
+	_ = w.Close()
+	os.Stdout = oldStdout
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {
+	out := formatIDCreate(idCreateOutput{
+		Status:         "created",
+		Address:        "acme.com/alice",
+		DIDAW:          "did:aw:alice",
+		DIDKey:         "did:key:alice",
+		ControllerDID:  "did:key:controller",
+		IdentityPath:   ".aw/identity.yaml",
+		SigningKeyPath: ".aw/signing.key",
+		RegistryStatus: "registered",
+	})
+	for _, want := range []string{"Scope:       global", "Address:     acme.com/alice", "Global ID:   .aw/identity.yaml", "Signing Key: .aw/signing.key"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Identity:    .aw/identity.yaml") || strings.Contains(out, "Key:         .aw/signing.key") {
+		t.Fatalf("legacy identity/key labels remain:\n%s", out)
+	}
+}
+
 func TestAwIDCommandsHappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -351,8 +415,21 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if identity.Custody != awid.CustodySelf {
 		t.Fatalf("identity custody=%q", identity.Custody)
 	}
+	if identity.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", identity.IdentityScope)
+	}
 	if identity.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("identity lifetime=%q", identity.Lifetime)
+		t.Fatalf("deprecated-read-compat identity lifetime=%q", identity.Lifetime)
+	}
+	identityRaw, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatalf("read identity.yaml: %v", err)
+	}
+	if !strings.Contains(string(identityRaw), "identity_scope: global") || !strings.Contains(string(identityRaw), "schema_version: 2") {
+		t.Fatalf("identity.yaml must write schema v2 identity_scope: %s", string(identityRaw))
+	}
+	if strings.Contains(string(identityRaw), "lifetime:") {
+		t.Fatalf("identity.yaml must not write deprecated lifetime: %s", string(identityRaw))
 	}
 	if identity.RegistryURL != server.URL {
 		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, server.URL)

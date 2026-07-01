@@ -41,14 +41,17 @@ var (
 	idCreateSkipDNSVerify bool
 	idCreateCmd           = &cobra.Command{
 		Use:   "create",
-		Short: "Create a standalone global identity with a DNS-backed address in .aw/",
-		RunE:  runIDCreate,
+		Short: "Create a global identity by claiming a namespace address",
+		Long: "Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME\n" +
+			"in a namespace you control. This mints a did:aw, stores the local signing\n" +
+			"key material, and atomically claims the global address in AWID.",
+		RunE: runIDCreate,
 	}
 )
 
 func init() {
-	idCreateCmd.Flags().StringVar(&idCreateName, "name", "", "Global identity name")
-	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Global identity domain")
+	idCreateCmd.Flags().StringVar(&idCreateName, "name", "", "Global identity name (address name under --domain)")
+	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
 	identityCmd.AddCommand(idCreateCmd)
@@ -154,7 +157,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    plan.RegistryURL,
 		RegistryStatus: registryStatus,
 		CreatedAt:      plan.CreatedAt,
@@ -175,7 +178,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    plan.RegistryURL,
 		RegistryStatus: registryStatus,
 		CreatedAt:      plan.CreatedAt,

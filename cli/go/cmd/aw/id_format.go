@@ -26,14 +26,15 @@ func formatIDCreate(v any) string {
 	out := v.(idCreateOutput)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	sb.WriteString("Scope:       global\n")
 	if strings.TrimSpace(out.Address) != "" {
 		sb.WriteString(fmt.Sprintf("Address:     %s\n", out.Address))
 	}
 	sb.WriteString(fmt.Sprintf("did:aw:      %s\n", out.DIDAW))
 	sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.DIDKey))
 	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
-	sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.IdentityPath))
-	sb.WriteString(fmt.Sprintf("Key:         %s\n", out.SigningKeyPath))
+	sb.WriteString(fmt.Sprintf("Global ID:   %s\n", out.IdentityPath))
+	sb.WriteString(fmt.Sprintf("Signing Key: %s\n", out.SigningKeyPath))
 	if strings.TrimSpace(out.EncryptionKeyID) != "" {
 		sb.WriteString(fmt.Sprintf("E2E Key:     %s\n", out.EncryptionKeyID))
 	}
@@ -61,7 +62,7 @@ func formatIDShow(v any) string {
 	out := v.(idShowOutput)
 	var sb strings.Builder
 	if strings.TrimSpace(out.Alias) != "" {
-		sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+		sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	}
 	if strings.TrimSpace(out.Address) != "" {
 		sb.WriteString(fmt.Sprintf("Address:     %s\n", out.Address))

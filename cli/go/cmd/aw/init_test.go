@@ -125,8 +125,8 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	initIsTTY = func() bool { return true }
 	initURL = "https://app.aweb.ai"
 	initUsername = "jane"
-	initAlias = "alice"
-	initName = ""
+	initAlias = ""
+	initName = "alice"
 	initDomain = ""
 	initBYOD = false
 	initPersistent = false
@@ -921,7 +921,7 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	}
 }
 
-func TestRunImplicitLocalInitRequiresAlias(t *testing.T) {
+func TestRunImplicitLocalInitRequiresName(t *testing.T) {
 	tmp := t.TempDir()
 	_, err := runImplicitLocalInit(implicitLocalInitRequest{
 		WorkingDir:  tmp,
@@ -929,9 +929,9 @@ func TestRunImplicitLocalInitRequiresAlias(t *testing.T) {
 		RegistryURL: "http://localhost:8010",
 	})
 	if err == nil {
-		t.Fatal("expected alias requirement error")
+		t.Fatal("expected name requirement error")
 	}
-	if !strings.Contains(err.Error(), "--alias is required") {
+	if !strings.Contains(err.Error(), "--name is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

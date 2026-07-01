@@ -97,9 +97,9 @@ type registryReadAuthority struct {
 
 var (
 	idAddressesCmd = &cobra.Command{
-		Use:   "addresses <did_aw>",
-		Short: "List registry addresses for a did:aw",
-		Args:  cobra.ExactArgs(1),
+		Use:   "addresses [did_aw]",
+		Short: "List registry addresses for a did:aw (defaults to the current global identity)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE:  runIDAddresses,
 	}
 
@@ -139,9 +139,14 @@ func runIDAddresses(cmd *cobra.Command, args []string) error {
 	}
 	requestID := newRegistryReadRequestID()
 	registry.RequestID = requestID
-	didAW := strings.TrimSpace(args[0])
+	didAW := ""
+	if len(args) > 0 {
+		didAW = strings.TrimSpace(args[0])
+	} else if identity != nil {
+		didAW = strings.TrimSpace(identity.StableID)
+	}
 	if !strings.HasPrefix(didAW, "did:aw:") {
-		return usageError("did_aw must start with did:aw:")
+		return usageError("did_aw must start with did:aw: (or run from a global identity workspace)")
 	}
 	registryURL, err := registryLookupURL(ctx, registry, identity, didAW)
 	if err != nil {

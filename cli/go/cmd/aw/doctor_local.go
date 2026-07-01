@@ -357,12 +357,12 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 			doctorCheckCertificateAlias,
 			doctorStatusFail,
 			&doctorTarget{Type: "team", ID: expectedTeam},
-			"Team certificate alias does not match the active workspace membership.",
-			"Restore the certificate for this workspace alias or reinitialize the binding.",
+			"Team certificate member name does not match the active workspace membership.",
+			"Restore the certificate for this workspace name or reinitialize the binding.",
 			map[string]any{"workspace_alias": expectedAlias, "certificate_alias": strings.TrimSpace(cert.Alias)},
 		))
 	} else {
-		r.add(localCheck(doctorCheckCertificateAlias, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate alias matches the active workspace membership.", "", map[string]any{"alias": expectedAlias}))
+		r.add(localCheck(doctorCheckCertificateAlias, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate member name matches the active workspace membership.", "", map[string]any{"alias": expectedAlias}))
 	}
 
 	lifetime := strings.TrimSpace(cert.Lifetime)
@@ -595,7 +595,7 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 		return
 	}
 
-	identityLifetime := strings.TrimSpace(identity.Lifetime)
+	identityLifetime := awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
 	if identityLifetime != lifetime {
 		r.add(localPathCheck(
 			doctorCheckIdentityScope,

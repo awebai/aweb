@@ -1001,8 +1001,14 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 		return pluginResolution{Kind: pluginResolutionManifest, Path: manifestPluginManifestPath(dir, name)}, nil
 	}
 	path, ok, err := resolveTrustedExternalPluginInDir(dir, name)
-	if err != nil || !ok {
+	if err != nil {
 		return pluginResolution{}, err
+	}
+	if !ok {
+		if strings.TrimSpace(name) == libraryPluginName {
+			return pluginResolution{}, missingLibraryPluginCommandError()
+		}
+		return pluginResolution{}, nil
 	}
 	return pluginResolution{Kind: pluginResolutionExternal, Path: path}, nil
 }

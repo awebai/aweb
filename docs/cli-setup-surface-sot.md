@@ -25,13 +25,13 @@ The distinction is not beginner versus expert. The distinction is:
 
 ## Why this taxonomy exists
 
-The current bootstrap-era product center combines too many boundaries in one
-command. A single `aw agents bootstrap` invocation may read a template, create
-or join a team, create identities, install roles/instructions, write files,
-edit gitignore, and create worktrees. A partial failure can strand local layout
-state before hosted team/account setup completes. Retrying then fails because
-`agents/` already exists, while `provision` cannot create the missing hosted
-team.
+The old bootstrap-era product center combined too many boundaries in one
+command. A single retired `aw agents bootstrap` invocation could read a
+template, create or join a team, create identities, install roles/instructions,
+write files, edit gitignore, and create worktrees. A partial failure could
+strand local layout state before hosted team/account setup completed. Retrying
+then failed because `agents/` already existed, while `provision` could not
+create the missing hosted team.
 
 That failure mode is a symptom of the wrong abstraction. Setup must keep these
 concerns separate:
@@ -99,14 +99,15 @@ Use this label when the user is:
 
 ### Obsolete/legacy compatibility
 
-Obsolete/legacy compatibility commands are kept for existing users and scripts,
-but should not be taught as the product center. These are usually commands that
-combine identity/team mutation with filesystem/template/git mutation, or that
-represent a retired setup model.
+Obsolete/legacy compatibility commands may exist temporarily for existing users
+and scripts, but should not be taught as the product center. The bootstrap-era
+`aw agents` family has now been retired; historical layout docs remain only as
+recovery context.
 
-The term "obsolete" is a product signal, not permission to make the commands
-unsafe. Legacy commands must still preserve identity/key safety and fail before
-partial side effects when required inputs are missing.
+The term "obsolete" is a product signal, not permission to make compatibility
+commands unsafe while they exist. Legacy commands must still preserve
+identity/key safety and fail before partial side effects when required inputs
+are missing.
 
 ## Command classification
 
@@ -161,17 +162,12 @@ the categories stable unless this document is updated.
 | `aw id register` / `resolve` / `verify` / `addresses` / `log` / `sign` / `request` | Protocol/admin or diagnostic identity primitives | Keep available for debugging, automation, and registry-aware tooling. |
 | hidden `aw connect --bootstrap-token` | Protocol/bootstrap plumbing | Keep hidden unless a current dashboard flow still emits it; prefer clearer connect/join wording where possible. |
 
-### Obsolete/legacy compatibility candidates
+### Retired / legacy compatibility notes
 
-| Current command/action | Classification | Required compatibility behavior |
+| Current command/action | Classification | Required behavior |
 | --- | --- | --- |
-| `aw agents bootstrap` | Obsolete/legacy compatibility once replacement resource-pack flow lands | Keep callable short-term. Stop teaching as happy path. Fail before filesystem/git side effects when team source cannot be resolved. On post-layout hosted/setup failures, roll back newly-created in-repo layouts when no `.aw` identity state exists; preserve layouts that contain `.aw` keys and print recovery guidance. |
-| `aw agents provision` | Obsolete/legacy compatibility | Keep for existing `agents/` layouts. Make error messages point to invite/API key/BYOT/current-workspace sources and resource-pack replacement guidance. |
-| `aw agents plan` | Compatibility diagnostic for old layout | Keep while old layouts exist; avoid teaching as new template planning model. |
-| `aw agents add` | Obsolete/legacy compatibility if it mutates shared layout + identity state | Prefer separate primitives: invite/join/connect workspace, then resource-pack/application steps. |
-| `aw agents add-worktree` | Obsolete/legacy compatibility if it couples template layout with identity/worktree setup | Prefer explicit git/filesystem primitives, then `aw init`/invite/join/connect primitives and skills/resource application. |
+| `aw agents bootstrap` / `provision` / `plan` / `add` / `add-worktree` / `remove` | Retired bootstrap-era family | No longer callable. Do not teach as setup paths; use team/identity/workspace primitives and normal git/filesystem operations instead. |
 | `aw workspace add-worktree` | Local convenience/compatibility for existing users | Future skills should prefer explicit `git worktree`/filesystem steps followed by `aw init`/invite/join/connect primitives, unless this command is reduced to a transparent wrapper with no identity/team/template magic. |
-| `aw agents remove` | Compatibility command with strong safety constraints | Removal/deprovision may remain useful, but must clearly separate layout removal, membership revocation, local `.aw` state movement, worktree cleanup, and address deletion. |
 | `aw init --byod` wording | Retired middle-ground risk unless carefully scoped | If retained, copy must not imply the BYOT controller-first import path. BYOT docs should teach controller primitives. |
 | bootstrap-era template repos | Obsolete template model | Replace with team blueprints (see [team-blueprints-sot.md](team-blueprints-sot.md)). Old repos should redirect or clearly mark legacy/compatibility. |
 

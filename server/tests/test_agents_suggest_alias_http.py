@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -33,8 +34,8 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
-        "member_did_aw": "",
-        "member_address": "",
+        "member_did_aw": kwargs.get("member_did_aw", ""),
+        "member_address": kwargs.get("member_address", ""),
         "alias": kwargs.get("alias", "alice"),
         "identity_scope": kwargs.get("identity_scope", "local"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
@@ -239,6 +240,53 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     assert resp.json() == {
         "team_id": "backend:acme.com",
         "name_prefix": "charlie",
+        "names": [{"name": "charlie"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_suggest_alias_prefix_no_body_keeps_legacy_response_shape(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
+        """,
+        uuid4(),
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+
+    body_bytes = b""
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/agents/suggest-alias-prefix",
+            content=body_bytes,
+            headers=headers,
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "team_id": "backend:acme.com",
+        "name_prefix": "bob",
     }
 
 
@@ -285,6 +333,133 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
     assert resp.json() == {
         "team_id": "backend:acme.com",
         "name_prefix": "bob",
+        "names": [{"name": "bob"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_suggest_alias_prefix_count_and_exclude_are_ordered(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES
+            ($1, $2, $3, 'alice', 'local', 'active'),
+            ($4, $2, $5, 'bob', 'local', 'active')
+        """,
+        uuid4(),
+        "backend:acme.com",
+        agent_did_key,
+        uuid4(),
+        "did:key:z6Mkbob",
+    )
+
+    body_bytes = json.dumps({"scope": "local", "exclude": ["charlie"], "count": 3}, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/agents/suggest-alias-prefix",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "team_id": "backend:acme.com",
+        "name_prefix": "dave",
+        "names": [{"name": "dave"}, {"name": "eve"}, {"name": "frank"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_suggest_alias_prefix_global_uses_namespace_names_and_user_prefix(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    other_team_sk, _, other_team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="maria",
+        identity_scope="global",
+        member_address="acme.com/maria",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+    await _insert_team(aweb_cloud_db.aweb_db, "frontend:acme.com", other_team_did_key)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status)
+        VALUES
+            ($1, $2, $3, 'did:aw:maria', 'acme.com/maria', 'maria', 'global', 'active'),
+            ($4, $2, $5, 'did:aw:mariaalice', 'acme.com/maria-alice', 'maria-alice', 'global', 'active'),
+            ($6, $7, $8, 'did:aw:mariabob', 'acme.com/maria-bob', 'maria-bob', 'global', 'active'),
+            ($9, $7, $10, 'did:aw:otheralice', 'acme.com/other-alice', 'other-alice', 'global', 'active'),
+            ($11, $7, $12, 'did:aw:otherns', 'other.com/maria-charlie', 'maria-charlie', 'global', 'active')
+        """,
+        uuid4(),
+        "backend:acme.com",
+        agent_did_key,
+        uuid4(),
+        "did:key:z6Mkmariaalice",
+        uuid4(),
+        "frontend:acme.com",
+        "did:key:z6Mkmariabob",
+        uuid4(),
+        "did:key:z6Mkotheralice",
+        uuid4(),
+        "did:key:z6Mkotherns",
+    )
+
+    body_bytes = json.dumps(
+        {"scope": "global", "exclude": ["maria-charlie"], "count": 2},
+        separators=(",", ":"),
+    ).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    app.state.awid_registry_client.list_addresses = AsyncMock(
+        return_value=[
+            SimpleNamespace(domain="acme.com", name="maria"),
+            SimpleNamespace(domain="acme.com", name="maria-alice"),
+            SimpleNamespace(domain="acme.com", name="maria-bob"),
+            SimpleNamespace(domain="acme.com", name="other-alice"),
+            SimpleNamespace(domain="other.com", name="maria-charlie"),
+        ]
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/agents/suggest-alias-prefix",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "team_id": "backend:acme.com",
+        "name_prefix": "maria-dave",
+        "names": [{"name": "maria-dave"}, {"name": "maria-eve"}],
     }
 
 

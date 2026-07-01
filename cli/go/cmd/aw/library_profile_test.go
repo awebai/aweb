@@ -14,6 +14,43 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 )
 
+func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, exists, err := executeInstalledManifestTool(libraryPluginName, []string{"get-profile", "--blueprint_ref", "aweb.development", "--profile_ref", "developer"})
+	if err != nil || exists {
+		t.Fatalf("executeInstalledManifestTool err=%v exists=%v, want missing without error for direct lookup", err, exists)
+	}
+
+	_, err = resolveTrustedPluginCommand(libraryPluginName)
+	if err == nil {
+		t.Fatal("expected aw library command resolution to fail actionably")
+	}
+	for _, want := range []string{"The aw Library plugin is not installed", "Install it with:", libraryPluginInstallCommand} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing plugin error should contain %q, got %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "Adding an agent") {
+		t.Fatalf("direct aw library error should not use team-add wording: %v", err)
+	}
+
+	_, _, err = applyLibraryProfileToHome(t.TempDir(), "developer", libraryProfileSelector{SourceBlueprintRef: "aweb.development", ProfileRef: "developer"}, true)
+	if err == nil {
+		t.Fatal("expected team/profile materialize path to fail without library plugin")
+	}
+	for _, want := range []string{"Adding an agent from a Library profile (aweb.development/developer) requires the aw Library plugin", "Install it, then re-run:", libraryPluginInstallCommand} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("profile path missing plugin error should contain %q, got %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "The aw Library plugin is not installed. Install it with:") {
+		t.Fatalf("profile path should use team-add wording, got %v", err)
+	}
+}
+
 func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
 	selector, err := parseLibraryProfileSelector("aweb.engineering/reviewer=pi")
 	if err != nil {
@@ -22,15 +59,45 @@ func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
 	if selector.SourceBlueprintRef != "aweb.engineering" || selector.ProfileRef != "reviewer" || selector.RuntimeKind != "pi" {
 		t.Fatalf("selector=%+v", selector)
 	}
-	versioned, err := parseLibraryProfileSelector("aweb.engineering/reviewer@0.2.0=local-shell")
+	scoped, err := parseLibraryProfileSelector("aweb.engineering/reviewer:global=codex")
 	if err != nil {
-		t.Fatalf("parse versioned selector: %v", err)
+		t.Fatalf("parse scoped selector: %v", err)
 	}
-	if versioned.SourceBlueprintVersion != "0.2.0" || versioned.RuntimeKind != "local-shell" {
-		t.Fatalf("versioned selector=%+v", versioned)
+	if scoped.IdentityScope != awid.IdentityModeGlobal || scoped.RuntimeKind != "codex" {
+		t.Fatalf("scoped selector=%+v", scoped)
+	}
+	if _, err := parseLibraryProfileSelector("aweb.engineering/reviewer@0.2.0=local-shell"); err == nil || !strings.Contains(err.Error(), "@ now separates NAME") {
+		t.Fatalf("versioned selector error=%v", err)
 	}
 	if _, err := parseLibraryProfileSelector("aweb.engineering/reviewer=python"); err == nil || !strings.Contains(err.Error(), "supported runtimes") {
 		t.Fatalf("bad runtime error=%v", err)
+	}
+}
+
+func TestApplyLocalBlueprintProfileToHomeUsesLocalSourceAndRuntime(t *testing.T) {
+	fixture := filepath.Join(engineeringBlueprintFixtureRoot(t), "source")
+	home := t.TempDir()
+	selector := libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "developer", RuntimeKind: "pi"}
+
+	result, written, err := applyLocalBlueprintProfileToHome(home, selector, fixture, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceBlueprintRef != "aweb.engineering" || result.ProfileRef != "developer" {
+		t.Fatalf("result=%+v", result)
+	}
+	if len(written) == 0 {
+		t.Fatalf("no files written")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("pi runtime should not create CLAUDE.md symlink, err=%v", err)
+	}
+	profileYAML, err := os.ReadFile(filepath.Join(home, ".aw", "profile", "profile.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(profileYAML), "id: developer") {
+		t.Fatalf("profile.yaml did not come from local developer profile:\n%s", string(profileYAML))
 	}
 }
 
@@ -150,13 +217,9 @@ func TestApplyLibraryProfileToHomeUsesInstalledManifestAndMaterializesLocally(t 
 	}
 }
 
-func TestApplyLibraryProfileToHomeRejectsVersionedSelectorUntilVersionedSourceFetch(t *testing.T) {
+func TestParseLibraryProfileSelectorRejectsVersionedSelector(t *testing.T) {
 	home := t.TempDir()
-	selector, err := parseLibraryProfileSelector("aweb.engineering/coordinator@0.1.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = applyLibraryProfileToHome(home, "coordinator", selector, false)
+	_, err := parseLibraryProfileSelector("aweb.engineering/coordinator@0.1.0")
 	if err == nil || !strings.Contains(err.Error(), "versioned Library profile selectors are not supported") {
 		t.Fatalf("error=%v", err)
 	}

@@ -32,7 +32,7 @@ func TestTeamRequestLocalPrintsAddMemberCommandWithoutStableFields(t *testing.T)
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--alias", "laptop")
+	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--name", "laptop")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -50,8 +50,8 @@ func TestTeamRequestLocalPrintsAddMemberCommandWithoutStableFields(t *testing.T)
 	if !strings.Contains(text, "--did "+memberDID) {
 		t.Fatalf("output missing did:\n%s", text)
 	}
-	if !strings.Contains(text, "--alias laptop") {
-		t.Fatalf("output missing alias:\n%s", text)
+	if !strings.Contains(text, "--name laptop") {
+		t.Fatalf("output missing name:\n%s", text)
 	}
 	if strings.Contains(text, "--did-aw") || strings.Contains(text, "--address") || strings.Contains(text, "--lifetime") {
 		t.Fatalf("local output unexpectedly included global compatibility flags:\n%s", text)
@@ -88,7 +88,7 @@ func TestTeamRequestGlobalJSONIncludesStableFields(t *testing.T) {
 		CreatedAt:   "2026-04-13T00:00:00Z",
 	})
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--alias", "alice", "--json")
+	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--name", "alice", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -137,7 +137,7 @@ func TestTeamRequestRequiresSigningKey(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--alias", "alice")
+	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--name", "alice")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

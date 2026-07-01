@@ -81,7 +81,7 @@ aw mail inbox
 
 ```bash
 # On the joining workspace, print the approval command
-aw id team request --team backend:myteam.aweb.ai --alias alice
+aw id team request --team backend:myteam.aweb.ai --name alice
 
 # On the controller machine, run the printed add-member command.
 # It prints a fetch-cert command containing the issued certificate id.

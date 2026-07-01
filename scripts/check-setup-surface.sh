@@ -9,7 +9,7 @@ scripts/check-resource-packs.sh
 
 (
   cd cli/go
-  go test ./cmd/aw -run 'TestAwTopLevelHelpGroupsCommandsByArchitecture|TestAgentsCommandSurfaceKeepsLegacyAgentsAlongsideHumanTeamVerbs|TestTeamBootstrapInRepoMissingSourceFailsBeforeMutation|TestAgentsProvisionMissingSourceFailsBeforeMutation|TestTeamBootstrapHostedNonInteractiveFailureRollsBackAgentsLayout|TestTeamBootstrapRollbackPreservesAgentsLayoutWithIdentityState|TestAwRolesAdd|TestAwRolesShowAcceptsPositionalRoleName'
+  go test ./cmd/aw -run 'TestAwTopLevelHelpGroupsCommandsByArchitecture|TestReservedAppIDsArtifactMatchesLiveCobraReservedNames|TestAwRolesAdd|TestAwRolesShowAcceptsPositionalRoleName'
 )
 
 echo "setup surface checks passed"

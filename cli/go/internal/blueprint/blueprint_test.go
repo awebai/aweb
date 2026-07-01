@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -346,10 +347,13 @@ func TestLoadLocalDirRejectsNakedEd25519KeyBlobUnderEightyChars(t *testing.T) {
 	// A 48-byte Ed25519 PKCS8 key base64-encodes to 64 chars, under the old
 	// 80-char blob threshold. A naked headerless key on one line must still be
 	// caught - the DER-parse gate keeps this from false-positiving. (aabq.28)
-	_, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
+	seed := []byte{
+		0x06, 0x46, 0x46, 0x09, 0x5f, 0xf3, 0xed, 0xcd,
+		0x83, 0xfe, 0x49, 0x3d, 0xcb, 0x98, 0x6d, 0xc5,
+		0x77, 0x71, 0x04, 0x2c, 0x31, 0x1a, 0x22, 0x2f,
+		0x6d, 0x6f, 0x41, 0x2b, 0xce, 0xd8, 0x41, 0x3f,
 	}
+	priv := ed25519.NewKeyFromSeed(seed)
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		t.Fatal(err)
@@ -357,6 +361,9 @@ func TestLoadLocalDirRejectsNakedEd25519KeyBlobUnderEightyChars(t *testing.T) {
 	blob := base64.StdEncoding.EncodeToString(pkcs8)
 	if len(blob) >= 80 {
 		t.Fatalf("expected a sub-80-char blob to exercise the lowered threshold, got %d chars", len(blob))
+	}
+	if !strings.HasSuffix(blob, "/") {
+		t.Fatalf("test fixture must exercise a non-word base64 edge, got %q", blob)
 	}
 
 	root := t.TempDir()

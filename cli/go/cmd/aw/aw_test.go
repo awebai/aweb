@@ -137,12 +137,8 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		t.Fatalf("expected run in Coordination & Runtime group:\n%s", text)
 	}
 
-	agentsIdx := strings.Index(text, "\n  agents")
-	if agentsIdx < obsoleteIdx || agentsIdx > utilityIdx {
-		t.Fatalf("expected agents in Obsolete / Legacy Compatibility group:\n%s", text)
-	}
-	if !strings.Contains(text, "Obsolete compatibility for repo-local agent layouts") {
-		t.Fatalf("expected agents help to be marked obsolete compatibility:\n%s", text)
+	if strings.Contains(text, "\n  agents") {
+		t.Fatalf("agents command should not appear in top-level help after retirement:\n%s", text)
 	}
 	if strings.Contains(text, "\n  spawn") || strings.Contains(text, "\nspawn") {
 		t.Fatalf("spawn should not appear in top-level help:\n%s", text)
@@ -177,14 +173,20 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 		{
 			name:       "init",
 			args:       []string{"init", "--help"},
-			want:       []string{"--global", "Global identity name", "Local workspace routing alias"},
+			want:       []string{"--global", "Identity/member name"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity, "Local workspace routing name"},
+		},
+		{
+			name:       "id create",
+			args:       []string{"id", "create", "--help"},
+			want:       []string{"Create a self-custodial global identity", "claiming DOMAIN/NAME", "Global identity name", "Namespace domain"},
 			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity},
 		},
 		{
 			name:       "team invite",
 			args:       []string{"id", "team", "invite", "--help"},
-			want:       []string{"--global", "--local", "global member invite", "local workspace member invite"},
-			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralFlag, legacyPersistentInvite, legacyEphemeralInvite},
+			want:       []string{"--member-global", "--member-local", "global member invite", "local workspace member invite"},
+			mustAbsent: []string{"--global", "--local", legacyPersistentFlag, legacyEphemeralFlag, legacyPersistentInvite, legacyEphemeralInvite},
 		},
 		{
 			name:       "team add-member",
@@ -212,6 +214,43 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 				if strings.Contains(text, forbidden) {
 					t.Fatalf("%s help still advertises %q:\n%s", tc.name, forbidden, text)
 				}
+			}
+		})
+	}
+}
+
+func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
+		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
+		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
+		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
+		{name: "id team add to accept-invite", args: []string{"id", "team", "add", "--help"}, want: "Command \"add\" is deprecated, use `aw id team accept-invite --global <token>` or `aw team join --global <token>`"},
+		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, bin, tc.args...)
+			cmd.Dir = tmp
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("deprecated flag command failed: %v\n%s", err, string(out))
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Fatalf("missing deprecation warning %q:\n%s", tc.want, string(out))
 			}
 		})
 	}

@@ -151,8 +151,8 @@ Required commands:
 
 ```bash
 aw blueprint inspect <source>
-aw team create <team> [--profile <blueprint>/<profile>[=<runtime>]]...
-aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
+aw team create <team> [--agent [NAME@]BLUEPRINT/PROFILE[:scope][=<runtime>]]...
+aw team add <name>@<blueprint>/<profile>=<runtime> [--home <dir>]
 aw agent start <name> --runtime <runtime>
 aw agent status <name>
 aw agent logs <name>
@@ -195,7 +195,7 @@ Required:
 
 Acceptance criteria:
 
-- `aw team add developer@aweb.engineering-pack/developer --runtime claude-code` materializes the right home/worktree layout;
+- `aw team add developer@aweb.development/developer=claude-code` materializes the right home/worktree layout;
 - `aw agent start developer --runtime claude-code` starts the selected local runtime from that home;
 - `aw agent status developer` shows useful runtime state;
 - launcher is local-only and thin; no hosted runtime service is implied.

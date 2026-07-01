@@ -442,9 +442,6 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 	if did := ComputeDIDKey(params.IdentitySigningKey.Public().(ed25519.PublicKey)); did != params.CurrentDIDKey {
 		return nil, fmt.Errorf("identity signing key does not match current_did_key")
 	}
-	if stableID := ComputeStableID(params.IdentitySigningKey.Public().(ed25519.PublicKey)); stableID != params.DIDAW {
-		return nil, fmt.Errorf("identity signing key does not match did_aw")
-	}
 	identityCustody := strings.TrimSpace(params.IdentityCustody)
 	if identityCustody == "" {
 		identityCustody = string(AddressClaimCustodySelf)
@@ -455,6 +452,10 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 	}
 
 	timestamp := registryNow().UTC().Format(time.RFC3339)
+	logProof, err := c.atomicAddressClaimDIDLogProof(ctx, registryURL, params.DIDAW, params.CurrentDIDKey, params.IdentitySigningKey, timestamp)
+	if err != nil {
+		return nil, err
+	}
 	fields := AtomicAddressClaimFields{
 		Operation:        AtomicAddressClaimOperation,
 		Domain:           params.Domain,
@@ -486,17 +487,6 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		ed25519.Sign(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
 	)
 
-	stateHash := stableIdentityStateHash(params.DIDAW, params.CurrentDIDKey)
-	didLogPayload := CanonicalDidLogPayload(params.DIDAW, &DidKeyEvidence{
-		Seq:            1,
-		Operation:      "register_did",
-		PreviousDIDKey: nil,
-		NewDIDKey:      params.CurrentDIDKey,
-		PrevEntryHash:  nil,
-		StateHash:      stateHash,
-		AuthorizedBy:   params.CurrentDIDKey,
-		Timestamp:      timestamp,
-	})
 	body := atomicAddressClaimRequest{
 		Operation:          AtomicAddressClaimOperation,
 		AddressName:        params.AddressName,
@@ -511,17 +501,15 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		NamespaceSignature: namespaceSignature,
 		DIDLogProof: atomicClaimDIDLogProof{
 			DIDAW:          params.DIDAW,
-			Seq:            1,
-			Operation:      "register_did",
-			PreviousDIDKey: nil,
-			NewDIDKey:      params.CurrentDIDKey,
-			PrevEntryHash:  nil,
-			StateHash:      stateHash,
-			AuthorizedBy:   params.CurrentDIDKey,
-			Timestamp:      timestamp,
-			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(params.IdentitySigningKey, []byte(didLogPayload)),
-			),
+			Seq:            logProof.Seq,
+			Operation:      strings.TrimSpace(logProof.Operation),
+			PreviousDIDKey: logProof.PreviousDIDKey,
+			NewDIDKey:      strings.TrimSpace(logProof.NewDIDKey),
+			PrevEntryHash:  logProof.PrevEntryHash,
+			StateHash:      strings.TrimSpace(logProof.StateHash),
+			AuthorizedBy:   strings.TrimSpace(logProof.AuthorizedBy),
+			Timestamp:      strings.TrimSpace(logProof.Timestamp),
+			Signature:      strings.TrimSpace(logProof.Signature),
 		},
 	}
 
@@ -531,6 +519,46 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, atomicAddressClaimConflictFromError(err)
 	}
 	return &out, nil
+}
+
+func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, registryURL, didAW, currentDIDKey string, signingKey ed25519.PrivateKey, timestamp string) (*DidKeyEvidence, error) {
+	if stableID := ComputeStableID(signingKey.Public().(ed25519.PublicKey)); stableID == strings.TrimSpace(didAW) {
+		stateHash := stableIdentityStateHash(didAW, currentDIDKey)
+		didLogPayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      currentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   currentDIDKey,
+			Timestamp:      timestamp,
+		})
+		return &DidKeyEvidence{
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      currentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   currentDIDKey,
+			Timestamp:      timestamp,
+			Signature: base64.RawStdEncoding.EncodeToString(
+				ed25519.Sign(signingKey, []byte(didLogPayload)),
+			),
+		}, nil
+	}
+	resolution, err := c.ResolveKeyAt(ctx, registryURL, didAW)
+	if err != nil {
+		return nil, fmt.Errorf("resolve did log head for rotated identity %s: %w", didAW, err)
+	}
+	if strings.TrimSpace(resolution.CurrentDIDKey) != strings.TrimSpace(currentDIDKey) {
+		return nil, fmt.Errorf("registry current did:key for %s is %s, not %s", didAW, resolution.CurrentDIDKey, currentDIDKey)
+	}
+	if resolution.LogHead == nil {
+		return nil, fmt.Errorf("registry did log for rotated identity %s has no log head", didAW)
+	}
+	return resolution.LogHead, nil
 }
 
 func (c *RegistryClient) DeleteAddress(

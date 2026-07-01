@@ -126,7 +126,7 @@ func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
 		state.stableID = strings.TrimSpace(identity.StableID)
 		state.address = strings.TrimSpace(identity.Address)
 		state.custody = strings.TrimSpace(identity.Custody)
-		state.lifetime = strings.TrimSpace(identity.Lifetime)
+		state.lifetime = awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
 		if domain, handle, ok := awconfig.CutIdentityAddress(state.address); ok {
 			state.domain = domain
 			state.handle = handle

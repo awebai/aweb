@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
 
@@ -153,14 +156,20 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "display_name": "", "team_did_key": body["team_did_key"], "visibility": "private", "created_at": "2026-06-19T00:00:00Z"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates":
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates/revoke":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": body["certificate_id"]})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "eng", "agent_id": "agent-eng", "workspace_id": "workspace-eng", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "coordinator", "agent_id": "agent-coordinator", "workspace_id": "workspace-coordinator", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
 		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent", "eng:local", "agent")
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-coordinator", "eng:local", "coordinator")
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/"):
 			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -220,27 +229,31 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
 	}
-	for _, agent := range []string{"coordinator", "reviewer"} {
-		agentHome := filepath.Join(root, "agents", "instances", agent)
-		for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
-			if _, err := os.Lstat(filepath.Join(agentHome, filepath.FromSlash(rel))); err != nil {
-				t.Fatalf("profile-bound roster home %s missing %s: %v", agent, rel, err)
-			}
+	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("first listed create agent home missing %s in cwd: %v", rel, err)
 		}
-		assertMaterializedHomeHasAwebCoordination(t, agentHome)
 	}
-	if _, err := os.Readlink(filepath.Join(root, "agents", "instances", "coordinator", "CLAUDE.md")); err != nil {
+	assertMaterializedHomeHasAwebCoordination(t, root)
+	if _, err := os.Readlink(filepath.Join(root, "CLAUDE.md")); err != nil {
 		t.Fatalf("coordinator claude-code home missing CLAUDE.md symlink: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "reviewer", "CLAUDE.md")); !os.IsNotExist(err) {
-		t.Fatalf("reviewer pi home unexpectedly has CLAUDE.md (first supported runtime_hints should choose pi), stat err=%v", err)
+	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "coordinator")); !os.IsNotExist(err) {
+		t.Fatalf("team create --profile created extra profile-less/default coordinator home, stat err=%v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(err) {
-		t.Fatalf("team create roster materialized profile into cwd, stat err=%v", err)
+	reviewerHome := filepath.Join(root, "agents", "instances", "reviewer")
+	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
+		if _, err := os.Lstat(filepath.Join(reviewerHome, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("profile-bound roster home reviewer missing %s: %v", rel, err)
+		}
+	}
+	assertMaterializedHomeHasAwebCoordination(t, reviewerHome)
+	if _, err := os.Lstat(filepath.Join(reviewerHome, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("reviewer pi home unexpectedly has CLAUDE.md (first supported runtime_hints should choose pi), stat err=%v", err)
 	}
 
 	teamHumanCreateProfiles = nil
-	if err := os.Chdir(filepath.Join(root, "agents", "instances", "coordinator")); err != nil {
+	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
 	teamHumanAddHome = filepath.Join(root, "auditor-home")
@@ -341,6 +354,199 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				t.Fatalf("outside file mutated: data=%q err=%v", data, readErr)
 			}
 		})
+	}
+}
+
+// TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime is the homepage
+// case: a hosted-team owner with a connected workspace (no local team key) runs
+// `aw team add NAME@BLUEPRINT/PROFILE=RUNTIME`. The listed agent must mint via
+// the owner's hosted member authority (spawn create/accept-invite), materialize
+// the Library profile into its own home, and apply the requested runtime.
+func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	teamID := "default:gracehosted.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	profileFiles := []blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.1.0\nmission: Review work.\naccepted_work: [review]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Review carefully.\n"},
+	}
+	profileDigest := testLibraryProfilePayloadDigestForProfile(t, "reviewer", profileFiles)
+
+	var createInviteCalls, acceptInviteCalls, importCalls, bindCalls int
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID {
+				t.Fatalf("create invite cert team=%q want %q", cert.Team, teamID)
+			}
+			createInviteCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"invite_id":      "invite-hosted-1",
+				"token":          "aw_inv_hosted_add_token",
+				"token_prefix":   "hosted_t",
+				"access_mode":    "open",
+				"max_uses":       1,
+				"expires_at":     "2026-08-17T00:00:00Z",
+				"namespace_slug": "gracehosted",
+				"namespace":      "gracehosted.aweb.ai",
+				"server_url":     server.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			acceptInviteCalls++
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			if didKey == "" {
+				t.Fatal("accept request missing did")
+			}
+			alias, _ := req["alias"].(string)
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "server-team-id",
+				"team_slug":      "default",
+				"namespace_slug": "gracehosted",
+				"namespace":      "gracehosted.aweb.ai",
+				"identity_id":    "agent-" + alias,
+				"alias":          alias,
+				"api_key":        "aw_sk_child_not_printed",
+				"server_url":     server.URL,
+				"did":            didKey,
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+				"access_mode":    "open",
+				"created":        true,
+				"team_cert":      encoded,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": server.URL, "aweb_url": server.URL, "registry_url": server.URL})
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "rev", "agent_id": "agent-rev", "workspace_id": "workspace-rev", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-rev", "gracehosted.aweb.ai", "rev")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/"):
+			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"blueprint_ref":       "aweb.engineering",
+				"blueprint_version":   "0.1.0",
+				"profile_ref":         profileRef,
+				"version":             "0.1.0",
+				"digest":              profileDigest,
+				"runtime_assumptions": []string{"local shell"},
+				"runtime_hints":       []string{"pi", "claude-code"},
+				"files":               profileFiles,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
+			importCalls++
+			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
+				t.Fatalf("import-to-shelf missing signed headers")
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			profileRef, _ := body["profile_ref"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigest, "source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0", "source_blueprint_digest": "sha256:blueprint", "created": true})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
+			bindCalls++
+			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
+				t.Fatalf("bind missing signed headers")
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			profileRef, _ := body["profile_ref"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": profileRef, "profile_version": "0.1.0", "profile_digest": profileDigest})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/materialize":
+			t.Fatalf("server materialize must not be called in local-compose flow")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+
+	// The owner's connected workspace: hosted membership, cert, and signing key,
+	// but no local team key (hosted authority mints via the member cert).
+	ownerDir := filepath.Join(root, "owner")
+	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceBindingForTest(t, ownerDir, awconfig.WorktreeWorkspace{
+		AwebURL: server.URL,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "owner",
+			WorkspaceID: "workspace-owner",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-05-16T00:00:00Z",
+		}},
+	})
+	writeLibraryManifestPluginForTest(t, home, server.URL)
+	t.Chdir(ownerDir)
+
+	teamHumanAddRuntime = ""
+	if err := runTeamHumanAdd(nil, []string{"rev@aweb.engineering/reviewer=pi"}); err != nil {
+		t.Fatalf("hosted team add profiled agent: %v", err)
+	}
+
+	if createInviteCalls != 1 || acceptInviteCalls != 1 {
+		t.Fatalf("hosted mint calls create=%d accept=%d", createInviteCalls, acceptInviteCalls)
+	}
+	if importCalls != 1 || bindCalls != 1 {
+		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
+	}
+
+	agentHome := filepath.Join(ownerDir, "agents", "instances", "rev")
+	// Profile materialized into the agent's own home.
+	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
+		if _, err := os.Lstat(filepath.Join(agentHome, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
+		}
+	}
+	assertMaterializedHomeHasAwebCoordination(t, agentHome)
+	// =pi runtime applied: the pi runtime must not write a claude-code CLAUDE.md.
+	if _, err := os.Lstat(filepath.Join(agentHome, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("=pi runtime unexpectedly wrote CLAUDE.md, stat err=%v", err)
+	}
+	// The freshly-minted agent identity is recorded in its home.
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(agentHome, teamID))
+	if err != nil {
+		t.Fatalf("load minted agent cert: %v", err)
+	}
+	if cert.Team != teamID || cert.Alias != "rev" {
+		t.Fatalf("minted cert team=%q alias=%q", cert.Team, cert.Alias)
 	}
 }
 

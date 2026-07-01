@@ -164,6 +164,7 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		Handle:         "",
 		Domain:         "",
 		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeLocal,
 		Lifetime:       awid.LifetimeEphemeral,
 		RegistryURL:    "",
 		RegistryStatus: "",
@@ -178,15 +179,18 @@ func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {
 	if strings.TrimSpace(identity.DID) == "" {
 		return usageError("current identity is invalid: .aw/identity.yaml is missing did")
 	}
-	lifetime := strings.TrimSpace(identity.Lifetime)
-	if lifetime == "" {
-		return usageError("current identity is invalid: .aw/identity.yaml is missing lifetime")
+	identityScope := strings.TrimSpace(identity.IdentityScope)
+	if identityScope == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing identity_scope")
+	}
+	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
+		return usageError("current identity is invalid: .aw/identity.yaml has unsupported identity_scope %q", identityScope)
 	}
 	custody := strings.TrimSpace(identity.Custody)
 	if custody == "" {
 		return usageError("current identity is invalid: .aw/identity.yaml is missing custody")
 	}
-	if lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) == "" {
+	if identityScope == awid.IdentityModeGlobal && strings.TrimSpace(identity.StableID) == "" {
 		return usageError("current identity is invalid: global .aw/identity.yaml is missing stable_id")
 	}
 	if custody != awid.CustodySelf {
@@ -382,7 +386,7 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		for _, candidate := range candidates {
 			teamIDs = append(teamIDs, strings.TrimSpace(candidate.selection.TeamID))
 		}
-		return nil, nil, usageError("alias %q exists in multiple local team memberships (%s); pass --team to choose one", strings.TrimSpace(targetAlias), strings.Join(teamIDs, ", "))
+		return nil, nil, usageError("name %q exists in multiple local team memberships (%s); pass --team to choose one", strings.TrimSpace(targetAlias), strings.Join(teamIDs, ", "))
 	}
 	lastClient = c
 	return c, sel, nil
@@ -527,14 +531,14 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	}
 	c.SetAddress(selectionAddress(sel))
 	e2eeAddress := ""
-	if awid.IdentityHasPublicAddress(sel.Lifetime) {
+	if strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal {
 		e2eeAddress = strings.TrimSpace(sel.Address)
 	}
 	c.SetE2EESenderAddress(e2eeAddress)
 	if sel.StableID != "" {
 		c.SetStableID(sel.StableID)
 	}
-	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.Lifetime) == awid.LifetimePersistent || strings.TrimSpace(sel.StableID) != "")
+	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal || strings.TrimSpace(sel.StableID) != "")
 
 	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {
@@ -986,9 +990,7 @@ func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName
 			return "", "", err
 		}
 	}
-	if baseURL == "" {
-		baseURL = DefaultAwebURL
-	}
+	baseURL = awebURLOrDefault(baseURL)
 	if serverName == "" {
 		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
 		if derr == nil {
@@ -1204,8 +1206,42 @@ func ensureWorktreeContextAt(workingDir string) error {
 }
 
 func printJSON(v any) {
-	data, _ := json.MarshalIndent(v, "", "  ")
+	data, _ := json.Marshal(v)
+	var compat any
+	if err := json.Unmarshal(data, &compat); err == nil {
+		compat = addJSONNameScopeCompat(compat)
+		data, _ = json.MarshalIndent(compat, "", "  ")
+	} else {
+		data, _ = json.MarshalIndent(v, "", "  ")
+	}
 	fmt.Println(string(data))
+}
+
+func addJSONNameScopeCompat(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			typed[key] = addJSONNameScopeCompat(value)
+		}
+		if _, hasName := typed["name"]; !hasName {
+			if alias, ok := typed["alias"].(string); ok && strings.TrimSpace(alias) != "" {
+				typed["name"] = alias
+			}
+		}
+		if _, hasScope := typed["identity_scope"]; !hasScope {
+			if lifetime, ok := typed["lifetime"].(string); ok && strings.TrimSpace(lifetime) != "" {
+				typed["identity_scope"] = awid.NormalizeIdentityScope(lifetime)
+			}
+		}
+		return typed
+	case []any:
+		for i, value := range typed {
+			typed[i] = addJSONNameScopeCompat(value)
+		}
+		return typed
+	default:
+		return v
+	}
 }
 
 func printOutput(v any, formatter func(v any) string) {

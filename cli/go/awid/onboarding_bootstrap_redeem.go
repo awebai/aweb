@@ -26,6 +26,8 @@ type BootstrapRedeemRequest struct {
 type BootstrapRedeemResponse struct {
 	Certificate   string `json:"certificate"`
 	TeamID        string `json:"team_id"`
+	IdentityScope string `json:"identity_scope,omitempty"`
+	// Lifetime is deprecated-read-compat for older bootstrap responses; use identity_scope.
 	Lifetime      string `json:"lifetime"`
 	Alias         string `json:"alias"`
 	DIDAW         string `json:"did_aw,omitempty"`

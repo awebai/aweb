@@ -945,6 +945,43 @@ func TestA2AGatewayVersionAtLeast(t *testing.T) {
 	}
 }
 
+func TestGatewayBaseURLPrefersWorkspaceOverTeamMembership(t *testing.T) {
+	tests := []struct {
+		name         string
+		workspaceURL string
+		teamURL      string
+		want         string
+	}{
+		{
+			name:         "workspace top-level wins when both present",
+			workspaceURL: "https://workspace.example",
+			teamURL:      "https://teams.example",
+			want:         "https://workspace.example",
+		},
+		{
+			name:         "teams membership is fallback when workspace empty",
+			workspaceURL: "",
+			teamURL:      "https://teams.example",
+			want:         "https://teams.example",
+		},
+		{
+			name:         "empty when neither present",
+			workspaceURL: "",
+			teamURL:      "",
+			want:         "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := &awconfig.WorktreeWorkspace{AwebURL: tt.workspaceURL}
+			membership := &awconfig.TeamMembership{AwebURL: tt.teamURL}
+			if got := gatewayBaseURL(ws, membership); got != tt.want {
+				t.Fatalf("gatewayBaseURL()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func writeGatewayWorkspace(t *testing.T, dir, awebURL string) {
 	t.Helper()
 	_, teamPriv, err := awid.GenerateKeypair()

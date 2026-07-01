@@ -82,7 +82,7 @@ Key points:
 
 Multi-team commands:
 
-- `aw id team add <invite-token>` adds another team membership to the same local identity without switching `active_team`
+- `aw id team accept-invite --global <invite-token>` (or `aw team join --global <invite-token>`) adds another team membership to the same global identity; the old `aw id team add <invite-token>` form is deprecated
 - `aw id team switch <team_id>` changes `active_team`
 - `aw id team list` shows all local memberships for the current worktree
 - `aw id team leave <team_id>` removes one local membership and its certificate from this worktree only
@@ -108,8 +108,11 @@ Global identities store their durable identity state in:
 .aw/identity.yaml
 ```
 
+Current schema version: `2`.
+
 Typical fields include:
 
+- `schema_version: 2`
 - `did`
 - `stable_id`
 - `address`
@@ -126,8 +129,9 @@ registry state, not aweb coordination binding.
 
 Compatibility note: older `.aw/identity.yaml` files may still store the
 identity class in a `lifetime` field with `persistent`/`ephemeral` values. New
-docs and normal output use `identity_scope=global|local`; the old field is a
-compatibility input until the aapj cleanup removes or fully quarantines it.
+writes use `schema_version: 2` and `identity_scope=global|local`; they do not
+write `lifetime`. The old `lifetime` field is deprecated-read-compat only until
+the cleanup window removes or fully quarantines it.
 
 ## Local Signing Key: `.aw/signing.key`
 
@@ -210,7 +214,7 @@ aw workspace add-worktree <role>
 ```
 
 - `aw init` writes or refreshes `workspace.yaml`, `context`, and related local binding state
-- `aw id team accept-invite` writes a team certificate under `team-certs/`; hosted invite tokens create a fresh self-custodial signing key, refuse to overwrite an existing `.aw` identity, and can create a hosted global identity when accepted with `--address <domain>/<name>`
+- `aw id team accept-invite` writes a team certificate under `team-certs/`; local accepts create/reuse local key material for one team, while `--global` reuses an existing self-custodial global identity from `identity.yaml` rather than minting a new `did:aw`
 - `aw workspace add-worktree` creates a sibling worktree with its own `.aw/` state
 
 ## Injected Coordination Docs

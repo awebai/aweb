@@ -99,7 +99,7 @@ func formatInboundMode(v any) string {
 	out := v.(inboundModeOutput)
 	var sb strings.Builder
 	if out.Alias != "" {
-		sb.WriteString(fmt.Sprintf("Alias:      %s\n", out.Alias))
+		sb.WriteString(fmt.Sprintf("Name:       %s\n", out.Alias))
 	}
 	if out.AgentID != "" {
 		sb.WriteString(fmt.Sprintf("Agent ID:   %s\n", out.AgentID))

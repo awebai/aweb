@@ -11,6 +11,15 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func splitTeamID(teamID string) (string, string) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID == "" {
@@ -30,16 +39,19 @@ type Selection struct {
 	BaseURL       string
 	AwebURL       string
 
-	TeamID      string
-	WorkspaceID string
-	Alias       string
-	Address     string
-	Email       string
-	Domain      string
-	DID         string
-	StableID    string
-	SigningKey  string
-	Custody     string
+	TeamID        string
+	WorkspaceID   string
+	Alias         string
+	Address       string
+	Email         string
+	Domain        string
+	DID           string
+	StableID      string
+	SigningKey    string
+	Custody       string
+	IdentityScope string
+	// Lifetime is a deprecated-read-compat mirror of IdentityScope for callers
+	// still using persistent/ephemeral helpers during the config migration.
 	Lifetime    string
 	RegistryURL string
 }
@@ -144,6 +156,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	stableID := ""
 	signingKey := ""
 	custody := ""
+	identityScope := ""
 	lifetime := ""
 	registryURL := ""
 	awebURL := ""
@@ -164,8 +177,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 					did = v
 				}
 				stableID = strings.TrimSpace(cert.MemberDIDAW)
-				if v := strings.TrimSpace(cert.Lifetime); v != "" {
-					lifetime = v
+				if v := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)); v == awid.IdentityModeLocal || v == awid.IdentityModeGlobal {
+					identityScope = v
+					lifetime = awid.LegacyLifetimeForIdentityScope(v)
 				}
 				if v := strings.TrimSpace(cert.MemberAddress); v != "" {
 					address = v
@@ -183,7 +197,11 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		if v := strings.TrimSpace(identity.DID); v != "" && did == "" {
 			did = v
 		}
-		if v := strings.TrimSpace(identity.StableID); v != "" && stableID == "" && lifetime != awid.LifetimeEphemeral {
+		if v := strings.TrimSpace(identity.IdentityScope); v != "" && identityScope == "" {
+			identityScope = v
+			lifetime = awid.LegacyLifetimeForIdentityScope(v)
+		}
+		if v := strings.TrimSpace(identity.StableID); v != "" && stableID == "" && identityScope != awid.IdentityModeLocal {
 			stableID = v
 		}
 		if v := strings.TrimSpace(identity.Custody); v != "" {
@@ -191,6 +209,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		}
 		if v := strings.TrimSpace(identity.Lifetime); v != "" && lifetime == "" {
 			lifetime = v
+			if identityScope == "" {
+				identityScope = awid.NormalizeIdentityScope(v)
+			}
 		}
 		if v := strings.TrimSpace(identity.RegistryURL); v != "" {
 			registryURL = v
@@ -224,6 +245,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		StableID:      stableID,
 		SigningKey:    signingKey,
 		Custody:       custody,
+		IdentityScope: identityScope,
 		Lifetime:      lifetime,
 		RegistryURL:   registryURL,
 	}, nil
@@ -234,7 +256,11 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 	stableID := strings.TrimSpace(identity.StableID)
 	address := strings.TrimSpace(identity.Address)
 	custody := strings.TrimSpace(identity.Custody)
+	identityScope := strings.TrimSpace(identity.IdentityScope)
 	lifetime := strings.TrimSpace(identity.Lifetime)
+	if lifetime == "" && identityScope != "" {
+		lifetime = awid.LegacyLifetimeForIdentityScope(identityScope)
+	}
 	signingKey := ""
 	if strings.EqualFold(custody, "self") {
 		signingKey = WorktreeSigningKeyPath(workingDir)
@@ -246,16 +272,17 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 		}
 	}
 	return &Selection{
-		WorkingDir:  workingDir,
-		DID:         did,
-		StableID:    stableID,
-		Address:     address,
-		Alias:       handle,
-		Domain:      domainFromAddress(address),
-		SigningKey:  signingKey,
-		Custody:     custody,
-		Lifetime:    lifetime,
-		RegistryURL: strings.TrimSpace(identity.RegistryURL),
+		WorkingDir:    workingDir,
+		DID:           did,
+		StableID:      stableID,
+		Address:       address,
+		Alias:         handle,
+		Domain:        domainFromAddress(address),
+		SigningKey:    signingKey,
+		Custody:       custody,
+		IdentityScope: identityScope,
+		Lifetime:      lifetime,
+		RegistryURL:   strings.TrimSpace(identity.RegistryURL),
 	}
 }
 

@@ -8,16 +8,47 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
+	"gopkg.in/yaml.v3"
 )
 
-const defaultMaterializeRuntimeKind = "claude-code"
+const (
+	defaultMaterializeRuntimeKind = "claude-code"
+	libraryPluginName             = "library"
+	libraryPluginManifestURL      = "https://library.aweb.ai/.well-known/aweb-app.json"
+	libraryPluginInstallCommand   = "aw plugin install " + libraryPluginManifestURL
+)
+
+const missingLibraryPluginMarker = "Library plugin"
+
+func missingLibraryPluginCommandError() error {
+	return usageError("The aw Library plugin is not installed. Install it with:\n    %s", libraryPluginInstallCommand)
+}
+
+func missingLibraryPluginProfileError(selector libraryProfileSelector) error {
+	return usageError("Adding an agent from a Library profile (%s) requires the aw Library plugin, which is not installed. Install it, then re-run:\n    %s", libraryProfileSelectorLabel(selector), libraryPluginInstallCommand)
+}
+
+func isMissingLibraryPluginError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), missingLibraryPluginMarker) && strings.Contains(err.Error(), "not installed")
+}
+
+func libraryProfileSelectorLabel(selector libraryProfileSelector) string {
+	blueprintRef := strings.TrimSpace(selector.SourceBlueprintRef)
+	profileRef := strings.TrimSpace(selector.ProfileRef)
+	if blueprintRef == "" || profileRef == "" {
+		return "NAME@BLUEPRINT/PROFILE"
+	}
+	return blueprintRef + "/" + profileRef
+}
 
 type libraryProfileSelector struct {
 	SourceBlueprintRef     string
 	SourceBlueprintVersion string
 	ProfileRef             string
 	RuntimeKind            string
+	IdentityScope          string
 }
 
 type libraryProfileDetailResponse struct {
@@ -54,9 +85,9 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 		return libraryProfileSelector{}, usageError("profile selector is required")
 	}
 	runtimeKind := ""
-	blueprintProfileVersion := trimmed
+	blueprintProfileScope := trimmed
 	if before, after, ok := strings.Cut(trimmed, "="); ok {
-		blueprintProfileVersion = strings.TrimSpace(before)
+		blueprintProfileScope = strings.TrimSpace(before)
 		runtimeKind = strings.TrimSpace(after)
 		if runtimeKind == "" {
 			return libraryProfileSelector{}, usageError("runtime is required after =")
@@ -67,32 +98,81 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 			return libraryProfileSelector{}, err
 		}
 	}
-	blueprintAndProfile := blueprintProfileVersion
-	version := ""
-	if before, after, ok := strings.Cut(blueprintProfileVersion, "@"); ok {
+	if strings.Contains(blueprintProfileScope, "@") {
+		return libraryProfileSelector{}, usageError("versioned Library profile selectors are not supported; @ now separates NAME from BLUEPRINT/PROFILE, use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
+	}
+	identityScope := ""
+	blueprintAndProfile := blueprintProfileScope
+	if before, after, ok := strings.Cut(blueprintProfileScope, ":"); ok {
 		blueprintAndProfile = strings.TrimSpace(before)
-		version = strings.TrimSpace(after)
-		if version == "" {
-			return libraryProfileSelector{}, usageError("blueprint version is required after @")
+		var err error
+		identityScope, err = normalizeTeamAgentScope(after)
+		if err != nil {
+			return libraryProfileSelector{}, err
 		}
 	}
 	blueprintRef, profileRef, ok := strings.Cut(blueprintAndProfile, "/")
 	if !ok {
-		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION]", raw)
+		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[:local|global][=RUNTIME]", raw)
 	}
-	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), SourceBlueprintVersion: version, ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind}
+	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind, IdentityScope: identityScope}
 	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
 	if err := validateLibraryRef("profile ref", selector.ProfileRef, false); err != nil {
 		return libraryProfileSelector{}, err
 	}
-	if selector.SourceBlueprintVersion != "" {
-		if err := validateLibraryRef("source blueprint version", selector.SourceBlueprintVersion, true); err != nil {
-			return libraryProfileSelector{}, err
-		}
-	}
 	return selector, nil
+}
+
+func normalizeTeamAgentScope(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "", usageError("scope is required after :")
+	case awid.IdentityModeLocal:
+		return awid.IdentityModeLocal, nil
+	case awid.IdentityModeGlobal:
+		return awid.IdentityModeGlobal, nil
+	default:
+		return "", usageError("scope %q is not supported; use local or global", raw)
+	}
+}
+
+func resolveLibraryProfileScope(selector libraryProfileSelector) (string, error) {
+	if scope := strings.TrimSpace(selector.IdentityScope); scope != "" {
+		return normalizeTeamAgentScope(scope)
+	}
+	profile, err := callLibraryGetProfile(selector)
+	if err != nil {
+		return "", err
+	}
+	scope, err := profileScopeFromLibraryPayload(profile)
+	if err != nil {
+		return "", err
+	}
+	if scope == "" {
+		return awid.IdentityModeLocal, nil
+	}
+	return normalizeTeamAgentScope(scope)
+}
+
+func profileScopeFromLibraryPayload(profile *libraryProfileDetailResponse) (string, error) {
+	if profile == nil {
+		return "", fmt.Errorf("library profile is required")
+	}
+	for _, file := range profile.Files {
+		if filepath.ToSlash(strings.TrimSpace(file.Path)) != "profile.yaml" {
+			continue
+		}
+		var doc struct {
+			Scope string `yaml:"scope"`
+		}
+		if err := yaml.Unmarshal([]byte(file.ContentUTF8), &doc); err != nil {
+			return "", fmt.Errorf("library profile %s/profile.yaml: parse scope: %w", profile.ProfileRef, err)
+		}
+		return strings.TrimSpace(doc.Scope), nil
+	}
+	return "", nil
 }
 
 func rejectUnsupportedVersionedLibrarySelector(selector libraryProfileSelector) error {
@@ -204,6 +284,27 @@ func applyLibraryProfileToHomeAndConfigure(homeDir, agentID string, selector lib
 	return materialized, written, nil
 }
 
+func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {
+	if strings.TrimSpace(sourceDir) == "" {
+		return nil, nil, fmt.Errorf("local blueprint source is required")
+	}
+	runtimeKind, err := materializeRuntimeKindForSelector(selector)
+	if err != nil {
+		return nil, nil, err
+	}
+	materialized, err := blueprint.MaterializeLocalProfile(blueprint.MaterializeOptions{
+		SourceDir:   sourceDir,
+		ProfileID:   selector.ProfileRef,
+		TargetDir:   homeDir,
+		RuntimeKind: runtimeKind,
+		Force:       force,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("local profile materialize: %w", err)
+	}
+	return materialized, materialized.FilesWritten, nil
+}
+
 func configureMaterializedAgentHome(homeDir string) error {
 	if result := InjectAgentDocs(homeDir); result != nil && len(result.Errors) > 0 {
 		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
@@ -230,7 +331,7 @@ func withWorkingDir(dir string, fn func() error) error {
 }
 
 func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
-	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef})
+	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef}, missingLibraryPluginProfileError(selector))
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +433,7 @@ func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportTo
 	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
 		args = append(args, "--source_blueprint_version", selector.SourceBlueprintVersion)
 	}
-	body, err := executeLibraryToolBody(args)
+	body, err := executeLibraryToolBody(args, missingLibraryPluginProfileError(selector))
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +461,7 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 		"--profile_version", imported.Version,
 		"--profile_digest", imported.Digest,
 		"--source_blueprint_ref", imported.SourceBlueprintRef,
-	})
+	}, missingLibraryPluginProfileError(libraryProfileSelector{SourceBlueprintRef: imported.SourceBlueprintRef, ProfileRef: imported.ProfileRef}))
 	if err != nil {
 		return nil, err
 	}
@@ -371,10 +472,13 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 	return &out, nil
 }
 
-func executeLibraryToolBody(args []string) ([]byte, error) {
-	result, exists, err := executeInstalledManifestTool("library", args)
+func executeLibraryToolBody(args []string, missingErr error) ([]byte, error) {
+	result, exists, err := executeInstalledManifestTool(libraryPluginName, args)
 	if !exists {
-		return nil, usageError("aw library plugin is not installed; run `aw plugin install https://library.aweb.ai/.well-known/aweb-app.json`")
+		if missingErr != nil {
+			return nil, missingErr
+		}
+		return nil, missingLibraryPluginCommandError()
 	}
 	if err != nil {
 		return nil, err

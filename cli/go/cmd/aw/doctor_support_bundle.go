@@ -147,9 +147,14 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
 	if identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil && identity != nil {
 		meta.IdentityYAMLPresent = true
-		meta.Lifetime = firstNonEmpty(strings.TrimSpace(identity.Lifetime), meta.Lifetime)
-		if strings.TrimSpace(meta.Lifetime) != "" {
-			meta.IdentityScope = awid.DescribeIdentityClass(meta.Lifetime)
+		if scope := strings.TrimSpace(identity.IdentityScope); scope != "" {
+			meta.IdentityScope = scope
+			meta.Lifetime = awid.LegacyLifetimeForIdentityScope(scope)
+		} else {
+			meta.Lifetime = firstNonEmpty(strings.TrimSpace(identity.Lifetime), meta.Lifetime)
+			if strings.TrimSpace(meta.Lifetime) != "" {
+				meta.IdentityScope = awid.DescribeIdentityClass(meta.Lifetime)
+			}
 		}
 		meta.Custody = strings.TrimSpace(identity.Custody)
 		meta.DIDKey = firstNonEmpty(strings.TrimSpace(identity.DID), meta.DIDKey)

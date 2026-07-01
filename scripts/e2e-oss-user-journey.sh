@@ -541,408 +541,24 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 1b: Bootstrap project-local agents/ layout against Docker stack
 # ---------------------------------------------------------------------------
-echo "=== Phase 1b: Bootstrap in-repo agents/ layout ==="
+# Phase 1b: Retired aw agents bootstrap family stays absent
+# ---------------------------------------------------------------------------
+echo "=== Phase 1b: Retired aw agents command family ==="
 
-cat > "$BOOTSTRAP_TEMPLATE_DIR/team.yaml" <<'EOF'
-name: bootstrap-e2e
-instructions:
-  file: docs/team.md
-roles:
-  coordinator:
-    title: Coordinator
-    file: roles/coordinator.md
-  developer:
-    title: Developer
-    file: roles/developer.md
-  reviewer:
-    title: Reviewer
-    file: roles/reviewer.md
-naming:
-  local_alias:
-    sequence: classic-name
-    pattern: "{user}-{classic-name}"
-  global_alias:
-    sequence: classic-name
-    pattern: "{user}-{classic-name}"
-  global_name:
-    pattern: "{user}-{responsibility}"
-agents:
-  coordinator:
-    role_name: coordinator
-    identity_scope: local
-    home_template: home/coordinator
-    work: repo_root
-  developer:
-    role_name: developer
-    identity_scope: local
-    home_template: home/developer
-    work: git_worktree
-  reviewer:
-    role_name: reviewer
-    identity_scope: local
-    home_template: home/reviewer
-    work: git_worktree
-EOF
-mkdir -p "$BOOTSTRAP_TEMPLATE_DIR/docs" "$BOOTSTRAP_TEMPLATE_DIR/roles" "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator" "$BOOTSTRAP_TEMPLATE_DIR/home/developer" "$BOOTSTRAP_TEMPLATE_DIR/home/reviewer"
-printf '# Bootstrap team\n' > "$BOOTSTRAP_TEMPLATE_DIR/docs/team.md"
-printf '# Coordinator role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/coordinator.md"
-printf '# Developer role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/developer.md"
-printf '# Reviewer role\n' > "$BOOTSTRAP_TEMPLATE_DIR/roles/reviewer.md"
-printf '# Coordinator home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator/AGENTS.md"
-printf 'visible blueprint\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/coordinator/README.md"
-printf '# Developer home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/developer/AGENTS.md"
-printf '# Reviewer home\n' > "$BOOTSTRAP_TEMPLATE_DIR/home/reviewer/AGENTS.md"
-
-git -C "$BOOTSTRAP_PROJECT_DIR" init >/dev/null
-git -C "$BOOTSTRAP_PROJECT_DIR" config user.email test@example.com
-git -C "$BOOTSTRAP_PROJECT_DIR" config user.name "Test User"
-printf '# bootstrap project\n' > "$BOOTSTRAP_PROJECT_DIR/README.md"
-git -C "$BOOTSTRAP_PROJECT_DIR" add README.md
-git -C "$BOOTSTRAP_PROJECT_DIR" commit -m init >/dev/null
-
-run_success "bootstrap namespace prepare" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace prepare-controller \
-  --domain bootstrap.local \
-  --registry "$AWID_URL"
-
-run_success "bootstrap dry-run" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
-  --dry-run \
-  --namespace bootstrap.local \
-  --team circle \
-  --identity-prefix bootstrap \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL"
-
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents" ]]; then
-  echo "  FAIL: bootstrap dry-run created agents directory"
+retired_agents_help="$(run_aw --help 2>&1)"
+if echo "$retired_agents_help" | grep -qE '^  agents[[:space:]]'; then
+  echo "  FAIL: retired aw agents command appears in top-level help"
   fail=$((fail + 1))
 else
-  echo "  PASS: bootstrap dry-run created no agents directory"
+  echo "  PASS: retired aw agents command absent from top-level help"
   pass=$((pass + 1))
 fi
 
-run_success "bootstrap apply" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
-  --namespace bootstrap.local \
-  --team circle \
-  --identity-prefix bootstrap \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL"
-
-assert_file_exists "bootstrap copied team.yaml" "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"
-assert_file_exists "bootstrap coordinator workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/.aw/workspace.yaml"
-assert_file_exists "bootstrap developer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.aw/workspace.yaml"
-assert_file_exists "bootstrap reviewer workspace" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.aw/workspace.yaml"
-assert_path_missing "bootstrap developer home has no runtime .aw" "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/.aw"
-assert_path_missing "bootstrap reviewer home has no runtime .aw" "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/.aw"
-assert_file_exists "bootstrap copied home blueprint" "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/README.md"
-bootstrap_team_id="circle:bootstrap.local"
-bootstrap_coord_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
-bootstrap_dev_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
-bootstrap_review_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
-assert_eq "bootstrap coordinator generated alias" "bootstrap-alice" "$bootstrap_coord_alias"
-assert_eq "bootstrap developer generated alias" "bootstrap-bob" "$bootstrap_dev_alias"
-assert_eq "bootstrap reviewer generated alias" "bootstrap-charlie" "$bootstrap_review_alias"
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer/.git" ]]; then
-  echo "  PASS: bootstrap developer worktree exists"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bootstrap developer worktree missing"
-  fail=$((fail + 1))
-fi
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer/.git" ]]; then
-  echo "  PASS: bootstrap reviewer worktree exists"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bootstrap reviewer worktree missing"
-  fail=$((fail + 1))
-fi
-if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/work" ]]; then
-  coord_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/coordinator/work")"
-  assert_eq "bootstrap coordinator work points to repo root" "$BOOTSTRAP_PROJECT_DIR" "$coord_work_target"
-else
-  echo "  FAIL: bootstrap coordinator work symlink missing"
-  fail=$((fail + 1))
-fi
-if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work" ]]; then
-  dev_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/developer/work")"
-  assert_eq "bootstrap developer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/developer" "$dev_work_target"
-else
-  echo "  FAIL: bootstrap developer work symlink missing"
-  fail=$((fail + 1))
-fi
-if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work" ]]; then
-  review_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/reviewer/work")"
-  assert_eq "bootstrap reviewer work points to worktree" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/reviewer" "$review_work_target"
-else
-  echo "  FAIL: bootstrap reviewer work symlink missing"
-  fail=$((fail + 1))
-fi
-if grep -qx '/agents/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
-  echo "  FAIL: bootstrap gitignore hides all agents"
-  fail=$((fail + 1))
-else
-  echo "  PASS: bootstrap gitignore does not hide all agents"
-  pass=$((pass + 1))
-fi
-if grep -Fqx '/agents/home/*/.aw/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
-  echo "  PASS: bootstrap gitignore ignores .aw"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bootstrap gitignore missing .aw pattern"
-  fail=$((fail + 1))
-fi
-if grep -Fqx '/agents/home/*/work' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
-  echo "  PASS: bootstrap gitignore ignores work symlinks"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bootstrap gitignore missing work symlink pattern"
-  fail=$((fail + 1))
-fi
-if grep -Fqx '/agents/worktrees/' "$BOOTSTRAP_PROJECT_DIR/.gitignore"; then
-  echo "  PASS: bootstrap gitignore ignores worktrees"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bootstrap gitignore missing worktrees pattern"
-  fail=$((fail + 1))
-fi
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/.aw" ]]; then
-  echo "  FAIL: bootstrap created repo-root .aw"
-  fail=$((fail + 1))
-else
-  echo "  PASS: bootstrap did not create repo-root .aw"
-  pass=$((pass + 1))
-fi
-
-bootstrap_before_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -prune -o -print | LC_ALL=C sort)"
-bootstrap_before_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
-rerun_output="$(run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents bootstrap "$BOOTSTRAP_TEMPLATE_DIR" \
-  --namespace bootstrap.local \
-  --team circle \
-  --identity-prefix bootstrap \
-  --aweb-url "http://127.0.0.1:9" \
-  --registry "http://127.0.0.1:9" 2>&1 || true)"
-assert_contains "bootstrap rerun refuses existing agents dir" "$rerun_output" "agents directory already exists"
-bootstrap_after_tree="$(cd "$BOOTSTRAP_PROJECT_DIR" && find . -path './.git' -prune -o -print | LC_ALL=C sort)"
-bootstrap_after_status="$(git -C "$BOOTSTRAP_PROJECT_DIR" status --porcelain=v1 --untracked-files=all --ignored=matching)"
-assert_eq "bootstrap rerun leaves filesystem snapshot unchanged" "$bootstrap_before_tree" "$bootstrap_after_tree"
-assert_eq "bootstrap rerun leaves git status unchanged" "$bootstrap_before_status" "$bootstrap_after_status"
-
-run_success "agents add local support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add support \
-  --identity-prefix bootstrap \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL"
-assert_file_exists "agents add local support workspace" "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/workspace.yaml"
-bootstrap_support_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
-assert_eq "agents add local support generated next alias" "bootstrap-dave" "$bootstrap_support_alias"
-if [[ -L "$BOOTSTRAP_PROJECT_DIR/agents/home/support/work" ]]; then
-  support_work_target="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR/agents/home/support/work")"
-  assert_eq "agents add support work points to repo root" "$BOOTSTRAP_PROJECT_DIR" "$support_work_target"
-else
-  echo "  FAIL: agents add support work symlink missing"
-  fail=$((fail + 1))
-fi
-
-run_success "agents remove local support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove support \
-  --deprovision-local \
-  --remove-layout
-if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/support" ]]; then
-  echo "  PASS: agents remove support moved home away"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents remove support left home in layout"
-  fail=$((fail + 1))
-fi
-if grep -q '^  support:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
-  echo "  FAIL: agents remove support left team.yaml entry"
-  fail=$((fail + 1))
-else
-  echo "  PASS: agents remove support removed team.yaml entry"
-  pass=$((pass + 1))
-fi
-
-run_success "agents add global support" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add support \
-  --global \
-  --namespace bootstrap.local \
-  --team circle \
-  --identity-prefix global \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL"
-assert_file_exists "agents add global support identity" "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/identity.yaml"
-if grep -Fq 'address: bootstrap.local/global-support' "$BOOTSTRAP_PROJECT_DIR/agents/home/support/.aw/identity.yaml"; then
-  echo "  PASS: agents add global support address"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add global support address missing"
-  fail=$((fail + 1))
-fi
-run_success "agents add global support address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global-support --json
-
-run_success "agents remove global support preserves address" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove support \
-  --deprovision-local \
-  --remove-layout
-if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/support" ]]; then
-  echo "  PASS: agents remove global support moved home away"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents remove global support left home in layout"
-  fail=$((fail + 1))
-fi
-if grep -q '^  support:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
-  echo "  FAIL: agents remove global support left team.yaml entry"
-  fail=$((fail + 1))
-else
-  echo "  PASS: agents remove global support removed team.yaml entry"
-  pass=$((pass + 1))
-fi
-run_success "agents remove global support preserved address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global-support --json
-
-run_success "agents add global outreach" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add outreach \
-  --global \
-  --role coordinator \
-  --namespace bootstrap.local \
-  --team circle \
-  --identity-prefix global2 \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL"
-assert_file_exists "agents add global outreach identity" "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach/.aw/identity.yaml"
-if grep -Fq 'address: bootstrap.local/global2-outreach' "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach/.aw/identity.yaml"; then
-  echo "  PASS: agents add global outreach address"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add global outreach address missing"
-  fail=$((fail + 1))
-fi
-run_success "agents add global outreach address resolves" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global2-outreach --json
-
-capture_success agents_global_outreach_remove "agents remove global outreach deletes address" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents remove outreach \
-  --deprovision-local \
-  --delete-global-address \
-  --remove-layout \
-  --json
-global_outreach_deleted="$(echo "$agents_global_outreach_remove" | jq_field global_address_deleted)"
-assert_eq "agents remove global outreach reports address deleted" "True" "$global_outreach_deleted"
-capture_success agents_global_outreach_resolve_deleted "agents remove global outreach deleted address resolve envelope" run_aw_in "$BOOTSTRAP_PROJECT_DIR" id namespace resolve bootstrap.local/global2-outreach --json
-global_outreach_deleted_resolve="$(echo "$agents_global_outreach_resolve_deleted" | python3 -c "import sys,json; d=json.load(sys.stdin); p=d.get('payload',{}); e=p.get('error') or {}; print(f\"{p.get('status','')}:{e.get('code','')}\")" 2>/dev/null || echo "")"
-assert_eq "agents remove global outreach deleted address no longer resolves" "fail:target.not_found" "$global_outreach_deleted_resolve"
-if [[ ! -d "$BOOTSTRAP_PROJECT_DIR/agents/home/outreach" ]]; then
-  echo "  PASS: agents remove global outreach moved home away"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents remove global outreach left home in layout"
-  fail=$((fail + 1))
-fi
-if grep -q '^  outreach:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
-  echo "  FAIL: agents remove global outreach left team.yaml entry"
-  fail=$((fail + 1))
-else
-  echo "  PASS: agents remove global outreach removed team.yaml entry"
-  pass=$((pass + 1))
-fi
-
-bootstrap_team_yaml_before_add_worktree="$(cksum "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml" | awk '{print $1 ":" $2}')"
-run_success "agents add-worktree qa" run_aw_in "$BOOTSTRAP_PROJECT_DIR" agents add-worktree developer \
-  --alias bootstrap2-qa
-bootstrap_team_yaml_after_add_worktree="$(cksum "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml" | awk '{print $1 ":" $2}')"
-assert_eq "agents add-worktree does not mutate team.yaml" "$bootstrap_team_yaml_before_add_worktree" "$bootstrap_team_yaml_after_add_worktree"
-assert_file_exists "agents add-worktree qa workspace" "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa/.aw/workspace.yaml"
-bootstrap_qa_alias="$(workspace_membership_field "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa/.aw/workspace.yaml" "$bootstrap_team_id" alias)"
-assert_eq "agents add-worktree qa explicit alias" "bootstrap2-qa" "$bootstrap_qa_alias"
-if [[ -d "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa/.git" || -f "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa/.git" ]]; then
-  echo "  PASS: agents add-worktree qa checkout exists"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add-worktree qa checkout missing"
-  fail=$((fail + 1))
-fi
-if [[ ! -e "$BOOTSTRAP_PROJECT_DIR/agents/home/bootstrap2-qa" ]]; then
-  echo "  PASS: agents add-worktree qa did not create separate home"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add-worktree qa created separate home"
-  fail=$((fail + 1))
-fi
-if grep -q '^  bootstrap2-qa:' "$BOOTSTRAP_PROJECT_DIR/agents/team.yaml"; then
-  echo "  FAIL: agents add-worktree qa added team.yaml entry"
-  fail=$((fail + 1))
-else
-  echo "  PASS: agents add-worktree qa did not add team.yaml entry"
-  pass=$((pass + 1))
-fi
-
-if git -C "$BOOTSTRAP_PROJECT_DIR" worktree remove "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa" --force; then
-  echo "  PASS: agents add-worktree qa cleanup removed worktree"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add-worktree qa cleanup failed"
-  fail=$((fail + 1))
-fi
-git -C "$BOOTSTRAP_PROJECT_DIR" branch -D bootstrap2-qa >/dev/null 2>&1 || true
-if [[ ! -e "$BOOTSTRAP_PROJECT_DIR/agents/worktrees/bootstrap2-qa" ]]; then
-  echo "  PASS: agents add-worktree qa worktree path gone after cleanup"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: agents add-worktree qa worktree path remains after cleanup"
-  fail=$((fail + 1))
-fi
+retired_agents_output="$(run_aw agents --help 2>&1 || true)"
+assert_contains "retired aw agents command is unavailable" "$retired_agents_output" "unknown command"
 
 echo ""
-
-# ---------------------------------------------------------------------------
-# Phase 1c: Bootstrap legacy work-directory compatibility
-# ---------------------------------------------------------------------------
-echo "=== Phase 1c: Bootstrap legacy work-directory layout ==="
-
-cat > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/team.yaml" <<'EOF'
-name: bootstrap-legacy-e2e
-instructions:
-  file: docs/team.md
-roles:
-  coordinator:
-    title: Coordinator
-    file: roles/coordinator.md
-agents:
-  coordinator:
-    role_name: coordinator
-    default_name: bootstrap-legacy-coord
-    default_alias: blegacy
-EOF
-mkdir -p "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/docs" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/roles" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator"
-printf '# Legacy bootstrap team\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/docs/team.md"
-printf '# Legacy coordinator role\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/roles/coordinator.md"
-printf '# Legacy coordinator home\n' > "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/AGENTS.md"
-printf '# legacy work repo\n' > "$BOOTSTRAP_LEGACY_WORK_DIR/README.md"
-git -C "$BOOTSTRAP_LEGACY_WORK_DIR" init >/dev/null
-git -C "$BOOTSTRAP_LEGACY_WORK_DIR" config user.email test@example.com
-git -C "$BOOTSTRAP_LEGACY_WORK_DIR" config user.name "Test User"
-git -C "$BOOTSTRAP_LEGACY_WORK_DIR" add README.md
-git -C "$BOOTSTRAP_LEGACY_WORK_DIR" commit -m init >/dev/null
-
-run_success "bootstrap legacy work-directory apply" run_aw_in "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" agents bootstrap "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" \
-  --namespace bootstrap.local \
-  --team circle \
-  --aweb-url "$AWEB_URL" \
-  --registry "$AWID_URL" \
-  --work-directory "$BOOTSTRAP_LEGACY_WORK_DIR"
-
-assert_file_exists "bootstrap legacy coordinator workspace" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/.aw/workspace.yaml"
-if [[ -L "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/work" ]]; then
-  legacy_work_target="$(canonicalize_dir "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/coordinator/work")"
-  assert_eq "bootstrap legacy work points to work-directory" "$BOOTSTRAP_LEGACY_WORK_DIR" "$legacy_work_target"
-else
-  echo "  FAIL: bootstrap legacy work symlink missing"
-  fail=$((fail + 1))
-fi
-if [[ -d "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/home" || -d "$BOOTSTRAP_LEGACY_TEMPLATE_DIR/agents/worktrees" ]]; then
-  echo "  FAIL: bootstrap legacy mode created in-repo layout directories"
-  fail=$((fail + 1))
-else
-  echo "  PASS: bootstrap legacy mode did not create in-repo layout directories"
-  pass=$((pass + 1))
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
 # Phase 2: Create alice's identity
 # ---------------------------------------------------------------------------
 echo "=== Phase 2: Create alice's identity ==="
@@ -995,7 +611,7 @@ capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id te
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
 assert_not_empty "alice invite token" "$ALICE_INVITE_TOKEN"
 
-capture_success alice_accept_out "alice_accept_out" run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" \
+capture_success alice_accept_out "alice_accept_out" run_aw_in "$ALICE_DIR" id team accept-invite "$ALICE_INVITE_TOKEN" --global \
   --alias alice \
   --json
 
@@ -1093,7 +709,7 @@ BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
 # Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
-capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" \
+capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" --global \
   --alias bob \
   --json
 
@@ -1340,7 +956,7 @@ capture_success eve_invite_out "eve_invite_out" run_aw_in "$ALICE_DIR" id team i
 EVE_INVITE_TOKEN="$(echo "$eve_invite_out" | jq_field token)"
 assert_not_empty "eve local invite token" "$EVE_INVITE_TOKEN"
 
-capture_success eve_accept "eve_accept" run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
+capture_success eve_accept "eve_accept" run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" --global \
   --alias eve \
   --json
 EVE_ACCEPT_STATUS="$(echo "$eve_accept" | jq_field status)"
@@ -1641,7 +1257,7 @@ capture_success ops_invite_out "ops_invite_out" run_aw_in "$ALICE_DIR" id team i
 OPS_INVITE_TOKEN="$(echo "$ops_invite_out" | jq_field token)"
 assert_not_empty "ops invite token" "$OPS_INVITE_TOKEN"
 
-capture_success carol_accept "carol_accept" run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" \
+capture_success carol_accept "carol_accept" run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" --global \
   --alias carol \
   --json
 CAROL_ACCEPT_STATUS="$(echo "$carol_accept" | jq_field status)"
@@ -1667,7 +1283,7 @@ capture_success dave_invite_out "dave_invite_out" run_aw_in "$ALICE_DIR" id team
 DAVE_INVITE_TOKEN="$(echo "$dave_invite_out" | jq_field token)"
 assert_not_empty "dave ops invite token" "$DAVE_INVITE_TOKEN"
 
-capture_success dave_accept "dave_accept" run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" \
+capture_success dave_accept "dave_accept" run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" --global \
   --alias dave \
   --json
 DAVE_ACCEPT_STATUS="$(echo "$dave_accept" | jq_field status)"
@@ -1941,7 +1557,7 @@ capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PART
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
 
-capture_success partner_bob_accept "partner_bob_accept" run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" \
+capture_success partner_bob_accept "partner_bob_accept" run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" --global \
   --alias bob \
   --json
 PARTNER_BOB_ACCEPT_STATUS="$(echo "$partner_bob_accept" | jq_field status)"
@@ -1959,7 +1575,7 @@ capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
 
-capture_success partner_alice_accept "partner_alice_accept" run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" \
+capture_success partner_alice_accept "partner_alice_accept" run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" --global \
   --alias alice \
   --address partner.local/alice \
   --json

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os"
@@ -11,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	blueprintpkg "github.com/awebai/aw/internal/blueprint"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +29,11 @@ var (
 	teamHumanCreateHome        string
 	teamHumanCreateRuntime     string
 	teamHumanCreateProfiles    []string
+	teamHumanCreateAgents      []string
+	teamHumanCreateBlueprint   string
+	teamHumanCreateFirstLocal  bool
+	teamHumanCreateFirstGlobal bool
+	teamHumanAddSpecOverride   []teamAgentSpec
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
@@ -52,18 +58,19 @@ var teamHumanCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a local empty-profile team workspace",
 	Long: "Create a local empty-profile team workspace.\n\n" +
-		"This wraps aw init for the aw-local path. No --profile means no Library call\n" +
-		"and no profile materialization. --profile BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME]\n" +
-		"adopts from Library, binds the local identity, and materializes the home.\n" +
-		"The materialization runtime is explicit CLI policy: --runtime, a =RUNTIME suffix, or default claude-code.",
+		"This wraps aw init for the aw-local path. No --agent/--profile means no Library call\n" +
+		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
+		"(or NAME[:local|global] for an empty-profile agent). Omitted names use the\n" +
+		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
+		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
 
 var teamHumanAddCmd = &cobra.Command{
-	Use:   "add <name>[@<profile-ref>]...",
-	Short: "Add empty-profile agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Bare names create empty-profile identity-only homes with no Library calls. NAME@BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION] adopts from Library, binds the new identity, and materializes the home. Use --runtime to choose the materialization runtime; omitted --runtime defaults to claude-code.",
+	Use:   "add <agent-spec>...",
+	Short: "Add agents to this team's agents/instances layout",
+	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanAdd,
 }
@@ -135,10 +142,16 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateDisplayName, "display-name", "", "Team display name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateServiceURL, "service", "", "Hosted service URL for dashboard guidance")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRegistryURL, "registry", "", "Registry origin override for --byot")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Initial local workspace alias (defaults to <name>)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "first-agent-name", "", "Initial workspace member name (defaults to <name>)")
+	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstLocal, "first-agent-local", false, "Enroll the first agent as a local team-scoped identity (default)")
+	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstGlobal, "first-agent-global", false, "Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
+	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for --profile homes (claude-code|codex|pi|local-shell; default claude-code)")
-	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Library profile selector BLUEPRINT_REF/PROFILE_REF[@BLUEPRINT_VERSION][=RUNTIME] to adopt and materialize")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)")
+	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateAgents, "agent", nil, "Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]")
+	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "Materialize all profiles in a local blueprint directory")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
@@ -149,12 +162,21 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Create local workspace member invite (default)")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Create global member invite")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
+	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
+	markDeprecatedHiddenFlag(teamHumanInviteCmd, "local", "member-local")
+	markDeprecatedHiddenFlag(teamHumanInviteCmd, "global", "member-global")
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
-	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
-	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the global member certificate")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamHumanJoinCmd, "alias", "name")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptLocal, "local", false, "Join with a local workspace identity (default)")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
+	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
+	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 
 	teamHumanCmd.AddCommand(teamHumanListCmd)
@@ -165,6 +187,152 @@ func init() {
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
 	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
 	rootCmd.AddCommand(teamHumanCmd)
+}
+
+type teamAgentSpec struct {
+	Raw               string
+	Name              string
+	Scope             string
+	Profile           *libraryProfileSelector
+	LocalBlueprintDir string
+	LayoutOnly        bool
+	RuntimeKind       string
+	ResolvedName      string
+}
+
+func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
+	raws := append([]string{}, teamHumanCreateAgents...)
+	if len(teamHumanCreateProfiles) > 0 {
+		for _, rawProfile := range teamHumanCreateProfiles {
+			rawProfile = strings.TrimSpace(rawProfile)
+			compat := rawProfile
+			if !strings.Contains(rawProfile, "@") {
+				profilePart := rawProfile
+				if before, _, ok := strings.Cut(profilePart, "="); ok {
+					profilePart = before
+				}
+				if before, _, ok := strings.Cut(profilePart, ":"); ok {
+					profilePart = before
+				}
+				if _, profileRef, ok := strings.Cut(profilePart, "/"); ok && isValidWorkspaceAlias(profileRef) {
+					compat = profileRef + "@" + rawProfile
+				}
+			}
+			raws = append(raws, compat)
+		}
+	}
+	localBlueprintDir := ""
+	if strings.TrimSpace(teamHumanCreateBlueprint) != "" {
+		if len(raws) > 0 {
+			return nil, usageError("--blueprint cannot be combined with --agent/--profile")
+		}
+		absBlueprint, err := filepath.Abs(strings.TrimSpace(teamHumanCreateBlueprint))
+		if err != nil {
+			return nil, err
+		}
+		bp, err := blueprintpkg.LoadLocalDir(absBlueprint)
+		if err != nil {
+			return nil, fmt.Errorf("load blueprint: %w", err)
+		}
+		localBlueprintDir = absBlueprint
+		for _, profile := range bp.LoadedProfiles {
+			spec := bp.ID + "/" + profile.ID
+			if scope := strings.TrimSpace(profile.Scope); scope != "" {
+				spec += ":" + scope
+			}
+			raws = append(raws, spec)
+		}
+	}
+	specs := make([]teamAgentSpec, 0, len(raws))
+	for _, raw := range raws {
+		spec, err := parseTeamAgentSpec(raw)
+		if err != nil {
+			return nil, err
+		}
+		if localBlueprintDir != "" {
+			spec.LocalBlueprintDir = localBlueprintDir
+		}
+		if spec.Profile != nil {
+			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanCreateRuntime)
+			if err != nil {
+				return nil, err
+			}
+			spec.Profile = &parsed
+			spec.RuntimeKind = parsed.RuntimeKind
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
+func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return teamAgentSpec{}, usageError("agent spec is required")
+	}
+	runtimeKind := ""
+	body := trimmed
+	if before, after, ok := strings.Cut(trimmed, "="); ok {
+		body = strings.TrimSpace(before)
+		runtimeKind = strings.TrimSpace(after)
+		if runtimeKind == "" {
+			return teamAgentSpec{}, usageError("runtime is required after =")
+		}
+		var err error
+		runtimeKind, err = normalizeMaterializeRuntimeKind(runtimeKind)
+		if err != nil {
+			return teamAgentSpec{}, err
+		}
+	}
+	name := ""
+	profilePart := body
+	if before, after, ok := strings.Cut(body, "@"); ok {
+		name = strings.TrimSpace(before)
+		profilePart = strings.TrimSpace(after)
+		if name == "" {
+			return teamAgentSpec{}, usageError("agent name is required before @")
+		}
+		if strings.Contains(name, "/") {
+			return teamAgentSpec{}, usageError("versioned Library profile selectors are not supported; @ now separates NAME from BLUEPRINT/PROFILE")
+		}
+		if !isValidWorkspaceAlias(name) {
+			return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
+		}
+	}
+	if strings.Contains(profilePart, "/") {
+		selector, err := parseLibraryProfileSelector(profilePart)
+		if err != nil {
+			return teamAgentSpec{}, err
+		}
+		if runtimeKind != "" && strings.TrimSpace(selector.RuntimeKind) == "" {
+			selector.RuntimeKind = runtimeKind
+		}
+		return teamAgentSpec{Raw: trimmed, Name: name, Profile: &selector, RuntimeKind: selector.RuntimeKind, Scope: selector.IdentityScope}, nil
+	}
+	if name != "" {
+		return teamAgentSpec{}, usageError("profile selector is required after @")
+	}
+	if runtimeKind != "" {
+		return teamAgentSpec{}, usageError("=RUNTIME is only valid with BLUEPRINT/PROFILE agent specs")
+	}
+	emptyName := profilePart
+	scope := ""
+	if before, after, ok := strings.Cut(profilePart, ":"); ok {
+		emptyName = strings.TrimSpace(before)
+		var err error
+		scope, err = normalizeTeamAgentScope(after)
+		if err != nil {
+			return teamAgentSpec{}, err
+		}
+	}
+	emptyName = strings.TrimSpace(emptyName)
+	if emptyName == "" {
+		return teamAgentSpec{}, usageError("empty-profile agent name is required")
+	}
+	if !isValidWorkspaceAlias(emptyName) {
+		return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", emptyName)
+	}
+	return teamAgentSpec{Raw: trimmed, Name: emptyName, Scope: scope}, nil
 }
 
 type teamHumanCreateOutput struct {
@@ -187,37 +355,30 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if teamName == "" {
 		return usageError("team name is required")
 	}
-	profileSelectors := make([]libraryProfileSelector, 0, len(teamHumanCreateProfiles))
-	for _, rawProfile := range teamHumanCreateProfiles {
-		parsed, err := parseLibraryProfileSelector(rawProfile)
-		if err != nil {
-			return err
-		}
-		if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
-			return err
-		}
-		parsed, err = applyMaterializeRuntimePolicy(parsed, teamHumanCreateRuntime)
-		if err != nil {
-			return err
-		}
-		profileSelectors = append(profileSelectors, parsed)
+	agentSpecs, err := teamHumanCreateAgentSpecs()
+	if err != nil {
+		return err
 	}
+	var firstSpec teamAgentSpec
 	var selector *libraryProfileSelector
-	if len(profileSelectors) == 1 {
-		selector = &profileSelectors[0]
+	if len(agentSpecs) > 0 {
+		firstSpec = agentSpecs[0]
+		if firstSpec.Profile != nil {
+			selector = firstSpec.Profile
+		}
 	}
-	rosterSpecs, err := teamHumanCreateRosterSpecs(profileSelectors)
+	rosterSpecs, err := teamHumanCreateRosterSpecs(agentSpecs)
 	if err != nil {
 		return err
 	}
 	wd, _ := os.Getwd()
 	createHomeOverride := ""
 	if strings.TrimSpace(teamHumanCreateHome) != "" {
-		if len(profileSelectors) == 0 {
-			return usageError("aw team create --home requires --profile")
+		if len(agentSpecs) == 0 {
+			return usageError("aw team create --home requires --profile/--agent")
 		}
-		if len(profileSelectors) > 1 {
-			return usageError("aw team create --home can only be used with a single --profile")
+		if len(agentSpecs) > 1 {
+			return usageError("aw team create --home can only be used with a single --agent/--profile")
 		}
 		homeDir, err := filepath.Abs(strings.TrimSpace(teamHumanCreateHome))
 		if err != nil {
@@ -228,13 +389,29 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		createHomeOverride = homeDir
 	}
+	firstAgentScope, err := resolveTeamHumanCreateFirstAgentScope()
+	if err != nil {
+		return err
+	}
+	if scope := strings.TrimSpace(firstSpec.Scope); scope != "" {
+		if (teamHumanCreateFirstLocal || teamHumanCreateFirstGlobal) && scope != firstAgentScope {
+			return usageError("first agent scope %q conflicts with --first-agent-%s", scope, firstAgentScope)
+		}
+		firstAgentScope = scope
+	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
+	if name := strings.TrimSpace(firstSpec.Name); name != "" {
+		if alias != "" && !strings.EqualFold(alias, name) {
+			return usageError("the first listed --agent is the first team member; --first-agent-name cannot name a separate/additional agent - pass agents uniformly as --agent NAME@BLUEPRINT/PROFILE, or use --first-agent-name alone with no --agent")
+		}
+		alias = name
+	}
 	if alias == "" {
 		alias = strings.ToLower(teamName)
 	}
 	if teamHumanCreateBYOT {
-		if len(profileSelectors) > 0 {
-			return usageError("aw team create --byot --profile is not supported yet; create the BYOT team, then use aw team add NAME@BLUEPRINT_REF/PROFILE_REF")
+		if len(agentSpecs) > 0 {
+			return usageError("aw team create --byot --agent is not supported yet; create the BYOT team, then use aw team add [NAME@]BLUEPRINT/PROFILE[:SCOPE]")
 		}
 		name := strings.TrimSpace(teamHumanCreateName)
 		if name == "" {
@@ -244,7 +421,18 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if domain == "" {
 			return usageError("aw team create --byot requires --namespace")
 		}
-		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), nil)
+		if firstAgentScope == awid.IdentityModeGlobal {
+			identityExists, err := teamCreateHasIdentityMaterial(wd)
+			if err != nil {
+				return err
+			}
+			if !identityExists {
+				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL)); err != nil {
+					return err
+				}
+			}
+		}
+		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
@@ -273,7 +461,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if identityExists {
-		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, selector); err != nil {
+		if err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope, selector); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
@@ -287,12 +475,27 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if apiKey := resolveInitAPIKey(); apiKey != "" {
+		// The API-key workspace-init endpoint is reached at <base>/api/v1/..., so an
+		// /api-suffixed AWEB_URL must be stripped to its base here, matching aw init.
+		apiKeyAwebURL, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
+		apiAlias := alias
+		apiName := ""
+		if firstAgentGlobal {
+			apiAlias = ""
+			apiName = alias
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:  wd,
-			AwebURL:     awebURL,
+			AwebURL:     apiKeyAwebURL,
 			RegistryURL: registryURL,
 			APIKey:      apiKey,
-			Alias:       alias,
+			Name:        apiName,
+			Alias:       apiAlias,
+			Persistent:  firstAgentGlobal,
 			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
@@ -313,10 +516,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, selector); err != nil {
+		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope, selector); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
+	}
+	if firstAgentScope == awid.IdentityModeGlobal {
+		return usageError("--first-agent-global requires an existing global identity or namespace/hosted context; run `aw id create`, pass --namespace with --byot, or use hosted onboarding")
 	}
 	result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 		WorkingDir:  wd,
@@ -347,32 +553,28 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	return runTeamHumanCreateRosterAdd(rosterSpecs)
 }
 
-func teamHumanCreateRosterSpecs(selectors []libraryProfileSelector) ([]string, error) {
-	if len(selectors) <= 1 {
-		return nil, nil
-	}
-	specs := make([]string, 0, len(selectors))
-	seen := map[string]bool{}
-	for _, selector := range selectors {
-		name := strings.TrimSpace(selector.ProfileRef)
-		if !isValidWorkspaceAlias(name) {
-			return nil, usageError("profile ref %q cannot be used as an agent name; use aw team add NAME@BLUEPRINT_REF/PROFILE_REF", selector.ProfileRef)
+func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]teamAgentSpec, error) {
+	seenExplicit := map[string]bool{}
+	for _, agent := range agents {
+		name := strings.TrimSpace(agent.Name)
+		if name == "" {
+			continue
 		}
 		key := strings.ToLower(name)
-		if seen[key] {
-			return nil, usageError("duplicate roster agent name %q from --profile selectors", name)
+		if seenExplicit[key] {
+			return nil, usageError("duplicate roster agent name %q", name)
 		}
-		seen[key] = true
-		spec := fmt.Sprintf("%s@%s/%s", name, selector.SourceBlueprintRef, selector.ProfileRef)
-		if strings.TrimSpace(selector.RuntimeKind) != "" {
-			spec += "=" + strings.TrimSpace(selector.RuntimeKind)
-		}
-		specs = append(specs, spec)
+		seenExplicit[key] = true
 	}
+	if len(agents) <= 1 {
+		return nil, nil
+	}
+	specs := make([]teamAgentSpec, 0, len(agents)-1)
+	specs = append(specs, agents[1:]...)
 	return specs, nil
 }
 
-func runTeamHumanCreateRosterAdd(specs []string) error {
+func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	if len(specs) == 0 {
 		return nil
 	}
@@ -380,17 +582,45 @@ func runTeamHumanCreateRosterAdd(specs []string) error {
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	oldAddHome := teamHumanAddHome
+	oldAddSpecOverride := teamHumanAddSpecOverride
 	defer func() {
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 		teamHumanAddHome = oldAddHome
+		teamHumanAddSpecOverride = oldAddSpecOverride
 	}()
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
 	teamHumanAddHome = ""
-	return runTeamHumanAdd(nil, specs)
+	teamHumanAddSpecOverride = append([]teamAgentSpec(nil), specs...)
+	args := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		args = append(args, spec.Raw)
+	}
+	return runTeamHumanAdd(nil, args)
+}
+
+func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) error {
+	domain = awconfig.NormalizeDomain(domain)
+	if domain == "" {
+		return usageError("--first-agent-global requires --namespace with --byot when no global identity exists")
+	}
+	exists, err := awconfig.ControllerKeyExists(domain)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
+	}
+	_, err = executeIDCreate(wd, idCreateOptions{
+		Name:        alias,
+		Domain:      domain,
+		RegistryURL: registryURL,
+		Now:         time.Now,
+	})
+	return err
 }
 
 func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
@@ -407,9 +637,16 @@ func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	return false, nil
 }
 
-func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, selector *libraryProfileSelector) error {
+func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope string, selector *libraryProfileSelector) error {
 	canPrompt := initIsTTY() && !jsonFlag
 	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
+	firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
+	requestAlias := alias
+	requestName := ""
+	if firstAgentGlobal {
+		requestAlias = ""
+		requestName = alias
+	}
 	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir:         wd,
 		PromptIn:           os.Stdin,
@@ -420,12 +657,12 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 		BYOD:               false,
 		Username:           strings.TrimSpace(initUsername),
 		Domain:             strings.TrimSpace(initDomain),
-		Alias:              alias,
-		Name:               strings.TrimSpace(initName),
+		Alias:              requestAlias,
+		Name:               requestName,
 		HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-		Persistent:         initPersistent,
+		Persistent:         firstAgentGlobal,
 		InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 		InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 		DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
@@ -454,30 +691,37 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias string, 
 	return nil
 }
 
-func runTeamHumanCreateForExistingIdentity(wd, teamName, alias string, selector *libraryProfileSelector) error {
-	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), selector)
+func resolveTeamHumanCreateFirstAgentScope() (string, error) {
+	if teamHumanCreateFirstLocal && teamHumanCreateFirstGlobal {
+		return "", usageError("--first-agent-local and --first-agent-global cannot be used together")
+	}
+	if teamHumanCreateFirstGlobal {
+		return awid.IdentityModeGlobal, nil
+	}
+	return awid.IdentityModeLocal, nil
 }
 
-func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName string, selector *libraryProfileSelector) error {
+func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) error {
+	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector)
+}
+
+func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector) error {
 	if selector != nil {
 		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
-	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(wd)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if strings.TrimSpace(explicitDomain) != "" {
-				return usageError("aw team create --byot requires a local member identity to enroll; use aw id team create for a controller-only team, or run aw init / aw id create first")
-			}
-			return usageError("current workspace has local signing state but no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
-		}
-		return err
-	}
-	identityDomain, _, ok := awconfig.CutIdentityAddress(identity.Address)
-	if !ok {
-		return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
-	}
 	domain := awconfig.NormalizeDomain(explicitDomain)
+	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if domain == "" {
+		if identityErr != nil {
+			if errors.Is(identityErr, os.ErrNotExist) {
+				return usageError("current workspace has no identity namespace; use --byot/--namespace for a domain you control, or run aw init first")
+			}
+			return identityErr
+		}
+		identityDomain, _, ok := awconfig.CutIdentityAddress(identity.Address)
+		if !ok {
+			return usageError("current identity has no namespace address; run aw init for first-team setup or use --byot/--namespace for a domain you control")
+		}
 		domain = identityDomain
 	}
 	exists, err := awconfig.ControllerKeyExists(domain)
@@ -492,7 +736,7 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 		return fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
 	registryURL := strings.TrimSpace(explicitRegistryURL)
-	if registryURL == "" {
+	if registryURL == "" && identityErr == nil && identity != nil {
 		registryURL = strings.TrimSpace(identity.RegistryURL)
 	}
 	if registryURL == "" {
@@ -510,23 +754,45 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 			return err
 		}
 	}
-	memberKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(wd))
-	if err != nil {
-		return fmt.Errorf("load local signing key: %w", err)
-	}
-	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
-	if strings.TrimSpace(identity.DID) != "" && strings.TrimSpace(identity.DID) != memberDIDKey {
-		return fmt.Errorf("local signing key did %s does not match identity did %s", memberDIDKey, identity.DID)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), strings.TrimSpace(identity.Address), strings.TrimSpace(identity.StableID), memberDIDKey, memberKey); err != nil {
-		return err
+	firstAgentAddress := ""
+	if firstAgentScope == awid.IdentityModeGlobal && identityErr == nil && identity != nil {
+		firstAgentAddress = strings.TrimSpace(identity.Address)
 	}
-	bootstrap, err := bootstrapLocalTeamMemberWithLifetime(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey, memberKey, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address), alias, strings.TrimSpace(identity.Lifetime))
+	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
+		WorkingDir:        wd,
+		TeamDomain:        domain,
+		Name:              alias,
+		Address:           firstAgentAddress,
+		Scope:             firstAgentScope,
+		RegistryURL:       strings.TrimSpace(registry.DefaultRegistryURL),
+		Registry:          registry,
+		AllowLocalMint:    true,
+		AllowDefaultClaim: false,
+	})
 	if err != nil {
 		return err
 	}
+	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey)
+	if err != nil {
+		return err
+	}
+	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
+		Team:          registration.TeamID,
+		MemberDIDKey:  plan.MemberDIDKey,
+		MemberDIDAW:   strings.TrimSpace(plan.MemberDIDAW),
+		MemberAddress: strings.TrimSpace(plan.MemberAddress),
+		Alias:         strings.TrimSpace(plan.Name),
+		Lifetime:      strings.TrimSpace(plan.Lifetime),
+	})
+	if err != nil {
+		return err
+	}
+	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		return fmt.Errorf("register certificate at registry: %w", err)
+	}
+	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
 	certPath, err := awconfig.SaveTeamCertificateForTeam(wd, bootstrap.TeamID, bootstrap.Certificate)
 	if err != nil {
 		return err
@@ -536,10 +802,9 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 	if err != nil {
 		return err
 	}
-	if err := upsertAcceptedTeamMembershipState(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, true); err != nil {
-		return err
-	}
-	if err := ensureAcceptedTeamWorkspaceBinding(wd, accepted, bootstrap.Certificate, awebURL); err != nil {
+	// The creator self-enrolls as the team's first member and produces a
+	// ready-to-run identity, so the worktree binding is written now.
+	if err := recordAcceptedTeamMembership(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return err
 	}
 	printOutput(teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
@@ -570,7 +835,7 @@ func formatTeamHumanCreate(v any) string {
 		fmt.Fprintf(&b, " (%s)", out.TeamID)
 	}
 	if out.Alias != "" {
-		fmt.Fprintf(&b, " as alias %s", out.Alias)
+		fmt.Fprintf(&b, " as name %s", out.Alias)
 	}
 	b.WriteString("\n")
 	if out.HomeDir != "" {
@@ -595,13 +860,122 @@ type teamHumanAddOutput struct {
 }
 
 type teamHumanAddedAgent struct {
-	Name        string                  `json:"name"`
-	HomeDir     string                  `json:"home_dir"`
-	ProfileMode string                  `json:"profile_mode"`
-	Profile     *libraryProfileSelector `json:"-"`
-	Alias       string                  `json:"alias,omitempty"`
-	TeamID      string                  `json:"team_id,omitempty"`
-	CertPath    string                  `json:"cert_path,omitempty"`
+	Name              string                  `json:"name"`
+	HomeDir           string                  `json:"home_dir"`
+	ProfileMode       string                  `json:"profile_mode"`
+	Profile           *libraryProfileSelector `json:"-"`
+	LocalBlueprintDir string                  `json:"-"`
+	Scope             string                  `json:"scope,omitempty"`
+	Alias             string                  `json:"alias,omitempty"`
+	TeamID            string                  `json:"team_id,omitempty"`
+	CertPath          string                  `json:"cert_path,omitempty"`
+}
+
+func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, error) {
+	var client *aweb.Client
+	used := map[string]bool{}
+	inputSpecs := append([]teamAgentSpec(nil), teamHumanAddSpecOverride...)
+	if inputSpecs == nil {
+		inputSpecs = make([]teamAgentSpec, 0, len(args))
+		for _, raw := range args {
+			spec, err := parseTeamAgentSpec(raw)
+			if err != nil {
+				return nil, err
+			}
+			inputSpecs = append(inputSpecs, spec)
+		}
+	}
+	resolved := make([]teamAgentSpec, 0, len(inputSpecs))
+	for _, spec := range inputSpecs {
+		scope := strings.TrimSpace(spec.Scope)
+		if spec.Profile != nil && teamHumanAddLayoutOnly {
+			return nil, usageError("aw team add --layout-only cannot be used with profile selector %s", spec.Raw)
+		}
+		if spec.Profile != nil {
+			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanAddRuntime)
+			if err != nil {
+				return nil, err
+			}
+			spec.Profile = &parsed
+			if scope == "" {
+				if strings.TrimSpace(spec.LocalBlueprintDir) != "" {
+					scope = awid.IdentityModeLocal
+				} else {
+					scope, err = resolveLibraryProfileScope(parsed)
+					if err != nil {
+						if !isMissingLibraryPluginError(err) {
+							return nil, err
+						}
+						scope = awid.IdentityModeLocal
+					}
+				}
+			}
+		}
+		if scope == "" {
+			scope = awid.IdentityModeLocal
+		}
+		if teamHumanAddGlobal {
+			scope = awid.IdentityModeGlobal
+		} else if teamHumanAddLocal {
+			scope = awid.IdentityModeLocal
+		}
+		if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
+			return nil, usageError("scope %q is not supported; use local or global", scope)
+		}
+		name := strings.TrimSpace(spec.Name)
+		var err error
+		if name == "" {
+			if client == nil {
+				var err error
+				client, _, err = resolveClientSelectionForDir(wd)
+				if err != nil {
+					return nil, err
+				}
+			}
+			name, err = suggestTeamHumanAgentName(client, scope, used)
+			if err != nil {
+				return nil, err
+			}
+		}
+		key := strings.ToLower(name)
+		if used[key] {
+			return nil, usageError("duplicate agent name %q", name)
+		}
+		used[key] = true
+		spec.ResolvedName = name
+		spec.Name = name
+		spec.Scope = scope
+		resolved = append(resolved, spec)
+	}
+	return resolved, nil
+}
+
+func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[string]bool) (string, error) {
+	exclude := make([]string, 0, len(used))
+	for name := range used {
+		exclude = append(exclude, name)
+	}
+	sort.Strings(exclude)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	suggestion, err := client.SuggestAgentNames(ctx, awid.SuggestAgentNamesRequest{
+		Scope:   scope,
+		Exclude: exclude,
+		Count:   1,
+	})
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("suggest next name from server: %w", err)
+	}
+	for _, suggested := range suggestion.Names {
+		name := strings.TrimSpace(suggested.Name)
+		if name == "" || !isValidWorkspaceAlias(name) {
+			return "", fmt.Errorf("server returned invalid name suggestion %q", name)
+		}
+		if !used[strings.ToLower(name)] {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
 func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
@@ -625,45 +999,24 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	}
 	repoRoot := resolveRepoRoot(wd)
 	agentsRoot := filepath.Join(repoRoot, "agents", "instances")
-	plans := make([]teamHumanAddedAgent, 0, len(args))
-	seen := map[string]bool{}
-	for _, raw := range args {
-		name, profileRef, err := parseTeamHumanAddSpec(raw)
-		if err != nil {
-			return err
+	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args)
+	if err != nil {
+		return err
+	}
+	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
+	for _, spec := range resolvedSpecs {
+		if spec.Profile != nil && teamHumanAddLayoutOnly {
+			return usageError("aw team add --layout-only cannot be used with profile selector %s", spec.Raw)
 		}
-		var selector *libraryProfileSelector
-		if profileRef != "" {
-			if teamHumanAddLayoutOnly {
-				return usageError("aw team add --layout-only cannot be used with profile selector %s@%s", name, profileRef)
-			}
-			parsed, err := parseLibraryProfileSelector(profileRef)
-			if err != nil {
-				return err
-			}
-			if err := rejectUnsupportedVersionedLibrarySelector(parsed); err != nil {
-				return err
-			}
-			parsed, err = applyMaterializeRuntimePolicy(parsed, teamHumanAddRuntime)
-			if err != nil {
-				return err
-			}
-			selector = &parsed
-		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			return usageError("duplicate agent name %q", name)
-		}
-		seen[key] = true
 		profileMode := "empty"
-		if selector != nil {
+		if spec.Profile != nil {
 			profileMode = "library"
 		}
-		homeDir := filepath.Join(agentsRoot, name)
+		homeDir := filepath.Join(agentsRoot, spec.Name)
 		if explicitHome != "" {
 			homeDir = explicitHome
 		}
-		plans = append(plans, teamHumanAddedAgent{Name: name, HomeDir: homeDir, ProfileMode: profileMode, Profile: selector})
+		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope, LocalBlueprintDir: spec.LocalBlueprintDir})
 	}
 	for _, plan := range plans {
 		if plan.Profile != nil {
@@ -692,12 +1045,14 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		createdProfileIdentity := false
+		var acceptedProfileIdentity *acceptedTeamInvite
+		globalAgent := plans[i].Scope == awid.IdentityModeGlobal
 		if plans[i].Profile != nil {
 			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
 				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
 			} else {
-				accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+				accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
 				if err != nil {
 					if rollback != nil {
 						_ = rollback.Rollback()
@@ -705,12 +1060,13 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 					return err
 				}
 				createdProfileIdentity = true
+				acceptedProfileIdentity = accepted
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
 			}
 		} else {
-			accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, teamHumanAddGlobal)
+			accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
 			if err != nil {
 				return err
 			}
@@ -724,12 +1080,15 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				agentID = plans[i].Name
 			}
 			rollbackOnErr := func(err error) error {
-				if createdProfileIdentity && rollback != nil {
-					if rbErr := rollback.Rollback(); rbErr != nil {
-						return fmt.Errorf("%w; rollback failed: %v", err, rbErr)
-					}
+				if !createdProfileIdentity {
+					return err
 				}
-				return err
+				memberRollbackErr := rollbackJustCreatedTeamMember(wd, acceptedProfileIdentity)
+				var homeRollbackErr error
+				if rollback != nil {
+					homeRollbackErr = rollback.Rollback()
+				}
+				return addPostJoinRollbackError(err, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr)
 			}
 			// Materialize the profile home, connect the member to the aweb service,
 			// then run the coordination configure step. Connect sits between the two:
@@ -738,7 +1097,11 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			// install the awid certificate but not the aweb connection. Connecting only
 			// after materialize succeeds avoids an orphaned aweb connection on a
 			// materialize failure. (default-aabq.21)
-			if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+			if strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
+				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
+					return rollbackOnErr(err)
+				}
+			} else if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
 				return rollbackOnErr(err)
 			}
 			if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
@@ -764,6 +1127,133 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	}
 	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+type justCreatedTeamMemberRollbackTarget struct {
+	TeamID        string
+	Domain        string
+	TeamName      string
+	RegistryURL   string
+	AwebURL       string
+	CertificateID string
+	MemberAddress string
+}
+
+func rollbackJustCreatedTeamMember(anchorDir string, accepted *acceptedTeamInvite) error {
+	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), awid.APITimeout())
+	defer cancel()
+	if isAwebHostedNamespace(target.Domain) {
+		awebURL, apiKey, err := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, "")
+		if err != nil {
+			return err
+		}
+		_, err = postHostedTeamRemoveMember(ctx, awebURL, apiKey, target.TeamID, hostedTeamRemoveMemberRequest{CertificateID: target.CertificateID})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := strings.TrimSpace(target.RegistryURL)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
+		}
+	} else {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	teamKey, err := awconfig.LoadTeamKey(target.Domain, target.TeamName)
+	if err != nil {
+		return fmt.Errorf("load team key for %s/%s: %w", target.Domain, target.TeamName, err)
+	}
+	if err := registry.RevokeCertificate(ctx, registryURL, target.Domain, target.TeamName, target.CertificateID, teamKey); err != nil {
+		return fmt.Errorf("revoke certificate %s: %w", target.CertificateID, err)
+	}
+	return nil
+}
+
+func justCreatedTeamMemberRollbackTargetFromAccepted(accepted *acceptedTeamInvite) (justCreatedTeamMemberRollbackTarget, error) {
+	if accepted == nil || accepted.Certificate == nil {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: accepted certificate is missing")
+	}
+	target := justCreatedTeamMemberRollbackTarget{
+		CertificateID: strings.TrimSpace(accepted.Certificate.CertificateID),
+		MemberAddress: strings.TrimSpace(accepted.Certificate.MemberAddress),
+		RegistryURL:   strings.TrimSpace(accepted.RegistryURL),
+		AwebURL:       strings.TrimSpace(accepted.AwebURL),
+	}
+	if accepted.Output != nil {
+		target.TeamID = strings.TrimSpace(accepted.Output.TeamID)
+	}
+	if target.TeamID == "" {
+		target.TeamID = strings.TrimSpace(accepted.Certificate.Team)
+	}
+	target.Domain = awconfig.NormalizeDomain(accepted.Domain)
+	target.TeamName = strings.TrimSpace(accepted.TeamName)
+	if target.Domain == "" || target.TeamName == "" {
+		if domain, teamName, err := awid.ParseTeamID(target.TeamID); err == nil {
+			if target.Domain == "" {
+				target.Domain = domain
+			}
+			if target.TeamName == "" {
+				target.TeamName = teamName
+			}
+		}
+	}
+	if target.TeamID == "" && target.Domain != "" && target.TeamName != "" {
+		target.TeamID = awid.BuildTeamID(target.Domain, target.TeamName)
+	}
+	if target.TeamID == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member: team id is missing")
+	}
+	if target.Domain == "" || target.TeamName == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: team domain/name is missing", target.TeamID)
+	}
+	if target.CertificateID == "" {
+		return justCreatedTeamMemberRollbackTarget{}, fmt.Errorf("cannot roll back server-side team member for %s: certificate_id is missing", target.TeamID)
+	}
+	return target, nil
+}
+
+func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberRollbackErr, homeRollbackErr error) error {
+	if memberRollbackErr == nil && homeRollbackErr == nil {
+		return cause
+	}
+	target, targetErr := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
+	var b strings.Builder
+	if memberRollbackErr != nil {
+		b.WriteString("server-side member rollback failed")
+		if targetErr == nil {
+			fmt.Fprintf(&b, " for team_id %s certificate_id %s", target.TeamID, target.CertificateID)
+			if target.MemberAddress != "" {
+				fmt.Fprintf(&b, " member_address %s", target.MemberAddress)
+			}
+		}
+		fmt.Fprintf(&b, ": %v", memberRollbackErr)
+		if targetErr == nil {
+			fmt.Fprintf(&b, "; dirty server-side member may remain; clean it from an owner/admin workspace with `aw id team remove-member --team %s --namespace %s --cert-id %s`", target.TeamName, target.Domain, target.CertificateID)
+			if target.MemberAddress != "" {
+				fmt.Fprintf(&b, " or `aw team remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
+			}
+		} else {
+			fmt.Fprintf(&b, "; rollback target details unavailable: %v", targetErr)
+		}
+	}
+	if homeRollbackErr != nil {
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "local home rollback failed: %v", homeRollbackErr)
+	}
+	return fmt.Errorf("%w; %s", cause, b.String())
 }
 
 func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
@@ -874,7 +1364,29 @@ func preflightProfileAgentHome(homeDir string) error {
 func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
 	if err != nil {
+		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
+		// mentions --team/--namespace. Those are not flags on `aw team add`: this
+		// command mints against this workspace's active team.
+		var usageErr *cliError
+		if errors.As(err, &usageErr) {
+			return nil, usageError("aw team add mints against this workspace's active team, but none was found here; run `aw team create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team add`")
+		}
 		return nil, err
+	}
+	memberAddress := ""
+	if global {
+		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		if !identityExists {
+			if err := bootstrapTeamCreateGlobalIdentity(homeDir, alias, domain, registryURL); err != nil {
+				return nil, err
+			}
+		}
+		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir); err == nil && identity != nil {
+			memberAddress = strings.TrimSpace(identity.Address)
+		}
 	}
 	localInvite := !global
 	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
@@ -892,17 +1404,13 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	accepted, err := acceptTeamInviteWithDetails(homeDir, token, alias, "")
+	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress})
 	if err != nil {
 		return nil, err
 	}
-	if err := upsertAcceptedTeamMembershipState(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
-		return nil, err
-	}
-	if err := ensureAcceptedTeamWorkspaceBinding(homeDir, accepted.Output, accepted.Certificate, accepted.AwebURL); err != nil {
-		return nil, err
-	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(homeDir); err != nil {
+	// Agent provisioning writes the worktree binding immediately: the produced
+	// agent is ready to run with no separate `aw init`.
+	if err := recordAcceptedTeamMembership(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return nil, err
 	}
 	return accepted, nil

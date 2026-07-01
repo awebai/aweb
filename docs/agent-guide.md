@@ -202,10 +202,9 @@ non-default coordination server.
 
 The guided onboarding path runs interactively in a TTY by default.
 For scripted runs, pass `--json` and provide the required inputs as
-flags: hosted needs `--username` plus `--alias` (or `--name` with
-`--global`); BYOD needs `--byod --domain <domain>` plus a name
-or alias. Missing flags return a usage error rather than blocking
-on stdin.
+flags: hosted needs `--username` plus `--name`; BYOD needs
+`--byod --domain <domain>` plus `--name`. Missing flags return a usage error
+rather than blocking on stdin.
 
 ### Team setup
 
@@ -589,16 +588,16 @@ workspaces it asks the cloud to issue the child certificate using
 the parent workspace API key.
 
 ```bash
-aw workspace add-worktree --alias bob
-aw workspace add-worktree --alias carol
+aw workspace add-worktree --name bob
+aw workspace add-worktree --name carol
 ```
 
 If your team has a roles bundle and you want the new worktree
 assigned to a specific role, pass the role as a positional after the
-alias:
+name:
 
 ```bash
-aw workspace add-worktree --alias bob developer
+aw workspace add-worktree --name bob developer
 ```
 
 The role name must already exist in the team's active roles bundle —
@@ -620,7 +619,7 @@ For a member identity on a different machine, the joining machine can print
 the controller-side command:
 
 ```bash
-aw id team request --team backend:acme.com --alias alice
+aw id team request --team backend:acme.com --name alice
 ```
 
 This reads `.aw/signing.key`, computes the local `did:key`, and
@@ -629,7 +628,7 @@ owner needs to run. The team controller then signs and registers
 the AWID certificate:
 
 ```bash
-aw id team add-member --team backend --namespace acme.com --did did:key:z6Mk... --alias alice
+aw id team add-member --team backend --namespace acme.com --did did:key:z6Mk... --name alice
 ```
 
 The joining machine installs the registered certificate:
@@ -678,7 +677,7 @@ aw init --aweb-url <server-url>
 
 Each repo gets its own connected workspace. Inside a repo on the
 team-controller machine, add more local agents with `aw workspace
-add-worktree --alias <name>`.
+add-worktree --name <name>`.
 
 ### Setting up roles and instructions
 
@@ -706,11 +705,11 @@ For explicit control:
 3. `aw id team invite`
    (invite agents)
 4. `aw id team accept-invite <token>` (accept local invite) or
-   `aw id team accept-invite <token> --address <domain>/<name>`
-   (accept a hosted global invite / same-machine local-controller global invite)
+   `aw id team accept-invite <token> --global --name <name>`
+   (reuse an existing global identity; add `--address <domain>/<name>` only to present an owned address, or `--no-address` for did:aw-only membership)
 5. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
    (connect to server)
-6. Use `aw workspace add-worktree --alias <name>` for additional
+6. Use `aw workspace add-worktree --name <name>` for additional
    local worktrees, or repeat steps 3-5 in each additional repo or
    machine
 7. `aw roles set --bundle-file roles.json` (if roles are ready)
@@ -722,7 +721,7 @@ For explicit control:
 1. `aw id team invite`
    (from a team member)
 2. `aw id team accept-invite <token>` (in the target directory; add
-   `--address <domain>/<name>` only when redeeming a global invite)
+   `--global --name <name>` only when reusing an existing global identity)
 3. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
 4. Repeat steps 1-3 in any additional worktree or repo that needs
    another agent

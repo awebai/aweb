@@ -285,6 +285,7 @@ capture_success gateway_invite "gateway invite" run_aw_in "$GATEWAY_DIR" id team
 gateway_token="$(echo "$gateway_invite" | json_field token)"
 capture_success gateway_accept "gateway accept invite" run_aw_in "$GATEWAY_DIR" id team accept-invite "$gateway_token" \
   --alias gateway \
+  --global \
   --json
 capture_success personal_invite "personal invite" run_aw_in "$GATEWAY_DIR" id team invite \
   --team demo \
@@ -294,6 +295,7 @@ capture_success personal_invite "personal invite" run_aw_in "$GATEWAY_DIR" id te
 personal_token="$(echo "$personal_invite" | json_field token)"
 capture_success personal_accept "personal accept invite" run_aw_in "$PERSONAL_DIR" id team accept-invite "$personal_token" \
   --alias personal \
+  --global \
   --json
 capture_success gateway_init "gateway aw init" run_aw_in "$GATEWAY_DIR" init --url "$AWEB_DOCKER_URL"
 capture_success personal_init "personal aw init" run_aw_in "$PERSONAL_DIR" init --url "$AWEB_DOCKER_URL"

@@ -2,7 +2,8 @@
   "schema": "aweb.reserved-app-ids.v1",
   "reserved_app_ids": [
     "a2a",
-    "agents",
+    "agent",
+    "blueprint",
     "chat",
     "check",
     "claim-human",

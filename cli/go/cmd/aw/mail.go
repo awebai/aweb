@@ -795,7 +795,7 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 		identityDID := strings.TrimSpace(identity.DID)
 		if identityDID != "" && (did == "" || identityDID == did) {
 			did = identityDID
-			if stableID == "" && (strings.TrimSpace(sel.Lifetime) == "" || awid.NormalizeIdentityScope(sel.Lifetime) != awid.IdentityModeLocal) {
+			if stableID == "" && strings.TrimSpace(sel.IdentityScope) != awid.IdentityModeLocal {
 				stableID = strings.TrimSpace(identity.StableID)
 			}
 		}
@@ -990,7 +990,7 @@ var mailShowCmd = &cobra.Command{
 }
 
 func init() {
-	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient alias within the active team")
+	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient name within the active team, or a routable address")
 	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
 	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
 	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")

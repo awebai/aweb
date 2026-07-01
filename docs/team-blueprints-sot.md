@@ -498,19 +498,19 @@ profile-bound agents use the shipped team and agent runtime verbs.
 Recommended dev-team flow:
 
 ```bash
-aw blueprint inspect github.com/awebai/aweb-team-dev-simple
+aw blueprint inspect aweb.development
 aw team create eng
-aw team add coordinator@aweb.engineering-pack/coordinator --runtime claude-code
-aw agent start coordinator --runtime claude-code
+aw team add developer@aweb.development/developer=claude-code
+aw agent start developer --runtime claude-code
 ```
 
 A roster can also be seeded during create:
 
 ```bash
 aw team create eng \
-  --profile aweb.engineering-pack/coordinator=claude-code \
-  --profile aweb.engineering-pack/developer=claude-code \
-  --profile aweb.engineering-pack/reviewer=pi
+  --agent coordinator@aweb.support/coordinator=claude-code \
+  --agent developer@aweb.development/developer=claude-code \
+  --agent reviewer@aweb.development/reviewer=pi
 ```
 
 These commands must show or rely on an inspectable plan and compose explicit
@@ -716,8 +716,8 @@ runtime facts.
 ```bash
 aw blueprint inspect <source>
 aw blueprint materialize <source> --profile <profile> --target <dir>
-aw team create <team> [--profile <blueprint>/<profile>[=<runtime>]]...
-aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
+aw team create <team> [--agent [NAME@]BLUEPRINT/PROFILE[:scope][=<runtime>]]...
+aw team add <name>@<blueprint>/<profile>=<runtime> [--home <dir>]
 aw agent start <name> --runtime <runtime>
 aw agent status <name>
 ```
@@ -802,10 +802,10 @@ aw agent restart <name> --runtime <runtime>
 Adding an agent must be trivial. The launch UX:
 
 ```bash
-aw team add reviewer@aweb.engineering-pack/reviewer --runtime claude-code
+aw team add reviewer@aweb.development/reviewer=claude-code
 aw agent start reviewer --runtime claude-code
-aw team add researcher@aweb.engineering-pack/researcher --runtime pi
-aw agent start researcher --runtime pi
+aw team add agent-resources@aweb.support/agent-resources=pi
+aw agent start agent-resources --runtime pi
 ```
 
 For local runtimes, `aw team add NAME@BLUEPRINT/PROFILE` should be able to:

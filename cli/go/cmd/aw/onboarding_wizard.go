@@ -205,7 +205,7 @@ func validateHostedNonInteractiveRequired(req guidedOnboardingRequest) error {
 		return nil
 	}
 	if strings.TrimSpace(req.Alias) == "" && strings.TrimSpace(req.Name) == "" {
-		return usageError("missing required flag: --alias")
+		return usageError("missing required flag: --name")
 	}
 	return nil
 }
@@ -316,10 +316,7 @@ func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Write
 }
 
 func defaultWizardAwebURL() string {
-	if awebURL := strings.TrimSpace(os.Getenv("AWEB_URL")); awebURL != "" {
-		return awebURL
-	}
-	return DefaultAwebURL
+	return awebURLOrDefault(os.Getenv("AWEB_URL"))
 }
 
 func resolveGuidedOnboardingAwebURL(raw string) (string, error) {
@@ -359,14 +356,14 @@ func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string
 		if name == "" {
 			name = strings.TrimSpace(req.Name)
 		}
-		label = "Agent alias"
+		label = "Agent name"
 	}
 	if name == "" {
 		if req.NonInteractive {
 			if persistent {
 				return "", usageError("missing required flag: --name")
 			}
-			return "", usageError("missing required flag: --alias")
+			return "", usageError("missing required flag: --name")
 		}
 		prompted, err := promptRequiredStringWithIO(label, "", req.PromptIn, req.PromptOut)
 		if err != nil {
@@ -399,7 +396,7 @@ func printGuidedBYODIdentityPlan(out io.Writer, persistent bool, name, domain st
 		return
 	}
 	fmt.Fprintln(out, "Creating local BYOD workspace identity.")
-	fmt.Fprintf(out, "  Agent alias %q is used inside team %s:%s.\n", name, guidedOnboardingDefaultTeamName, normalizedDomain)
+	fmt.Fprintf(out, "  Agent name %q is used inside team %s:%s.\n", name, guidedOnboardingDefaultTeamName, normalizedDomain)
 	fmt.Fprintln(out, "  No public did:aw address will be registered for this workspace.")
 }
 
@@ -504,7 +501,7 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    plan.RegistryURL,
 		RegistryStatus: "registered",
 		CreatedAt:      plan.CreatedAt,
@@ -566,18 +563,18 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 		if req.Persistent {
 			return "", usageError("missing required flag: --name")
 		}
-		return "", usageError("missing required flag: --alias")
+		return "", usageError("missing required flag: --name")
 	}
 	// "alice" is the canonical first-agent name from cli-tutorial.md. The
 	// developer who hits Enter at the prompt lands at <username>.aweb.ai/alice
 	// for global identity or inside the local team for local workspaces. Sibling worktrees
-	// for a second identity pass --alias explicitly (e.g., "bob"). $USER is
+	// for a second identity pass --name explicitly (e.g., "bob"). $USER is
 	// deliberately not used as a default — that previous behavior silently
 	// bound the developer's OS login name to a public did:aw address.
 	if req.Persistent {
 		return promptRequiredStringWithIO("Agent name", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 	}
-	return promptRequiredStringWithIO("Agent alias", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
+	return promptRequiredStringWithIO("Agent name", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 }
 
 func defaultGuidedHostedAlias() string {
@@ -755,7 +752,7 @@ func validateHostedSignupResponse(
 		return nil, fmt.Errorf("hosted signup returned did_aw %q, expected %q", resp.DIDAW, didAW)
 	}
 	if gotAlias := strings.TrimSpace(resp.Alias); gotAlias != "" && gotAlias != strings.TrimSpace(alias) {
-		return nil, fmt.Errorf("hosted signup returned alias %q, expected %q", resp.Alias, alias)
+		return nil, fmt.Errorf("hosted signup returned name %q, expected %q", resp.Alias, alias)
 	}
 
 	cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(resp.Certificate))
@@ -778,7 +775,7 @@ func validateHostedSignupResponse(
 		return nil, fmt.Errorf("hosted signup response returned member_address %q for local identity", cert.MemberAddress)
 	}
 	if cert.Alias != alias {
-		return nil, fmt.Errorf("hosted signup certificate alias %q does not match %q", cert.Alias, alias)
+		return nil, fmt.Errorf("hosted signup certificate member name %q does not match %q", cert.Alias, alias)
 	}
 	if teamID := strings.TrimSpace(resp.TeamID); teamID != "" && cert.Team != teamID {
 		return nil, fmt.Errorf("hosted signup certificate team %q does not match response team_id %q", cert.Team, resp.TeamID)
@@ -805,7 +802,7 @@ func persistGuidedHostedState(
 		StableID:       didAW,
 		Address:        memberAddress,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    strings.TrimSpace(registryURL),
 		RegistryStatus: "registered",
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),

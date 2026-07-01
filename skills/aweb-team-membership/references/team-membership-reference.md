@@ -28,7 +28,7 @@ aw id namespace prepare-controller --domain <domain>
 aw id namespace check-txt --domain <domain>
 aw id create --name <name> --domain <domain>
 aw id team create --namespace <namespace> --name <team>
-aw id team request --team <team>:<namespace> --alias <alias>
+aw id team request --team <team>:<namespace> --name <name>
 aw id team add-member --team <team> --namespace <namespace> ...
 aw id team fetch-cert --team <team> --namespace <namespace> --cert-id <id>
 aw id team import-request --namespace <domain> --team <team> --organization-id <org>

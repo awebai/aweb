@@ -54,7 +54,7 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 }
 
 var workspaceDeleteCmd = &cobra.Command{
-	Use:   "delete <workspace-id-or-alias>",
+	Use:   "delete <workspace-id-or-name>",
 	Short: "Delete a local workspace and its local identity",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkspaceDelete,
@@ -113,7 +113,9 @@ var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
 func init() {
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
 	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusAll, "all", false, "Show all local team memberships in addition to the selected team status")
-	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
+	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "name", "", "Override the default workspace/member name")
+	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(workspaceAddWorktreeCmd, "alias", "name")
 	workspaceConnectCmd.Flags().StringVar(&serviceInitServiceURL, "service", "", "Service URL to connect to")
 	workspaceConnectCmd.Flags().StringVar(&serviceInitTeamID, "team", "", "Canonical AWID team id to activate before connecting")
 	workspaceConnectCmd.Flags().StringVar(&serviceInitRole, "role", "", "Optional role name for this workspace")
@@ -134,7 +136,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Team-bound workspaces need a local alias/workspace identity to function.
+	// Team-bound workspaces need a local member name/workspace identity to function.
 	hasIdentity := strings.TrimSpace(sel.WorkspaceID) != "" ||
 		strings.TrimSpace(sel.DID) != "" ||
 		strings.TrimSpace(sel.Alias) != ""
@@ -245,12 +247,12 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 
 	target := strings.TrimSpace(args[0])
 	if target == "" {
-		return usageError("workspace id or alias is required")
+		return usageError("workspace id or name is required")
 	}
 	workspaceID := target
 	if !workspaceIDPattern.MatchString(target) {
 		if !isValidWorkspaceAlias(target) {
-			return usageError("invalid workspace alias %q", target)
+			return usageError("invalid workspace name %q", target)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		resp, lookupErr := client.WorkspaceList(ctx, aweb.WorkspaceListParams{
@@ -270,11 +272,11 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		}
 		switch len(matches) {
 		case 0:
-			return fmt.Errorf("workspace alias %q not found", target)
+			return fmt.Errorf("workspace name %q not found", target)
 		case 1:
 			workspaceID = matches[0].WorkspaceID
 		default:
-			return fmt.Errorf("workspace alias %q matched multiple workspaces; retry with workspace id", target)
+			return fmt.Errorf("workspace name %q matched multiple workspaces; retry with workspace id", target)
 		}
 	}
 
@@ -356,7 +358,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	alias := strings.TrimSpace(workspaceAddAlias)
 	aliasExplicit := alias != ""
 	if aliasExplicit && !isValidWorkspaceAlias(alias) {
-		return usageError("invalid alias %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
+		return usageError("invalid name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
 	}
 
 	if aliasExplicit {
@@ -365,18 +367,18 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if teamAliases[strings.ToLower(alias)] {
-			return usageError("alias %q is already in use by this team", alias)
+			return usageError("name %q is already in use by this team", alias)
 		}
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		suggestion, err := client.SuggestAliasPrefix(ctx)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("suggest next alias from server: %w", err)
+			return fmt.Errorf("suggest next name from server: %w", err)
 		}
 		alias = strings.TrimSpace(suggestion.NamePrefix)
 		if !isValidSuggestedAliasPrefix(alias) {
-			return fmt.Errorf("server returned invalid alias suggestion %q", alias)
+			return fmt.Errorf("server returned invalid name suggestion %q", alias)
 		}
 	}
 
@@ -396,7 +398,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  Main repo: %s\n", root)
 		fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
 		fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
-		fmt.Fprintf(os.Stderr, "  Alias:     %s\n\n", alias)
+		fmt.Fprintf(os.Stderr, "  Name:      %s\n\n", alias)
 		fmt.Fprintln(os.Stderr, "Creating git worktree...")
 	}
 
@@ -480,7 +482,7 @@ func addWorktreeViaLocalTeamKey(
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
-	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, alias, "")
+	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, teamAcceptInviteOptions{Name: alias, Scope: awid.IdentityModeLocal})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
@@ -506,8 +508,8 @@ func addWorktreeViaLocalTeamKey(
 	}
 	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
 		return rollback(
-			"validate new worktree alias",
-			fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
+			"validate new worktree name",
+			fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
 		)
 	}
 	return connectResult, nil
@@ -550,7 +552,7 @@ func addWorktreeViaCloudBootstrap(
 	}
 	if strings.TrimSpace(result.Alias) != "" && !strings.EqualFold(strings.TrimSpace(result.Alias), alias) {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(result.Alias), alias)
+		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(result.Alias), alias)
 	}
 	return result, nil
 }
@@ -757,7 +759,7 @@ func formatWorkspaceAddWorktree(v any) string {
 	out := v.(workspaceAddWorktreeOutput)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("New agent worktree created at %s\n", abbreviateUserHome(out.WorktreePath)))
-	sb.WriteString(fmt.Sprintf("Alias:      %s\n", out.Alias))
+	sb.WriteString(fmt.Sprintf("Name:       %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Role:       %s\n", out.Role))
 	sb.WriteString(fmt.Sprintf("Branch:     %s\n", out.Branch))
 	sb.WriteString(fmt.Sprintf("Workspace:  this worktree is now agent %s\n", out.Alias))
@@ -920,10 +922,10 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 		Limit:                    200,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list team aliases: %w", err)
+		return nil, fmt.Errorf("list team names: %w", err)
 	}
 	if resp.HasMore {
-		return nil, usageError("team has more than 200 workspaces; specify --alias explicitly")
+		return nil, usageError("team has more than 200 workspaces; specify --name explicitly")
 	}
 
 	aliases := make(map[string]bool, len(resp.Workspaces))
@@ -1077,7 +1079,7 @@ func formatWorkspaceStatus(v any) string {
 	if strings.TrimSpace(out.SelectedTeam) != "" {
 		sb.WriteString(fmt.Sprintf("- Team: %s\n", out.SelectedTeam))
 	}
-	sb.WriteString(fmt.Sprintf("- Alias: %s\n", out.Workspace.Alias))
+	sb.WriteString(fmt.Sprintf("- Name: %s\n", out.Workspace.Alias))
 	sb.WriteString(fmt.Sprintf("- Context: %s\n", out.ContextKind))
 	if out.Workspace.Role != nil && strings.TrimSpace(*out.Workspace.Role) != "" {
 		sb.WriteString(fmt.Sprintf("- Role: %s\n", strings.TrimSpace(*out.Workspace.Role)))

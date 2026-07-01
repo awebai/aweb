@@ -133,7 +133,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 func validateConnectAddress(address string) error {
 	domain, alias, ok := strings.Cut(strings.TrimSpace(address), "/")
 	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(alias) == "" {
-		return usageError("invalid --address %q; expected <domain>/<alias>", address)
+		return usageError("invalid --address %q; expected <domain>/<name>", address)
 	}
 	return nil
 }
@@ -198,8 +198,9 @@ func validateBootstrapRedeemResponse(
 		return nil, fmt.Errorf("bootstrap certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
 	}
 
-	switch strings.TrimSpace(resp.Lifetime) {
-	case awid.LifetimePersistent:
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	switch identityScope {
+	case awid.IdentityModeGlobal:
 		if strings.TrimSpace(stableID) == "" || strings.TrimSpace(address) == "" {
 			return nil, fmt.Errorf("global bootstrap redeem requires a did:aw and address")
 		}
@@ -215,7 +216,7 @@ func validateBootstrapRedeemResponse(
 		if cert.MemberAddress != strings.TrimSpace(address) {
 			return nil, fmt.Errorf("bootstrap certificate member_address %q does not match %q", cert.MemberAddress, address)
 		}
-	case awid.LifetimeEphemeral:
+	case awid.IdentityModeLocal:
 		if strings.TrimSpace(address) != "" {
 			return nil, fmt.Errorf("dashboard minted a local bootstrap token; re-run the exact command without --address")
 		}
@@ -226,7 +227,7 @@ func validateBootstrapRedeemResponse(
 			return nil, fmt.Errorf("local bootstrap certificate unexpectedly contains global identity fields")
 		}
 	default:
-		return nil, fmt.Errorf("unsupported bootstrap lifetime %q", resp.Lifetime)
+		return nil, fmt.Errorf("unsupported bootstrap identity_scope %q", firstNonEmpty(resp.IdentityScope, resp.Lifetime))
 	}
 
 	return cert, nil
@@ -251,7 +252,8 @@ func persistBootstrapConnectState(
 		return err
 	}
 
-	if strings.TrimSpace(resp.Lifetime) != awid.LifetimePersistent {
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	if identityScope != awid.IdentityModeGlobal {
 		return nil
 	}
 
@@ -261,7 +263,7 @@ func persistBootstrapConnectState(
 		StableID:       stableID,
 		Address:        strings.TrimSpace(address),
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    strings.TrimSpace(registryURL),
 		RegistryStatus: "registered",
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
