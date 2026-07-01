@@ -869,6 +869,7 @@ type teamHumanAddedAgent struct {
 	Alias             string                  `json:"alias,omitempty"`
 	TeamID            string                  `json:"team_id,omitempty"`
 	CertPath          string                  `json:"cert_path,omitempty"`
+	Connected         bool                    `json:"-"`
 }
 
 func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, error) {
@@ -978,6 +979,84 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
+func shouldUseAPIKeyBootstrapForTeamAdd(wd string) (bool, error) {
+	if strings.TrimSpace(resolveInitAPIKey()) == "" {
+		return false, nil
+	}
+	if _, _, _, _, err := resolveTeamInviteTarget(wd); err == nil {
+		return false, nil
+	} else {
+		var usageErr *cliError
+		if errors.As(err, &usageErr) {
+			return true, nil
+		}
+		return false, err
+	}
+}
+
+func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAgent) (*acceptedTeamInvite, error) {
+	apiKey := resolveInitAPIKey()
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, usageError("%s is required for API-key team add bootstrap", initAPIKeyEnvVar)
+	}
+	awebURL, err := resolveAPIKeyInitAwebURL()
+	if err != nil {
+		return nil, err
+	}
+	registryURL, err := resolveInitAWIDRegistryURL()
+	if err != nil {
+		return nil, err
+	}
+	global := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
+	request := apiKeyInitRequest{
+		WorkingDir:  homeDir,
+		AwebURL:     awebURL,
+		RegistryURL: registryURL,
+		APIKey:      apiKey,
+		Role:        teamHumanAddRoleForPlan(plan),
+		Persistent:  global,
+	}
+	if global {
+		request.Name = strings.TrimSpace(plan.Name)
+	} else {
+		request.Alias = strings.TrimSpace(plan.Name)
+	}
+	out, err := runAPIKeyBootstrapInit(request)
+	if err != nil {
+		return nil, err
+	}
+	certPath := awconfig.TeamCertificatePath(homeDir, strings.TrimSpace(out.TeamID))
+	cert, err := awid.LoadTeamCertificate(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("load API-key team add certificate: %w", err)
+	}
+	domain, teamName, _ := awid.ParseTeamID(strings.TrimSpace(out.TeamID))
+	acceptedAwebURL := strings.TrimSpace(out.AwebURL)
+	if acceptedAwebURL == "" {
+		acceptedAwebURL = strings.TrimSpace(awebURL)
+	}
+	return &acceptedTeamInvite{
+		Output: &teamAcceptInviteOutput{
+			Status:   "accepted",
+			TeamID:   strings.TrimSpace(out.TeamID),
+			Alias:    strings.TrimSpace(out.Alias),
+			CertPath: filepath.ToSlash(certPath),
+		},
+		Certificate: cert,
+		RegistryURL: strings.TrimSpace(registryURL),
+		AwebURL:     acceptedAwebURL,
+		Domain:      domain,
+		TeamName:    teamName,
+	}, nil
+}
+
+func teamHumanAddRoleForPlan(plan teamHumanAddedAgent) string {
+	if plan.Profile == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.Profile.ProfileRef)
+}
+
 func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	if teamHumanAddLocal && teamHumanAddGlobal {
 		return usageError("--local and --global cannot be used together")
@@ -1000,6 +1079,10 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	repoRoot := resolveRepoRoot(wd)
 	agentsRoot := filepath.Join(repoRoot, "agents", "instances")
 	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args)
+	if err != nil {
+		return err
+	}
+	apiKeyBootstrapMode, err := shouldUseAPIKeyBootstrapForTeamAdd(wd)
 	if err != nil {
 		return err
 	}
@@ -1052,7 +1135,12 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
 				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
 			} else {
-				accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
+				var accepted *acceptedTeamInvite
+				if apiKeyBootstrapMode {
+					accepted, err = bootstrapTeamHumanAddAgentWithAPIKey(plans[i].HomeDir, plans[i])
+				} else {
+					accepted, err = createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
+				}
 				if err != nil {
 					if rollback != nil {
 						_ = rollback.Rollback()
@@ -1064,15 +1152,22 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
+				plans[i].Connected = apiKeyBootstrapMode
 			}
 		} else {
-			accepted, err := createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
+			var accepted *acceptedTeamInvite
+			if apiKeyBootstrapMode {
+				accepted, err = bootstrapTeamHumanAddAgentWithAPIKey(plans[i].HomeDir, plans[i])
+			} else {
+				accepted, err = createAndAcceptTeamInviteForEmptyAgent(wd, plans[i].HomeDir, plans[i].Name, globalAgent)
+			}
 			if err != nil {
 				return err
 			}
 			plans[i].Alias = accepted.Output.Alias
 			plans[i].TeamID = accepted.Output.TeamID
 			plans[i].CertPath = accepted.Output.CertPath
+			plans[i].Connected = apiKeyBootstrapMode
 		}
 		if plans[i].Profile != nil {
 			agentID := strings.TrimSpace(plans[i].Alias)
@@ -1104,11 +1199,13 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			} else if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
 				return rollbackOnErr(err)
 			}
-			if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
-				if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
-					Role: strings.TrimSpace(plans[i].Profile.ProfileRef),
-				}); err != nil {
-					return rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err))
+			if !plans[i].Connected {
+				if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
+					if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
+						Role: strings.TrimSpace(plans[i].Profile.ProfileRef),
+					}); err != nil {
+						return rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err))
+					}
 				}
 			}
 			if err := configureMaterializedAgentHome(plans[i].HomeDir); err != nil {
@@ -1147,7 +1244,7 @@ func rollbackJustCreatedTeamMember(anchorDir string, accepted *acceptedTeamInvit
 	ctx, cancel := context.WithTimeout(context.Background(), awid.APITimeout())
 	defer cancel()
 	if isAwebHostedNamespace(target.Domain) {
-		awebURL, apiKey, err := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, "")
+		awebURL, apiKey, err := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL)
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -683,7 +684,7 @@ func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("AW_CONFIG_PATH", "")
-	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	t.Setenv("AWEB_API_KEY", "")
 	t.Setenv("AWEB_URL", "https://app.aweb.ai")
 	t.Chdir(root)
 
@@ -696,6 +697,194 @@ func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.
 	}
 	if !strings.Contains(err.Error(), "aw team create") {
 		t.Fatalf("error should guide the user to establish team context: %v", err)
+	}
+}
+
+func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	t.Chdir(root)
+	jsonFlag = true
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	files := testLibraryProfilePayloadFiles()
+	digest := testLibraryProfilePayloadDigest(t, files)
+
+	var initCalls, connectCalls, bindCalls int
+	var initBody map[string]any
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			initCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_owner" {
+				t.Fatalf("workspace init Authorization=%q", got)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := initBody["did"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": server.URL, "team_cert": encoded, "alias": "developer", "team_id": "default:launch.aweb.ai", "workspace_id": "ws-dev", "did": didKey, "stable_id": "", "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": "workspace-sk-dev"})
+		case r.Method == http.MethodPost && (r.URL.Path == "/api/v1/connect" || r.URL.Path == "/v1/connect"):
+			connectCalls++
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "default:launch.aweb.ai", "alias": "developer", "agent_id": "developer", "workspace_id": "ws-dev", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/agents/heartbeat" || r.URL.Path == "/v1/agents/heartbeat"):
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/instructions/active" || r.URL.Path == "/v1/instructions/active"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+		case r.Method == http.MethodPut && (r.URL.Path == "/api/v1/agents/me/encryption-key" || r.URL.Path == "/v1/agents/me/encryption-key"):
+			writePublishEncryptionKeyResponseForTest(t, w, "developer", "default:launch.aweb.ai", "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(libraryProfileDetailResponse{BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0", ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, Files: files})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
+			_ = json.NewEncoder(w).Encode(libraryImportToShelfResponse{ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", SourceBlueprintDigest: "sha256:test-blueprint", Created: true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/developer/profile-binding":
+			bindCalls++
+			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "developer", ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	writeLibraryManifestPluginForTest(t, home, server.URL)
+	t.Setenv("AWEB_URL", server.URL+"/api")
+
+	if err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/coordinator=pi"}); err != nil {
+		t.Fatalf("runTeamHumanAdd: %v", err)
+	}
+	if initCalls != 1 || connectCalls != 1 || bindCalls != 1 {
+		t.Fatalf("calls init/connect/bind=%d/%d/%d", initCalls, connectCalls, bindCalls)
+	}
+	if initBody["alias"] != "developer" || initBody["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("workspace init body=%v", initBody)
+	}
+	agentHome := filepath.Join(root, "agents", "instances", "developer")
+	if _, err := os.Stat(filepath.Join(agentHome, ".aw", "profile", "ref.json")); err != nil {
+		t.Fatalf("profile ref not materialized: %v", err)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(agentHome, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load agent workspace: %v", err)
+	}
+	if workspace.APIKey != "workspace-sk-dev" {
+		t.Fatalf("workspace api key=%q", workspace.APIKey)
+	}
+}
+
+func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsGlobalThroughWorkspaceInit(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	t.Chdir(root)
+	jsonFlag = true
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	files := testLibraryProfilePayloadFiles()
+	digest := testLibraryProfilePayloadDigest(t, files)
+
+	var requestOrder []string
+	var initBody map[string]any
+	var registeredDIDKey string
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			requestOrder = append(requestOrder, "register_identity")
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			registeredDIDKey, _ = body["new_did_key"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			requestOrder = append(requestOrder, "did_full")
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": stableID, "current_did_key": registeredDIDKey, "created_at": "2026-04-18T00:00:00Z", "updated_at": "2026-04-18T00:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			requestOrder = append(requestOrder, "workspace_init")
+			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := initBody["did"].(string)
+			pubKeyB64, _ := initBody["public_key"].(string)
+			pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyB64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stableID := awid.ComputeStableID(ed25519.PublicKey(pubKeyBytes))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, MemberDIDAW: stableID, MemberAddress: "launch.aweb.ai/global-dev", Alias: "global-dev", Lifetime: awid.LifetimePersistent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": server.URL, "team_cert": encoded, "alias": "global-dev", "team_id": "default:launch.aweb.ai", "workspace_id": "ws-global", "did": didKey, "stable_id": stableID, "identity_scope": awid.IdentityModeGlobal, "custody": awid.CustodySelf, "api_key": "workspace-sk-global"})
+		case r.Method == http.MethodPost && (r.URL.Path == "/api/v1/connect" || r.URL.Path == "/v1/connect"):
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "default:launch.aweb.ai", "alias": "global-dev", "agent_id": "global-dev", "workspace_id": "ws-global", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/agents/heartbeat" || r.URL.Path == "/v1/agents/heartbeat"):
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/instructions/active" || r.URL.Path == "/v1/instructions/active"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writePublishEncryptionKeyResponseForTest(t, w, "global-dev", "default:launch.aweb.ai", "global-dev")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(libraryProfileDetailResponse{BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0", ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, Files: files})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
+			_ = json.NewEncoder(w).Encode(libraryImportToShelfResponse{ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", SourceBlueprintDigest: "sha256:test-blueprint", Created: true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/global-dev/profile-binding":
+			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "global-dev", ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	writeLibraryManifestPluginForTest(t, home, server.URL)
+	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	if err := runTeamHumanAdd(nil, []string{"global-dev@aweb.engineering/coordinator:global=pi"}); err != nil {
+		t.Fatalf("runTeamHumanAdd global: %v", err)
+	}
+	if got := strings.Join(requestOrder[:3], ","); got != "register_identity,did_full,workspace_init" {
+		t.Fatalf("request order=%q", got)
+	}
+	if initBody["identity_scope"] != awid.IdentityModeGlobal || initBody["name"] != "global-dev" {
+		t.Fatalf("global workspace init body=%v", initBody)
+	}
+	if alias, ok := initBody["alias"].(string); ok && strings.TrimSpace(alias) != "" {
+		t.Fatalf("global workspace init should not send alias: %v", initBody)
+	}
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(root, "agents", "instances", "global-dev", ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("load global identity: %v", err)
+	}
+	if identity.IdentityScope != awid.IdentityModeGlobal || identity.Address != "launch.aweb.ai/global-dev" {
+		t.Fatalf("identity=%+v", identity)
 	}
 }
 
