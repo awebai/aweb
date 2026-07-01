@@ -559,14 +559,28 @@ func coerceValue(value any, typ string) (any, error) {
 		switch v := value.(type) {
 		case []any:
 			return v, nil
+		case string:
+			var arr []any
+			if err := json.Unmarshal([]byte(v), &arr); err != nil {
+				return nil, fmt.Errorf("expected array (JSON): %w", err)
+			}
+			return arr, nil
 		default:
 			return nil, fmt.Errorf("expected array")
 		}
 	case "object":
-		if m, ok := value.(map[string]any); ok {
+		switch v := value.(type) {
+		case map[string]any:
+			return v, nil
+		case string:
+			var m map[string]any
+			if err := json.Unmarshal([]byte(v), &m); err != nil {
+				return nil, fmt.Errorf("expected object (JSON): %w", err)
+			}
 			return m, nil
+		default:
+			return nil, fmt.Errorf("expected object")
 		}
-		return nil, fmt.Errorf("expected object")
 	default:
 		return nil, fmt.Errorf("unsupported schema type %q", typ)
 	}
