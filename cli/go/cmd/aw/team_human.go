@@ -243,10 +243,7 @@ func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
 			raws = append(raws, spec)
 		}
 	}
-	specs := make([]teamAgentSpec, 0, len(raws)+1)
-	if len(raws) > 0 && (len(teamHumanCreateAgents) > 0 || strings.TrimSpace(teamHumanCreateBlueprint) != "" || len(teamHumanCreateProfiles) > 1) {
-		specs = append(specs, teamAgentSpec{Raw: "", Name: ""})
-	}
+	specs := make([]teamAgentSpec, 0, len(raws))
 	for _, raw := range raws {
 		spec, err := parseTeamAgentSpec(raw)
 		if err != nil {
@@ -362,9 +359,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	var firstSpec teamAgentSpec
 	var selector *libraryProfileSelector
-	if len(agentSpecs) == 1 && agentSpecs[0].Profile != nil {
-		selector = agentSpecs[0].Profile
+	if len(agentSpecs) > 0 {
+		firstSpec = agentSpecs[0]
+		if firstSpec.Profile != nil {
+			selector = firstSpec.Profile
+		}
 	}
 	rosterSpecs, err := teamHumanCreateRosterSpecs(agentSpecs)
 	if err != nil {
@@ -392,7 +393,16 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if scope := strings.TrimSpace(firstSpec.Scope); scope != "" {
+		if (teamHumanCreateFirstLocal || teamHumanCreateFirstGlobal) && scope != firstAgentScope {
+			return usageError("first agent scope %q conflicts with --first-agent-%s", scope, firstAgentScope)
+		}
+		firstAgentScope = scope
+	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
+	if name := strings.TrimSpace(firstSpec.Name); name != "" {
+		alias = name
+	}
 	if alias == "" {
 		alias = strings.ToLower(teamName)
 	}
@@ -462,6 +472,12 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if apiKey := resolveInitAPIKey(); apiKey != "" {
+		// The API-key workspace-init endpoint is reached at <base>/api/v1/..., so an
+		// /api-suffixed AWEB_URL must be stripped to its base here, matching aw init.
+		apiKeyAwebURL, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
 		firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
 		apiAlias := alias
 		apiName := ""
@@ -471,7 +487,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:  wd,
-			AwebURL:     awebURL,
+			AwebURL:     apiKeyAwebURL,
 			RegistryURL: registryURL,
 			APIKey:      apiKey,
 			Name:        apiName,
@@ -1345,6 +1361,13 @@ func preflightProfileAgentHome(homeDir string) error {
 func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
 	if err != nil {
+		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
+		// mentions --team/--namespace. Those are not flags on `aw team add`: this
+		// command mints against this workspace's active team.
+		var usageErr *cliError
+		if errors.As(err, &usageErr) {
+			return nil, usageError("aw team add mints against this workspace's active team, but none was found here; run `aw team create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team add`")
+		}
 		return nil, err
 	}
 	memberAddress := ""

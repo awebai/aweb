@@ -21,6 +21,10 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldWizard := guidedOnboardingWizard
 	oldPrintReady := initPrintGuidedOnboardingReady
 	oldIsTTY := initIsTTY
+	oldInitAwebURL := initAwebURL
+	oldInitURL := initURL
+	oldInitAWIDRegistry := initAWIDRegistry
+	oldServerFlag := serverFlag
 	oldJSON := jsonFlag
 	oldBYOT := teamHumanCreateBYOT
 	oldName := teamHumanCreateName
@@ -47,6 +51,10 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		guidedOnboardingWizard = oldWizard
 		initPrintGuidedOnboardingReady = oldPrintReady
 		initIsTTY = oldIsTTY
+		initAwebURL = oldInitAwebURL
+		initURL = oldInitURL
+		initAWIDRegistry = oldInitAWIDRegistry
+		serverFlag = oldServerFlag
 		jsonFlag = oldJSON
 		teamHumanCreateBYOT = oldBYOT
 		teamHumanCreateName = oldName
@@ -71,6 +79,10 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
+	initAwebURL = ""
+	initURL = ""
+	initAWIDRegistry = ""
+	serverFlag = ""
 	jsonFlag = false
 	teamHumanCreateBYOT = false
 	teamHumanCreateName = ""
@@ -136,19 +148,22 @@ func TestFormatTeamHumanAddKeepsBareAgentEmptyProfileWording(t *testing.T) {
 	}
 }
 
-func TestTeamHumanCreateAgentSpecsTreatsAgentAsRoster(t *testing.T) {
+func TestTeamHumanCreateAgentSpecsUseListedAgentAsFirstMember(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	teamHumanCreateAgents = []string{"developer@aweb.engineering/developer:local"}
 	specs, err := teamHumanCreateAgentSpecs()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(specs) != 1 || specs[0].Raw != "developer@aweb.engineering/developer:local" {
+		t.Fatalf("specs=%+v", specs)
+	}
 	roster, err := teamHumanCreateRosterSpecs(specs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roster) != 1 || roster[0].Raw != "developer@aweb.engineering/developer:local" {
-		t.Fatalf("roster=%v specs=%+v", roster, specs)
+	if len(roster) != 0 {
+		t.Fatalf("single listed create agent should be the first member, roster=%v specs=%+v", roster, specs)
 	}
 }
 
@@ -161,10 +176,10 @@ func TestTeamHumanCreateBlueprintSpecsCarryLocalSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(specs) < 2 {
+	if len(specs) == 0 {
 		t.Fatalf("specs=%+v", specs)
 	}
-	for _, spec := range specs[1:] {
+	for _, spec := range specs {
 		if spec.Profile == nil {
 			t.Fatalf("missing profile in spec %+v", spec)
 		}
@@ -489,6 +504,170 @@ func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *test
 	}
 	if got.Alias != "eng" {
 		t.Fatalf("alias=%q want eng", got.Alias)
+	}
+}
+
+func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix string
+	}{
+		{name: "base", suffix: ""},
+		{name: "apisuffixed", suffix: "/api"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTeamHumanCreateGlobals(t)
+
+			const apiKey = "aw_sk_create_apikey"
+			teamPub, teamKey, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+			var initPaths []string
+			var server *httptest.Server
+			server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/workspaces/init":
+					initPaths = append(initPaths, r.URL.Path)
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					didKey, _ := body["did"].(string)
+					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+						Team:         "backend:acme.com",
+						MemberDIDKey: didKey,
+						Alias:        "eng",
+						Lifetime:     awid.LifetimeEphemeral,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := awid.EncodeTeamCertificateHeader(cert)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"server_url":     server.URL,
+						"team_cert":      encoded,
+						"alias":          "eng",
+						"team_id":        "backend:acme.com",
+						"workspace_id":   "ws-1",
+						"did":            didKey,
+						"stable_id":      "",
+						"identity_scope": awid.IdentityModeLocal,
+						"custody":        awid.CustodySelf,
+						"api_key":        "workspace-sk-ephemeral",
+					})
+				case "/api/v1/connect", "/v1/connect":
+					requireCertificateAuthForTest(t, r)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"team_id":      "backend:acme.com",
+						"alias":        "eng",
+						"agent_id":     "agent-1",
+						"workspace_id": "ws-1",
+						"repo_id":      "",
+						"team_did_key": teamDIDKey,
+					})
+				case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
+					w.WriteHeader(http.StatusOK)
+				case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "eng")
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}))
+
+			t.Setenv("AWEB_API_KEY", apiKey)
+			t.Setenv("AWEB_URL", server.URL+tc.suffix)
+			t.Setenv("AWID_REGISTRY_URL", "")
+			t.Chdir(t.TempDir())
+			jsonFlag = true
+
+			if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
+				t.Fatalf("runTeamHumanCreate with AWEB_URL=%q: %v", server.URL+tc.suffix, err)
+			}
+			if len(initPaths) != 1 || initPaths[0] != "/api/v1/workspaces/init" {
+				t.Fatalf("workspace init paths=%v want [/api/v1/workspaces/init]", initPaths)
+			}
+		})
+	}
+}
+
+func TestTeamHumanCreateAgentUsesListedFirstAgentName(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	const apiKey = "aw_sk_create_apikey"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	var gotInitAlias string
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/workspaces/init":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			gotInitAlias, _ = body["alias"].(string)
+			didKey, _ := body["did"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:acme.com", MemberDIDKey: didKey, Alias: gotInitAlias, Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": server.URL, "team_cert": encoded, "alias": gotInitAlias, "team_id": "backend:acme.com", "workspace_id": "ws-1", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": "workspace-sk-ephemeral"})
+		case "/api/v1/connect", "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "backend:acme.com", "alias": gotInitAlias, "agent_id": "agent-1", "workspace_id": "ws-1", "repo_id": "", "team_did_key": teamDIDKey})
+		case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/agents/me/encryption-key", "/api/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", gotInitAlias)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	t.Setenv("AWEB_API_KEY", apiKey)
+	t.Setenv("AWEB_URL", server.URL)
+	t.Chdir(t.TempDir())
+	teamHumanCreateAgents = []string{"developer"}
+	jsonFlag = true
+
+	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
+		t.Fatalf("runTeamHumanCreate: %v", err)
+	}
+	if gotInitAlias != "developer" {
+		t.Fatalf("workspace init alias=%q want listed first agent name developer", gotInitAlias)
+	}
+}
+
+func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	t.Setenv("AWEB_URL", "https://app.aweb.ai")
+	t.Chdir(root)
+
+	err := runTeamHumanAdd(nil, []string{"alice@aweb.engineering/developer=pi"})
+	if err == nil {
+		t.Fatal("expected failure without team context")
+	}
+	if strings.Contains(err.Error(), "--team") || strings.Contains(err.Error(), "--namespace") {
+		t.Fatalf("error should not reference invite-only flags: %v", err)
+	}
+	if !strings.Contains(err.Error(), "aw team create") {
+		t.Fatalf("error should guide the user to establish team context: %v", err)
 	}
 }
 
