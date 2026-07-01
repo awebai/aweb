@@ -5,10 +5,13 @@ that holds DIDs, namespaces, addresses, teams, and certificate issuance
 records. It is the implementation spec for the awid.ai service.
 
 aweb (the coordination server that depends on awid) is described in
-[`aweb-sot.md`](aweb-sot.md). The supporting SOT for the shipped route-level
-global/local messaging contract and legacy reachability cleanup path is
-[`global-local-identity-routing.md`](global-local-identity-routing.md). Hosted
-deployment details live with the hosted deployment codebase, not in this SOT.
+[`aweb-sot.md`](aweb-sot.md). The canonical product vocabulary and invariants
+for namespaces, addresses, local/global identities, teams, member names, and the
+three verbs live in [`identity.md`](identity.md). The supporting SOT for the
+shipped route-level global/local messaging contract and legacy reachability
+cleanup path is [`global-local-identity-routing.md`](global-local-identity-routing.md).
+Hosted deployment details live with the hosted deployment codebase, not in this
+SOT.
 
 ---
 
@@ -115,7 +118,7 @@ Identity handles within namespaces. `acme.com/alice`.
 ```
 POST   /v1/namespaces/{domain}/addresses          Create (controller auth)
 GET    /v1/namespaces/{domain}/addresses           List (public, paginated)
-GET    /v1/namespaces/{domain}/addresses/{name}    Read global address alias (public resolver; legacy reachability is not a resolver gate)
+GET    /v1/namespaces/{domain}/addresses/{name}    Read global address handle (public resolver; legacy reachability is not a resolver gate)
 PUT    /v1/namespaces/{domain}/addresses/{name}    Update legacy reachability metadata during compatibility window
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
@@ -424,9 +427,11 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_address": "acme.com/alice",
                "alias": "alice",
                "identity_scope": "global" }
-       Compatibility: stale clients may send "lifetime" (persistent->global,
-       ephemeral->local); awid normalizes it before storage and never emits it
-       in normal certificate responses.
+       The canonical product term for the per-team routing key is member name;
+       the current wire/schema field is still "alias" until the scheduled
+       compatibility rename. Compatibility clients may send "lifetime"
+       (legacy global/local storage); awid normalizes it to identity_scope
+       before storage and never emits it in normal certificate responses.
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, hosted deployment for
        managed). awid records the issuance but does not sign.
@@ -455,7 +460,9 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
        This is how the dashboard lists team members.
 
 GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
-       Resolve an active team-member reference.
+       Resolve an active team-member reference. The path segment is the
+       member name; it is called alias in the current wire path for
+       compatibility.
        Auth: none (public).
        Response: { "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
@@ -465,7 +472,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
                    "alias": "alice",
                    "identity_scope": "global",
                    "issued_at": "..." }
-       This is the canonical `(team_id, alias)` lookup layer.
+       This is the canonical `(team_id, member name)` lookup layer; the wire
+       field remains `alias` during the compatibility window.
 
 POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Revoke a certificate.
@@ -618,11 +626,11 @@ document that the CLI stores and sends as `X-AWID-Team-Certificate`; it is not
 PEM and is not an inline JSON object.
 
 Compatibility note: current deployed certificate blobs and database rows may
-still expose a legacy `lifetime` field with `persistent`/`ephemeral` values.
-That wire/storage cleanup is tracked separately by `aweb-aapj.12`. The
-canonical contract for new docs, examples, and product language is
-`identity_scope=global|local`; services that accept the old field must normalize
-it at the boundary and must not teach it as product authority.
+still expose a legacy `lifetime` field. That wire/storage cleanup is tracked by
+the identity config/schema compatibility work. The canonical contract for new
+docs, examples, and product language is `identity_scope=global|local`; services
+that accept the old field must normalize it at the boundary and must not teach
+it as product authority.
 
 `aw id team fetch-cert` is refuse-overwrite by default. If a local
 certificate already exists for the target team with a different
@@ -686,19 +694,26 @@ a member of `backend:acme.com`. No special protocol support is needed —
 the certificate format already accommodates this because `member_address`
 is just a string and is not constrained to match the team's namespace.
 
-Authorization model: the namespace controller of the team-owning namespace
-(`acme.com` in the example) is the sole authority for adding cross-namespace
-members. The home namespace of the external member (`partner.com`) does
-not need to authorize anything — the team controller is making a claim
-about who is in their team, not about who controls the external address.
-awid enforces that a non-empty `member_address` on a registered
-certificate resolves to the certificate's `member_did_aw`; services may
-also resolve the address when they need fresh address-route or current-key
-data.
+Authorization model: the team controller is the authority for membership in
+its team. It signs the certificate that says `partner.com/bob` is a member of
+`backend:acme.com`; it does not control the external address. Namespace
+authority is needed only to claim or control an address in that namespace. In
+the example, the `partner.com` namespace has already authorized the address
+binding that makes `partner.com/bob` resolve to Bob's `did:aw`. AWID validates
+that a non-empty `member_address` on a registered certificate resolves to the
+certificate's `member_did_aw`; it does not authorize the membership itself.
+Services may also resolve the address when they need fresh address-route or
+current-key data.
 
 ---
 
 ## awid database schema
+
+The current migration chain starts with `001_registry.sql`, where active
+addresses, teams, and team-member names are unique. The canonical
+`identity_scope` column for team certificates is added later by
+`004_team_certificate_identity_scope.sql`; do not infer that it was part of the
+original consolidated `001` migration.
 
 ```sql
 CREATE TABLE did_aw_mappings (

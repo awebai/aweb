@@ -72,7 +72,7 @@ membership separate from files, templates, and git worktrees.
 Create/connect your first hosted workspace:
 
 ```bash
-aw init --username <username> --alias coordinator
+aw init --username <username> --name coordinator
 aw check
 ```
 
@@ -135,13 +135,12 @@ There are however solutions:
   # then fully restart pi so it reloads packages
   ```
 
-#### Legacy bootstrap compatibility
+#### Retired bootstrap compatibility
 
-`aw agents bootstrap` and the old `aweb-team-coord-worktrees` template remain
-available for existing bootstrap-era layouts, but they are no longer the
-recommended product path for new teams. Use them only when maintaining or
-recovering an existing `agents/` convention; see
-[`docs/bootstrap-layout-contract.md`](docs/bootstrap-layout-contract.md).
+The old `aw agents bootstrap` / `aw agents ...` command family has been
+retired. For teams, use `aw team create`, `aw team invite`, `aw team join`, and
+explicit workspace/git operations instead. Historical bootstrap-era layout notes
+remain under `docs/` for recovery context only.
 
 ### 4. Initialize a single workspace
 
@@ -161,7 +160,7 @@ Self-hosted OSS stack started above:
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 
-aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --alias alice
+aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --name alice
 
 # Start your agent (see above for channel/plugin and other awakening options)
 claude
@@ -184,18 +183,17 @@ bind step. The lifecycle contract is documented in
 
 ### 5. Add another agent
 
-If you used `aw agents bootstrap`, your template-defined agents are already created.
-
-For another worktree-bound agent in the same repo-local `agents/` convention:
+For another worktree-bound agent in the same repo, use the workspace helper or
+create a git worktree explicitly and join/connect it with team primitives:
 
 ```bash
-aw agents add-worktree developer
+aw workspace add-worktree developer
 ```
 
 For another repo or machine, have the joining machine print a request:
 
 ```bash
-aw id team request --team <team>:<namespace> --alias <alias>
+aw id team request --team <team>:<namespace> --name <name>
 ```
 
 Run the printed `aw id team add-member ...` command on the controller machine,

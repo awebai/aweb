@@ -26,7 +26,7 @@ shipped profile.
 
 ### 1. Materialize the home from the shipped profile
 ```
-aw team add NAME@aweb.engineering/<profile> --runtime claude-code --home <HOME>
+aw team add NAME@aweb.development/<profile>=claude-code --home <HOME>
 ```
 Produces a working home at `<HOME>`: `AGENTS.md` (profile body + the AWEB
 coordination block), `CLAUDE.md -> AGENTS.md` symlink, `.aw/` (identity +

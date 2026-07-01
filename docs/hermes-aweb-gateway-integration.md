@@ -112,7 +112,7 @@ Runtime behavior:
 
    ```bash
    cd /path/to/hermes-aweb-workspace
-   aw init   # or aw agents bootstrap / invite accept / existing workspace setup
+   aw init   # or aw team join / invite accept / existing workspace setup
    aw workspace status
    ```
 

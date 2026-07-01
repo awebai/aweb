@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -409,12 +410,12 @@ func collectDoctorSubject(workingDir string) doctorSubject {
 		subject.TeamID = strings.TrimSpace(sel.TeamID)
 		subject.WorkspaceID = strings.TrimSpace(sel.WorkspaceID)
 		subject.Alias = strings.TrimSpace(sel.Alias)
-		subject.Lifetime = strings.TrimSpace(sel.Lifetime)
+		subject.Lifetime = awid.LegacyLifetimeForIdentityScope(sel.IdentityScope)
 	}
 	if identity, identityPath, err := awconfig.LoadWorktreeIdentityFromDir(subject.WorkingDir); err == nil && identity != nil {
 		subject.IdentityPath = strings.TrimSpace(identityPath)
 		if strings.TrimSpace(subject.Lifetime) == "" {
-			subject.Lifetime = strings.TrimSpace(identity.Lifetime)
+			subject.Lifetime = awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
 		}
 	}
 	return subject

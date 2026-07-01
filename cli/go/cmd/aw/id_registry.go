@@ -192,10 +192,10 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 		DIDAW:          identity.StableID,
 		DIDKey:         identity.DID,
 		Custody:        identity.Custody,
-		Lifetime:       identity.Lifetime,
+		Lifetime:       awid.LegacyLifetimeForIdentityScope(identity.IdentityScope),
 		RegistryStatus: "not_applicable",
 	}
-	if identity.Lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) != "" {
+	if identity.IdentityScope == awid.IdentityModeGlobal && strings.TrimSpace(identity.StableID) != "" {
 		registry, regClientErr := resolveIdentityRegistryClient(identity)
 		if regClientErr != nil {
 			out.RegistryStatus = "unreachable"
@@ -426,7 +426,7 @@ func requirePersistentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity,
 	if identity == nil {
 		return fmt.Errorf("missing identity context")
 	}
-	if strings.TrimSpace(identity.Lifetime) != awid.LifetimePersistent {
+	if strings.TrimSpace(identity.IdentityScope) != awid.IdentityModeGlobal {
 		return usageError("this command requires a global identity")
 	}
 	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {

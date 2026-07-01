@@ -111,31 +111,15 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if workspaceState == nil {
 		workspaceState = &awconfig.WorktreeWorkspace{}
 	}
-	teamState, err := loadOptionalTeamState(workingDir)
-	if err != nil {
-		return connectOutput{}, err
-	}
-	if teamState == nil {
-		teamState = &awconfig.TeamState{}
-	}
-	membership := awconfig.TeamMembership{
+	// Record the teams.yaml membership through the shared writer, which carries
+	// over any registry/aweb URLs an earlier join stored. The worktree binding
+	// (role, workspace id) is written separately below because it is unique to
+	// the connect step.
+	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
 		TeamID:   resp.TeamID,
 		Alias:    resp.Alias,
 		CertPath: filepath.ToSlash(certPath),
-		JoinedAt: strings.TrimSpace(cert.IssuedAt),
-	}
-	if existing := teamState.Membership(resp.TeamID); existing != nil {
-		if strings.TrimSpace(existing.JoinedAt) != "" {
-			membership.JoinedAt = existing.JoinedAt
-		}
-		membership.RegistryURL = strings.TrimSpace(existing.RegistryURL)
-		membership.AwebURL = strings.TrimSpace(existing.AwebURL)
-		*existing = membership
-	} else {
-		teamState.AddMembership(membership)
-	}
-	teamState.ActiveTeam = resp.TeamID
-	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
+	}, cert, "", "", true); err != nil {
 		return connectOutput{}, err
 	}
 	workspaceState.AwebURL = awebURL
@@ -305,7 +289,7 @@ func formatConnect(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
-	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
 	return sb.String()
 }

@@ -11,10 +11,11 @@ HTML rendering is served as `https://aweb.ai/docs/<name>/`.
 
 These documents define the system:
 
+- [identity.md](identity.md): the canonical identity/team model and vocabulary
+  for namespaces, addresses, local/global identities, teams, member names, and
+  the three setup verbs
 - [aweb-sot.md](aweb-sot.md): the implementation
-  spec for the `aweb` server and `aw` CLI under the awid teams architecture,
-  including the conceptual taxonomy (agent, workspace, identity, alias,
-  address, lifecycle)
+  spec for the `aweb` server and `aw` CLI under the awid teams architecture
 - [awid-sot.md](awid-sot.md): the awid
   service spec for namespaces, addresses, the DID registry, teams, and
   membership certificates

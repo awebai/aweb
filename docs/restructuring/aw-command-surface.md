@@ -28,23 +28,24 @@ These act locally (identity, certs, files); none of them is Library-specific.
 - **invite / accept-invite — the cross-machine join flow.** `aw team invite`
   generates a token; the joiner runs `aw team join` / `aw id team accept-invite`.
   First-class, kept.
-- **`aw team create <name> [--runtime <rt>] [--profile <blueprint/profile>[=<rt>]]…`** — create a team. Reuses
+- **`aw team create <name> [--runtime <rt>] [--agent [NAME@]BLUEPRINT/PROFILE[:scope][=<rt>]]…`** —
+  create a team. Reuses
   `aw init`'s full branching, keyed on **identity existence and namespace
   control, not registry location**: no identity → `aw init`'s bundle (hosted
   onboarding by default, local-implicit on a localhost stack); existing
   self-custodial identity → mint a new team under its namespace, signed, no
   re-signup; hosted-managed identity → the hosted create-team path. There is no
   "requires a local awid registry" gate. See
-  `team-create-and-membership-model.md` for the full contract. No `--profile` →
-  an empty-profile team (hard invariant). `--profile` composes a Library adopt +
-  a local materialize (§3). Runtime selection is explicit CLI policy: per-roster
-  `--profile aweb.engineering/reviewer=pi`, command-level `--runtime`, or the
-  CLI default `claude-code`; it is never inferred from profile metadata.
+  `team-create-and-membership-model.md` for the full contract. No `--agent` →
+  an empty-profile team (hard invariant). `--agent` composes a Library adopt +
+  a local materialize (§3). Runtime selection is explicit CLI policy: per-agent
+  `--agent reviewer@aweb.development/reviewer=pi`, command-level `--runtime`,
+  or the CLI default `claude-code`; it is never inferred from profile metadata.
   `--byot`/`--namespace` is the explicit self-custodial create for a domain you
   control.
 - **`aw team add <name>[@<ref>]… [--runtime <rt>]`** — product-grade add of
   agent(s) to an existing team, on the `agents/instances/<name>/` layout
-  (reusing the proven add-agent internals: unique-alias naming, identity +
+  (reusing the proven add-agent internals: server-authoritative naming, identity +
   team-cert, `--local/--global`, `--layout-only`). API-key-prefixed, this is
   the dashboard/wizard self-host incantation. `@<ref>` → adopt + bind +
   materialize; bare name → an empty agent (no shelf, no Library — hard
@@ -53,9 +54,10 @@ These act locally (identity, certs, files); none of them is Library-specific.
 - **materialize a runnable home** — the agent-home composition (composed
   `AGENTS.md` + `CLAUDE.md`/harness symlink + harness-discoverable skills + the
   full evolvable `.aw/profile/`). A local disk operation; see the agent-home
-  composition contract. This is what `--profile`/`@ref` triggers locally. The
+  composition contract. This is what `--agent`/`@ref` triggers locally. The
   runtime hints/assumptions in profiles are advisory/queryable only; they do not
-  choose the harness.
+  choose the harness. Deprecated `--profile` remains a compatibility alias for
+  `--agent` during the transition.
 
 **Retires:** the obsolete bootstrap-era `aw agents` surface (`bootstrap`,
 `plan`, `provision`, `add`, `add-worktree`, `remove` on the `agents/home`
@@ -90,7 +92,7 @@ Library concepts; their CLI surface is `aw library`.
 
 ## 3. The composition seam
 
-`aw team create --profile X` and `aw team add name@X` **compose** the two halves:
+`aw team create --agent X` and `aw team add name@X` **compose** the two halves:
 1. `aw library` makes the **adopt / import-to-shelf** call (a private shelf
    copy);
 2. aw-local **materializes** the runnable home from that shelf copy.

@@ -51,9 +51,10 @@ Auth at the awid layer is Ed25519 signatures, never an API key.
 
 Local key material (self-custodial):
 - Identity: `.aw/identity.yaml` (`WorktreeIdentity`) + `.aw/signing.key`
-  (`cli/go/awconfig/identity.go`). A **global** identity has `stable_id`
-  (did:aw) + `address` + `lifetime: persistent`; a **local** identity has only
-  `did` (did:key) + `lifetime: ephemeral`.
+  (`cli/go/awconfig/identity.go`). A **global** identity has `identity_scope:
+  global`, `stable_id` (did:aw), and `address`; a **local** identity has
+  `identity_scope: local` and `did` (did:key). Older identity configs may still
+  contain deprecated-read-compat `lifetime: persistent|ephemeral`.
 - Namespace controller key: `~/.awid/controllers/<domain>.key`
   (`cli/go/awconfig/controllers.go`).
 - Team key: `~/.awid/team-keys/<domain>/<name>.key`

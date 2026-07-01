@@ -5,9 +5,9 @@ This page documents the OSS `aw` support surface: lifecycle semantics,
 actions are intentionally described only as boundaries here. Cloud support
 APIs and operator runbooks live in the cloud support documentation.
 
-## Lifetime Semantics
+## Lifecycle Semantics
 
-aweb separates workspace lifetime from identity lifetime.
+aweb separates workspace lifecycle from identity lifecycle.
 
 - A **local identity** is team-local and workspace-bound. It has an alias
   such as `alice`, but no public address or trust-continuity promise.
@@ -171,7 +171,7 @@ For direct DID approvals, use the values from the member's request:
 
 ```bash
 aw id team add-member --namespace <domain> --team <team> \
-  --did <did:key> --alias <alias> \
+  --did <did:key> --name <name> \
   --global --did-aw <did:aw> --address <domain>/<name>
 ```
 

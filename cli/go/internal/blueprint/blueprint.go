@@ -67,6 +67,7 @@ type Profile struct {
 	AcceptedWork       []string       `json:"accepted_work" yaml:"accepted_work"`
 	Instructions       string         `json:"instructions" yaml:"instructions"`
 	RuntimeAssumptions []string       `json:"runtime_assumptions" yaml:"runtime_assumptions"`
+	Scope              string         `json:"scope,omitempty" yaml:"scope,omitempty"`
 	MemoryPolicy       map[string]any `json:"memory_policy" yaml:"memory_policy"`
 	ExpectedApps       []string       `json:"expected_apps,omitempty" yaml:"expected_apps"`
 	EventSubscriptions []Subscription `json:"event_subscriptions,omitempty" yaml:"event_subscriptions"`
@@ -138,6 +139,7 @@ type ProfileSummary struct {
 	Mission                string                 `json:"mission"`
 	AcceptedWork           []string               `json:"accepted_work"`
 	RuntimeAssumptions     []string               `json:"runtime_assumptions"`
+	Scope                  string                 `json:"scope,omitempty"`
 	MemoryPolicy           map[string]any         `json:"memory_policy"`
 	ExpectedApps           []string               `json:"expected_apps,omitempty"`
 	ExpectedAppsSemantics  string                 `json:"expected_apps_semantics,omitempty"`
@@ -242,6 +244,7 @@ func InspectPlan(bp *Blueprint) Plan {
 			Mission:                profile.Mission,
 			AcceptedWork:           append([]string(nil), profile.AcceptedWork...),
 			RuntimeAssumptions:     append([]string(nil), profile.RuntimeAssumptions...),
+			Scope:                  strings.TrimSpace(profile.Scope),
 			MemoryPolicy:           profile.MemoryPolicy,
 			ExpectedApps:           sortedUnique(profile.ExpectedApps),
 			ExpectedAppsSemantics:  expectedAppsSemantics(profile.ExpectedApps),
@@ -437,6 +440,9 @@ func validateProfile(root, profileDir, profileRel string, entry BlueprintProfile
 		if err := validateRequiredString(fmt.Sprintf("%s/profile.yaml:runtime_assumptions[%d]", profileRel, i), assumption); err != nil {
 			return err
 		}
+	}
+	if scope := strings.TrimSpace(profile.Scope); scope != "" && scope != "local" && scope != "global" {
+		return fmt.Errorf("%s/profile.yaml:scope: expected local or global", profileRel)
 	}
 	if err := validateMemoryPolicy(fmt.Sprintf("%s/profile.yaml:memory_policy", profileRel), profile.MemoryPolicy); err != nil {
 		return err
@@ -644,7 +650,10 @@ var (
 	knownSecretTokenRe      = regexp.MustCompile(`(?i)^(?:aw_sk_|gh[oprsu]_|github_pat_|xox[abprs]-|sk_(?:live|test)_)[A-Za-z0-9_-]{6,}`)
 	teamCertificateHeaderRe = regexp.MustCompile(`(?i)(?:\b|["'])x-awid-team-certificate(?:\b|["'])\s*:\s*["']?[A-Za-z0-9+/=_-]{8,}\b`)
 	jwtCandidateRe          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
-	longBase64BlobRe        = regexp.MustCompile(`\b[A-Za-z0-9+/_=-]{64,}\b`)
+	// Base64/base64url key blobs may start or end with non-word alphabet chars
+	// such as + or /. Do not use \b: it misses those edge cases. Instead require
+	// string edges or explicit non-base64 delimiters and capture only the token.
+	longBase64BlobRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9+/=_-])([A-Za-z0-9+/=_-]{64,})(?:[^A-Za-z0-9+/=_-]|$)`)
 )
 
 func unsafeContent(s string) bool {
@@ -797,8 +806,11 @@ func credentialValueHasEntropy(value string) bool {
 }
 
 func hasLongBase64Blob(s string) bool {
-	for _, candidate := range longBase64BlobRe.FindAllString(s, -1) {
-		if decodesAsMaterialBase64(candidate) {
+	for _, match := range longBase64BlobRe.FindAllStringSubmatch(s, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		if decodesAsMaterialBase64(match[1]) {
 			return true
 		}
 	}

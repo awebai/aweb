@@ -42,7 +42,7 @@ channel is allowlisted (see "Deterministic path"):
 
 ```bash
 NAME=...                       # the new agent's alias
-PROFILE=...                    # e.g. aweb.engineering/developer
+PROFILE=...                    # e.g. aweb.development/developer
 HOME_DIR=...                   # where this agent's home lives
 CHANNEL="--dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace"
 ```

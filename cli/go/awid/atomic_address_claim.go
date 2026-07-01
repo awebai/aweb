@@ -110,6 +110,7 @@ type AtomicAddressClaimFields struct {
 	DryRun           bool
 	IdentityCustody  string
 	NamespaceCustody string
+	DIDLogProof      *DidKeyEvidence
 }
 
 type AtomicAddressClaimDIDLogProof struct {
@@ -171,8 +172,14 @@ func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, ident
 	if did := ComputeDIDKey(pub); did != strings.TrimSpace(fields.CurrentDIDKey) {
 		return nil, fmt.Errorf("identity signing key does not match current_did_key")
 	}
+	logProof := fields.DIDLogProof
 	if stableID := ComputeStableID(pub); stableID != strings.TrimSpace(fields.DIDAW) {
-		return nil, fmt.Errorf("identity signing key does not match did_aw")
+		if logProof == nil {
+			return nil, fmt.Errorf("identity signing key does not match did_aw and no did log proof was provided")
+		}
+		if strings.TrimSpace(logProof.NewDIDKey) != strings.TrimSpace(fields.CurrentDIDKey) {
+			return nil, fmt.Errorf("did log proof current did:key %q does not match %q", logProof.NewDIDKey, fields.CurrentDIDKey)
+		}
 	}
 	normalized, err := normalizeAtomicAddressClaimFields(fields)
 	if err != nil {
@@ -185,17 +192,32 @@ func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, ident
 	identitySignature := base64.RawStdEncoding.EncodeToString(
 		ed25519.Sign(identitySigningKey, []byte(identityCanonical)),
 	)
-	stateHash := stableIdentityStateHash(normalized.DIDAW, normalized.CurrentDIDKey)
-	didLogPayload := CanonicalDidLogPayload(normalized.DIDAW, &DidKeyEvidence{
-		Seq:            1,
-		Operation:      "register_did",
-		PreviousDIDKey: nil,
-		NewDIDKey:      normalized.CurrentDIDKey,
-		PrevEntryHash:  nil,
-		StateHash:      stateHash,
-		AuthorizedBy:   normalized.CurrentDIDKey,
-		Timestamp:      normalized.Timestamp,
-	})
+	if logProof == nil {
+		stateHash := stableIdentityStateHash(normalized.DIDAW, normalized.CurrentDIDKey)
+		didLogPayload := CanonicalDidLogPayload(normalized.DIDAW, &DidKeyEvidence{
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      normalized.CurrentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   normalized.CurrentDIDKey,
+			Timestamp:      normalized.Timestamp,
+		})
+		logProof = &DidKeyEvidence{
+			Seq:            1,
+			Operation:      "register_did",
+			PreviousDIDKey: nil,
+			NewDIDKey:      normalized.CurrentDIDKey,
+			PrevEntryHash:  nil,
+			StateHash:      stateHash,
+			AuthorizedBy:   normalized.CurrentDIDKey,
+			Timestamp:      normalized.Timestamp,
+			Signature: base64.RawStdEncoding.EncodeToString(
+				ed25519.Sign(identitySigningKey, []byte(didLogPayload)),
+			),
+		}
+	}
 	return &AtomicAddressClaimIdentityProof{
 		Operation:         normalized.Operation,
 		Domain:            normalized.Domain,
@@ -210,17 +232,15 @@ func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, ident
 		IdentitySignature: identitySignature,
 		DIDLogProof: AtomicAddressClaimDIDLogProof{
 			DIDAW:          normalized.DIDAW,
-			Seq:            1,
-			Operation:      "register_did",
-			PreviousDIDKey: nil,
-			NewDIDKey:      normalized.CurrentDIDKey,
-			PrevEntryHash:  nil,
-			StateHash:      stateHash,
-			AuthorizedBy:   normalized.CurrentDIDKey,
-			Timestamp:      normalized.Timestamp,
-			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(identitySigningKey, []byte(didLogPayload)),
-			),
+			Seq:            logProof.Seq,
+			Operation:      strings.TrimSpace(logProof.Operation),
+			PreviousDIDKey: logProof.PreviousDIDKey,
+			NewDIDKey:      strings.TrimSpace(logProof.NewDIDKey),
+			PrevEntryHash:  logProof.PrevEntryHash,
+			StateHash:      strings.TrimSpace(logProof.StateHash),
+			AuthorizedBy:   strings.TrimSpace(logProof.AuthorizedBy),
+			Timestamp:      strings.TrimSpace(logProof.Timestamp),
+			Signature:      strings.TrimSpace(logProof.Signature),
 		},
 	}, nil
 }

@@ -49,7 +49,7 @@ Run this from the repo you want to use as an agent workspace:
 aw init \
   --awid-registry http://localhost:8010 \
   --aweb-url http://localhost:8000 \
-  --alias alice
+  --name alice
 ```
 
 Because the registry URL is localhost, `aw init` takes the implicit local path
@@ -75,7 +75,7 @@ The default team membership is local. That is fine for local try-it-out use.
 Create a sibling worktree for another agent:
 
 ```bash
-aw workspace add-worktree developer --alias bob
+aw workspace add-worktree developer --name bob
 ```
 
 That creates another local workspace in a sibling git worktree and joins it to
@@ -203,7 +203,7 @@ aw id team invite \
 Run this in the target workspace:
 
 ```bash
-aw id team accept-invite <token> --alias alice
+aw id team accept-invite <token> --name alice
 ```
 
 That writes a certificate under `.aw/team-certs/`.
@@ -225,7 +225,7 @@ Create more teams with `aw id team create`, then invite and accept as usual.
 For more local agents on one machine, use:
 
 ```bash
-aw workspace add-worktree developer --alias bob
+aw workspace add-worktree developer --name bob
 ```
 
 For more repos or machines, repeat invite, accept, and init in each target

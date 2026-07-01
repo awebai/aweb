@@ -434,9 +434,9 @@ func TestExecuteBYODPathDefaultsToLocalAlias(t *testing.T) {
 	// local; --global is the canonical signal that flips it. Output still
 	// describes the chosen identity once name + domain are known.
 	for _, want := range []string{
-		"Agent alias",
+		"Agent name",
 		"Creating local BYOD workspace identity",
-		`Agent alias "alice"`,
+		`Agent name "alice"`,
 		"No public did:aw address will be registered",
 	} {
 		if !strings.Contains(output, want) {
@@ -1511,7 +1511,7 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username "jack", agent alias blank (accept "alice" default),
+	// stdin: username "jack", agent name blank (accept "alice" default),
 	// claim-human "n". No --global compatibility flag.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
@@ -1524,16 +1524,16 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 	}
 
 	output := out.String()
-	// Local branch prompts "Agent alias" (not "Agent name").
-	if !strings.Contains(output, "Agent alias") {
-		t.Fatalf("local CLI signup path must prompt 'Agent alias', output:\n%s", output)
+	// Local branch prompts "Agent name" (not "Agent name").
+	if !strings.Contains(output, "Agent name") {
+		t.Fatalf("local CLI signup path must prompt 'Agent name', output:\n%s", output)
 	}
 	// Default offered is "alice" — never $USER.
 	if !strings.Contains(output, "[alice]") {
-		t.Fatalf("local CLI signup alias prompt must default to [alice], output:\n%s", output)
+		t.Fatalf("local CLI signup name prompt must default to [alice], output:\n%s", output)
 	}
 	if strings.Contains(output, "[juan]") {
-		t.Fatalf("local CLI signup alias prompt must not default to OS $USER (juan); output:\n%s", output)
+		t.Fatalf("local CLI signup name prompt must not default to OS $USER (juan); output:\n%s", output)
 	}
 	// Empty input accepts the "alice" default.
 	if got, _ := signupBody["alias"].(string); got != "alice" {
@@ -1553,10 +1553,10 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 }
 
 // TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias locks in the
-// regression that defaulting the global hosted alias to the OS $USER
+// regression that defaulting the global hosted name to the OS $USER
 // value was silently binding the user's login name to a public did:aw
 // address (e.g. aweb.ai/juan). Global identities must force an
-// explicit name, prompted as "Agent name" (not "Agent alias") to match
+// explicit name, prompted as "Agent name" (not "Agent name") to match
 // the BYOD global-path vocabulary.
 func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 	home := t.TempDir()
@@ -1684,7 +1684,7 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 	// stdin: username "jack", agent name blank (accept "alice" default),
 	// claim-human "n". USER=juan is set in the env to prove the OS login name
 	// never leaks into the prompt default for the global path. The legacy internal
-	// boolean selects the "Agent name" branch (vs local "Agent alias"); both
+	// boolean selects the "Agent name" branch (vs local "Agent name"); both
 	// branches default to "alice" now.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
@@ -1698,7 +1698,7 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 	}
 
 	output := out.String()
-	// The prompt for the global identity must use "Agent name", not "Agent alias".
+	// The prompt for the global identity must use "Agent name", not "Agent name".
 	if !strings.Contains(output, "Agent name") {
 		t.Fatalf("global hosted path should prompt 'Agent name', output:\n%s", output)
 	}
@@ -1706,10 +1706,10 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 	// silently becoming the public did:aw address is the regression this test
 	// locks in. The canonical seed default is "alice", not $USER.
 	if strings.Contains(output, "[juan]") {
-		t.Fatalf("global hosted alias prompt must not default to OS $USER (juan); output:\n%s", output)
+		t.Fatalf("global hosted name prompt must not default to OS $USER (juan); output:\n%s", output)
 	}
 	if !strings.Contains(output, "[alice]") {
-		t.Fatalf("global hosted alias prompt must offer [alice] as the canonical default; output:\n%s", output)
+		t.Fatalf("global hosted name prompt must offer [alice] as the canonical default; output:\n%s", output)
 	}
 
 	// Empty input accepts the "alice" default; signup body carries it through.

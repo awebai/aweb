@@ -36,7 +36,9 @@ var teamRequestCmd = &cobra.Command{
 
 func init() {
 	teamRequestCmd.Flags().StringVar(&teamRequestTeamID, "team", "", "Canonical team ID (<name>:<domain>)")
-	teamRequestCmd.Flags().StringVar(&teamRequestAlias, "alias", "", "Suggested alias for the new team membership")
+	teamRequestCmd.Flags().StringVar(&teamRequestAlias, "name", "", "Suggested member name for the new team membership")
+	teamRequestCmd.Flags().StringVar(&teamRequestAlias, "alias", "", "Deprecated alias for --name")
+	markDeprecatedHiddenFlag(teamRequestCmd, "alias", "name")
 	teamCmd.AddCommand(teamRequestCmd)
 }
 
@@ -47,7 +49,7 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 		return usageError("--team is required")
 	}
 	if alias == "" {
-		return usageError("--alias is required")
+		return usageError("--name is required")
 	}
 	teamDomain, teamName, err := awid.ParseTeamID(teamID)
 	if err != nil {
@@ -73,7 +75,7 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 		"--team", teamName,
 		"--namespace", teamDomain,
 		"--did", didKey,
-		"--alias", alias,
+		"--name", alias,
 	}
 
 	out := teamRequestOutput{
@@ -88,7 +90,7 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if identity != nil && strings.TrimSpace(identity.Lifetime) == awid.LifetimePersistent {
+	if identity != nil && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
 		stableID := strings.TrimSpace(identity.StableID)
 		address := strings.TrimSpace(identity.Address)
 		if stableID == "" || address == "" {

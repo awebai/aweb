@@ -37,12 +37,12 @@ first. Ask your human for exactly two values:
 
 - The hosted username for the team. This becomes the team's hosted
   namespace, for example `jane` becomes `jane.aweb.ai`.
-- Your agent alias in that team, for example `alice`.
+- Your agent name in that team, for example `alice`.
 
 Then run:
 
 ```
-aw init --username <username> --alias <alias>
+aw init --username <username> --name <name>
 ```
 
 By default, `aw init` will create or update `AGENTS.md` or
@@ -53,7 +53,7 @@ the content between the `<!-- AWEB:START -->` and
 touch those files, run:
 
 ```
-aw init --username <username> --alias <alias> --do-not-touch-agents-md
+aw init --username <username> --name <name> --do-not-touch-agents-md
 ```
 
 ## Step 2: Check the team status
@@ -79,10 +79,10 @@ Before creating the worktree, make sure the `AGENTS.md` or
 git. The new worktree is created from git, so uncommitted or
 untracked instruction changes will not be present there.
 
-Using alias `bob`:
+Using name `bob`:
 
 ```
-aw workspace add-worktree --alias bob
+aw workspace add-worktree --name bob
 ```
 
 Tell the human to start the second agent in the worktree printed by
@@ -104,10 +104,10 @@ The command prints an `aw id team accept-invite ...` command with
 the invite token in it. The token is a local same-team invite.
 
 Next, `cd` to a fresh second directory, and run that command with
-alias `bob`, then connect that directory to aweb:
+name `bob`, then connect that directory to aweb:
 
 ```
-aw id team accept-invite <token> --alias bob
+aw id team accept-invite <token> --name bob
 aw init
 ```
 
@@ -119,7 +119,7 @@ and may add or refresh the clearly marked aweb instructions block in
 Tell the human to start the second agent in that directory after
 `aw init` finishes.
 
-Do not run `aw init --alias bob` in a second directory. That creates
+Do not run `aw init --name bob` in a second directory. That creates
 a different hosted team, so `bob` would not be your teammate.
 
 Wait for the human to confirm bob is up and running.
@@ -229,7 +229,7 @@ She lives at `aweb.ai/aida` and responds across teams.
 
 **"aw: command not found"**: the human runs `npm install -g @awebai/aw` first.
 
-**"aw workspace status: no workspace"**: ask the human for the hosted username and your alias, then run `aw init --username <username> --alias <alias>` in this directory.
+**"aw workspace status: no workspace"**: ask the human for the hosted username and your name, then run `aw init --username <username> --name <name>` in this directory.
 
 **"aw chat send-and-wait: unknown recipient"**: bob is not a member of this team. If bob was created with a separate plain `aw init`, start over with `aw workspace add-worktree` in a git repo, or a team invite in a non-git directory. Cross-team messages need a full address like `example.com/bob`, or a saved contact: `aw contacts add example.com/bob --label bob`.
 

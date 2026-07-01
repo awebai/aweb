@@ -241,7 +241,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	text := string(out)
 	for _, want := range []string{
 		"## Self",
-		"- Alias: alice",
+		"- Name: alice",
 		"- Context: repo_worktree",
 		"- Repo: github.com/acme/repo",
 		"- Branch: main",
@@ -499,7 +499,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	text := string(out)
 	for _, want := range []string{
 		"## Self",
-		"- Alias: coordinator",
+		"- Name: coordinator",
 		"- Context: none",
 		"- Status: offline",
 		"- Focus: none",
@@ -698,7 +698,7 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
-	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }
@@ -792,7 +792,7 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion from agent_identity_scope=local")
 	}
-	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }
@@ -854,7 +854,7 @@ func TestAwWorkspaceDeleteByAlias(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 	if !sawAliasLookup.Load() || !sawDelete.Load() {
-		t.Fatalf("expected alias lookup and delete, lookup=%v delete=%v", sawAliasLookup.Load(), sawDelete.Load())
+		t.Fatalf("expected name lookup and delete, lookup=%v delete=%v", sawAliasLookup.Load(), sawDelete.Load())
 	}
 	if !strings.Contains(string(out), "Deleted workspace bob") || !strings.Contains(string(out), "Deleted local identity: true") {
 		t.Fatalf("unexpected output:\n%s", string(out))
@@ -950,7 +950,7 @@ func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 	if deletedWorkspace.Load() {
 		t.Fatal("global gone-workspace path called DELETE")
 	}
-	if !strings.Contains(string(out), "gone_persistent_path_only") || !strings.Contains(string(out), "no cleanup attempted") {
+	if !strings.Contains(string(out), "gone_global_path_only") || !strings.Contains(string(out), "no cleanup attempted") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 	if strings.Contains(string(out), "deleted local identity") || strings.Contains(string(out), "removed workspace record") {
@@ -1046,7 +1046,7 @@ func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownLifetime(t *testing.T) {
 	if deletedWorkspace.Load() {
 		t.Fatal("unknown-lifetime gone-workspace path called DELETE")
 	}
-	if !strings.Contains(string(out), "unknown_lifetime_no_cleanup") || !strings.Contains(string(out), "no cleanup attempted") {
+	if !strings.Contains(string(out), "unknown_identity_scope_no_cleanup") || !strings.Contains(string(out), "no cleanup attempted") {
 		t.Fatalf("expected unknown-lifetime cleanup output, got:\n%s", string(out))
 	}
 }
@@ -1097,7 +1097,7 @@ func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
 	runGitForTest(t, repo, "add", ".aw")
 	runGitForTest(t, repo, "commit", "-m", "Accidentally track aw runtime")
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "bob")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", "bob")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1558,7 +1558,7 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		return string(out)
 	}
 
-	runAW(repo, "workspace", "add-worktree", "developer", "--alias", "charlie")
+	runAW(repo, "workspace", "add-worktree", "developer", "--name", "charlie")
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(child); err != nil {
 		t.Fatalf("expected child worktree: %v", err)
@@ -1836,7 +1836,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	}
 	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL", "AWEB_API_KEY")
 	initEnv := append(append([]string{}, baseEnv...), "AWEB_API_KEY="+apiKey)
-	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--alias", "alice", "--role", "developer")
+	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--name", "alice", "--role", "developer")
 
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("parent identity.yaml should not exist after local API-key bootstrap: %v", err)
@@ -1850,7 +1850,7 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("parent local cert member_did_aw=%q", parentCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--alias", "charlie")
+	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist after local add-worktree: %v", err)
@@ -2120,7 +2120,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 	if err == nil {
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), `new workspace connected as alias "mallory", expected "charlie"`) {
+	if !strings.Contains(string(out), `new workspace connected as name "mallory", expected "charlie"`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
@@ -2184,7 +2184,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "bob")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", "bob")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -2192,7 +2192,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), `alias "bob" is already in use by this team`) {
+	if !strings.Contains(string(out), `name "bob" is already in use by this team`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
@@ -2483,7 +2483,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 		t.Fatalf("unexpected output:\n%s", text)
 	}
 	if !strings.Contains(text, "grace") {
-		t.Fatalf("expected alias 'grace' in output:\n%s", text)
+		t.Fatalf("expected name 'grace' in output:\n%s", text)
 	}
 
 	// Verify the cloud init request used the right parameters.
@@ -2787,9 +2787,11 @@ func TestResolveWorkspaceTeamRegistryURLPrefersControllerRegistryOverIdentity(t 
 
 	workingDir := t.TempDir()
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         "did:key:z6MkMember",
-		RegistryURL: "https://member-registry.example",
-		CreatedAt:   "2026-04-08T00:00:00Z",
+		DID:           "did:key:z6MkMember",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		RegistryURL:   "https://member-registry.example",
+		CreatedAt:     "2026-04-08T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("save identity: %v", err)
 	}

@@ -204,7 +204,7 @@ func init() {
 	lockRevokeCmd.Flags().StringVar(&lockRevokePrefix, "prefix", "", "Optional prefix filter")
 
 	lockListCmd.Flags().StringVar(&lockListPrefix, "prefix", "", "Prefix filter")
-	lockListCmd.Flags().BoolVar(&lockListMine, "mine", false, "Show only locks held by the current workspace alias")
+	lockListCmd.Flags().BoolVar(&lockListMine, "mine", false, "Show only locks held by the current workspace name")
 
 	lockCmd.AddCommand(lockAcquireCmd, lockRenewCmd, lockReleaseCmd, lockRevokeCmd, lockListCmd)
 	rootCmd.AddCommand(lockCmd)

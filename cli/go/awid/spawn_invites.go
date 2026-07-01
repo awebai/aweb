@@ -37,6 +37,7 @@ type SpawnAcceptInviteRequest struct {
 	HumanName          string                           `json:"human_name,omitempty"`
 	AgentType          string                           `json:"agent_type,omitempty"`
 	DID                string                           `json:"did,omitempty"`
+	StableID           string                           `json:"stable_id,omitempty"`
 	PublicKey          string                           `json:"public_key,omitempty"`
 	Custody            string                           `json:"custody,omitempty"`
 	Lifetime           string                           `json:"lifetime,omitempty"`

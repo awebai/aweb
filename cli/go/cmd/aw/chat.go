@@ -147,7 +147,7 @@ var (
 )
 
 var chatSendAndWaitCmd = &cobra.Command{
-	Use:   "send-and-wait <alias> <message>",
+	Use:   "send-and-wait <recipient> <message>",
 	Short: "Send a message and wait for a reply",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -196,7 +196,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 // chat send-and-leave
 
 var chatSendAndLeaveCmd = &cobra.Command{
-	Use:   "send-and-leave <alias> <message>",
+	Use:   "send-and-leave <recipient> <message>",
 	Short: "Send a message and leave the conversation",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -263,7 +263,7 @@ var chatPendingCmd = &cobra.Command{
 // chat open
 
 var chatOpenCmd = &cobra.Command{
-	Use:   "open <alias>",
+	Use:   "open <recipient>",
 	Short: "Open a chat session",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -292,17 +292,17 @@ var chatOpenCmd = &cobra.Command{
 // chat history
 
 var chatHistoryCmd = &cobra.Command{
-	Use:   "history <alias>",
-	Short: "Show chat history with alias",
+	Use:   "history <recipient>",
+	Short: "Show chat history with a recipient name or address",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(chatHistorySessionID) != "" {
 			if len(args) != 0 {
-				return usageError("chat history with --session-id does not accept an alias")
+				return usageError("chat history with --session-id does not accept a recipient")
 			}
 			return nil
 		}
 		if len(args) != 1 {
-			return usageError("chat history requires an alias, or use --session-id")
+			return usageError("chat history requires a recipient name/address, or use --session-id")
 		}
 		return nil
 	},
@@ -437,7 +437,7 @@ var chatReadCmd = &cobra.Command{
 // chat extend-wait
 
 var chatExtendWaitCmd = &cobra.Command{
-	Use:   "extend-wait <alias> <message>",
+	Use:   "extend-wait <recipient> <message>",
 	Short: "Ask the other party to wait longer",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -486,7 +486,7 @@ var chatExtendWaitCmd = &cobra.Command{
 // chat listen
 
 var chatListenCmd = &cobra.Command{
-	Use:   "listen <alias>",
+	Use:   "listen <recipient>",
 	Short: "Wait for a message without sending",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -514,8 +514,8 @@ var chatListenCmd = &cobra.Command{
 // chat show-pending
 
 var chatShowPendingCmd = &cobra.Command{
-	Use:   "show-pending <alias>",
-	Short: "Show pending messages for alias",
+	Use:   "show-pending <recipient>",
+	Short: "Show pending messages for a recipient name or address",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -555,7 +555,7 @@ func init() {
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (currently the default)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
 
-	chatHistoryCmd.Flags().StringVar(&chatHistorySessionID, "session-id", "", "Fetch chat history by session id instead of alias")
+	chatHistoryCmd.Flags().StringVar(&chatHistorySessionID, "session-id", "", "Fetch chat history by session id instead of recipient")
 	chatHistoryCmd.Flags().StringVar(&chatHistoryMessageID, "message-id", "", "Fetch one message by id when using --session-id")
 	chatHistoryCmd.Flags().IntVar(&chatHistoryLimit, "limit", 1000, "Maximum messages to fetch")
 	chatHistoryCmd.Flags().BoolVar(&chatHistoryUnreadOnly, "unread-only", false, "Fetch unread messages only")

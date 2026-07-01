@@ -21,7 +21,7 @@ func init() {
 	taskListCmd.Flags().String("type", "", "Filter by type (task, bug, feature, epic)")
 	taskListCmd.Flags().String("priority", "", "Filter by priority 0-4 (accepts P0-P4)")
 	taskListCmd.Flags().String("labels", "", "Filter by labels (comma-separated)")
-	taskListCmd.Flags().String("assignee", "", "Filter by assignee agent alias")
+	taskListCmd.Flags().String("assignee", "", "Filter by assignee agent name")
 	taskCmd.AddCommand(taskListCmd)
 }
 
