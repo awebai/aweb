@@ -114,3 +114,69 @@ func TestRefreshLibraryProfileReMaterializesFromLatestShelf(t *testing.T) {
 		t.Fatalf("re-materialized .aw/profile/profile.yaml missing: %v", err)
 	}
 }
+
+// A response whose profile_ref differs from the locally recorded one must be
+// refused - the refresh is pinned to the recorded ref and must never rewrite
+// ref.json to a different profile the remote named.
+func TestRefreshLibraryProfileRefusesMismatchedProfileRef(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+
+	files := testLibraryProfilePayloadFiles()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// respond with a DIFFERENT profile_ref than the recorded one.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"profile_ref":              "reviewer",
+			"version":                  "0.2.0",
+			"digest":                   "sha256:deadbeef",
+			"source_blueprint_ref":     "aweb.engineering",
+			"source_blueprint_version": "0.1.0",
+			"source_blueprint_digest":  "sha256:blueprint",
+			"files":                    files,
+		})
+	}))
+	defer server.Close()
+	writeLibraryShelfManifestPluginForTest(t, home, server.URL)
+
+	old := recordedProfileRef{
+		ProfileRef:             "coordinator",
+		ProfileVersion:         "0.1.0",
+		ProfileDigest:          "sha256:old",
+		SourceBlueprintRef:     "aweb.engineering",
+		SourceBlueprintVersion: "0.1.0",
+		SourceBlueprintDigest:  "sha256:blueprint",
+	}
+	// pre-write ref.json so we can assert the refused refresh leaves it untouched.
+	refPath := filepath.Join(home, ".aw", "profile", "ref.json")
+	if err := os.MkdirAll(filepath.Dir(refPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	origRef, _ := json.Marshal(old)
+	if err := os.WriteFile(refPath, origRef, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code"); err == nil || !strings.Contains(err.Error(), "refusing to rewrite") {
+		t.Fatalf("expected refusal on mismatched profile_ref, got %v", err)
+	}
+	// ref.json is unchanged (still the recorded coordinator@0.1.0).
+	data, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after recordedProfileRef
+	if err := json.Unmarshal(data, &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.ProfileRef != "coordinator" || after.ProfileVersion != "0.1.0" {
+		t.Fatalf("ref.json was rewritten despite the refusal: %+v", after)
+	}
+}

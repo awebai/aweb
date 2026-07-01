@@ -108,13 +108,20 @@ func refreshLibraryProfileInHome(homeDir, agentID string, old recordedProfileRef
 		if err != nil {
 			return fmt.Errorf("library get-shelf-profile: %w", err)
 		}
+		// The refresh is pinned to the LOCALLY recorded profile: the recorded ref
+		// decides which profile to re-materialize, never the remote response. Refuse
+		// a response whose profile_ref differs, so a bug/proxy/test double cannot
+		// redirect the refresh and rewrite ref.json to a different profile.
+		if shelf.ProfileRef != old.ProfileRef {
+			return fmt.Errorf("library returned profile_ref %q for a refresh of %q; refusing to rewrite the recorded profile with a different one", shelf.ProfileRef, old.ProfileRef)
+		}
 		var mErr error
 		materialized, mErr = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
 			TargetDir:        homeDir,
 			BlueprintRef:     firstNonEmptyLibraryValue(shelf.SourceBlueprintRef, old.SourceBlueprintRef),
 			BlueprintVersion: firstNonEmptyLibraryValue(shelf.SourceBlueprintVersion, old.SourceBlueprintVersion),
 			BlueprintDigest:  firstNonEmptyLibraryValue(shelf.SourceBlueprintDigest, old.SourceBlueprintDigest),
-			ProfileRef:       shelf.ProfileRef,
+			ProfileRef:       old.ProfileRef,
 			ProfileVersion:   shelf.Version,
 			ProfileDigest:    shelf.Digest,
 			RuntimeKind:      runtimeKind,

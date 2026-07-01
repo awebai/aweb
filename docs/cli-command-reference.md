@@ -871,6 +871,7 @@ Subcommands:
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
+- `refresh` Re-materialize a team member's home from the latest version of its Library profile
 - `remove-agent` Remove an agent from a team
 - `switch` Switch the active team for this identity
 
@@ -971,6 +972,24 @@ List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
+
+## `team refresh`
+
+### `team refresh`
+
+Re-materialize agents/instances/<name> from the latest version of the profile it was
+materialized from on the team's private Library shelf. This closes the learning loop: an
+approved profile proposal mints a new shelf version, and `aw team refresh` re-applies it
+locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.
+It reads the recorded profile ref locally and never asks a remote service which profile to use.
+
+Upstream blueprint updates are a separate, composable step: run `aw library update-from-source`
+first to pull them onto the shelf, then `aw team refresh` to re-materialize.
+
+Flags:
+- `-h, --help help for refresh`
+- `--home string Agent home directory override (default: agents/instances/<name>)`
+- `--runtime string Runtime harness to re-materialize for (claude-code|codex|pi|local-shell) (default "claude-code")`
 
 ## `team remove-agent`
 
