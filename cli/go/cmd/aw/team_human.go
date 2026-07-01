@@ -783,10 +783,9 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 	if err != nil {
 		return err
 	}
-	if err := upsertAcceptedTeamMembershipState(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, true); err != nil {
-		return err
-	}
-	if err := ensureAcceptedTeamWorkspaceBinding(wd, accepted, bootstrap.Certificate, awebURL); err != nil {
+	// The creator self-enrolls as the team's first member and produces a
+	// ready-to-run identity, so the worktree binding is written now.
+	if err := recordAcceptedTeamMembership(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return err
 	}
 	printOutput(teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
@@ -1383,13 +1382,9 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	if err := upsertAcceptedTeamMembershipState(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
-		return nil, err
-	}
-	if err := ensureAcceptedTeamWorkspaceBinding(homeDir, accepted.Output, accepted.Certificate, accepted.AwebURL); err != nil {
-		return nil, err
-	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(homeDir); err != nil {
+	// Agent provisioning writes the worktree binding immediately: the produced
+	// agent is ready to run with no separate `aw init`.
+	if err := recordAcceptedTeamMembership(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return nil, err
 	}
 	return accepted, nil

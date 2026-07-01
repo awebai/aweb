@@ -698,6 +698,9 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	if _, err := resolveSelectionForDir(root); err != nil {
 		t.Fatalf("active team should resolve after create: %v", err)
 	}
+	// The creator self-enrolls as the first member; without an encryption key it
+	// could not do E2E messaging, so the create flow must ensure one.
+	requireWorktreeEncryptionKeyForTest(t, root)
 }
 
 func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(t *testing.T) {
