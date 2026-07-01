@@ -759,22 +759,54 @@ func registryURLForTeamInvite(workingDir, domain, awebURL string) string {
 	}
 	if strings.TrimSpace(awebURL) != "" {
 		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
-			return strings.TrimSpace(discovered.RegistryURL)
+			if registryURL := strings.TrimSpace(discovered.RegistryURL); registryURL != "" {
+				return registryURL
+			}
 		}
+	}
+	// A hosted aweb.ai team resolves to our registry when nothing else is on
+	// record; BYOT and local namespaces fail closed rather than assume it.
+	if isAwebHostedNamespace(domain) {
+		return awid.DefaultAWIDRegistryURL
 	}
 	return ""
 }
 
+// awebURLForTeamInvite resolves the aweb server hosting teamID so an invite can
+// be minted for it. Precedence: the live worktree binding (workspace.yaml,
+// written by `aw init`), then the team roster (teams.yaml, which `aw team join`
+// populates before `aw init` writes workspace.yaml), then the hosted default
+// for aweb.ai namespaces. It must not return "" for a hosted team: an empty
+// result makes the invite mint fall through to the local team-key branch, so a
+// member entitled to mint via their hosted cert fails with "no team key". BYOT
+// and local namespaces have no hosted default and correctly resolve to "" when
+// no URL is on record, so they fail closed rather than assume our server.
 func awebURLForTeamInvite(workingDir, teamID string) string {
+	teamID = strings.TrimSpace(teamID)
 	if workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir); err == nil && workspace != nil {
-		if membership := workspace.Membership(teamID); membership != nil {
-			if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
+		if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
+			if teamID == "" {
+				if awconfig.ActiveMembershipFor(workspace, teamState) != nil {
+					return awebURL
+				}
+			} else if workspace.Membership(teamID) != nil {
 				return awebURL
 			}
 		}
-		if awconfig.ActiveMembershipFor(workspace, teamState) != nil {
-			return strings.TrimSpace(workspace.AwebURL)
+	}
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+		membership := teamState.Membership(teamID)
+		if membership == nil && teamID == "" {
+			membership = teamState.ActiveMembership()
 		}
+		if membership != nil {
+			if awebURL := strings.TrimSpace(membership.AwebURL); awebURL != "" {
+				return awebURL
+			}
+		}
+	}
+	if domain, _, err := awid.ParseTeamID(teamID); err == nil && isAwebHostedNamespace(domain) {
+		return DefaultAwebURL
 	}
 	return ""
 }
