@@ -13,7 +13,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultMaterializeRuntimeKind = "claude-code"
+const (
+	defaultMaterializeRuntimeKind = "claude-code"
+	libraryPluginName             = "library"
+	libraryPluginManifestURL      = "https://library.aweb.ai/.well-known/aweb-app.json"
+	libraryPluginInstallCommand   = "aw plugin install " + libraryPluginManifestURL
+)
+
+func missingLibraryPluginError() error {
+	return usageError("aw library plugin is not installed; run `%s`", libraryPluginInstallCommand)
+}
 
 type libraryProfileSelector struct {
 	SourceBlueprintRef     string
@@ -445,9 +454,9 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 }
 
 func executeLibraryToolBody(args []string) ([]byte, error) {
-	result, exists, err := executeInstalledManifestTool("library", args)
+	result, exists, err := executeInstalledManifestTool(libraryPluginName, args)
 	if !exists {
-		return nil, usageError("aw library plugin is not installed; run `aw plugin install https://library.aweb.ai/.well-known/aweb-app.json`")
+		return nil, missingLibraryPluginError()
 	}
 	if err != nil {
 		return nil, err

@@ -14,6 +14,37 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 )
 
+func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, exists, err := executeInstalledManifestTool(libraryPluginName, []string{"get-profile", "--blueprint_ref", "aweb.development", "--profile_ref", "developer"})
+	if err != nil || exists {
+		t.Fatalf("executeInstalledManifestTool err=%v exists=%v, want missing without error for direct lookup", err, exists)
+	}
+
+	_, err = resolveTrustedPluginCommand(libraryPluginName)
+	if err == nil {
+		t.Fatal("expected aw library command resolution to fail actionably")
+	}
+	for _, want := range []string{"aw library plugin is not installed", libraryPluginInstallCommand} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing plugin error should contain %q, got %v", want, err)
+		}
+	}
+
+	_, _, err = applyLibraryProfileToHome(t.TempDir(), "developer", libraryProfileSelector{SourceBlueprintRef: "aweb.development", ProfileRef: "developer"}, true)
+	if err == nil {
+		t.Fatal("expected team/profile materialize path to fail without library plugin")
+	}
+	for _, want := range []string{"aw library plugin is not installed", libraryPluginInstallCommand} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("profile path missing plugin error should contain %q, got %v", want, err)
+		}
+	}
+}
+
 func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
 	selector, err := parseLibraryProfileSelector("aweb.engineering/reviewer=pi")
 	if err != nil {
