@@ -23,9 +23,9 @@ var blueprintPublishProfileCmd = &cobra.Command{
 	Use:   "publish-profile <source>",
 	Short: "Publish one local blueprint profile to the team's private Library shelf",
 	Long: "Pack a profile from a local blueprint source and publish it to the team's private\n" +
-		"Library shelf (create-shelf-profile). Mirrors `aw blueprint materialize`: --profile is\n" +
-		"optional when the source has exactly one profile, required when it has more. The request\n" +
-		"is signed with the active team certificate (library:write).",
+		"Library shelf (create-shelf-profile). --profile is optional when the source has exactly\n" +
+		"one profile and required when it has more than one. The request is signed with the\n" +
+		"active team certificate (library:write).",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBlueprintPublishProfile(cmd.OutOrStdout(), args[0], blueprintPublishProfileID, blueprintPublishProfileTags, blueprintPublishProfileJSON)

@@ -50,7 +50,7 @@ func ExtractProfilePayload(sourceDir, profileRef string) (*PublishableProfile, e
 	}, nil
 }
 
-// resolvePublishProfile mirrors materialize's selection: an explicit ref is looked
+// resolvePublishProfile selects the profile to publish: an explicit ref is looked
 // up; an empty ref defaults to the sole profile and is an error when the source
 // carries more than one.
 func resolvePublishProfile(bp *Blueprint, profileRef string) (Profile, error) {
