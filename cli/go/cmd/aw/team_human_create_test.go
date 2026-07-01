@@ -167,6 +167,34 @@ func TestTeamHumanCreateAgentSpecsUseListedAgentAsFirstMember(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateFirstAgentNameConflictsWithListedAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		agents   []string
+		profiles []string
+	}{
+		{name: "agent", agents: []string{"developer@aweb.engineering/developer"}},
+		{name: "profile compat synthesized name", profiles: []string{"aweb.engineering/developer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTeamHumanCreateGlobals(t)
+			root := t.TempDir()
+			t.Chdir(root)
+			teamHumanCreateAlias = "owner"
+			teamHumanCreateAgents = tc.agents
+			teamHumanCreateProfiles = tc.profiles
+
+			err := runTeamHumanCreate(nil, []string{"eng"})
+			if err == nil || !strings.Contains(err.Error(), "the first listed --agent is the first team member") {
+				t.Fatalf("error=%v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+				t.Fatalf(".aw created despite prevalidation failure, stat err=%v", statErr)
+			}
+		})
+	}
+}
+
 func TestTeamHumanCreateBlueprintSpecsCarryLocalSource(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	fixture := filepath.Join(engineeringBlueprintFixtureRoot(t), "source")

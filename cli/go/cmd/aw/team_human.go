@@ -401,6 +401,9 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
 	if name := strings.TrimSpace(firstSpec.Name); name != "" {
+		if alias != "" && !strings.EqualFold(alias, name) {
+			return usageError("the first listed --agent is the first team member; --first-agent-name cannot name a separate/additional agent - pass agents uniformly as --agent NAME@BLUEPRINT/PROFILE, or use --first-agent-name alone with no --agent")
+		}
 		alias = name
 	}
 	if alias == "" {
