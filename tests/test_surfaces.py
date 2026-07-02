@@ -23,8 +23,10 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "aw id request --team-auth" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
-    # Native Agentic App framing: canonical plugin install + native aw library verbs.
+    # Native Agentic App framing: core aw onboarding plus opt-in shelf verbs.
     assert "Native Agentic App" in response.text
+    assert "aw team add alice@aweb.team/developer=claude-code" in response.text
+    assert "aw agent start alice --runtime claude-code" in response.text
     assert "aw plugin install" in response.text
     assert "aw library" in response.text
 
@@ -38,11 +40,18 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "X-AWID-Team-Certificate" in text
     assert "X-AWEB-Signed-Payload" in text
     assert "X-AWEB-Timestamp" in text
-    # Getting-started journey, install-first, mirroring the landing (no run step).
+    # Getting-started journey mirrors the reconciled SOT canonical block.
     assert "npm install -g @awebai/aw" in text
-    assert "aw init --username" in text
-    assert "aw team add" in text
-    assert "alice@aweb.team/developer=pi" in text
+    assert "aw init" in text
+    assert "aw team add alice@aweb.team/developer=claude-code" in text
+    assert "aw team add bob@aweb.team/reviewer=claude-code" in text
+    assert "aw agent start alice --runtime claude-code" in text
+    assert "AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code" in text
+    assert "claude-code|codex|pi|local-shell" in text
+    assert "--blueprint" in text
+    assert "AWEB_BLUEPRINT" in text
+    assert "--library-url" in text
+    assert "AWEB_LIBRARY_URL" in text
     assert "import-to-shelf" in text
     # Points at the dual aw/curl reference for the full raw-HTTP recipe.
     assert "/reference" in text
@@ -70,6 +79,10 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     # The hero model diagram replaces the prose lede.
     assert 'class="model-fig"' in html
     assert "Browse the catalog, build your shelf, run your team." in html
+    assert "aw team add alice@aweb.team/developer=claude-code" in html
+    assert "aw team add bob@aweb.team/reviewer=claude-code" in html
+    assert "aw agent start alice --runtime claude-code" in html
+    assert "AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code" in html
 
 
 def test_reference_page_documents_every_operation_dual() -> None:
