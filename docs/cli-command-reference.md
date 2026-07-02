@@ -874,6 +874,7 @@ Subcommands:
 - `refresh` Re-materialize a team member's home from the latest version of its Library profile
 - `remove-agent` Remove an agent from a team
 - `switch` Switch the active team for this identity
+- `up` Launch local team agents in tmux
 
 Flags:
 - `-h, --help help for team`
@@ -1018,6 +1019,21 @@ Switch the active team for this identity
 
 Flags:
 - `-h, --help help for switch`
+
+## `team up`
+
+### `team up`
+
+Launch local team agents in tmux. This is a local runtime convenience: it reads materialized agents/instances/<name> homes and starts one tmux window per supported interactive harness. Team definitions and profile provenance remain in aweb state and .aw/profile/ref.json.
+
+Flags:
+- `--attach Attach or switch to the tmux session after launch (default true)`
+- `--dry-run Print the tmux launch plan without running it`
+- `--force Start even when another process already has an agent home as its cwd`
+- `-h, --help help for up`
+- `--no-attach Do not attach or switch to the tmux session after launch`
+- `--recreate Kill and recreate an existing tmux session`
+- `--session string tmux session name (default: active team name or aw-team)`
 
 ## `whoami`
 

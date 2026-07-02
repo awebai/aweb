@@ -40,6 +40,7 @@ type materializedProfileRef struct {
 	ProfileDigest          string   `json:"profile_digest"`
 	ProfileRef             string   `json:"profile_ref"`
 	ProfileVersion         string   `json:"profile_version"`
+	RuntimeKind            string   `json:"runtime_kind,omitempty"`
 	SourceBlueprintDigest  string   `json:"source_blueprint_digest,omitempty"`
 	SourceBlueprintRef     string   `json:"source_blueprint_ref,omitempty"`
 	SourceBlueprintVersion string   `json:"source_blueprint_version,omitempty"`
@@ -69,6 +70,10 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 }
 
 func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force bool, runtimeKind string, provenance materializeProvenance) (*MaterializeResult, error) {
+	runtimeKind = strings.TrimSpace(runtimeKind)
+	if runtimeKind == "" {
+		runtimeKind = "claude-code"
+	}
 	profile, ok := findProfile(bp, profileID)
 	if !ok {
 		return nil, fmt.Errorf("profile %q not found in blueprint", profileID)
@@ -183,6 +188,7 @@ func materializeOps(bp *Blueprint, profile Profile, runtimeKind string, provenan
 		ProfileDigest:  profile.Digest,
 		ProfileRef:     profile.ID,
 		ProfileVersion: profile.Version,
+		RuntimeKind:    strings.TrimSpace(runtimeKind),
 	}
 	if provenance.SourceBlueprint {
 		ref.SourceBlueprintDigest = bp.Source.Digest
