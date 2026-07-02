@@ -498,19 +498,27 @@ profile-bound agents use the shipped team and agent runtime verbs.
 Recommended dev-team flow:
 
 ```bash
-aw blueprint inspect aweb.development
+aw blueprint inspect aweb.team
 aw team create eng
-aw team add developer@aweb.development/developer=claude-code
+aw team add developer@aweb.team/developer=claude-code
 aw agent start developer --runtime claude-code
 ```
+
+`aw team add` materializes the profile from the public blueprint catalog with a
+direct read — no Library plugin required (aw 1.30+). The blueprint defaults to
+`aweb.team`, our maintained starter blueprint; override the blueprint with
+`--blueprint` (or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url`
+(or `AWEB_LIBRARY_URL`). The Library **shelf** — the propose/approve profile
+evolution loop — is a separate opt-in app a team installs when it wants it:
+`aw plugin install https://library.aweb.ai/.well-known/aweb-app.json`.
 
 A roster can also be seeded during create:
 
 ```bash
 aw team create eng \
-  --agent coordinator@aweb.support/coordinator=claude-code \
-  --agent developer@aweb.development/developer=claude-code \
-  --agent reviewer@aweb.development/reviewer=pi
+  --agent coordinator@aweb.team/coordinator=claude-code \
+  --agent developer@aweb.team/developer=claude-code \
+  --agent reviewer@aweb.team/reviewer=pi
 ```
 
 These commands must show or rely on an inspectable plan and compose explicit
@@ -802,9 +810,9 @@ aw agent restart <name> --runtime <runtime>
 Adding an agent must be trivial. The launch UX:
 
 ```bash
-aw team add reviewer@aweb.development/reviewer=claude-code
+aw team add reviewer@aweb.team/reviewer=claude-code
 aw agent start reviewer --runtime claude-code
-aw team add agent-resources@aweb.support/agent-resources=pi
+aw team add agent-resources@aweb.team/agent-resources=pi
 aw agent start agent-resources --runtime pi
 ```
 
