@@ -208,7 +208,7 @@ def render_head(site: SiteConfig) -> str:
   <meta name="description" content="{desc}">
   <link rel="canonical" href="{origin}/">
   <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0a0705" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0b0a09" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{escape(site.brand, quote=True)}">
   <meta property="og:title" content="{title}">
@@ -224,11 +224,11 @@ def render_head(site: SiteConfig) -> str:
 
 
 def render_header(site: SiteConfig) -> str:
-    # aweb / awid nav links carry the brand-mark (mono + accent), like the wordmarks
-    # in body copy; other nav links use the plain nav style.
+    # aweb / awid nav links carry the brand-word (accent wordmark), like the
+    # wordmarks in body copy; other nav links use the plain nav style.
     nav = "\n".join(
         f'        <a href="{link.href}"'
-        + (' class="brand-mark"' if link.label.lower() in ("aweb", "awid") else "")
+        + (' class="brand-word"' if link.label.lower() in ("aweb", "awid") else "")
         + f">{link.label}</a>"
         for link in site.nav_links
     )
@@ -264,7 +264,7 @@ def render_footer(site: SiteConfig) -> str:
         f"          <h4>{col.heading}</h4>\n"
         + "\n".join(
             f'          <a href="{link.href}"'
-            + (' class="brand-mark"' if link.label.lower() in ("aweb", "awid") else "")
+            + (' class="brand-word"' if link.label.lower() in ("aweb", "awid") else "")
             + f">{link.label}</a>"
             for link in col.links
         )

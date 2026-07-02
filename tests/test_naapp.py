@@ -311,10 +311,10 @@ def test_aweb_awid_nav_links_carry_brand_mark() -> None:
         ),
     )
     html = naapp.page(site, "    <section>x</section>")
-    # aweb / awid nav links get the brand-mark; ordinary links do not.
-    assert '<a href="https://aweb.ai" class="brand-mark">aweb</a>' in html
-    assert '<a href="https://awid.ai" class="brand-mark">awid</a>' in html
+    # aweb / awid nav links get the brand-word; ordinary links do not.
+    assert '<a href="https://aweb.ai" class="brand-word">aweb</a>' in html
+    assert '<a href="https://awid.ai" class="brand-word">awid</a>' in html
     assert '<a href="/reference">Reference</a>' in html
-    # the design system ships the brand-mark and a monospace logo.
-    assert ".brand-mark" in naapp.aweb_css()
+    # the design system ships the brand-word and a monospace logo.
+    assert ".brand-word" in naapp.aweb_css()
     assert ".brand {" in naapp.aweb_css() and "var(--font-mono)" in naapp.aweb_css()
