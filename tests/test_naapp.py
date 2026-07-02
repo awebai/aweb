@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import aweb_naapp as naapp
 from aweb_naapp import llms, manifest
 
@@ -60,8 +62,46 @@ def _site() -> naapp.SiteConfig:
     )
 
 
+def _site_with_source() -> naapp.SiteConfig:
+    import dataclasses
+
+    return dataclasses.replace(_site(), source_url="https://github.com/awebai/library")
+
+
+def _rendered_class_names() -> set[str]:
+    html_pages = [
+        naapp.page(_site(), "    <section>hi</section>"),
+        naapp.page(_site_with_source(), "    <section>hi</section>"),
+        naapp.render_reference(
+            _MANIFEST,
+            _site_with_source(),
+            verb="library",
+            example_path_values={"pack_ref": "aweb.engineering-pack"},
+        ),
+        naapp.render_reference(_CERT_ONLY_MANIFEST, _docs_site(), verb="folio"),
+    ]
+    classes: set[str] = set()
+    for html in html_pages:
+        for raw in re.findall(r'class="([^"]+)"', html):
+            classes.update(raw.split())
+    return classes
+
+
+def _css_class_names() -> set[str]:
+    return set(re.findall(r'\.([A-Za-z_][\w-]*)', naapp.aweb_css()))
+
+
 def test_css_is_sha_pinned() -> None:
+    # The served bundle hash covers both the vendored design SOT and the
+    # naapp-only component layer.
     assert naapp.aweb_css_sha256() == naapp.CSS_SHA256
+    # The vendored design-system file remains byte-identical to the ac SOT.
+    assert naapp.vendored_aweb_css_sha256() == naapp.VENDORED_AWEB_CSS_SHA256
+
+
+def test_every_rendered_class_has_css_rule() -> None:
+    missing = _rendered_class_names() - _css_class_names()
+    assert not missing, sorted(missing)
 
 
 def test_path_params_classified_required() -> None:
