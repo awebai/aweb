@@ -58,6 +58,15 @@ from library.surfaces import (
 )
 
 _OG_CARD_BYTES = (Path(__file__).resolve().parent / "assets" / "og-card.png").read_bytes()
+_FONTS_DIR = Path(__file__).resolve().parents[2] / "site" / "static" / "fonts"
+_FONT_FILES = {
+    name: _FONTS_DIR / name
+    for name in (
+        "BerkeleyMono-Light.woff2",
+        "BerkeleyMono-Regular.woff2",
+        "BerkeleyMono-SemiBold.woff2",
+    )
+}
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -129,6 +138,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content=_OG_CARD_BYTES,
             media_type="image/png",
             headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    @app.get("/fonts/{font_name}")
+    async def font_route(font_name: str) -> Response:
+        path = _FONT_FILES.get(font_name)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="Font not found")
+        return Response(
+            content=path.read_bytes(),
+            media_type="font/woff2",
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
         )
 
     @app.get("/llms.txt", response_class=PlainTextResponse)
