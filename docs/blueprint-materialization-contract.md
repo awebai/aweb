@@ -90,10 +90,20 @@ only by schema string and the file set (profile-relative vs blueprint-relative):
    **Exclude** these directory names anywhere in the tree: `.git`, `.hg`,
    `.svn`, `node_modules`, `.cache`, `dist`, `build`, `target`, `tmp`,
    `vendor`, `__pycache__`.
-2. **NEW — symlinks:** a symlink anywhere in the payload is an ERROR; the
-   payload is rejected. (Today aw errors on symlinks; the library follows them.
-   The library MUST be changed to reject them so the two sides can never
-   disagree on bytes.)
+2. **NEW — symlinks (walk order is normative):** the symlink check happens per
+   visited entry, **before** the excluded-directory skip. Consequences:
+   - The excluded-directory entry itself is checked for being a symlink; if it
+     is a real directory its **contents are never walked**. So a symlink
+     **nested inside an excluded directory is never visited and is ACCEPTED**
+     (it contributes nothing to the digest — e.g. `node_modules/.bin/*` in a
+     real JS project).
+   - A symlink at **any visited entry is an ERROR** — including a symlink whose
+     own name matches an excluded-directory name, because the symlink check
+     precedes the skip-by-name.
+   This matches aw's `canonicalPayloadDigest` (blueprint.go:903 symlink check
+   precedes the :907 excluded-dir skip), which is correct on the merits. The
+   library MUST match it — today the library follows symlinks. Tracked as
+   `default-aaeq.8`.
 3. Build each file entry per §2.1. **Sort the entries by `path`** (ascending,
    byte order).
 4. Build the payload object `{ "files": <sorted entries>, "schema": "<schema string>" }`.
@@ -202,8 +212,10 @@ response materializes to the expected file set + digest; digest mismatch fails
 closed; missing `profile.yaml` fails; `profile.yaml` `id`/`version`
 inconsistent with the response envelope fails; duplicate path rejected;
 non-normalized path (absolute, `..`, `.`, `//`, trailing slash, backslash,
-control char) rejected; path-escape rejected; symlink rejected;
-U+2028/U+2029 content rejected; the pin is written with the client-resolved URL
+control char) rejected; path-escape rejected; a symlink at a visited entry
+rejected (including a symlink whose name matches an excluded-directory name);
+a symlink nested inside an excluded directory accepted (digest computed, symlink
+ignored); non-UTF-8 file content rejected; U+2028/U+2029 content rejected; the pin is written with the client-resolved URL
 + managed set + all provenance/integrity fields; refresh no-ops at the same
 digest, updates on change, and prunes an upstream-removed file while preserving
 local/runtime state. A deliberate divergence on either side must red the vector
