@@ -506,7 +506,26 @@ func maxStringIndex(s string, needles ...string) int {
 
 func claudeChannelPromptComplete(pane string) bool {
 	lower := strings.ToLower(pane)
-	return strings.Contains(lower, "messages from plugin:aweb-channel")
+	completeIdx := claudeChannelCompleteIndex(lower)
+	if completeIdx < 0 {
+		return false
+	}
+	lastPromptIdx := maxStringIndexAtLeast(claudeTrustFolderPromptIndex(lower), claudeChannelPromptIndex(lower))
+	return completeIdx > lastPromptIdx
+}
+
+func claudeChannelCompleteIndex(lower string) int {
+	return maxStringIndex(lower, "messages from plugin:aweb-channel", "bypass permissions on")
+}
+
+func maxStringIndexAtLeast(indexes ...int) int {
+	maxIdx := -1
+	for _, idx := range indexes {
+		if idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+	return maxIdx
 }
 
 func printTeamUpPlan(out interface{ Write([]byte) (int, error) }, plan teamUpPlan) error {

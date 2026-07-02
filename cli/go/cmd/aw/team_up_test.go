@@ -205,7 +205,7 @@ func TestConfirmClaudeChannelPromptAnswersTrustThenDevChannelPrompts(t *testing.
 	outputs := []string{
 		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n",
 		"WARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n",
-		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n",
+		"Welcome back\n⏵⏵ bypass permissions on\n1 MCP server needs authentication - run /mcp\n",
 	}
 	captures := 0
 	var sent []string
@@ -231,12 +231,12 @@ func TestConfirmClaudeChannelPromptAnswersTrustThenDevChannelPrompts(t *testing.
 	}
 }
 
-func TestConfirmClaudeChannelPromptDoesNotTreatBypassAloneAsComplete(t *testing.T) {
+func TestConfirmClaudeChannelPromptDoesNotTreatBypassWithActivePromptAsComplete(t *testing.T) {
 	resetTeamUpTmuxForTest(t)
 	teamUpConfirmClaudePromptWait = 2 * time.Second
 	outputs := []string{
-		"WARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n⏵⏵ bypass permissions on\n",
-		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\n⏵⏵ bypass permissions on\n",
+		"⏵⏵ bypass permissions on\nWARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n",
+		"Welcome back\n⏵⏵ bypass permissions on\n1 MCP server needs authentication - run /mcp\n",
 	}
 	captures := 0
 	var sent []string
@@ -267,7 +267,7 @@ func TestConfirmClaudeChannelPromptHandlesStaleTrustTextAboveDevPrompt(t *testin
 	outputs := []string{
 		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n",
 		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n\nWARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n",
-		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n",
+		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n\nWARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n\nWelcome back\n⏵⏵ bypass permissions on\n1 MCP server needs authentication - run /mcp\n",
 	}
 	captures := 0
 	var sent []string
@@ -303,7 +303,7 @@ func TestConfirmClaudeChannelPromptSendsEnterAfterSeeingPrompt(t *testing.T) {
 		if captures == 1 {
 			return "1. I am using this for local development\n2. Exit\n", nil
 		}
-		return "Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n", nil
+		return "Welcome back\n⏵⏵ bypass permissions on\n1 MCP server needs authentication - run /mcp\n", nil
 	}
 	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
 		sent = append(sent, strings.Join(args, " "))
@@ -322,7 +322,7 @@ func TestConfirmClaudeChannelPromptAlreadyCompleteSendsNothing(t *testing.T) {
 	resetTeamUpTmuxForTest(t)
 	teamUpConfirmClaudePromptWait = 2 * time.Second
 	teamUpRunTmuxOutput = func(args ...string) (string, error) {
-		return "Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n", nil
+		return "Welcome back\n⏵⏵ bypass permissions on\n1 MCP server needs authentication - run /mcp\n", nil
 	}
 	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
 		t.Fatalf("send-keys should not run when channel is already complete: %v", args)
