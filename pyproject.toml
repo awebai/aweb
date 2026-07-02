@@ -49,7 +49,7 @@ packages = ["src/folio"]
 # pinned aweb-naapp package rather than any sibling checkout.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "d0baafa389b600c8b0a12525797d6e38726c5252" }
-aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "316de899ae3df402269494a2f59f3841921f5ce9" }
+aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "4dbeb4bc08e941f44d91971bb8cbe7448e28a4ed" }
 
 [dependency-groups]
 dev = [
