@@ -211,7 +211,7 @@ func teamUpCommandForRuntime(runtimeKind string) ([]string, error) {
 	case "claude-code":
 		return []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", claudeChannelSpec}, nil
 	case "pi":
-		return []string{"pi"}, nil
+		return []string{"pi", "--approve"}, nil
 	case "codex", "local-shell":
 		return nil, fmt.Errorf("runtime %q is not supported by this exploratory aw team up; only claude-code and pi are supported", runtimeKind)
 	default:

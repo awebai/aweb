@@ -76,7 +76,7 @@ func TestTeamUpPlanEnumeratesMaterializedAgents(t *testing.T) {
 	if plan.Agents[0].Name != "developer" || plan.Agents[0].HomeDir != devHome || plan.Agents[0].Action != teamUpActionStart || strings.Join(plan.Agents[0].Command, " ") != "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" {
 		t.Fatalf("developer plan=%+v", plan.Agents[0])
 	}
-	if plan.Agents[1].Name != "reviewer" || plan.Agents[1].HomeDir != piHome || strings.Join(plan.Agents[1].Command, " ") != "pi" {
+	if plan.Agents[1].Name != "reviewer" || plan.Agents[1].HomeDir != piHome || strings.Join(plan.Agents[1].Command, " ") != "pi --approve" {
 		t.Fatalf("reviewer plan=%+v", plan.Agents[1])
 	}
 }
