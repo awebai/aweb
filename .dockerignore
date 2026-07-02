@@ -17,8 +17,5 @@ tests/**/__pycache__
 .ruff_cache
 .coverage
 coverage
-site/public
-site/.serve.pid
-site/.serve.log
 .api.pid
 .api.log

@@ -193,13 +193,6 @@ def test_skill_surface_rejects_symlink_escapes(monkeypatch, tmp_path) -> None:
     assert "secret outside skill root" not in response.text
 
 
-def test_static_skill_surface_mirrors_repo_skills() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    for source in sorted((repo_root / "skills").glob("*/SKILL.md")):
-        mirrored = repo_root / "site" / "static" / "skills" / source.parent.name / "SKILL.md"
-        assert mirrored.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
-
-
 def test_robots_txt_blocks_user_content_paths() -> None:
     response = _client().get("/robots.txt")
 

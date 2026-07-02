@@ -29,10 +29,11 @@ contract prose unless the code and SOT move first.
    use local awid-service and real `aw id` certificates, not mocked crypto
    (`tests/test_e2e_smoke.py:376-451`, `tests/test_e2e_smoke.py:515-680`).
    The front-door recipes were validated verbatim before publication.
-5. **Agent-first surface.** The browser site has a plain-text twin for agents
-   (`site/static/llms.txt:1-64`), terminal-first recipes, structured 401/402
-   errors (`README.md:148-173`), and append-only version attribution
-   (`src/folio/repository.py:167-182`, `src/folio/repository.py:271-287`).
+5. **Agent-first surface.** The FastAPI app serves the browser landing and the
+   plain-text twin for agents from `src/folio/surfaces.py`, with terminal-first
+   recipes, structured 401/402 errors (`README.md:148-173`), and append-only
+   version attribution (`src/folio/repository.py:167-182`,
+   `src/folio/repository.py:271-287`).
 
 ## Architecture in one page
 
@@ -67,17 +68,16 @@ The shape is:
 | --- | --- | --- |
 | `src/folio/auth.py` | **Copy verbatim** | This is the relying-party verifier. Keep the cache, raw target, canonical audience, signature-over-presented-payload, AWID-resolved team key, revocation, and principal construction together (`src/folio/auth.py:50-301`). |
 | `tests/test_auth_v2_envelope.py` | **Copy + keep green** | This is the verifier spec by example: reject paths, replay negatives, raw-path/root-path parity with `aweb.team_auth_envelope`, AWID-key enforcement, revocation, and interop vectors (`tests/test_auth_v2_envelope.py:208-343`). Port it with `auth.py`. |
-| `src/folio/api.py` | **Adapt** | Keep the FastAPI dependency pattern that authenticates once and passes `Principal` into routes (`src/folio/api.py:28-65`). Replace document routes with your domain routes. Preserve same-origin health/API assumptions; deploy serves static site at `/`, API under `/v1/*`. |
+| `src/folio/api.py` | **Adapt** | Keep the FastAPI dependency pattern that authenticates once and passes `Principal` into routes (`src/folio/api.py:28-65`). Replace document routes with your domain routes. Preserve same-origin health/API assumptions; the app serves the landing at `/`, API under `/v1/*`, and agent surfaces at `/llms.txt` and `/skills/`. |
 | `src/folio/config.py` | **Adapt** | Keep `public_origin`, AWID registry URL, cache TTL, and timestamp skew knobs. Replace domain caps/settings with yours. Public origin must match what clients sign. |
 | `src/folio/repository.py` | **Replace with your domain** | The team-scoping and attribution pattern is useful, but documents/versions/caps are domain code. Keep the rule: every query scopes by `principal.team_id` and writes attribute the verified member. |
 | `src/folio/models.py` | **Replace with your domain** | Pydantic shapes are folio's text/billing API. Keep structured errors and response clarity; replace resource schemas. |
 | `src/folio/migrations/` | **Replace with your domain** | Keep pgdbm migration discipline and immutable forward migrations. Replace tables unless your domain is also documents. |
 | `tests/test_e2e_smoke.py` | **Adapt the fixture pattern** | Reuse the Docker-backed local awid-service, real `aw id` provisioning, recording proxy, revocation, fail-closed, replay-negative, and cap/error style (`tests/test_e2e_smoke.py:266-451`, `tests/test_e2e_smoke.py:597-680`). Replace endpoint assertions. |
 | `docker-compose.e2e.yml` | **Copy the shape** | Local Postgres + Redis + awid-service with DNS verification disabled for `.test` namespaces is the no-mocks harness (`docker-compose.e2e.yml:1-52`). |
-| `Makefile` | **Copy the shape** | Keep `test`, `e2e`, and site build targets (`Makefile:7-25`). Adapt ports and service names. |
+| `Makefile` | **Copy the shape** | Keep `test`, `e2e`, `run`, and local API serve targets. Adapt ports and service names. |
 | `README.md` | **Adapt, but keep recipes literal** | The README is the client contract. Recipes must be run verbatim before publication (`README.md:25-173`). Do not document blind copy-all when the setup has stop points. |
-| `site/` | **Adapt the pattern** | Static, text-first, no JS frameworks or analytics. Landing page explains agent-first inversion; docs mirror validated recipes. |
-| `site/static/llms.txt` | **Adapt the pattern** | Plain-text twin for agents that fetch instead of browse (`site/static/llms.txt:1-64`). Keep it concise and command-oriented. |
+| `src/folio/surfaces.py` | **Adapt the pattern** | Text-first human and agent surfaces served by the app: landing, reference, `/llms.txt`, `/skills/`, robots, and no private JS framework dependency. Keep it concise and command-oriented. |
 | `docs/sot.md` | **Write your own first** | This is the worked example of the source-of-truth doc: product, authority, envelope, data, API, validation, milestones. Your app needs its own SOT before code. |
 | `skills/team-cert-verification/SKILL.md` | **Copy/use when porting auth** | Load it when implementing or reviewing a verifier. It is the checklist version of `auth.py` plus SOT. |
 
