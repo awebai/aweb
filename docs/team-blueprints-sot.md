@@ -495,7 +495,39 @@ source, version, digest, required apps, capability requests, and docs.
 Inspecting a blueprint/profile pack shows the plan. Creating a team and adding
 profile-bound agents use the shipped team and agent runtime verbs.
 
-Recommended dev-team flow:
+### Getting started (canonical — onboarding surfaces quote this block)
+
+The minimal do-this-now onboarding. This is the single canonical shape landing
+pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
+and first team interactively; `aw team add` materializes starter agents from the
+`aweb.team` blueprint over a public read (no Library plugin on aw 1.30+);
+`aw agent start` runs them.
+
+```bash
+npm install -g @awebai/aw
+aw init
+aw team add alice@aweb.team/developer=claude-code
+aw team add bob@aweb.team/reviewer=claude-code
+aw agent start alice --runtime claude-code
+```
+
+Add an agent to an **existing hosted team** with a team API key (no dashboard
+session; the key is the whole credential):
+
+```bash
+AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+```
+
+The runtime suffix (`=claude-code` above) is a parameter, not a divergence:
+`claude-code|codex|pi|local-shell` — a surface may showcase whichever it
+prefers. The blueprint is always `aweb.team`; override it with `--blueprint`
+(or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+`AWEB_LIBRARY_URL`).
+
+### Fuller dev-team flow (named team + roster)
+
+The lifecycle example with an explicitly named team; `aw team create` is only
+needed when you want a named team beyond the one `aw init` creates.
 
 ```bash
 aw blueprint inspect aweb.team
