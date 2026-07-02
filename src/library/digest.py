@@ -36,25 +36,55 @@ def _sha256_hex(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _payload_path(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _reject_symlink(root: Path, path: Path) -> None:
+    raise ValueError(f"Symlink not allowed in payload: {_payload_path(root, path)}")
+
+
+def _decode_utf8(root: Path, path: Path, raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"{_payload_path(root, path)}: "
+            "blueprint canonical import payload requires UTF-8 text"
+        ) from exc
+
+
 def collect_files(root: Path) -> list[dict[str, str]]:
     """Collect content files under ``root`` into sorted payload entries with
     POSIX paths relative to ``root``. Excluded build/VCS directories are skipped."""
+    if root.is_symlink():
+        _reject_symlink(root, root)
     root = root.resolve()
     entries: list[dict[str, str]] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root)
-        if any(part in EXCLUDED_DIRS for part in relative.parts[:-1]):
-            continue
-        raw = path.read_bytes()
-        entries.append(
-            {
-                "content_utf8": raw.decode("utf-8"),
-                "path": relative.as_posix(),
-                "sha256": _sha256_hex(raw),
-            }
-        )
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        for path in sorted(directory.iterdir(), key=lambda item: item.name):
+            if path.is_symlink():
+                _reject_symlink(root, path)
+            if path.is_dir():
+                if path.name not in EXCLUDED_DIRS:
+                    pending.append(path)
+                continue
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            raw = path.read_bytes()
+            entries.append(
+                {
+                    "content_utf8": _decode_utf8(root, path, raw),
+                    "path": relative.as_posix(),
+                    "sha256": _sha256_hex(raw),
+                }
+            )
     entries.sort(key=lambda entry: entry["path"])
     return entries
 

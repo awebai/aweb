@@ -12,7 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, collect_files, payload_digest
+from library.digest import (
+    BLUEPRINT_PAYLOAD_SCHEMA,
+    PROFILE_PAYLOAD_SCHEMA,
+    collect_files,
+    payload_digest,
+)
 from library.repository import get_shelf_profile, import_to_shelf, list_shelf, publish_blueprint
 
 _SOURCE = Path(__file__).parent / "vectors" / "blueprints" / "engineering" / "source"
