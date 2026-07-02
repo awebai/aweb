@@ -121,13 +121,13 @@ func defaultTeamUpSessionName(repoRoot string) string {
 	if err == nil && teamState != nil {
 		teamID := strings.TrimSpace(teamState.ActiveTeam)
 		if teamID != "" {
-			return safeTmuxName(teamID)
+			return teamUpTmuxName(teamID)
 		}
 	}
 	if err == nil && workspace != nil && len(workspace.Memberships) == 1 {
 		teamID := strings.TrimSpace(workspace.Memberships[0].TeamID)
 		if teamID != "" {
-			return safeTmuxName(teamID)
+			return teamUpTmuxName(teamID)
 		}
 	}
 	return "aw-team"
@@ -142,7 +142,7 @@ func buildTeamUpPlan(repoRoot, session string, force bool, recreate bool) (teamU
 		}
 		return teamUpPlan{}, err
 	}
-	plan := teamUpPlan{Session: safeTmuxName(firstNonEmptyLibraryValue(session, "aw-team"))}
+	plan := teamUpPlan{Session: teamUpTmuxName(firstNonEmptyLibraryValue(session, "aw-team"))}
 	activeHomes := map[string]teamUpRunningProcess{}
 	if !(force || recreate) {
 		activeHomes, err = teamUpDetectActiveHomes(agentsDir)
@@ -289,10 +289,11 @@ func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {
 
 func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan) error {
 	shellCmd := teamUpShellCommand(agent)
+	windowName := teamUpWindowName(agent.Name)
 	if !teamUpSessionExists(session) {
-		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", safeTmuxName(agent.Name), shellCmd)
+		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", windowName, shellCmd)
 	}
-	return teamUpRunTmux(cmd, "new-window", "-t", session, "-n", safeTmuxName(agent.Name), shellCmd)
+	return teamUpRunTmux(cmd, "new-window", "-t", session, "-n", windowName, shellCmd)
 }
 
 func tmuxSessionExists(session string) bool {
@@ -457,7 +458,18 @@ func confirmClaudeChannelPrompt(session string, agent teamUpAgentPlan, deadline 
 }
 
 func teamUpWindowTarget(session, agentName string) string {
-	return safeTmuxName(session) + ":" + safeTmuxName(agentName)
+	return teamUpTmuxName(session) + ":" + teamUpWindowName(agentName)
+}
+
+func teamUpWindowName(agentName string) string {
+	return teamUpTmuxName(agentName)
+}
+
+func teamUpTmuxName(name string) string {
+	// safeTmuxName historically allows '.', but tmux normalizes dots to
+	// underscores in session names and treats dots as pane separators in targets.
+	// Normalize dots consistently everywhere aw creates or targets tmux names.
+	return strings.ReplaceAll(safeTmuxName(name), ".", "_")
 }
 
 func claudeBlockingPromptKind(pane string) string {

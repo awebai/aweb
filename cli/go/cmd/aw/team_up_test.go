@@ -81,6 +81,19 @@ func TestTeamUpPlanEnumeratesMaterializedAgents(t *testing.T) {
 	}
 }
 
+func TestTeamUpPlanNormalizesDottedSessionNameForTmux(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	plan, err := buildTeamUpPlan(root, "aweb-juan.aweb.ai", false, false)
+	if err != nil {
+		t.Fatalf("buildTeamUpPlan: %v", err)
+	}
+	if got, want := plan.Session, "aweb-juan_aweb_ai"; got != want {
+		t.Fatalf("session=%q, want %q", got, want)
+	}
+}
+
 func TestTeamUpPlanDefaultsMissingRuntimeKindToClaudeCode(t *testing.T) {
 	resetTeamUpDetectorsForTest(t)
 	root := t.TempDir()
@@ -241,6 +254,27 @@ func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 				t.Fatalf("tmux calls=%v", got)
 			}
 		})
+	}
+}
+
+func TestTeamUpWindowNameNormalizesDotsForTargetSafety(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{name: "developer", want: "developer"},
+		{name: "aw-docs", want: "aw-docs"},
+		{name: "dev.team", want: "dev_team"},
+	} {
+		if got := teamUpWindowName(tc.name); got != tc.want {
+			t.Fatalf("teamUpWindowName(%q)=%q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got, want := teamUpWindowTarget("aw-team", "dev.team"), "aw-team:dev_team"; got != want {
+		t.Fatalf("window target=%q, want %q", got, want)
+	}
+	if got, want := teamUpWindowTarget("aweb-juan.aweb.ai", "dev.team"), "aweb-juan_aweb_ai:dev_team"; got != want {
+		t.Fatalf("window target with dotted session=%q, want %q", got, want)
 	}
 }
 
