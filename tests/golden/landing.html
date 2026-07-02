@@ -245,8 +245,8 @@
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>Install aw, create a team, run agents from profiles</h2>
-          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; creating your team mints the certificate that every later command signs with.</p>
+          <h2>Install aw, initialize your team workspace, run agents from profiles</h2>
+          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; initializing your hosted workspace mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
           <p class="cmd-label">1 · Install aw, the <span class="brand-mark">aweb</span> command-line tool</p>
@@ -255,25 +255,23 @@
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install https://library.aweb.ai/.well-known/aweb-app.json</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">3 · Browse the public catalog — no identity needed</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library list-blueprints</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-          <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <p class="cmd-label">4 · Initialize your team workspace — mints your identity and team certificate</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw init --username &lt;your-name&gt; --name &lt;your-name&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
           <p class="cmd-label">5 · Add an agent — adopt the profile, choose its runtime, and materialize its home, in one</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering/coordinator --runtime claude-code</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.team/developer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
-        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the coordinator profile. The selector is <code>NAME@BLUEPRINT/PROFILE</code>: it adopts the blueprint profile onto your shelf and adds the agent in one. The runtime is your explicit choice: omitting <code>--runtime</code> defaults to <code>claude-code</code> (a CLI default, not read from the profile). The command prints the home directory it wrote.</p>
-        <p class="prose-outro"><strong>Whole roster at once:</strong> create the team and its agents in one command, each profile's runtime after an <code>=</code>:</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the developer profile on <code>pi</code>. The selector is <code>NAME@BLUEPRINT/PROFILE=RUNTIME</code>: it adopts the blueprint profile onto your shelf, adds the agent, chooses its runtime, and materializes its home in one. The command prints the home directory it wrote.</p>
+        <p class="prose-outro"><strong>Whole roster at once:</strong> add multiple agents in one command, each using the explicit <code>NAME@aweb.team/PROFILE=RUNTIME</code> selector:</p>
         <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team \
-  --profile aweb.engineering/coordinator=claude-code \
-  --profile aweb.engineering/reviewer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.team/developer=pi bob@aweb.team/reviewer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
-        <p class="prose-outro">A blueprint's <code>runtime_hints</code> and <code>runtime_assumptions</code> are advisory metadata you read to choose the runtime — query them with <code>aw blueprint inspect</code> or <code>aw library get-profile</code>; they are not auto-applied.</p>
+        <p class="prose-outro">A blueprint's <code>runtime_hints</code> and <code>runtime_assumptions</code> are advisory metadata you read to choose the runtime — query them with <code>aw library get-profile --blueprint_ref aweb.team --profile_ref developer</code>; they are not auto-applied.</p>
         <p class="prose-outro"><strong>Adopt without adding an agent:</strong> to copy a blueprint profile onto your shelf and evolve it before binding, use <code>import-to-shelf</code>:</p>
         <div class="cmd-panel">
           <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf \
-  --source_blueprint_ref aweb.engineering \
+  --source_blueprint_ref aweb.team \
   --source_blueprint_version 0.1.0 \
-  --profile_ref coordinator</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+  --profile_ref developer</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
         <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
