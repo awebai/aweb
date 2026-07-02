@@ -160,9 +160,9 @@ choice** at materialize time (`aw team add/create --runtime <rt>` /
 `…/PROFILE=<rt>`), **never inferred** from the profile's `runtime_assumptions`
 or `runtime_hints`. When `--runtime` is omitted, materialize uses a CLI-policy
 default (`claude-code`) — a default defined by the CLI, not read from the
-profile. Likewise, launch (`aw agent start`) takes an explicit `--runtime`/
-`--command` and refuses if neither is given. A profile is untrusted online data;
-it must not decide which harness is composed or which process executes.
+profile. Runtime launch is a separate operator action from the materialized
+home. A profile is untrusted online data; it must not decide which harness is
+composed or which process executes.
 
 - `claude-code` (the CLI-policy default): `CLAUDE.md -> AGENTS.md`.
 - `codex`: `AGENTS.md` is already the native file; no extra symlink.

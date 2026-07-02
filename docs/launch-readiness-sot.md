@@ -86,7 +86,7 @@ one polished AI dev team
   control plane.
 - Launch with local/git blueprints; `library.aweb.ai` is not required for wedge
   v1.
-- `aw agent start` is a thin local launcher, not a hosted runtime service.
+- Local interactive runtimes are launched directly from the materialized agent home.
 - Audit covers Aweb-mediated actions, not arbitrary filesystem or shell effects
   that happen outside Aweb-controlled tools.
 - Agents should use secrets through `secrets.aweb.ai`, app-native actions,
@@ -153,9 +153,7 @@ Required commands:
 aw blueprint inspect <source>
 aw team create <team> [--agent [NAME@]BLUEPRINT/PROFILE[:scope][=<runtime>]]...
 aw team add <name>@<blueprint>/<profile>=<runtime> [--home <dir>]
-aw agent start <name> --runtime <runtime>
-aw agent status <name>
-aw agent logs <name>
+aw agent profile show <name>
 ```
 
 Required behavior:
@@ -177,28 +175,25 @@ Acceptance criteria:
 - failure leaves inspectable state and a clear recovery path;
 - no second team-setup system is introduced.
 
-### L4. Local runtime launcher
+### L4. Local runtime handoff
 
-Outcome: local agents can be started without hand-building homes, worktrees, or
-tmux sessions.
+Outcome: local agents can be launched by an operator without hand-building homes,
+worktrees, or harness configuration.
 
 Required:
 
-- local Claude Code launcher;
-- local Codex or Pi launcher if available;
-- optional tmux supervisor;
 - instance home creation;
 - profile binding;
 - team certificate/config installation;
 - worktree creation for developer profiles;
-- status/stop/restart/logs or enough equivalent state for the demo.
+- harness-specific entry files and clear manual launch guidance for Claude Code,
+  Codex, Pi, or another supported local harness.
 
 Acceptance criteria:
 
 - `aw team add developer@aweb.development/developer=claude-code` materializes the right home/worktree layout;
-- `aw agent start developer --runtime claude-code` starts the selected local runtime from that home;
-- `aw agent status developer` shows useful runtime state;
-- launcher is local-only and thin; no hosted runtime service is implied.
+- the operator can start the selected local runtime directly from that home;
+- no hosted runtime service is implied.
 
 ### L5. Workroom dashboard
 
@@ -407,7 +402,7 @@ Acceptance criteria:
 2. Build the engineering blueprint/blueprints to product quality.
 3. Implement `aw blueprint inspect` and local materialization for local dirs.
 4. Implement `aw team create` and `aw team add <name>@<blueprint>/<profile>` over existing primitives.
-5. Implement `aw agent start/status/logs` for local runtime.
+5. Make local runtime handoff clear from materialized homes.
 6. Make tasks/messages/dev or GitHub sufficient for one real workflow.
 7. Build the workroom view around the demo path.
 8. Expose the signed audit trail in the workroom.
@@ -465,7 +460,7 @@ future.
 - [ ] Homepage message and demo CTA are aligned with launch promise.
 - [ ] Engineering blueprint installs cleanly from local source.
 - [ ] Blueprint inspect/apply/team-create path is implemented.
-- [ ] Agent add/start/status path works for local runtime.
+- [ ] Agent add/materialize path works, `aw agent profile show` verifies provenance, and direct runtime handoff is clear.
 - [ ] Workroom shows agents, work, activity, approvals, and audit.
 - [ ] One real dogfooded task completes through the team.
 - [ ] Signed audit trail is visible and understandable.

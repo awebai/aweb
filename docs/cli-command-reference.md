@@ -12,7 +12,7 @@ to refresh it.
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
-| Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
+| Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 
 ## Global Flags
@@ -885,10 +885,12 @@ Flags:
 Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
 Flags:
+- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
 - `--global Add a global AWID identity/address-backed agent`
 - `-h, --help help for add`
 - `--home string Agent home directory override for a single added agent (default: agents/instances/<name>)`
 - `--layout-only Only create agents/instances/<name>; do not create identity state`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
 - `--local Add a local team-scoped agent identity (default)`
 - `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
 
@@ -906,7 +908,7 @@ Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 
 Flags:
 - `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
-- `--blueprint string Materialize all profiles in a local blueprint directory`
+- `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
 - `--byot Create a customer-controlled AWID team with local namespace controller authority`
 - `--display-name string Team display name`
 - `--first-agent-global Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority`
@@ -914,6 +916,7 @@ Flags:
 - `--first-agent-name string Initial workspace member name (defaults to <name>)`
 - `-h, --help help for create`
 - `--home string Agent home directory override for single-agent --profile create`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
 - `--name string Team name`
 - `--namespace string Namespace domain for --byot`
 - `--profile stringArray Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`
@@ -1478,6 +1481,40 @@ Flags:
 - `-h, --help help for show`
 - `--limit int Max messages (default 200)`
 - `--message-id string Legacy mail message to inspect`
+
+## `agent`
+
+### `agent`
+
+Inspect local materialized agent homes under agents/instances/<name>.
+
+Subcommands:
+- `profile` Inspect the Library profile recorded in a local agent home
+
+Flags:
+- `-h, --help help for agent`
+
+## `agent profile`
+
+### `agent profile`
+
+Inspect the Library profile recorded in a local agent home
+
+Subcommands:
+- `show` Show the recorded profile ref/snapshot (.aw/profile/ref.json) for a materialized agent
+
+Flags:
+- `-h, --help help for profile`
+
+## `agent profile show`
+
+### `agent profile show`
+
+Show the Library profile a local agent home was materialized from - the blueprint and profile refs, versions, and content digests recorded in .aw/profile/ref.json. This is what `aw team refresh` updates and what the materialize seam records; it never asks a remote service which profile is in use.
+
+Flags:
+- `-h, --help help for show`
+- `--home string Agent home directory override (default: agents/instances/<name>)`
 
 ## `instructions`
 

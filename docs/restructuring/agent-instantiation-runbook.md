@@ -91,10 +91,10 @@ profile's mission.
 
 ## Dead ends — do not use these (and why)
 
-- **`aw agent start --runtime claude-code`** — launches `claude` as a bare
-  background process with no TTY and no prompt, so claude falls into `--print`
-  mode and dies with `Error: Input must be provided either through stdin or as
-  a prompt argument when using --print`. It cannot run an interactive agent.
+- **Background launchers** — launching `claude` as a bare background process
+  provides no TTY and no prompt, so claude falls into `--print` mode and dies
+  with `Error: Input must be provided either through stdin or as a prompt
+  argument when using --print`. It cannot run an interactive agent.
 - **`aw run claude`** — the native wake-loop runner; it *does* run the agent,
   but it is explicitly out of scope for this flow (Juan's call). Use plain
   `claude` with the flags above.
@@ -119,8 +119,8 @@ the Enter-keystroke pattern in step 4 is the way, or file `/feedback` for a
 ## Lifecycle
 
 - The agent is the `claude` process in its tmux window. Stop it by closing the
-  window (or `/quit` in the pane). There is no `aw agent stop` for this path
-  (that supervised it as a bare process, which does not work — see dead ends).
+  window (or `/quit` in the pane). The process is supervised by the tmux
+  session, not by the CLI.
 - The home persists; restarting is step 3-4 again (the channel confirmation
   recurs each start until allowlisted).
 
@@ -140,6 +140,6 @@ coordinator's. The coordinator decides what work and who is needed; AR
 provisions, onboards, and runs the agents. So this runbook is the source for
 the **AR profile's core instantiation skill**: the exact commands (steps 1-5),
 the Enter-keystroke handling with read-before-send, the dead-ends so it does not
-waste time on `aw agent start`/`aw run`/`.mcp.json`, and mail-based onboarding
+waste time on background launchers/`aw run`/`.mcp.json`, and mail-based onboarding
 after start. The coordinator profile only needs to know that it *requests*
 staffing from AR.

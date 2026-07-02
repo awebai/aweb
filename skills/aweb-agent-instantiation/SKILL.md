@@ -113,9 +113,9 @@ the TUI.
 
 ## Guardrails — do NOT use these (each is a known dead-end)
 
-- **`aw agent start`** — launches `claude` with no TTY and no prompt; it falls
-  into `--print` mode and dies with `Input must be provided … --print`. It
-  cannot run an interactive agent.
+- **Background launchers** — an interactive Claude Code agent needs a real TTY
+  and the channel confirmation prompt; bare background processes fall into
+  non-interactive mode and die.
 - **`aw run`** — runs the agent, but is out of scope for this flow.
 - **The materialized `.mcp.json`** — the wrong channel mechanism; remove it
   (step 2). The live agents have no `.mcp.json`.
@@ -138,8 +138,8 @@ That is the only line that changes.
 ## Lifecycle
 
 - The agent is the `claude` process in its TTY session. Stop/retire it by
-  `/quit` in the pane or closing the window. There is no `aw agent stop` for
-  this path (it supervised a bare process, which does not work — see guardrails).
+  `/quit` in the pane or closing the window. The process is supervised by the
+  TTY/tmux session, not by the CLI.
 - The home persists; restarting is steps 3-4 again (the confirmation recurs each
   start until allowlisted).
 
