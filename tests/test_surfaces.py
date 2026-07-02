@@ -21,6 +21,15 @@ def _override_db_for_path(app, path: str) -> None:
     app.dependency_overrides[db_dependency] = lambda: object()
 
 
+def test_aweb_naapp_import_uses_pinned_package_not_sibling_checkout() -> None:
+    import aweb_naapp
+
+    package_path = Path(aweb_naapp.__file__).resolve()
+    sibling_checkout = Path(__file__).resolve().parents[2] / "aweb-naapp" / "src"
+
+    assert sibling_checkout not in package_path.parents
+
+
 def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     response = _client().get("/")
 
@@ -44,12 +53,12 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert 'href="/skills/"' in response.text
 
 
-def test_landing_brand_marks_and_nav_cleanup() -> None:
+def test_landing_brand_words_and_nav_cleanup() -> None:
     text = _client().get("/").text
-    # aweb / awid wordmarks carry the brand-mark — in the nav and in body copy.
-    assert '<a href="https://aweb.ai" class="brand-mark">aweb</a>' in text
-    assert '<a href="https://awid.ai" class="brand-mark">awid</a>' in text
-    assert '<span class="brand-mark">aweb</span>' in text
+    # aweb / awid wordmarks carry the brand-word — in the nav and in body copy.
+    assert '<a href="https://aweb.ai" class="brand-word">aweb</a>' in text
+    assert '<a href="https://awid.ai" class="brand-word">awid</a>' in text
+    assert '<span class="brand-word">aweb</span>' in text
     # Nav cleanup: the broken "Model" link is gone (no #model section to reach).
     assert 'href="/#model"' not in text
     # The open-source / MIT line is prominent in the hero, linking the repo.
@@ -57,7 +66,7 @@ def test_landing_brand_marks_and_nav_cleanup() -> None:
     assert "github.com/awebai/folio" in text
 
 
-def test_seo_meta_and_social_card() -> None:
+def test_seo_meta_social_card_and_design_assets() -> None:
     client = _client()
     text = client.get("/").text
     # SEO + social-card meta for link previews (WhatsApp, Slack, X).
@@ -70,6 +79,15 @@ def test_seo_meta_and_social_card() -> None:
     assert og.status_code == 200
     assert og.headers["content-type"] == "image/png"
     assert og.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    css = client.get("/css/aweb.css")
+    assert css.status_code == 200
+    assert '/fonts/BerkeleyMono-Regular.woff2' in css.text
+    font = client.get("/fonts/BerkeleyMono-Regular.woff2")
+    assert font.status_code == 200
+    assert font.headers["content-type"] == "font/woff2"
+    assert font.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert font.content.startswith(b"wOF2")
 
 
 def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
