@@ -245,6 +245,12 @@ run_aw_in() {
   run_aw_with_home_in "$E2E_HOME" "$workdir" "$@"
 }
 
+# Run aw for workspace-free commands (e.g. --help) that need only the binary.
+# Uses the shared E2E_HOME as a neutral working directory.
+run_aw() {
+  run_aw_in "$E2E_HOME" "$@"
+}
+
 capture_success() {
   local output_var="$1" label="$2"
   shift 2
