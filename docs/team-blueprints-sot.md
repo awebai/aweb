@@ -515,9 +515,8 @@ aw team add bob@aweb.team/reviewer=claude-code
 
 Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
 agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
-directly in the agent home. `aw agent start` and `aw run` are **not** the
-interactive run path — Claude Code and pi are interactive and must be launched
-directly.
+directly in the agent home. Claude Code and pi are interactive and must be
+started directly by the operator from that home.
 
 **Claude Code** — install the channel plugin once, inside Claude Code:
 
@@ -646,7 +645,7 @@ expanding core.
 The first product wedge is still excellent team creation:
 
 ```text
-good blueprint -> aw inspect -> aw team create/add -> aw agent start
+good blueprint -> aw inspect -> aw team create/add -> direct runtime launch
 ```
 
 The library app is the learning and reuse loop that follows. It should not
@@ -788,8 +787,7 @@ aw blueprint inspect <source>
 aw blueprint materialize <source> --profile <profile> --target <dir>
 aw team create <team> [--agent [NAME@]BLUEPRINT/PROFILE[:scope][=<runtime>]]...
 aw team add <name>@<blueprint>/<profile>=<runtime> [--home <dir>]
-aw agent start <name> --runtime <runtime>
-aw agent status <name>
+aw agent profile show <name>
 ```
 
 `inspect` prints:
@@ -862,20 +860,19 @@ aw library propose profile-change <profile> --patch-file <patch>
 
 ```bash
 aw team add <name>@<blueprint>/<profile> --runtime <runtime> [--home <dir>]
-aw agent start <name> --runtime claude-code|codex|pi|local-shell
-aw agent status <name>
-aw agent logs <name>
-aw agent stop <name>
-aw agent restart <name> --runtime <runtime>
+aw agent profile show <name>
 ```
 
-Adding an agent must be trivial. The launch UX:
+Adding an agent must be trivial. The setup UX:
 
 ```bash
 aw team add reviewer@aweb.team/reviewer=claude-code
-aw agent start reviewer --runtime claude-code
+cd agents/instances/reviewer
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+
 aw team add agent-resources@aweb.team/agent-resources=pi
-aw agent start agent-resources --runtime pi
+cd agents/instances/agent-resources
+pi
 ```
 
 For local runtimes, `aw team add NAME@BLUEPRINT/PROFILE` should be able to:
@@ -886,10 +883,9 @@ For local runtimes, `aw team add NAME@BLUEPRINT/PROFILE` should be able to:
 - symlink/copy profile resources as appropriate;
 - create a worktree if the profile/runtime requests one;
 - install or verify the team certificate;
-- write runtime adapter config;
+- write harness adapter config;
 - register the instance/workspace with aweb;
-- show the exact start command;
-- optionally start the runtime immediately.
+- show the exact manual launch command for the selected harness.
 
 For hosted MCP runtimes, the dashboard/Team Builder flow should create or select
 the hosted custodial identity, bind it to the profile and effective app grants,
@@ -899,47 +895,15 @@ Existing `spawn-instance` and `retire-instance` skills remain useful as
 documentation and compatibility while CLI support lands, but they should not be
 the product happy path.
 
-### Runtime commands
+### Runtime handoff
 
-Runtime launch should be first-class enough that a human can add an agent and
-start it without hand-building tmux sessions.
+Runtime launch is an operator action for interactive local harnesses. The CLI
+materializes the home, records profile provenance, and writes harness-specific
+entry files; the operator starts Claude Code, Codex, Pi, or another harness from
+that home using the command printed by setup docs or profile guidance.
 
-For v1, `aw agent start` is a thin local launcher only. It starts local runtimes
-such as Claude Code or Pi in the right instance home, optionally under tmux. It
-is not a new daemon, hosted runtime service, scheduler, or fleet manager.
-Hosted MCP teams do not depend on it.
-
-```bash
-aw runtime list
-aw runtime doctor
-aw agent start reviewer --runtime claude-code
-aw agent start reviewer --runtime pi
-aw agent start reviewer --runtime claude-code --supervisor tmux
-aw agent start reviewer --runtime pi --supervisor tmux
-```
-
-For `--supervisor tmux`, `aw` should:
-
-- create or reuse a named session/window for the agent;
-- `cd` into the agent home;
-- set the required environment;
-- start the configured runtime command;
-- show attach/detach commands;
-- record enough state for `aw agent status`, `aw agent stop`, and
-  `aw agent logs` or equivalent.
-
-The runtime adapter owns the actual command template for Claude Code, Codex, Pi,
-or other harnesses. The product requirement is that the human does not need to
-remember the right directory, symlinks, env vars, or startup command.
-
-Required runtime UX:
-
-```bash
-aw agent status
-aw agent logs reviewer
-aw agent stop reviewer
-aw agent restart reviewer
-```
+The product requirement is that the human does not need to remember the right
+directory, symlinks, env vars, or startup command after materialization.
 
 This is deliberately operational. If a company cannot quickly add one more
 agent and start it in the right home, the blueprint model will feel theoretical.
@@ -1059,16 +1023,16 @@ it should not become a second core control plane.
 
 ### Local dev runtime
 
-The first wedge can use local runtime launchers:
+The first wedge can use direct local runtime handoff:
 
-- Claude Code sessions in instance directories;
-- Codex sessions in instance directories;
+- Claude Code sessions launched in instance directories;
+- Codex sessions launched in instance directories;
 - worktree creation for developer agents;
 - channel/event subscription for wakeups;
-- `tmux` or process supervision as an implementation option.
+- optional operator-managed `tmux` sessions for interactive harnesses.
 
 Do not expose "tmux team" as the product. The product is an AI team; tmux is
-one local runtime supervisor.
+only an optional local terminal/session tool.
 
 ### Hosted MCP runtime
 
@@ -1150,9 +1114,10 @@ This should work before marketplace/profile hosting is built.
 
 Wedge v1 has zero dependency on `library.aweb.ai`. It reads blueprints from a
 local directory or git source, applies a pinned installed snapshot, grants apps
-through existing app-grant rails, and starts local runtimes through the thin
-launcher. The library app adds company-level learning later; it is not required
-for initial team creation.
+through existing app-grant rails, and hands operators clear direct runtime
+launch guidance for Claude Code, Pi, or another selected harness. The library
+app adds company-level learning later; it is not required for initial team
+creation.
 
 The quality bar for first-party blueprints is product-level, not sample-code
 level. A blueprint must be something a company can actually start from: clear
@@ -1210,7 +1175,7 @@ The default answers are: keep compatibility with current soul layout, support
 local dir first, make `aw blueprint inspect` the read-only primitive and use
 `aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` for the launch setup path,
 prove with engineering blueprint, prioritize native `aw` team creation and
-`aw agent start/status/logs`, specify `library.aweb.ai` as an app rather than a
-core layer, prove the learning loop with memory before broadening it, and defer
-public hosted catalog until the git/local flow and library-app promotion loop
-work.
+direct harness launch guidance, specify `library.aweb.ai` as an app rather than
+a core layer, prove the learning loop with memory before broadening it, and
+defer public hosted catalog until the git/local flow and library-app promotion
+loop work.
