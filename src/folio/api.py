@@ -75,7 +75,16 @@ from folio.surfaces import (
 )
 from folio.templates import render_declarative_template
 
-_OG_CARD_BYTES = (Path(__file__).resolve().parent / "assets" / "og-card.png").read_bytes()
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_OG_CARD_BYTES = (_PACKAGE_DIR / "assets" / "og-card.png").read_bytes()
+_FONTS_DIR = _PACKAGE_DIR / "fonts"
+_FONT_NAMES = frozenset(
+    {
+        "BerkeleyMono-Light.woff2",
+        "BerkeleyMono-Regular.woff2",
+        "BerkeleyMono-SemiBold.woff2",
+    }
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -145,6 +154,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/css/aweb.{fingerprint}.css")
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
+
+    @app.get("/fonts/{font_name}")
+    async def font_route(font_name: str) -> Response:
+        if font_name not in _FONT_NAMES:
+            raise HTTPException(status_code=404, detail="Font not found")
+        return Response(
+            content=(_FONTS_DIR / font_name).read_bytes(),
+            media_type="font/woff2",
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @app.get("/og-card.png")
     async def og_card_route() -> Response:

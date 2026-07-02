@@ -45,11 +45,11 @@ packages = ["src/folio"]
 
 # awid-service and aweb-naapp are not on PyPI — they live in sibling aweb repos and
 # are pinned by git commit so the Docker build (uv sync --frozen) fetches them
-# without auth (both repos are public). pgdbm resolves from PyPI. Local cross-repo
-# development still imports the sibling checkouts via the pytest pythonpath below.
+# without auth (both repos are public). pgdbm resolves from PyPI. Tests use the
+# pinned aweb-naapp package rather than any sibling checkout.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "d0baafa389b600c8b0a12525797d6e38726c5252" }
-aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "89f7a5a50c863cba90bc9aa9a3ba1d5c506e21ca" }
+aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "316de899ae3df402269494a2f59f3841921f5ce9" }
 
 [dependency-groups]
 dev = [
@@ -60,7 +60,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
+pythonpath = ["src", "../aweb/awid/src", "../pgdbm/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
