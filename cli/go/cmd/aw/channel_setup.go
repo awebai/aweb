@@ -12,15 +12,26 @@ const (
 	claudeChannelMarketplace = "awebai/claude-plugins"
 	claudeChannelPlugin      = "aweb-channel@awebai-marketplace"
 	claudeChannelSpec        = "plugin:" + claudeChannelPlugin
+
+	piChannelExtensionPackage = "npm:@awebai/pi"
+	piChannelExtensionSource  = piChannelExtensionPackage + "@latest"
 )
 
-var runClaudeChannelPluginCommand = runClaudeChannelPluginCommandExec
+var (
+	runClaudeChannelPluginCommand = runClaudeChannelPluginCommandExec
+	runPiChannelExtensionCommand  = runPiChannelExtensionCommandExec
+)
 
 func runClaudeChannelPluginCommandExec(args ...string) error {
 	cmd := exec.Command("claude", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func runPiChannelExtensionCommandExec(args ...string) ([]byte, error) {
+	cmd := exec.Command("pi", args...)
+	return cmd.CombinedOutput()
 }
 
 type channelPluginOptions struct {
@@ -47,6 +58,60 @@ func EnsureClaudeChannelPlugin(opts channelPluginOptions) *claudeHooksResult {
 	}
 	result.Created = true
 	return result
+}
+
+func EnsurePiChannelExtension() *claudeHooksResult {
+	result := &claudeHooksResult{FilePath: "Pi aweb channel extension"}
+	if _, err := exec.LookPath("pi"); err != nil {
+		result.Error = fmt.Errorf("pi is required to install the aweb channel extension; install pi and try again")
+		return result
+	}
+	if present, err := piChannelExtensionInstalled(); err != nil {
+		result.Error = err
+		return result
+	} else if present {
+		result.AlreadyExists = true
+		return result
+	}
+	if output, err := runPiChannelExtensionCommand("install", piChannelExtensionSource, "--no-approve"); err != nil {
+		result.Error = fmt.Errorf("pi install %s --no-approve: %w%s", piChannelExtensionSource, err, formatCommandOutput(output))
+		return result
+	}
+	if present, err := piChannelExtensionInstalled(); err != nil {
+		result.Error = err
+		return result
+	} else if !present {
+		result.Error = fmt.Errorf("pi install %s completed but `pi list --no-approve` did not show %s", piChannelExtensionSource, piChannelExtensionPackage)
+		return result
+	}
+	result.Created = true
+	return result
+}
+
+func piChannelExtensionInstalled() (bool, error) {
+	output, err := runPiChannelExtensionCommand("list", "--no-approve")
+	if err != nil {
+		return false, fmt.Errorf("pi list --no-approve: %w%s", err, formatCommandOutput(output))
+	}
+	return piChannelExtensionPresent(string(output)), nil
+}
+
+func piChannelExtensionPresent(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		field := strings.TrimSpace(line)
+		if field == piChannelExtensionPackage || field == piChannelExtensionSource || strings.HasPrefix(field, piChannelExtensionPackage+"@") {
+			return true
+		}
+	}
+	return false
+}
+
+func formatCommandOutput(output []byte) string {
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return ""
+	}
+	return ": " + text
 }
 
 // SetupChannelMCP is retained as the setup hook called by init/materialization,

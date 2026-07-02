@@ -242,8 +242,8 @@ func preflightTeamUpCommands(plan teamUpPlan) error {
 		}
 	}
 	if needsPi {
-		if _, err := exec.LookPath("pi"); err != nil {
-			return fmt.Errorf("pi is required for one or more agents; install it with `pi install npm:@awebai/pi@latest` and try again")
+		if result := EnsurePiChannelExtension(); result != nil && result.Error != nil {
+			return result.Error
 		}
 	}
 	return nil

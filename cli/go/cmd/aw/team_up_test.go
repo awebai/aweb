@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,50 @@ func TestTeamUpPlanRecreateIgnoresActiveProcess(t *testing.T) {
 	}
 	if got := plan.Agents[0].Action; got != teamUpActionStart {
 		t.Fatalf("action=%q", got)
+	}
+}
+
+func TestPreflightTeamUpCommandsEnsuresPiChannelExtensionForStartingPiAgent(t *testing.T) {
+	withFakeCommandOnPath(t, "tmux")
+	withFakePiOnPath(t)
+	calls := withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		return []byte("User packages:\n  npm:@awebai/pi\n"), nil
+	})
+	plan := teamUpPlan{Agents: []teamUpAgentPlan{{Name: "reviewer", RuntimeKind: "pi", Action: teamUpActionStart}}}
+	if err := preflightTeamUpCommands(plan); err != nil {
+		t.Fatalf("preflightTeamUpCommands: %v", err)
+	}
+	want := [][]string{{"list", "--no-approve"}}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("pi ensure calls=%v, want %v", *calls, want)
+	}
+}
+
+func TestPreflightTeamUpCommandsSkipsPiEnsureWhenPiAgentAlreadyRunning(t *testing.T) {
+	withFakeCommandOnPath(t, "tmux")
+	withFakePiOnPath(t)
+	calls := withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		t.Fatalf("pi ensure should not run for skipped agents: %v", args)
+		return nil, nil
+	})
+	plan := teamUpPlan{Agents: []teamUpAgentPlan{{Name: "reviewer", RuntimeKind: "pi", Action: teamUpActionSkip}}}
+	if err := preflightTeamUpCommands(plan); err != nil {
+		t.Fatalf("preflightTeamUpCommands: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("pi ensure calls=%v, want none", *calls)
+	}
+}
+
+func TestPreflightTeamUpCommandsFailsWhenPiEnsureFails(t *testing.T) {
+	withFakeCommandOnPath(t, "tmux")
+	withFakePiOnPath(t)
+	withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		return []byte("No packages installed\n"), nil
+	})
+	plan := teamUpPlan{Agents: []teamUpAgentPlan{{Name: "reviewer", RuntimeKind: "pi", Action: teamUpActionStart}}}
+	if err := preflightTeamUpCommands(plan); err == nil || !strings.Contains(err.Error(), "did not show npm:@awebai/pi") {
+		t.Fatalf("expected loud pi ensure failure, got %v", err)
 	}
 }
 
