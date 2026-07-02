@@ -14,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 func resetTeamHumanCreateGlobals(t *testing.T) {
@@ -36,6 +37,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAlias := teamHumanCreateAlias
 	oldCreateHome := teamHumanCreateHome
 	oldCreateRuntime := teamHumanCreateRuntime
+	oldCreateLibraryURL := teamHumanCreateLibraryURL
 	oldProfiles := teamHumanCreateProfiles
 	oldAgents := teamHumanCreateAgents
 	oldBlueprint := teamHumanCreateBlueprint
@@ -46,6 +48,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
 	oldAddHome := teamHumanAddHome
 	oldAddRuntime := teamHumanAddRuntime
+	oldAddLibraryURL := teamHumanAddLibraryURL
+	oldAddBlueprint := teamHumanAddBlueprint
 	oldAddSpecOverride := teamHumanAddSpecOverride
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
@@ -66,6 +70,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateAlias = oldAlias
 		teamHumanCreateHome = oldCreateHome
 		teamHumanCreateRuntime = oldCreateRuntime
+		teamHumanCreateLibraryURL = oldCreateLibraryURL
 		teamHumanCreateProfiles = oldProfiles
 		teamHumanCreateAgents = oldAgents
 		teamHumanCreateBlueprint = oldBlueprint
@@ -76,6 +81,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
 		teamHumanAddHome = oldAddHome
 		teamHumanAddRuntime = oldAddRuntime
+		teamHumanAddLibraryURL = oldAddLibraryURL
+		teamHumanAddBlueprint = oldAddBlueprint
 		teamHumanAddSpecOverride = oldAddSpecOverride
 	})
 	initIsTTY = func() bool { return false }
@@ -94,6 +101,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateAlias = ""
 	teamHumanCreateHome = ""
 	teamHumanCreateRuntime = ""
+	teamHumanCreateLibraryURL = ""
 	teamHumanCreateProfiles = nil
 	teamHumanCreateAgents = nil
 	teamHumanCreateBlueprint = ""
@@ -104,6 +112,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddLayoutOnly = false
 	teamHumanAddHome = ""
 	teamHumanAddRuntime = ""
+	teamHumanAddLibraryURL = ""
+	teamHumanAddBlueprint = ""
 	teamHumanAddSpecOverride = nil
 }
 
@@ -491,7 +501,7 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	teamHumanAddLayoutOnly = true
 
-	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
+	err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
 	if err == nil || !strings.Contains(err.Error(), "--layout-only") {
 		t.Fatalf("error=%v", err)
 	}
@@ -679,6 +689,31 @@ func TestTeamHumanCreateAgentUsesListedFirstAgentName(t *testing.T) {
 	}
 }
 
+func TestTeamHumanAddOmittedScopeComesFromPublicProfile(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: developer\nname: Developer\nversion: 0.1.0\nscope: global\nmission: Build.\naccepted_work: [development]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Build.\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "developer", files)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/developer" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "developer", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer server.Close()
+	t.Setenv(libraryURLEnvVar, server.URL)
+
+	specs, err := resolveTeamHumanAddAgentSpecs(t.TempDir(), []string{"dev@aweb.engineering/developer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 1 || specs[0].Scope != awid.IdentityModeGlobal {
+		t.Fatalf("specs=%+v", specs)
+	}
+}
+
 func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
@@ -688,7 +723,7 @@ func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.
 	t.Setenv("AWEB_URL", "https://app.aweb.ai")
 	t.Chdir(root)
 
-	err := runTeamHumanAdd(nil, []string{"alice@aweb.engineering/developer=pi"})
+	err := runTeamHumanAdd(nil, []string{"alice@aweb.engineering/developer:local=pi"})
 	if err == nil {
 		t.Fatal("expected failure without team context")
 	}
@@ -718,7 +753,7 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 	files := testLibraryProfilePayloadFiles()
 	digest := testLibraryProfilePayloadDigest(t, files)
 
-	var initCalls, connectCalls, bindCalls int
+	var initCalls, connectCalls int
 	var initBody map[string]any
 	var server *httptest.Server
 	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -756,20 +791,19 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
 			_ = json.NewEncoder(w).Encode(libraryImportToShelfResponse{ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", SourceBlueprintDigest: "sha256:test-blueprint", Created: true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/developer/profile-binding":
-			bindCalls++
-			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "developer", ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest})
+			t.Fatalf("public profile materialization must not bind via Library plugin")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	writeLibraryManifestPluginForTest(t, home, server.URL)
 	t.Setenv("AWEB_URL", server.URL+"/api")
+	t.Setenv(libraryURLEnvVar, server.URL)
 
 	if err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/coordinator=pi"}); err != nil {
 		t.Fatalf("runTeamHumanAdd: %v", err)
 	}
-	if initCalls != 1 || connectCalls != 1 || bindCalls != 1 {
-		t.Fatalf("calls init/connect/bind=%d/%d/%d", initCalls, connectCalls, bindCalls)
+	if initCalls != 1 || connectCalls != 1 {
+		t.Fatalf("calls init/connect=%d/%d", initCalls, connectCalls)
 	}
 	if initBody["alias"] != "developer" || initBody["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("workspace init body=%v", initBody)
@@ -858,13 +892,13 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsGlobalThroughWorkspaceInit(t *t
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
 			_ = json.NewEncoder(w).Encode(libraryImportToShelfResponse{ProfileRef: "coordinator", Version: "0.1.0", Digest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", SourceBlueprintDigest: "sha256:test-blueprint", Created: true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/global-dev/profile-binding":
-			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "global-dev", ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest})
+			t.Fatalf("public profile materialization must not bind via Library plugin")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	writeLibraryManifestPluginForTest(t, home, server.URL)
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	if err := runTeamHumanAdd(nil, []string{"global-dev@aweb.engineering/coordinator:global=pi"}); err != nil {
@@ -1384,18 +1418,21 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": revokedCertID})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
+			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer server.Close()
+	t.Setenv(libraryURLEnvVar, server.URL)
 	writeLocalTeamSignedRequestWorkspaceForTest(t, root, server.URL, "eng:local", "eng", memberDID, memberPriv)
 	if err := awconfig.SaveTeamKey("local", "eng", teamKey); err != nil {
 		t.Fatal(err)
 	}
 
-	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
-	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
+	if err == nil || !strings.Contains(err.Error(), "library public get-profile") {
 		t.Fatalf("error=%v", err)
 	}
 	if certCalls != 1 {
@@ -1465,6 +1502,8 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
+			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback.aweb.ai/agents/remove-member":
 			removeCalls++
 			removeAuth = r.Header.Get("Authorization")
@@ -1483,6 +1522,7 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 	oldInitAwebURL := initAwebURL
 	initAwebURL = server.URL
 	t.Cleanup(func() { initAwebURL = oldInitAwebURL })
@@ -1490,8 +1530,8 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *
 	workspace.APIKey = "aw_sk_owner"
 	writeWorkspaceBindingForTest(t, root, workspace)
 
-	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
-	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
+	if err == nil || !strings.Contains(err.Error(), "library public get-profile") {
 		t.Fatalf("error=%v", err)
 	}
 	if justCreatedCertID == "" {
@@ -1556,6 +1596,8 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
+			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":
 			http.Error(w, `{"detail":"remove failed"}`, http.StatusServiceUnavailable)
 		default:
@@ -1564,6 +1606,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 	oldInitAwebURL := initAwebURL
 	initAwebURL = server.URL
 	t.Cleanup(func() { initAwebURL = oldInitAwebURL })
@@ -1571,12 +1614,12 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 	workspace.APIKey = "aw_sk_owner"
 	writeWorkspaceBindingForTest(t, root, workspace)
 
-	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer"})
+	err = runTeamHumanAdd(nil, []string{"developer@aweb.engineering/developer:local"})
 	if err == nil {
 		t.Fatal("expected materialize + rollback failure")
 	}
 	text := err.Error()
-	for _, want := range []string{"Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q:\n%s", want, text)
 		}
@@ -1597,15 +1640,32 @@ func TestTeamHumanAddRejectsVersionedLibraryProfileBeforeHomeCreate(t *testing.T
 	}
 }
 
-func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) {
+func TestTeamHumanCreateLibraryProfileUsesPublicCatalogAfterIdentity(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
 	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AW_CONFIG_PATH", "")
-	t.Chdir(t.TempDir())
+	root := t.TempDir()
+	t.Chdir(root)
 	teamHumanCreateProfiles = []string{"aweb.engineering/developer"}
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: developer\nname: Developer\nversion: 0.1.0\nmission: Build.\naccepted_work: [development]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Build.\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "developer", files)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/developer" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" {
+			t.Fatalf("public get-profile should be unsigned: %#v", r.Header)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "developer", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer server.Close()
+	t.Setenv(libraryURLEnvVar, server.URL)
 	called := false
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		called = true
@@ -1613,10 +1673,13 @@ func TestTeamHumanCreateLibraryProfileRequiresPluginAfterIdentity(t *testing.T) 
 	}
 
 	err := runTeamHumanCreate(nil, []string{"eng"})
-	if err == nil || !strings.Contains(err.Error(), "Adding an agent from a Library profile (aweb.engineering/developer) requires the aw Library plugin") {
-		t.Fatalf("error=%v", err)
+	if err == nil || !strings.Contains(err.Error(), "inject aw coordination docs") {
+		t.Fatalf("runTeamHumanCreate error=%v", err)
 	}
 	if !called {
-		t.Fatal("profile-bound create should create identity before Library bind/materialize")
+		t.Fatal("profile-bound create should create identity before public materialize")
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".aw", "profile", "ref.json")); err != nil {
+		t.Fatalf("profile ref not written: %v", err)
 	}
 }

@@ -1,5 +1,17 @@
 {
-  "profile_digest": "sha256:a48bf63bc15a50b15728a73881f485090b34ada8ba550cd16fb37fb1173587d3",
+  "managed_set": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/review/SKILL.md",
+    ".aw/profile/skills/review/SKILL.md",
+    ".claude/skills/review/SKILL.md",
+    "artifacts/review-template.md",
+    ".aw/profile/artifacts/review-template.md",
+    ".aw/profile/ref.json"
+  ],
+  "profile_digest": "sha256:1ea7930bbb43c956133d9f277a24e777e56e69efedab40cae128b6f7880c98c3",
   "profile_ref": "reviewer",
   "profile_version": "0.1.0",
   "source_blueprint_digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",

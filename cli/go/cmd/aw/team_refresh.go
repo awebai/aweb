@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/awebai/aw/internal/blueprint"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -95,13 +99,83 @@ func readRecordedProfileRef(home string) (recordedProfileRef, error) {
 	return ref, nil
 }
 
-// refreshLibraryProfileInHome re-materializes the home from the LATEST version of
-// its profile on the team's private shelf (get-shelf-profile) - picking up the
-// team's own approved proposals - and rewrites the materialized files + ref.json.
+// refreshLibraryProfileInHome re-materializes the home from its pinned source.
+// Public-blueprint pins (library_url present) refresh directly from the pinned
+// provider; legacy shelf pins (no library_url) keep using the private shelf
+// plugin path.
 func refreshLibraryProfileInHome(homeDir, agentID string, old recordedProfileRef, runtimeKind string) (*blueprint.MaterializeResult, error) {
 	if strings.TrimSpace(agentID) == "" {
 		return nil, fmt.Errorf("agent id is required for Library refresh")
 	}
+	if strings.TrimSpace(old.LibraryURL) != "" {
+		return refreshPublicLibraryProfileInHome(homeDir, old, runtimeKind)
+	}
+	return refreshShelfLibraryProfileInHome(homeDir, old, runtimeKind)
+}
+
+func refreshPublicLibraryProfileInHome(homeDir string, old recordedProfileRef, runtimeKind string) (*blueprint.MaterializeResult, error) {
+	selector := libraryProfileSelector{
+		LibraryURL:         strings.TrimSpace(old.LibraryURL),
+		SourceBlueprintRef: strings.TrimSpace(old.SourceBlueprintRef),
+		ProfileRef:         strings.TrimSpace(old.ProfileRef),
+		RuntimeKind:        runtimeKind,
+	}
+	if selector.SourceBlueprintRef == "" {
+		return nil, fmt.Errorf("recorded public profile has no source_blueprint_ref; cannot refresh from pinned library_url")
+	}
+	profile, err := fetchPublicLibraryProfile(context.Background(), selector)
+	if err != nil {
+		return nil, fmt.Errorf("library public get-profile: %w", err)
+	}
+	computedDigest, err := blueprint.ValidateLibraryProfilePayloadDigest(blueprint.ValidateLibraryProfilePayloadOptions{
+		ProfileRef:     profile.ProfileRef,
+		ProfileVersion: profile.Version,
+		ProfileDigest:  profile.Digest,
+		Files:          profile.Files,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("library public profile integrity: %w", err)
+	}
+	// Only trust the recomputed digest. The provider-claimed digest was checked
+	// above, but the unchanged no-op decision is anchored on local bytes.
+	if computedDigest == strings.TrimSpace(old.ProfileDigest) {
+		return &blueprint.MaterializeResult{
+			ProfileRef:             strings.TrimSpace(old.ProfileRef),
+			ProfileVersion:         strings.TrimSpace(old.ProfileVersion),
+			ProfileDigest:          strings.TrimSpace(old.ProfileDigest),
+			SourceBlueprintRef:     strings.TrimSpace(old.SourceBlueprintRef),
+			SourceBlueprintVersion: strings.TrimSpace(old.SourceBlueprintVersion),
+			TargetDir:              homeDir,
+			FilesWritten:           nil,
+		}, nil
+	}
+	var materialized *blueprint.MaterializeResult
+	err = withWorkingDir(homeDir, func() error {
+		var mErr error
+		materialized, mErr = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+			TargetDir:        homeDir,
+			LibraryURL:       selector.LibraryURL,
+			BlueprintRef:     profile.BlueprintRef,
+			BlueprintVersion: profile.BlueprintVersion,
+			ProfileRef:       profile.ProfileRef,
+			ProfileVersion:   profile.Version,
+			ProfileDigest:    profile.Digest,
+			RuntimeKind:      runtimeKind,
+			Files:            profile.Files,
+			Force:            true,
+		})
+		if mErr != nil {
+			return fmt.Errorf("local profile materialize: %w", mErr)
+		}
+		return pruneRemovedManagedProfileFiles(homeDir, old.ManagedSet, materialized.FilesWritten)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return materialized, nil
+}
+
+func refreshShelfLibraryProfileInHome(homeDir string, old recordedProfileRef, runtimeKind string) (*blueprint.MaterializeResult, error) {
 	var materialized *blueprint.MaterializeResult
 	err := withWorkingDir(homeDir, func() error {
 		shelf, err := callLibraryGetShelfProfile(old.ProfileRef)
@@ -131,12 +205,73 @@ func refreshLibraryProfileInHome(homeDir, agentID string, old recordedProfileRef
 		if mErr != nil {
 			return fmt.Errorf("local profile materialize: %w", mErr)
 		}
-		return nil
+		return pruneRemovedManagedProfileFiles(homeDir, old.ManagedSet, materialized.FilesWritten)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return materialized, nil
+}
+
+func pruneRemovedManagedProfileFiles(homeDir string, oldManaged, newManaged []string) error {
+	if len(oldManaged) == 0 {
+		return nil
+	}
+	newSet := map[string]bool{}
+	for _, rel := range newManaged {
+		newSet[filepath.ToSlash(strings.TrimSpace(rel))] = true
+	}
+	var remove []string
+	for _, rel := range oldManaged {
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		if rel == "" || newSet[rel] {
+			continue
+		}
+		if err := validateManagedSetPath(rel); err != nil {
+			return err
+		}
+		remove = append(remove, rel)
+	}
+	sort.Slice(remove, func(i, j int) bool { return len(remove[i]) > len(remove[j]) })
+	for _, rel := range remove {
+		path := filepath.Join(homeDir, filepath.FromSlash(rel))
+		if err := pathpreflight.RejectSymlinkedExistingComponents(filepath.Dir(path), rel, pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("managed path %s is a directory; refusing to prune", rel)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateManagedSetPath(rel string) error {
+	if rel == "" {
+		return fmt.Errorf("managed path is required")
+	}
+	for _, r := range rel {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("managed path %s contains control characters", rel)
+		}
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.Contains(rel, "://") || strings.Contains(rel, "\\") {
+		return fmt.Errorf("managed path %s is not a safe relative path", rel)
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("managed path %s is not a safe relative path", rel)
+	}
+	return nil
 }
 
 func callLibraryGetShelfProfile(profileRef string) (*libraryShelfProfileResponse, error) {

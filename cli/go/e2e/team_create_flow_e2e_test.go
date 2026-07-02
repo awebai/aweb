@@ -8,9 +8,9 @@
 // connected to the aweb server. With the aabq.21 fix (members connect to the
 // service before configure), the whole flow works end to end.
 //
-// Like the materialize suite, this drives the REAL aw binary and reaches the
-// self-hosted Library via a normal `aw plugin install` (the Library advertises
-// its real origin; aabq.20).
+// This drives the REAL aw binary and reaches the self-hosted Library through
+// the public catalog URL directly. The Library plugin is deliberately not
+// installed: default team materialization must not depend on shelf/plugin state.
 //
 // NOTE: `aw team create` uses the shared awid namespace "local", so this test
 // needs a freshly-seeded stack (which `make -C cli e2e` provides). Re-running it
@@ -37,16 +37,18 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	root := realDir(t, t.TempDir())
 	home := filepath.Join(root, "home")
 	repo := filepath.Join(root, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatalf("mkdir repo: %v", err)
+	for _, dir := range []string{home, repo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
 	}
-	installLibraryPlugin(t, home)
 	gitInit(t, repo)
 
 	env := append(os.Environ(),
 		"HOME="+home,
 		"AWEB_URL="+awebURL(),
 		"AWID_REGISTRY_URL="+awidURL(),
+		"AWEB_LIBRARY_URL="+libraryURL(),
 		"AWID_SKIP_DNS_VERIFY=1",
 		"NO_COLOR=1",
 	)
@@ -60,8 +62,17 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		t.Fatalf("aw team create --profile roster failed: %v\noutput:\n%s", err, out)
 	}
 
-	// Both homes materialize under agents/instances/<profile_ref>.
-	for _, agent := range []string{"coordinator", "reviewer"} {
+	// Profile-only team add uses --blueprint + --library-url directly (no plugin)
+	// and proves provider selection is a client-side URL, not shelf state.
+	addCmd := exec.Command(bin, "team", "add", "developer@developer", "--blueprint", "aweb.engineering", "--library-url", libraryURL(), "--runtime", "local-shell")
+	addCmd.Dir = repo
+	addCmd.Env = env
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("aw team add profile-only from public catalog failed: %v\noutput:\n%s", err, out)
+	}
+
+	// Homes materialize under agents/instances/<profile_ref or name>.
+	for _, agent := range []string{"coordinator", "reviewer", "developer"} {
 		base := filepath.Join(repo, "agents", "instances", agent)
 		for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/ref.json"} {
 			if _, err := os.Lstat(filepath.Join(base, filepath.FromSlash(rel))); err != nil {

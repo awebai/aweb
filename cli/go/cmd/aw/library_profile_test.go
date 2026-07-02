@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +53,57 @@ func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
 	}
 }
 
+func TestResolveLibraryProfileSelectorSourcePrecedence(t *testing.T) {
+	t.Setenv(libraryURLEnvVar, "https://env-library.example/")
+	t.Setenv(libraryBlueprintEnvVar, "env.blueprint")
+	selector, err := parseLibraryProfileSelector("developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveLibraryProfileSelectorSource(selector, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LibraryURL != "https://env-library.example" || resolved.SourceBlueprintRef != "env.blueprint" || resolved.ProfileRef != "developer" {
+		t.Fatalf("env resolved=%+v", resolved)
+	}
+	resolved, err = resolveLibraryProfileSelectorSource(selector, "http://flag-library.example/base/", "flag.blueprint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LibraryURL != "http://flag-library.example/base" || resolved.SourceBlueprintRef != "flag.blueprint" {
+		t.Fatalf("flag resolved=%+v", resolved)
+	}
+	explicit, err := parseLibraryProfileSelector("selector.blueprint/reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = resolveLibraryProfileSelectorSource(explicit, "", "flag.blueprint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.SourceBlueprintRef != "selector.blueprint" {
+		t.Fatalf("selector blueprint should win, got %+v", resolved)
+	}
+	t.Setenv(libraryURLEnvVar, "")
+	t.Setenv(libraryBlueprintEnvVar, "")
+	resolved, err = resolveLibraryProfileSelectorSource(selector, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LibraryURL != defaultLibraryBaseURL || resolved.SourceBlueprintRef != defaultLibraryBlueprintRef {
+		t.Fatalf("default resolved=%+v", resolved)
+	}
+}
+
 func TestParseLibraryProfileSelectorRuntimeSuffix(t *testing.T) {
+	profileOnly, err := parseLibraryProfileSelector("reviewer:local=pi")
+	if err != nil {
+		t.Fatalf("parse profile-only selector: %v", err)
+	}
+	if profileOnly.SourceBlueprintRef != "" || profileOnly.ProfileRef != "reviewer" || profileOnly.IdentityScope != awid.IdentityModeLocal || profileOnly.RuntimeKind != "pi" {
+		t.Fatalf("profile-only selector=%+v", profileOnly)
+	}
 	selector, err := parseLibraryProfileSelector("aweb.engineering/reviewer=pi")
 	if err != nil {
 		t.Fatalf("parse selector: %v", err)
@@ -124,6 +176,66 @@ func TestApplyMaterializeRuntimePolicyDefaultsAndHonorsFlag(t *testing.T) {
 	}
 	if got.RuntimeKind != "codex" {
 		t.Fatalf("suffix runtime should win, got %q", got.RuntimeKind)
+	}
+}
+
+func TestApplyPublicLibraryProfileToHomeFetchesUnsignedWritesPinAndRejectsBadDigest(t *testing.T) {
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: developer\nname: Developer\nversion: 0.1.0\nmission: Build.\naccepted_work: [development]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Build.\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "developer", files)
+	badDigest := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/developer" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-AWID-Team-Certificate") != "" {
+			t.Fatalf("public get-profile should be unsigned: %#v", r.Header)
+		}
+		responseDigest := digest
+		if r.URL.Query().Get("bad") == "1" {
+			responseDigest = badDigest
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "developer", "version": "0.1.0", "digest": responseDigest, "files": files})
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	selector := libraryProfileSelector{LibraryURL: server.URL, SourceBlueprintRef: "aweb.engineering", ProfileRef: "developer", RuntimeKind: "local-shell"}
+	if _, _, err := applyPublicLibraryProfileToHome(home, selector, true); err != nil {
+		t.Fatalf("applyPublicLibraryProfileToHome: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".aw", "profile", "ref.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pin struct {
+		LibraryURL            string   `json:"library_url"`
+		ManagedSet            []string `json:"managed_set"`
+		SourceBlueprintDigest string   `json:"source_blueprint_digest"`
+	}
+	if err := json.Unmarshal(data, &pin); err != nil {
+		t.Fatal(err)
+	}
+	if pin.LibraryURL != server.URL || len(pin.ManagedSet) == 0 || pin.SourceBlueprintDigest != "" {
+		t.Fatalf("pin=%+v", pin)
+	}
+
+	badHome := t.TempDir()
+	badSelector := selector
+	// Route a deliberately corrupt response through a second real HTTP fixture.
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "developer", "version": "0.1.0", "digest": badDigest, "files": files})
+	}))
+	defer badServer.Close()
+	badSelector.LibraryURL = badServer.URL
+	_, _, err = applyPublicLibraryProfileToHome(badHome, badSelector, true)
+	if err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("bad digest error=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(badHome, ".aw", "profile", "profile.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("bad digest wrote target state, stat err=%v", statErr)
 	}
 }
 
@@ -434,20 +546,36 @@ func TestApplyLibraryProfileToHomeRejectsFetchedImportMismatchBeforeBindOrWrite(
 }
 
 func testLibraryProfilePayloadFiles() []blueprint.LibraryProfilePayloadFile {
-	return []blueprint.LibraryProfilePayloadFile{
+	return withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
 		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
+	})
+}
+
+func withLibraryPayloadFileSHA(files []blueprint.LibraryProfilePayloadFile) []blueprint.LibraryProfilePayloadFile {
+	out := make([]blueprint.LibraryProfilePayloadFile, len(files))
+	for i, file := range files {
+		sum := sha256.Sum256([]byte(file.ContentUTF8))
+		file.SHA256 = "sha256:" + hex.EncodeToString(sum[:])
+		out[i] = file
 	}
+	return out
 }
 
 func testLibraryProfilePayloadDigest(t *testing.T, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
+	version := "0.1.0"
+	for _, file := range files {
+		if file.Path == "profile.yaml" && strings.Contains(file.ContentUTF8, "version: 0.2.0") {
+			version = "0.2.0"
+		}
+	}
 	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
 		TargetDir:        t.TempDir(),
 		BlueprintRef:     "aweb.engineering",
 		BlueprintVersion: "0.1.0",
 		ProfileRef:       "coordinator",
-		ProfileVersion:   "0.1.0",
+		ProfileVersion:   version,
 		RuntimeKind:      "local-shell",
 		Files:            files,
 	})

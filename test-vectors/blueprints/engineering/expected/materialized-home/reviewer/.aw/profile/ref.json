@@ -1,4 +1,16 @@
 {
+  "managed_set": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/review/SKILL.md",
+    ".aw/profile/skills/review/SKILL.md",
+    ".claude/skills/review/SKILL.md",
+    "artifacts/review-template.md",
+    ".aw/profile/artifacts/review-template.md",
+    ".aw/profile/ref.json"
+  ],
   "profile_digest": "sha256:1ea7930bbb43c956133d9f277a24e777e56e69efedab40cae128b6f7880c98c3",
   "profile_ref": "reviewer",
   "profile_version": "0.1.0",

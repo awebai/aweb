@@ -86,6 +86,7 @@ func TestMaterializeCreatedProfilePayloadMatchesEngineeringFixture(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
+	files = withPayloadFileSHA(files)
 	target := t.TempDir()
 	result, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
 		TargetDir:      target,

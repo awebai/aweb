@@ -926,6 +926,9 @@ func canonicalPayloadDigest(root string, schema string) (string, []canonicalPayl
 		if !utf8.Valid(data) {
 			return "", nil, fmt.Errorf("%s: blueprint canonical import payload requires UTF-8 text", relSlash)
 		}
+		if containsCanonicalJSONLineSeparator(string(data)) {
+			return "", nil, fmt.Errorf("%s: U+2028/U+2029 are not allowed in blueprint payloads", relSlash)
+		}
 		fileHash := sha256.Sum256(data)
 		files = append(files, canonicalPayloadFile{Path: relSlash, SHA256: "sha256:" + hex.EncodeToString(fileHash[:]), ContentUTF8: string(data)})
 	}
@@ -1013,6 +1016,48 @@ func validateRelativePath(field, value string) error {
 		return fmt.Errorf("%s: path traversal is not allowed", field)
 	}
 	return nil
+}
+
+func validateNormalizedPOSIXRelativePath(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s: required", field)
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s: path must already be normalized", field)
+	}
+	if hasControl(value) {
+		return fmt.Errorf("%s: control characters are not allowed", field)
+	}
+	if strings.ContainsRune(value, '\x00') || strings.Contains(value, "\\") {
+		return fmt.Errorf("%s: path must use normalized POSIX separators", field)
+	}
+	if strings.HasPrefix(value, "/") || filepath.IsAbs(value) {
+		return fmt.Errorf("%s: absolute paths are not allowed", field)
+	}
+	if strings.Contains(value, "://") || strings.HasPrefix(value, "git@") {
+		return fmt.Errorf("%s: host or scheme paths are not allowed", field)
+	}
+	if strings.Contains(value, "//") || strings.HasSuffix(value, "/") {
+		return fmt.Errorf("%s: path must already be normalized", field)
+	}
+	parts := strings.Split(value, "/")
+	for _, part := range parts {
+		if part == "" || part == "." {
+			return fmt.Errorf("%s: path must already be normalized", field)
+		}
+		if part == ".." {
+			return fmt.Errorf("%s: path traversal is not allowed", field)
+		}
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	if clean != value {
+		return fmt.Errorf("%s: path must already be normalized", field)
+	}
+	return nil
+}
+
+func containsCanonicalJSONLineSeparator(value string) bool {
+	return strings.ContainsRune(value, '\u2028') || strings.ContainsRune(value, '\u2029')
 }
 
 func validateRefString(field, value string) error {

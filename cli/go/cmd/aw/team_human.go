@@ -28,6 +28,7 @@ var (
 	teamHumanCreateAlias       string
 	teamHumanCreateHome        string
 	teamHumanCreateRuntime     string
+	teamHumanCreateLibraryURL  string
 	teamHumanCreateProfiles    []string
 	teamHumanCreateAgents      []string
 	teamHumanCreateBlueprint   string
@@ -40,6 +41,8 @@ var (
 	teamHumanAddLayoutOnly     bool
 	teamHumanAddHome           string
 	teamHumanAddRuntime        string
+	teamHumanAddLibraryURL     string
+	teamHumanAddBlueprint      string
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 	teamHumanRemoveAwebURL     string
@@ -149,9 +152,10 @@ func init() {
 	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateAgents, "agent", nil, "Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]")
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "Materialize all profiles in a local blueprint directory")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
@@ -159,6 +163,8 @@ func init() {
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
@@ -222,10 +228,7 @@ func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
 		}
 	}
 	localBlueprintDir := ""
-	if strings.TrimSpace(teamHumanCreateBlueprint) != "" {
-		if len(raws) > 0 {
-			return nil, usageError("--blueprint cannot be combined with --agent/--profile")
-		}
+	if strings.TrimSpace(teamHumanCreateBlueprint) != "" && len(raws) == 0 {
 		absBlueprint, err := filepath.Abs(strings.TrimSpace(teamHumanCreateBlueprint))
 		if err != nil {
 			return nil, err
@@ -256,6 +259,12 @@ func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
 			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanCreateRuntime)
 			if err != nil {
 				return nil, err
+			}
+			if localBlueprintDir == "" {
+				parsed, err = resolveLibraryProfileSelectorSource(parsed, teamHumanCreateLibraryURL, teamHumanCreateBlueprint)
+				if err != nil {
+					return nil, err
+				}
 			}
 			spec.Profile = &parsed
 			spec.RuntimeKind = parsed.RuntimeKind
@@ -299,7 +308,7 @@ func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
 			return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
 		}
 	}
-	if strings.Contains(profilePart, "/") {
+	if strings.Contains(profilePart, "/") || name != "" {
 		selector, err := parseLibraryProfileSelector(profilePart)
 		if err != nil {
 			return teamAgentSpec{}, err
@@ -308,9 +317,6 @@ func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
 			selector.RuntimeKind = runtimeKind
 		}
 		return teamAgentSpec{Raw: trimmed, Name: name, Profile: &selector, RuntimeKind: selector.RuntimeKind, Scope: selector.IdentityScope}, nil
-	}
-	if name != "" {
-		return teamAgentSpec{}, usageError("profile selector is required after @")
 	}
 	if runtimeKind != "" {
 		return teamAgentSpec{}, usageError("=RUNTIME is only valid with BLUEPRINT/PROFILE agent specs")
@@ -445,11 +451,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if selector != nil {
 		if sel, err := resolveSelectionForDir(wd); err == nil && strings.TrimSpace(sel.TeamID) != "" {
-			agentID := strings.TrimSpace(sel.Alias)
-			if agentID == "" {
-				agentID = strings.ToLower(teamName)
-			}
-			if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, agentID, *selector, true); err != nil {
+			if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(wd, *selector, true); err != nil {
 				return err
 			}
 			printOutput(teamHumanCreateOutput{Status: "created", TeamName: teamName, ProfileMode: "library", TeamID: sel.TeamID, Alias: sel.Alias, WorkspaceID: sel.WorkspaceID, AwebURL: sel.AwebURL, HomeDir: wd, NoLibrary: false, NoProfile: false, IdentityOnly: false}, formatTeamHumanCreate)
@@ -504,7 +506,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		out := teamHumanCreateOutputFromConnect(teamName, result, wd)
 		if selector != nil {
-			if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, result.Alias, *selector, true); err != nil {
+			if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(wd, *selector, true); err != nil {
 				return err
 			}
 			out.ProfileMode = "library"
@@ -541,7 +543,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	out := teamHumanCreateOutputFromConnect(teamName, result, wd)
 	if selector != nil {
-		if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, result.Alias, *selector, true); err != nil {
+		if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(wd, *selector, true); err != nil {
 			return err
 		}
 		out.ProfileMode = "library"
@@ -681,7 +683,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAg
 		if agentID == "" {
 			agentID = alias
 		}
-		if _, _, err := applyLibraryProfileToHomeAndConfigure(wd, agentID, *selector, true); err != nil {
+		if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(wd, *selector, true); err != nil {
 			return err
 		}
 	}
@@ -897,18 +899,25 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, e
 			if err != nil {
 				return nil, err
 			}
+			if strings.TrimSpace(spec.LocalBlueprintDir) == "" {
+				parsed, err = resolveLibraryProfileSelectorSource(parsed, teamHumanAddLibraryURL, teamHumanAddBlueprint)
+				if err != nil {
+					return nil, err
+				}
+			}
 			spec.Profile = &parsed
 			if scope == "" {
 				if strings.TrimSpace(spec.LocalBlueprintDir) != "" {
 					scope = awid.IdentityModeLocal
 				} else {
-					scope, err = resolveLibraryProfileScope(parsed)
+					parsed, scope, err = resolveLibraryProfileScopeAndCache(parsed)
 					if err != nil {
 						if !isMissingLibraryPluginError(err) {
 							return nil, err
 						}
 						scope = awid.IdentityModeLocal
 					}
+					spec.Profile = &parsed
 				}
 			}
 		}
@@ -1170,10 +1179,6 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			plans[i].Connected = apiKeyBootstrapMode
 		}
 		if plans[i].Profile != nil {
-			agentID := strings.TrimSpace(plans[i].Alias)
-			if agentID == "" {
-				agentID = plans[i].Name
-			}
 			rollbackOnErr := func(err error) error {
 				if !createdProfileIdentity {
 					return err
@@ -1196,7 +1201,7 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
 					return rollbackOnErr(err)
 				}
-			} else if _, _, err := applyLibraryProfileToHome(plans[i].HomeDir, agentID, *plans[i].Profile, true); err != nil {
+			} else if _, _, err := applyPublicLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, true); err != nil {
 				return rollbackOnErr(err)
 			}
 			if !plans[i].Connected {
