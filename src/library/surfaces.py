@@ -65,7 +65,7 @@ _FOOTER_BOTTOM = (
 # library's domain values for the shared docs generators: live path-param values
 # that make the public catalog reads genuinely runnable, the public-reads phrase,
 # and the /reference section copy in library's own nouns.
-_EXAMPLE_PATH_VALUES = {"blueprint_ref": "aweb.engineering", "profile_ref": "coordinator"}
+_EXAMPLE_PATH_VALUES = {"blueprint_ref": "aweb.team", "profile_ref": "developer"}
 _READS_PHRASE = "catalog reads"
 _REFERENCE_COPY = naapp.ReferenceCopy(
     reads_phrase=_READS_PHRASE,
@@ -355,8 +355,8 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>Install aw, create a team, run agents from profiles</h2>
-          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; creating your team mints the certificate that every later command signs with.</p>
+          <h2>Install aw, initialize your team workspace, run agents from profiles</h2>
+          <p><code>aw</code> is the only thing to install; library plugs into it. Browsing the catalog needs no identity; initializing your hosted workspace mints the certificate that every later command signs with.</p>
         </div>
         <div class="cmd-panel">
           <p class="cmd-label">1 · Install aw, the <span class="brand-mark">aweb</span> command-line tool</p>
@@ -365,25 +365,23 @@ def render_landing_page(*, public_origin: str) -> str:
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
           <p class="cmd-label">3 · Browse the public catalog — no identity needed</p>
           <div class="cmd-list"><div class="cmd"><pre>aw library list-blueprints</pre>{copy}</div></div>
-          <p class="cmd-label">4 · Create your team — mints your identity and team certificate</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
+          <p class="cmd-label">4 · Initialize your team workspace — mints your identity and team certificate</p>
+          <div class="cmd-list"><div class="cmd"><pre>aw init --username &lt;your-name&gt; --name &lt;your-name&gt;</pre>{copy}</div></div>
           <p class="cmd-label">5 · Add an agent — adopt the profile, choose its runtime, and materialize its home, in one</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.engineering/coordinator --runtime claude-code</pre>{copy}</div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.team/developer=pi</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the coordinator profile. The selector is <code>NAME@BLUEPRINT/PROFILE</code>: it adopts the blueprint profile onto your shelf and adds the agent in one. The runtime is your explicit choice: omitting <code>--runtime</code> defaults to <code>claude-code</code> (a CLI default, not read from the profile). The command prints the home directory it wrote.</p>
-        <p class="prose-outro"><strong>Whole roster at once:</strong> create the team and its agents in one command, each profile's runtime after an <code>=</code>:</p>
+        <p class="prose-intro">That is the whole path — from an empty machine to a materialized home for an agent named <code>alice</code> running the developer profile on <code>pi</code>. The selector is <code>NAME@BLUEPRINT/PROFILE=RUNTIME</code>: it adopts the blueprint profile onto your shelf, adds the agent, chooses its runtime, and materializes its home in one. The command prints the home directory it wrote.</p>
+        <p class="prose-outro"><strong>Whole roster at once:</strong> add multiple agents in one command, each using the explicit <code>NAME@aweb.team/PROFILE=RUNTIME</code> selector:</p>
         <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team \\
-  --profile aweb.engineering/coordinator=claude-code \\
-  --profile aweb.engineering/reviewer=pi</pre>{copy}</div></div>
+          <div class="cmd-list"><div class="cmd"><pre>aw team add alice@aweb.team/developer=pi bob@aweb.team/reviewer=pi</pre>{copy}</div></div>
         </div>
-        <p class="prose-outro">A blueprint's <code>runtime_hints</code> and <code>runtime_assumptions</code> are advisory metadata you read to choose the runtime — query them with <code>aw blueprint inspect</code> or <code>aw library get-profile</code>; they are not auto-applied.</p>
+        <p class="prose-outro">A blueprint's <code>runtime_hints</code> and <code>runtime_assumptions</code> are advisory metadata you read to choose the runtime — query them with <code>aw library get-profile --blueprint_ref aweb.team --profile_ref developer</code>; they are not auto-applied.</p>
         <p class="prose-outro"><strong>Adopt without adding an agent:</strong> to copy a blueprint profile onto your shelf and evolve it before binding, use <code>import-to-shelf</code>:</p>
         <div class="cmd-panel">
           <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf \\
-  --source_blueprint_ref aweb.engineering \\
+  --source_blueprint_ref aweb.team \\
   --source_blueprint_version 0.1.0 \\
-  --profile_ref coordinator</pre>{copy}</div></div>
+  --profile_ref developer</pre>{copy}</div></div>
         </div>
         <p class="prose-outro">Every library operation is a native <code>aw library</code> verb — <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
@@ -449,29 +447,27 @@ materializes them. "Public" is a publish, not a flag.
 
 ## Getting started
 
-Install aw, install library, adopt a profile, add an agent. Each step is a real
-command; nothing here needs a browser or an account.
+Install aw, install library, initialize your team workspace, add an agent. Each
+step is a real command; nothing here needs a browser.
 
 1. npm install -g @awebai/aw
 2. aw plugin install {origin}/.well-known/aweb-app.json
 3. aw library list-blueprints
-4. aw team create my-team
-5. aw team add alice@aweb.engineering/coordinator --runtime claude-code
+4. aw init --username <your-name> --name <your-name>
+5. aw team add alice@aweb.team/developer=pi
 
-Step 5 uses the NAME@BLUEPRINT/PROFILE selector: it adopts the blueprint profile
-onto your shelf, adds the agent, chooses its runtime, materializes its home, and
-prints the home directory path it wrote. The runtime is an explicit choice:
-omitting --runtime defaults to claude-code (a CLI default, not read from the
-profile). Whole roster at once, each profile's runtime after an =:
-aw team create my-team --profile aweb.engineering/coordinator=claude-code --profile aweb.engineering/reviewer=pi
+Step 5 uses the NAME@BLUEPRINT/PROFILE=RUNTIME selector: it adopts the blueprint
+profile onto your shelf, adds the agent, chooses its runtime, materializes its
+home, and prints the home directory path it wrote. Whole roster at once:
+aw team add alice@aweb.team/developer=pi bob@aweb.team/reviewer=pi
 
 To adopt a profile onto your shelf without adding an agent (e.g. to evolve it
 before binding), use import-to-shelf:
-aw library import-to-shelf --source_blueprint_ref aweb.engineering --source_blueprint_version 0.1.0 --profile_ref coordinator
+aw library import-to-shelf --source_blueprint_ref aweb.team --source_blueprint_version 0.1.0 --profile_ref developer
 
 A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
-to choose the runtime (query them with aw blueprint inspect or aw library
-get-profile); they are not auto-applied.
+to choose the runtime (query them with aw library get-profile --blueprint_ref
+aweb.team --profile_ref developer); they are not auto-applied.
 
 
 ## How to call it

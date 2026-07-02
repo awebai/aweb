@@ -40,8 +40,9 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "X-AWEB-Timestamp" in text
     # Getting-started journey, install-first, mirroring the landing (no run step).
     assert "npm install -g @awebai/aw" in text
-    assert "aw team create" in text
+    assert "aw init --username" in text
     assert "aw team add" in text
+    assert "alice@aweb.team/developer=pi" in text
     assert "import-to-shelf" in text
     # Points at the dual aw/curl reference for the full raw-HTTP recipe.
     assert "/reference" in text
@@ -120,14 +121,11 @@ def test_reference_public_reads_have_literal_runnable_curl() -> None:
     live values — nothing labelled runnable may carry a brace placeholder."""
     text = _client().get("/reference").text
     assert "curl -s https://library.aweb.ai/v1/blueprints" in text
-    assert "curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering" in text
-    assert (
-        "curl -s https://library.aweb.ai/v1/blueprints/aweb.engineering/profiles/coordinator"
-        in text
-    )
+    assert "curl -s https://library.aweb.ai/v1/blueprints/aweb.team" in text
+    assert "curl -s https://library.aweb.ai/v1/blueprints/aweb.team/profiles/developer" in text
     # get-blueprint / get-profile path params appear in the runnable verb examples.
-    assert "aw library get-blueprint --blueprint_ref aweb.engineering" in text
-    assert "aw library get-profile --blueprint_ref aweb.engineering --profile_ref coordinator" in text
+    assert "aw library get-blueprint --blueprint_ref aweb.team" in text
+    assert "aw library get-profile --blueprint_ref aweb.team --profile_ref developer" in text
     # No runnable curl line carries a brace placeholder.
     for line in text.splitlines():
         if "curl -s" in line:

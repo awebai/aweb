@@ -21,29 +21,27 @@ materializes them. "Public" is a publish, not a flag.
 
 ## Getting started
 
-Install aw, install library, adopt a profile, add an agent. Each step is a real
-command; nothing here needs a browser or an account.
+Install aw, install library, initialize your team workspace, add an agent. Each
+step is a real command; nothing here needs a browser.
 
 1. npm install -g @awebai/aw
 2. aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
 3. aw library list-blueprints
-4. aw team create my-team
-5. aw team add alice@aweb.engineering/coordinator --runtime claude-code
+4. aw init --username <your-name> --name <your-name>
+5. aw team add alice@aweb.team/developer=pi
 
-Step 5 uses the NAME@BLUEPRINT/PROFILE selector: it adopts the blueprint profile
-onto your shelf, adds the agent, chooses its runtime, materializes its home, and
-prints the home directory path it wrote. The runtime is an explicit choice:
-omitting --runtime defaults to claude-code (a CLI default, not read from the
-profile). Whole roster at once, each profile's runtime after an =:
-aw team create my-team --profile aweb.engineering/coordinator=claude-code --profile aweb.engineering/reviewer=pi
+Step 5 uses the NAME@BLUEPRINT/PROFILE=RUNTIME selector: it adopts the blueprint
+profile onto your shelf, adds the agent, chooses its runtime, materializes its
+home, and prints the home directory path it wrote. Whole roster at once:
+aw team add alice@aweb.team/developer=pi bob@aweb.team/reviewer=pi
 
 To adopt a profile onto your shelf without adding an agent (e.g. to evolve it
 before binding), use import-to-shelf:
-aw library import-to-shelf --source_blueprint_ref aweb.engineering --source_blueprint_version 0.1.0 --profile_ref coordinator
+aw library import-to-shelf --source_blueprint_ref aweb.team --source_blueprint_version 0.1.0 --profile_ref developer
 
 A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
-to choose the runtime (query them with aw blueprint inspect or aw library
-get-profile); they are not auto-applied.
+to choose the runtime (query them with aw library get-profile --blueprint_ref
+aweb.team --profile_ref developer); they are not auto-applied.
 
 
 ## How to call it
