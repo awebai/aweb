@@ -21,34 +21,47 @@ materializes them. "Public" is a publish, not a flag.
 
 ## Getting started
 
-Install aw, install library, initialize your team workspace, add an agent. Each
-step is a real command; nothing here needs a browser.
+The minimal do-this-now onboarding. This is the single canonical shape landing
+pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
+and first team interactively; `aw team add` materializes starter agents from the
+`aweb.team` blueprint over a public read (no Library plugin on aw 1.30+);
+`aw agent start` runs them.
 
-1. npm install -g @awebai/aw
-2. aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
-3. aw library list-blueprints
-4. aw init --username <your-name> --name <your-name>
-5. aw team add alice@aweb.team/developer=pi
+```bash
+npm install -g @awebai/aw
+aw init
+aw team add alice@aweb.team/developer=claude-code
+aw team add bob@aweb.team/reviewer=claude-code
+aw agent start alice --runtime claude-code
+```
 
-Step 5 uses the NAME@BLUEPRINT/PROFILE=RUNTIME selector: it adopts the blueprint
-profile onto your shelf, adds the agent, chooses its runtime, materializes its
-home, and prints the home directory path it wrote. Whole roster at once:
-aw team add alice@aweb.team/developer=pi bob@aweb.team/reviewer=pi
+Add an agent to an existing hosted team with a team API key (no dashboard
+session; the key is the whole credential):
 
-To adopt a profile onto your shelf without adding an agent (e.g. to evolve it
-before binding), use import-to-shelf:
+```bash
+AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+```
+
+The runtime suffix (`=claude-code` above) is a parameter, not a divergence:
+`claude-code|codex|pi|local-shell` — a surface may showcase whichever it
+prefers. The blueprint is always `aweb.team`; override it with `--blueprint`
+(or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+`AWEB_LIBRARY_URL`).
+
+The authenticated shelf/evolution loop is opt-in. Install the library plugin only
+when you want private shelf copies, proposals, approvals, or updates from source:
+aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
 aw library import-to-shelf --source_blueprint_ref aweb.team --source_blueprint_version 0.1.0 --profile_ref developer
 
 A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
-to choose the runtime (query them with aw library get-profile --blueprint_ref
-aweb.team --profile_ref developer); they are not auto-applied.
+to choose the runtime; they are not auto-applied.
 
 
 ## How to call it
 
-The canonical form is the native plugin verbs: after
-aw plugin install https://library.aweb.ai/.well-known/aweb-app.json, every operation below is
-aw library <verb> (e.g. aw library list-blueprints, aw library import-to-shelf,
+The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
+then aw agent start NAME --runtime RUNTIME. The aw library plugin verbs are the authenticated shelf surface for teams that
+want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same
 surface; call them directly with aw id request --team-auth (the low-level escape
 hatch) if you are not using the plugin.
