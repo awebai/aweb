@@ -905,6 +905,11 @@ that home using the command printed by setup docs or profile guidance.
 The product requirement is that the human does not need to remember the right
 directory, symlinks, env vars, or startup command after materialization.
 
+`aw team up` is an optional local convenience for this handoff: it reads the
+materialized `agents/instances/*` roster and starts one tmux window per
+supported interactive harness. It is not the team definition or a hosted runtime
+service; it only launches the already-materialized local homes.
+
 This is deliberately operational. If a company cannot quickly add one more
 agent and start it in the right home, the blueprint model will feel theoretical.
 

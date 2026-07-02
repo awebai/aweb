@@ -2,6 +2,7 @@ package blueprint
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +21,28 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
+}
+
+func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, RuntimeKind: "pi"})
+	if err != nil {
+		t.Fatalf("MaterializeLocalProfile: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, ".aw", "profile", "ref.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ref struct {
+		RuntimeKind string `json:"runtime_kind"`
+	}
+	if err := json.Unmarshal(data, &ref); err != nil {
+		t.Fatal(err)
+	}
+	if ref.RuntimeKind != "pi" {
+		t.Fatalf("runtime_kind=%q", ref.RuntimeKind)
+	}
 }
 
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {

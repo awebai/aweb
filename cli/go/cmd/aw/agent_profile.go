@@ -34,6 +34,7 @@ type recordedProfileRef struct {
 	ProfileDigest          string   `json:"profile_digest"`
 	ProfileRef             string   `json:"profile_ref"`
 	ProfileVersion         string   `json:"profile_version"`
+	RuntimeKind            string   `json:"runtime_kind,omitempty"`
 	SourceBlueprintDigest  string   `json:"source_blueprint_digest,omitempty"`
 	SourceBlueprintRef     string   `json:"source_blueprint_ref,omitempty"`
 	SourceBlueprintVersion string   `json:"source_blueprint_version,omitempty"`
@@ -69,6 +70,9 @@ func runAgentProfileShow(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out, "Blueprint: %s@%s (%s)\n", ref.SourceBlueprintRef, ref.SourceBlueprintVersion, ref.SourceBlueprintDigest)
 	}
 	fmt.Fprintf(out, "Profile:   %s@%s (%s)\n", ref.ProfileRef, ref.ProfileVersion, ref.ProfileDigest)
+	if ref.RuntimeKind != "" {
+		fmt.Fprintf(out, "Runtime:   %s\n", ref.RuntimeKind)
+	}
 	return nil
 }
 
