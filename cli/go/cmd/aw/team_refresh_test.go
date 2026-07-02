@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 // writeLibraryShelfManifestPluginForTest installs a library plugin whose manifest
@@ -29,6 +30,132 @@ func writeLibraryShelfManifestPluginForTest(t *testing.T, home, origin string) {
 	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRefreshPublicLibraryProfileNoOpsWhenDigestUnchanged(t *testing.T) {
+	home := t.TempDir()
+	files := testLibraryProfilePayloadFiles()
+	digest := testLibraryProfilePayloadDigest(t, files)
+	gets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer server.Close()
+	old := recordedProfileRef{LibraryURL: server.URL, ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", ManagedSet: []string{"AGENTS.md", ".aw/profile/ref.json"}}
+	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("local existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code")
+	if err != nil {
+		t.Fatalf("refreshLibraryProfileInHome: %v", err)
+	}
+	if gets != 1 || len(result.FilesWritten) != 0 || result.ProfileDigest != digest {
+		t.Fatalf("no-op result gets=%d result=%+v", gets, result)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil || string(data) != "local existing\n" {
+		t.Fatalf("no-op refresh wrote AGENTS.md: %q err=%v", data, err)
+	}
+}
+
+func TestRefreshPublicLibraryProfileRejectsDishonestUnchangedDigest(t *testing.T) {
+	home := t.TempDir()
+	files := testLibraryProfilePayloadFiles()
+	digest := testLibraryProfilePayloadDigest(t, files)
+	corrupt := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nmission: Coordinate.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
+	})
+	corrupt[1].ContentUTF8 = "tampered without updating sha\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": digest, "files": corrupt})
+	}))
+	defer server.Close()
+	old := recordedProfileRef{LibraryURL: server.URL, ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", ManagedSet: []string{"AGENTS.md"}}
+	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("local existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code")
+	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+		t.Fatalf("dishonest unchanged digest error=%v", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if readErr != nil || string(data) != "local existing\n" {
+		t.Fatalf("failed-closed refresh mutated AGENTS.md: %q err=%v", data, readErr)
+	}
+}
+
+func TestRefreshPublicLibraryProfilePrunesRemovedManagedFilesOnly(t *testing.T) {
+	home := t.TempDir()
+	oldFiles := refreshTestProfileFiles(true, "0.1.0")
+	newFiles := refreshTestProfileFiles(false, "0.2.0")
+	oldDigest := testLibraryProfilePayloadDigest(t, oldFiles)
+	newDigest := testLibraryProfilePayloadDigest(t, newFiles)
+	currentFiles := oldFiles
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		digest := oldDigest
+		version := "0.1.0"
+		if currentFiles[0].ContentUTF8 == newFiles[0].ContentUTF8 {
+			digest = newDigest
+			version = "0.2.0"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": version, "digest": digest, "files": currentFiles})
+	}))
+	defer server.Close()
+	selector := libraryProfileSelector{LibraryURL: server.URL, SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "claude-code"}
+	if _, _, err := applyPublicLibraryProfileToHome(home, selector, true); err != nil {
+		t.Fatalf("initial materialize: %v", err)
+	}
+	old, err := readRecordedProfileRef(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localPath := filepath.Join(home, ".aw", "runtime", "state.json")
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	currentFiles = newFiles
+
+	result, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code")
+	if err != nil {
+		t.Fatalf("refreshLibraryProfileInHome: %v", err)
+	}
+	if result.ProfileDigest != newDigest || len(result.FilesWritten) == 0 {
+		t.Fatalf("refresh result=%+v want digest %s", result, newDigest)
+	}
+	for _, rel := range []string{"skills/old/SKILL.md", ".aw/profile/skills/old/SKILL.md", ".claude/skills/old/SKILL.md"} {
+		if _, err := os.Lstat(filepath.Join(home, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("removed upstream managed file still exists %s: %v", rel, err)
+		}
+	}
+	if data, err := os.ReadFile(localPath); err != nil || string(data) != "local\n" {
+		t.Fatalf("local runtime state not preserved: %q err=%v", data, err)
+	}
+}
+
+func refreshTestProfileFiles(withSkill bool, version string) []blueprint.LibraryProfilePayloadFile {
+	profile := "id: coordinator\nname: Coordinator\nversion: " + version + "\nmission: Coordinate.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"
+	files := []blueprint.LibraryProfilePayloadFile{{Path: "profile.yaml", ContentUTF8: profile}, {Path: "instructions.md", ContentUTF8: "Coordinate " + version + ".\n"}}
+	if withSkill {
+		files[0].ContentUTF8 += "skills:\n  - path: skills/old/SKILL.md\n"
+		files = append(files, blueprint.LibraryProfilePayloadFile{Path: "skills/old/SKILL.md", ContentUTF8: "---\nname: old\n---\n# Old\n"})
+	}
+	return withLibraryPayloadFileSHA(files)
 }
 
 func TestRefreshLibraryProfileReMaterializesFromLatestShelf(t *testing.T) {
@@ -52,6 +179,7 @@ func TestRefreshLibraryProfileReMaterializesFromLatestShelf(t *testing.T) {
 			files[i].ContentUTF8 = strings.Replace(files[i].ContentUTF8, "version: 0.1.0", "version: 0.2.0", 1)
 		}
 	}
+	files = withLibraryPayloadFileSHA(files)
 	newDigest := testLibraryProfilePayloadDigest(t, files)
 
 	sawInclude := ""

@@ -66,6 +66,7 @@ func TestLocalSurfaceE2EEmptyProfileCreateAddStartFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	oldInitAwebURL := initAwebURL
 	oldInitAWIDRegistry := initAWIDRegistry
@@ -112,10 +113,10 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	t.Setenv("AW_CONFIG_PATH", "")
 
 	profileFiles := func(profileRef string) []blueprint.LibraryProfilePayloadFile {
-		return []blueprint.LibraryProfilePayloadFile{
+		return withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
 			{Path: "profile.yaml", ContentUTF8: "id: " + profileRef + "\nname: " + profileRef + "\nversion: 0.1.0\nmission: Work with the team.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 			{Path: "instructions.md", ContentUTF8: "Work together.\n"},
-		}
+		})
 	}
 	profileDigests := map[string]string{}
 	for _, profileRef := range []string{"coordinator", "reviewer"} {
@@ -132,7 +133,6 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		}
 	}
 
-	var importCalls, bindCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/.well-known/aweb-app.json":
@@ -183,27 +183,9 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 				"files":               profileFiles(profileRef),
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
-			importCalls++
-			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
-				t.Fatalf("import-to-shelf missing signed headers")
-			}
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			profileRef, _ := body["profile_ref"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigests[profileRef], "source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0", "source_blueprint_digest": "sha256:blueprint", "created": true})
+			t.Fatalf("public team materialization must not import to the private shelf")
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
-			bindCalls++
-			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
-				t.Fatalf("bind missing signed headers")
-			}
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			profileRef, _ := body["profile_ref"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": profileRef, "profile_version": "0.1.0", "profile_digest": profileDigests[profileRef]})
+			t.Fatalf("public team materialization must not bind via the Library plugin")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/materialize":
 			t.Fatalf("server materialize must not be called in local-compose flow")
 		default:
@@ -212,6 +194,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	oldInitAwebURL := initAwebURL
 	oldInitAWIDRegistry := initAWIDRegistry
@@ -221,10 +204,6 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		initAwebURL = oldInitAwebURL
 		initAWIDRegistry = oldInitAWIDRegistry
 	})
-	if _, err := installManifestPlugin(server.URL, filepath.Join(filepath.Join(root, "home"), ".aw", "plugins")); err != nil {
-		t.Fatalf("install library manifest: %v", err)
-	}
-
 	teamHumanCreateProfiles = []string{"aweb.engineering/coordinator=claude-code", "aweb.engineering/reviewer=pi"}
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
@@ -279,10 +258,6 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 	teamHumanAddRuntime = ""
 	teamHumanAddHome = ""
-	if importCalls != 4 || bindCalls != 4 {
-		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
-	}
-
 	for _, tc := range []struct {
 		name        string
 		prepareHome func(t *testing.T, home string) (outsidePath string, wantContent string)
@@ -376,13 +351,13 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	profileFiles := []blueprint.LibraryProfilePayloadFile{
+	profileFiles := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
 		{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.1.0\nmission: Review work.\naccepted_work: [review]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 		{Path: "instructions.md", ContentUTF8: "Review carefully.\n"},
-	}
+	})
 	profileDigest := testLibraryProfilePayloadDigestForProfile(t, "reviewer", profileFiles)
 
-	var createInviteCalls, acceptInviteCalls, importCalls, bindCalls int
+	var createInviteCalls, acceptInviteCalls int
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -467,27 +442,9 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"files":               profileFiles,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/shelf/import":
-			importCalls++
-			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
-				t.Fatalf("import-to-shelf missing signed headers")
-			}
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			profileRef, _ := body["profile_ref"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"profile_ref": profileRef, "version": "0.1.0", "digest": profileDigest, "source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0", "source_blueprint_digest": "sha256:blueprint", "created": true})
+			t.Fatalf("public team materialization must not import to the private shelf")
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/profile-binding"):
-			bindCalls++
-			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
-				t.Fatalf("bind missing signed headers")
-			}
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			profileRef, _ := body["profile_ref"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/agents/"), "/profile-binding"), "profile_ref": profileRef, "profile_version": "0.1.0", "profile_digest": profileDigest})
+			t.Fatalf("public team materialization must not bind via the Library plugin")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/materialize":
 			t.Fatalf("server materialize must not be called in local-compose flow")
 		default:
@@ -496,6 +453,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	t.Setenv(libraryURLEnvVar, server.URL)
 
 	// The owner's connected workspace: hosted membership, cert, and signing key,
 	// but no local team key (hosted authority mints via the member cert).
@@ -513,7 +471,6 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 			JoinedAt:    "2026-05-16T00:00:00Z",
 		}},
 	})
-	writeLibraryManifestPluginForTest(t, home, server.URL)
 	t.Chdir(ownerDir)
 
 	teamHumanAddRuntime = ""
@@ -524,10 +481,6 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 	if createInviteCalls != 1 || acceptInviteCalls != 1 {
 		t.Fatalf("hosted mint calls create=%d accept=%d", createInviteCalls, acceptInviteCalls)
 	}
-	if importCalls != 1 || bindCalls != 1 {
-		t.Fatalf("library calls import=%d bind=%d", importCalls, bindCalls)
-	}
-
 	agentHome := filepath.Join(ownerDir, "agents", "instances", "rev")
 	// Profile materialized into the agent's own home.
 	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {

@@ -29,12 +29,14 @@ var agentProfileShowCmd = &cobra.Command{
 // recordedProfileRef mirrors the .aw/profile/ref.json a materialize writes
 // (internal/blueprint materializedProfileRef).
 type recordedProfileRef struct {
-	ProfileDigest          string `json:"profile_digest"`
-	ProfileRef             string `json:"profile_ref"`
-	ProfileVersion         string `json:"profile_version"`
-	SourceBlueprintDigest  string `json:"source_blueprint_digest,omitempty"`
-	SourceBlueprintRef     string `json:"source_blueprint_ref,omitempty"`
-	SourceBlueprintVersion string `json:"source_blueprint_version,omitempty"`
+	LibraryURL             string   `json:"library_url,omitempty"`
+	ManagedSet             []string `json:"managed_set,omitempty"`
+	ProfileDigest          string   `json:"profile_digest"`
+	ProfileRef             string   `json:"profile_ref"`
+	ProfileVersion         string   `json:"profile_version"`
+	SourceBlueprintDigest  string   `json:"source_blueprint_digest,omitempty"`
+	SourceBlueprintRef     string   `json:"source_blueprint_ref,omitempty"`
+	SourceBlueprintVersion string   `json:"source_blueprint_version,omitempty"`
 }
 
 func runAgentProfileShow(cmd *cobra.Command, args []string) error {

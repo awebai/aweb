@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +19,12 @@ import (
 
 const (
 	defaultMaterializeRuntimeKind = "claude-code"
+	defaultLibraryBaseURL         = "https://library.aweb.ai"
+	defaultLibraryBlueprintRef    = "aweb.team"
+	libraryURLEnvVar              = "AWEB_LIBRARY_URL"
+	libraryBlueprintEnvVar        = "AWEB_BLUEPRINT"
 	libraryPluginName             = "library"
-	libraryPluginManifestURL      = "https://library.aweb.ai/.well-known/aweb-app.json"
+	libraryPluginManifestURL      = defaultLibraryBaseURL + "/.well-known/aweb-app.json"
 	libraryPluginInstallCommand   = "aw plugin install " + libraryPluginManifestURL
 )
 
@@ -44,11 +52,13 @@ func libraryProfileSelectorLabel(selector libraryProfileSelector) string {
 }
 
 type libraryProfileSelector struct {
+	LibraryURL             string
 	SourceBlueprintRef     string
 	SourceBlueprintVersion string
 	ProfileRef             string
 	RuntimeKind            string
 	IdentityScope          string
+	PublicProfile          *libraryProfileDetailResponse
 }
 
 type libraryProfileDetailResponse struct {
@@ -113,11 +123,14 @@ func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	}
 	blueprintRef, profileRef, ok := strings.Cut(blueprintAndProfile, "/")
 	if !ok {
-		return libraryProfileSelector{}, usageError("profile selector %q must be BLUEPRINT_REF/PROFILE_REF[:local|global][=RUNTIME]", raw)
+		blueprintRef = ""
+		profileRef = blueprintAndProfile
 	}
 	selector := libraryProfileSelector{SourceBlueprintRef: strings.TrimSpace(blueprintRef), ProfileRef: strings.TrimSpace(profileRef), RuntimeKind: runtimeKind, IdentityScope: identityScope}
-	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
-		return libraryProfileSelector{}, err
+	if selector.SourceBlueprintRef != "" {
+		if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
+			return libraryProfileSelector{}, err
+		}
 	}
 	if err := validateLibraryRef("profile ref", selector.ProfileRef, false); err != nil {
 		return libraryProfileSelector{}, err
@@ -139,21 +152,35 @@ func normalizeTeamAgentScope(raw string) (string, error) {
 }
 
 func resolveLibraryProfileScope(selector libraryProfileSelector) (string, error) {
+	_, scope, err := resolveLibraryProfileScopeAndCache(selector)
+	return scope, err
+}
+
+func resolveLibraryProfileScopeAndCache(selector libraryProfileSelector) (libraryProfileSelector, string, error) {
 	if scope := strings.TrimSpace(selector.IdentityScope); scope != "" {
-		return normalizeTeamAgentScope(scope)
+		normalized, err := normalizeTeamAgentScope(scope)
+		return selector, normalized, err
 	}
-	profile, err := callLibraryGetProfile(selector)
+	var profile *libraryProfileDetailResponse
+	var err error
+	if strings.TrimSpace(selector.LibraryURL) != "" {
+		profile, err = publicLibraryProfileForSelector(context.Background(), selector)
+		selector.PublicProfile = profile
+	} else {
+		profile, err = callLibraryGetProfile(selector)
+	}
 	if err != nil {
-		return "", err
+		return selector, "", err
 	}
 	scope, err := profileScopeFromLibraryPayload(profile)
 	if err != nil {
-		return "", err
+		return selector, "", err
 	}
 	if scope == "" {
-		return awid.IdentityModeLocal, nil
+		return selector, awid.IdentityModeLocal, nil
 	}
-	return normalizeTeamAgentScope(scope)
+	normalized, err := normalizeTeamAgentScope(scope)
+	return selector, normalized, err
 }
 
 func profileScopeFromLibraryPayload(profile *libraryProfileDetailResponse) (string, error) {
@@ -284,6 +311,57 @@ func applyLibraryProfileToHomeAndConfigure(homeDir, agentID string, selector lib
 	return materialized, written, nil
 }
 
+func applyPublicLibraryProfileToHome(homeDir string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
+	if strings.TrimSpace(selector.LibraryURL) == "" {
+		return nil, nil, fmt.Errorf("library url is required for public profile materialization")
+	}
+	if err := rejectUnsupportedVersionedLibrarySelector(selector); err != nil {
+		return nil, nil, err
+	}
+	var materialized *blueprint.MaterializeResult
+	err := withWorkingDir(homeDir, func() error {
+		profile, err := publicLibraryProfileForSelector(context.Background(), selector)
+		if err != nil {
+			return fmt.Errorf("library public get-profile: %w", err)
+		}
+		runtimeKind, err := materializeRuntimeKindForSelector(selector)
+		if err != nil {
+			return err
+		}
+		materialized, err = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+			TargetDir:        homeDir,
+			LibraryURL:       selector.LibraryURL,
+			BlueprintRef:     profile.BlueprintRef,
+			BlueprintVersion: profile.BlueprintVersion,
+			ProfileRef:       profile.ProfileRef,
+			ProfileVersion:   profile.Version,
+			ProfileDigest:    profile.Digest,
+			RuntimeKind:      runtimeKind,
+			Files:            profile.Files,
+			Force:            force,
+		})
+		if err != nil {
+			return fmt.Errorf("local profile materialize: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return materialized, materialized.FilesWritten, nil
+}
+
+func applyPublicLibraryProfileToHomeAndConfigure(homeDir string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
+	materialized, written, err := applyPublicLibraryProfileToHome(homeDir, selector, force)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := configureMaterializedAgentHome(homeDir); err != nil {
+		return nil, nil, err
+	}
+	return materialized, written, nil
+}
+
 func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {
 	if strings.TrimSpace(sourceDir) == "" {
 		return nil, nil, fmt.Errorf("local blueprint source is required")
@@ -330,6 +408,99 @@ func withWorkingDir(dir string, fn func() error) error {
 	return fn()
 }
 
+func resolveLibraryProfileSelectorSource(selector libraryProfileSelector, libraryURLFlag, blueprintFlag string) (libraryProfileSelector, error) {
+	libraryURL, err := resolveLibraryBaseURL(libraryURLFlag)
+	if err != nil {
+		return libraryProfileSelector{}, err
+	}
+	selector.LibraryURL = libraryURL
+	resolvedBlueprint := strings.TrimSpace(selector.SourceBlueprintRef)
+	flagBlueprint := strings.TrimSpace(blueprintFlag)
+	if resolvedBlueprint != "" {
+		if flagBlueprint != "" && flagBlueprint != resolvedBlueprint {
+			fmt.Fprintf(os.Stderr, "Warning: selector blueprint %s overrides --blueprint %s\n", resolvedBlueprint, flagBlueprint)
+		}
+	} else {
+		resolvedBlueprint = firstNonEmptyLibraryValue(flagBlueprint, os.Getenv(libraryBlueprintEnvVar), defaultLibraryBlueprintRef)
+		selector.SourceBlueprintRef = resolvedBlueprint
+	}
+	if err := validateLibraryRef("source blueprint ref", selector.SourceBlueprintRef, false); err != nil {
+		return libraryProfileSelector{}, err
+	}
+	return selector, nil
+}
+
+func resolveLibraryBaseURL(flag string) (string, error) {
+	raw := firstNonEmptyLibraryValue(flag, os.Getenv(libraryURLEnvVar), defaultLibraryBaseURL)
+	return normalizeLibraryBaseURL(raw)
+}
+
+func normalizeLibraryBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", usageError("library URL is required")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid library URL %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", usageError("library URL %q must use http or https", raw)
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return "", usageError("library URL %q must include a host", raw)
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimRight(u.Path, "/")
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+func publicLibraryProfileForSelector(ctx context.Context, selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
+	if selector.PublicProfile != nil {
+		return selector.PublicProfile, nil
+	}
+	return fetchPublicLibraryProfile(ctx, selector)
+}
+
+func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
+	base := strings.TrimSpace(selector.LibraryURL)
+	if base == "" {
+		return nil, fmt.Errorf("library url is required")
+	}
+	endpoint, err := url.JoinPath(base, "v1", "blueprints", selector.SourceBlueprintRef, "profiles", selector.ProfileRef)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("GET %s returned %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out libraryProfileDetailResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode library get-profile response: %w", err)
+	}
+	if err := validateLibraryProfileDetailResponse(&out); err != nil {
+		return nil, err
+	}
+	if out.BlueprintRef != selector.SourceBlueprintRef {
+		return nil, fmt.Errorf("library get-profile response blueprint_ref %q does not match requested %q", out.BlueprintRef, selector.SourceBlueprintRef)
+	}
+	if out.ProfileRef != selector.ProfileRef {
+		return nil, fmt.Errorf("library get-profile response profile_ref %q does not match requested %q", out.ProfileRef, selector.ProfileRef)
+	}
+	return &out, nil
+}
+
 func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
 	body, err := executeLibraryToolBody([]string{"get-profile", "--blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef}, missingLibraryPluginProfileError(selector))
 	if err != nil {
@@ -339,10 +510,20 @@ func callLibraryGetProfile(selector libraryProfileSelector) (*libraryProfileDeta
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("decode library get-profile response: %w", err)
 	}
-	if out.BlueprintRef == "" || out.BlueprintVersion == "" || out.ProfileRef == "" || out.Version == "" || out.Digest == "" {
-		return nil, fmt.Errorf("library get-profile response missing blueprint_ref/blueprint_version/profile_ref/version/digest")
+	if err := validateLibraryProfileDetailResponse(&out); err != nil {
+		return nil, err
 	}
 	return &out, nil
+}
+
+func validateLibraryProfileDetailResponse(out *libraryProfileDetailResponse) error {
+	if out == nil || out.BlueprintRef == "" || out.BlueprintVersion == "" || out.ProfileRef == "" || out.Version == "" || out.Digest == "" {
+		return fmt.Errorf("library get-profile response missing blueprint_ref/blueprint_version/profile_ref/version/digest")
+	}
+	if len(out.Files) == 0 {
+		return fmt.Errorf("library get-profile response missing files")
+	}
+	return nil
 }
 
 func validateFetchedProfileMatchesImport(selector libraryProfileSelector, profile *libraryProfileDetailResponse, imported *libraryImportToShelfResponse) error {

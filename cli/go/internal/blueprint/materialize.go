@@ -3,13 +3,16 @@ package blueprint
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/awebai/aw/internal/pathpreflight"
+	"gopkg.in/yaml.v3"
 )
 
 type MaterializeOptions struct {
@@ -32,16 +35,19 @@ type MaterializeResult struct {
 }
 
 type materializedProfileRef struct {
-	ProfileDigest          string `json:"profile_digest"`
-	ProfileRef             string `json:"profile_ref"`
-	ProfileVersion         string `json:"profile_version"`
-	SourceBlueprintDigest  string `json:"source_blueprint_digest,omitempty"`
-	SourceBlueprintRef     string `json:"source_blueprint_ref,omitempty"`
-	SourceBlueprintVersion string `json:"source_blueprint_version,omitempty"`
+	LibraryURL             string   `json:"library_url,omitempty"`
+	ManagedSet             []string `json:"managed_set,omitempty"`
+	ProfileDigest          string   `json:"profile_digest"`
+	ProfileRef             string   `json:"profile_ref"`
+	ProfileVersion         string   `json:"profile_version"`
+	SourceBlueprintDigest  string   `json:"source_blueprint_digest,omitempty"`
+	SourceBlueprintRef     string   `json:"source_blueprint_ref,omitempty"`
+	SourceBlueprintVersion string   `json:"source_blueprint_version,omitempty"`
 }
 
 type materializeProvenance struct {
 	SourceBlueprint bool
+	LibraryURL      string
 }
 
 func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error) {
@@ -98,21 +104,6 @@ func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force 
 }
 
 func materializeOps(bp *Blueprint, profile Profile, runtimeKind string, provenance materializeProvenance) ([]materializeWriteOp, error) {
-	ref := materializedProfileRef{
-		ProfileDigest:  profile.Digest,
-		ProfileRef:     profile.ID,
-		ProfileVersion: profile.Version,
-	}
-	if provenance.SourceBlueprint {
-		ref.SourceBlueprintDigest = bp.Source.Digest
-		ref.SourceBlueprintRef = bp.ID
-		ref.SourceBlueprintVersion = bp.Version
-	}
-	refBytes, err := json.MarshalIndent(ref, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	refBytes = append(refBytes, '\n')
 	instructions, err := os.ReadFile(filepath.Join(bp.Source.Ref, filepath.FromSlash(profile.InstructionPath)))
 	if err != nil {
 		return nil, err
@@ -123,7 +114,6 @@ func materializeOps(bp *Blueprint, profile Profile, runtimeKind string, provenan
 	}
 	ops := []materializeWriteOp{
 		{Kind: opFile, Rel: "AGENTS.md", Data: agents},
-		{Kind: opFile, Rel: filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json")), Data: refBytes},
 	}
 	if isClaudeRuntimeKind(runtimeKind) {
 		ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"})
@@ -181,6 +171,30 @@ func materializeOps(bp *Blueprint, profile Profile, runtimeKind string, provenan
 		}
 		ops = append(ops, op)
 	}
+	refRel := filepath.ToSlash(filepath.Join(".aw", "profile", "ref.json"))
+	managedSet := make([]string, 0, len(ops)+1)
+	for _, op := range ops {
+		managedSet = append(managedSet, filepath.ToSlash(op.Rel))
+	}
+	managedSet = append(managedSet, refRel)
+	ref := materializedProfileRef{
+		LibraryURL:     strings.TrimSpace(provenance.LibraryURL),
+		ManagedSet:     managedSet,
+		ProfileDigest:  profile.Digest,
+		ProfileRef:     profile.ID,
+		ProfileVersion: profile.Version,
+	}
+	if provenance.SourceBlueprint {
+		ref.SourceBlueprintDigest = bp.Source.Digest
+		ref.SourceBlueprintRef = bp.ID
+		ref.SourceBlueprintVersion = bp.Version
+	}
+	refBytes, err := json.MarshalIndent(ref, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	refBytes = append(refBytes, '\n')
+	ops = append(ops, materializeWriteOp{Kind: opFile, Rel: refRel, Data: refBytes})
 	return ops, nil
 }
 
@@ -317,8 +331,16 @@ type LibraryProfilePayloadFile struct {
 	ContentUTF8 string `json:"content_utf8,omitempty"`
 }
 
+type ValidateLibraryProfilePayloadOptions struct {
+	ProfileRef     string
+	ProfileVersion string
+	ProfileDigest  string
+	Files          []LibraryProfilePayloadFile
+}
+
 type MaterializeLibraryProfilePayloadOptions struct {
 	TargetDir        string
+	LibraryURL       string
 	BlueprintRef     string
 	BlueprintVersion string
 	BlueprintDigest  string
@@ -328,6 +350,17 @@ type MaterializeLibraryProfilePayloadOptions struct {
 	RuntimeKind      string
 	Files            []LibraryProfilePayloadFile
 	Force            bool
+}
+
+func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptions) (string, error) {
+	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
+		return "", err
+	}
+	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
+		return "", err
+	}
+	_, digest, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	return digest, err
 }
 
 func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (*MaterializeResult, error) {
@@ -349,13 +382,17 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
 		return nil, err
 	}
+	files, _, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	if err != nil {
+		return nil, err
+	}
 	tmp, err := os.MkdirTemp("", "aw-library-profile-payload-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
 	profileDir := filepath.Join(tmp, "profiles", opts.ProfileRef)
-	if err := validateAndWriteLibraryProfilePayload(tmp, profileDir, opts.Files); err != nil {
+	if err := writeLibraryProfilePayloadFiles(tmp, profileDir, files); err != nil {
 		return nil, err
 	}
 	blueprintRef := strings.TrimSpace(opts.BlueprintRef)
@@ -386,53 +423,117 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
-	profile, ok := findProfile(bp, opts.ProfileRef)
-	if !ok {
+	if _, ok := findProfile(bp, opts.ProfileRef); !ok {
 		return nil, fmt.Errorf("profile %q not found in library payload", opts.ProfileRef)
-	}
-	if strings.TrimSpace(opts.ProfileDigest) != "" && strings.TrimSpace(opts.ProfileDigest) != profile.Digest {
-		return nil, fmt.Errorf("library profile payload digest mismatch: fetched files digest %s, expected %s", profile.Digest, strings.TrimSpace(opts.ProfileDigest))
 	}
 	bp.Source.Kind = "library_blueprint_profile_payload"
 	bp.Source.DigestScope = DigestScopeLocalImportPayload
-	if strings.TrimSpace(opts.BlueprintDigest) != "" {
-		bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
-	}
-	return materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint})
+	// Public get-profile responses intentionally carry no blueprint digest; do
+	// not leak the synthetic one-profile wrapper digest into the home pin. Shelf
+	// and local callers that have a real upstream blueprint digest pass it here.
+	bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
+	return materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL})
 }
 
-func validateAndWriteLibraryProfilePayload(root, profileDir string, files []LibraryProfilePayloadFile) error {
+func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest string, files []LibraryProfilePayloadFile) ([]LibraryProfilePayloadFile, string, error) {
+	validated, err := validateLibraryProfilePayloadStructure(profileRef, profileVersion, files)
+	if err != nil {
+		return nil, "", err
+	}
+	digest, err := libraryProfilePayloadDigest(validated)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(profileDigest) != "" && strings.TrimSpace(profileDigest) != digest {
+		return nil, "", fmt.Errorf("library profile payload digest mismatch: fetched files digest %s, expected %s", digest, strings.TrimSpace(profileDigest))
+	}
+	return validated, digest, nil
+}
+
+func validateLibraryProfilePayloadStructure(profileRef, profileVersion string, files []LibraryProfilePayloadFile) ([]LibraryProfilePayloadFile, error) {
 	if len(files) == 0 {
-		return fmt.Errorf("library get-profile response missing files")
+		return nil, fmt.Errorf("library get-profile response missing files")
 	}
 	seen := map[string]bool{}
+	out := make([]LibraryProfilePayloadFile, 0, len(files))
+	var profileYAML string
 	for _, file := range files {
-		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		rel := file.Path
+		if err := validateNormalizedPOSIXRelativePath("library profile file", rel); err != nil {
+			return nil, err
+		}
 		if seen[rel] {
-			return fmt.Errorf("duplicate library profile file %s", rel)
+			return nil, fmt.Errorf("duplicate library profile file %s", rel)
 		}
 		seen[rel] = true
-		if err := validateRelativePath("library profile file", rel); err != nil {
-			return err
+		if containsCanonicalJSONLineSeparator(file.ContentUTF8) {
+			return nil, fmt.Errorf("library profile file %s contains U+2028/U+2029, which are not allowed in blueprint payloads", rel)
 		}
-		if strings.TrimSpace(file.SHA256) != "" {
-			want := strings.TrimPrefix(strings.TrimSpace(file.SHA256), "sha256:")
-			got := fmt.Sprintf("%x", sha256.Sum256([]byte(file.ContentUTF8)))
-			if want != got {
-				return fmt.Errorf("library profile file %s sha256 mismatch", rel)
-			}
+		if rel == "profile.yaml" {
+			profileYAML = file.ContentUTF8
 		}
+		out = append(out, file)
+	}
+	if !seen["profile.yaml"] {
+		return nil, fmt.Errorf("library get-profile response missing profile.yaml")
+	}
+	var doc struct {
+		ID      string `yaml:"id"`
+		Version string `yaml:"version"`
+	}
+	if err := yaml.Unmarshal([]byte(profileYAML), &doc); err != nil {
+		return nil, fmt.Errorf("library profile profile.yaml: parse: %w", err)
+	}
+	if strings.TrimSpace(doc.ID) != strings.TrimSpace(profileRef) {
+		return nil, fmt.Errorf("library profile profile.yaml id %q does not match response profile_ref %q", strings.TrimSpace(doc.ID), strings.TrimSpace(profileRef))
+	}
+	if strings.TrimSpace(doc.Version) != strings.TrimSpace(profileVersion) {
+		return nil, fmt.Errorf("library profile profile.yaml version %q does not match response version %q", strings.TrimSpace(doc.Version), strings.TrimSpace(profileVersion))
+	}
+	return out, nil
+}
+
+func libraryProfilePayloadDigest(files []LibraryProfilePayloadFile) (string, error) {
+	payloadFiles := make([]canonicalPayloadFile, 0, len(files))
+	for _, file := range files {
+		sha, err := verifyLibraryProfilePayloadFileSHA(file)
+		if err != nil {
+			return "", err
+		}
+		payloadFiles = append(payloadFiles, canonicalPayloadFile{Path: file.Path, SHA256: sha, ContentUTF8: file.ContentUTF8})
+	}
+	sort.Slice(payloadFiles, func(i, j int) bool { return payloadFiles[i].Path < payloadFiles[j].Path })
+	canonical, err := canonicalJSON(map[string]any{"schema": "aweb.blueprint.profile-payload.v1", "files": payloadFiles})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func verifyLibraryProfilePayloadFileSHA(file LibraryProfilePayloadFile) (string, error) {
+	want := strings.TrimSpace(file.SHA256)
+	if want == "" {
+		return "", fmt.Errorf("library profile file %s missing sha256", file.Path)
+	}
+	if !strings.HasPrefix(want, "sha256:") || len(want) != len("sha256:")+64 {
+		return "", fmt.Errorf("library profile file %s has invalid sha256 %q", file.Path, want)
+	}
+	gotBytes := sha256.Sum256([]byte(file.ContentUTF8))
+	got := "sha256:" + hex.EncodeToString(gotBytes[:])
+	if want != got {
+		return "", fmt.Errorf("library profile file %s sha256 mismatch", file.Path)
+	}
+	return want, nil
+}
+
+func writeLibraryProfilePayloadFiles(root, profileDir string, files []LibraryProfilePayloadFile) error {
+	for _, file := range files {
+		rel := file.Path
 		dest := filepath.Join(profileDir, filepath.FromSlash(rel))
 		if !isWithin(profileDir, dest) {
 			return fmt.Errorf("library profile file %s escapes profile directory", rel)
 		}
-	}
-	if !seen["profile.yaml"] {
-		return fmt.Errorf("library get-profile response missing profile.yaml")
-	}
-	for _, file := range files {
-		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
-		dest := filepath.Join(profileDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}

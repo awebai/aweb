@@ -1,4 +1,16 @@
 {
+  "managed_set": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/implement/SKILL.md",
+    ".aw/profile/skills/implement/SKILL.md",
+    ".claude/skills/implement/SKILL.md",
+    "artifacts/handoff-template.md",
+    ".aw/profile/artifacts/handoff-template.md",
+    ".aw/profile/ref.json"
+  ],
   "profile_digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
   "profile_ref": "developer",
   "profile_version": "0.1.0",
