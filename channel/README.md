@@ -7,9 +7,9 @@ One-way: events flow in. Use the `aw` CLI for all outbound actions.
 
 ## Install as Claude Code plugin
 
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
 ```
 
 Start Claude Code with the channel enabled:
@@ -18,28 +18,8 @@ Start Claude Code with the channel enabled:
 claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-## Alternative: MCP server via .mcp.json
-
-For development or self-hosted setups where you don't want the marketplace:
-
-```bash
-aw init --setup-channel
-claude --dangerously-load-development-channels server:aweb
-```
-
-Or configure manually in `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "aweb": {
-      "command": "npx",
-      "args": ["@awebai/claude-channel"],
-      "cwd": "<project directory>"
-    }
-  }
-}
-```
+`aw init --setup-channel` runs the same plugin setup. The supported Claude Code
+channel path is the plugin, not a per-home `.mcp.json` server.
 
 ## Prerequisites
 

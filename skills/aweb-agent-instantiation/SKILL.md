@@ -31,8 +31,9 @@ mail, acts as its profile, and replies.
   without a TTY** — that is why the supervised path does not work.
 - A recent `aw` on `PATH` with blueprint support (`aw team add … --runtime`);
   the agent itself uses the system `aw` for mail.
-- `claude` (Claude Code) on `PATH`, and the **aweb-channel plugin** available
-  from its marketplace (`claude plugin list` shows `aweb-channel`).
+- `claude` (Claude Code) on `PATH`. `aw team up`/setup can ensure the
+  **aweb-channel plugin** with `claude plugin marketplace add awebai/claude-plugins`
+  and `claude plugin install aweb-channel@awebai-marketplace`.
 - You are a member of the team you are staffing into.
 
 ## The sequence
@@ -66,16 +67,15 @@ AWID-identity-backed agents (`aw team add --global`, or `aw id team add-member
 the `manage-team-identities` skill — not this one. Staffing creates local
 team members; minting global identities is a distinct, gated responsibility.
 
-### 2. Remove the materialized `.mcp.json` — workaround
+### 2. Ensure the Claude Code channel plugin
 
 ```bash
-rm -f "$HOME_DIR/.mcp.json"
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
 ```
 
-The channel is a Claude Code **plugin** (step 3), not the npx MCP server
-`aw team add` writes. *(Workaround for an open `SetupChannelMCP` bug — it writes
-a non-working npx MCP server into the home; remove it. The step disappears when
-that bug is fixed.)*
+These Claude Code plugin commands are non-interactive and idempotent. The
+channel is a Claude Code **plugin**, not a per-home `.mcp.json` server.
 
 ### 3. Start the agent in a persistent TTY session
 
@@ -117,8 +117,8 @@ the TUI.
   and the channel confirmation prompt; bare background processes fall into
   non-interactive mode and die.
 - **`aw run`** — runs the agent, but is out of scope for this flow.
-- **The materialized `.mcp.json`** — the wrong channel mechanism; remove it
-  (step 2). The live agents have no `.mcp.json`.
+- **Per-home `.mcp.json` channel servers** — the wrong channel mechanism. The
+  live agents use the Claude Code plugin and have no channel `.mcp.json`.
 
 ## Deterministic path — no prompt
 

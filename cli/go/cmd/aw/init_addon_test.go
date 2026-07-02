@@ -76,11 +76,22 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	initRole = ""
 	initPersistent = false
 	initIsTTY = func() bool { return false }
+	oldRunner := runClaudeChannelPluginCommand
+	runClaudeChannelPluginCommand = func(args ...string) error { return nil }
+	t.Cleanup(func() { runClaudeChannelPluginCommand = oldRunner })
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	if err := runInit(&cobra.Command{}, nil); err != nil {
 		t.Fatalf("runInit setup-channel addon failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".mcp.json")); err != nil {
-		t.Fatalf("setup-channel did not create .mcp.json: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("setup-channel unexpectedly created broken .mcp.json: %v", err)
 	}
 }

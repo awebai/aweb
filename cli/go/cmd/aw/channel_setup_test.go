@@ -1,132 +1,88 @@
 package main
 
 import (
-	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
-func TestSetupChannelMCPCreatesNew(t *testing.T) {
-	t.Parallel()
-	tmp := t.TempDir()
-	result := SetupChannelMCP(tmp, false)
+func withFakeClaudePluginRunner(t *testing.T, err error) *[][]string {
+	t.Helper()
+	old := runClaudeChannelPluginCommand
+	var calls [][]string
+	runClaudeChannelPluginCommand = func(args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return err
+	}
+	t.Cleanup(func() { runClaudeChannelPluginCommand = old })
+	return &calls
+}
+
+func withFakeClaudeOnPath(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	path := filepath.Join(bin, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestEnsureClaudeChannelPluginRunsMarketplaceAndInstall(t *testing.T) {
+	withFakeClaudeOnPath(t)
+	calls := withFakeClaudePluginRunner(t, nil)
+	result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: true})
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
-	if !result.Created {
-		t.Fatal("expected created")
+	want := [][]string{
+		{"plugin", "marketplace", "add", claudeChannelMarketplace},
+		{"plugin", "install", claudeChannelPlugin},
 	}
-
-	data, err := os.ReadFile(filepath.Join(tmp, ".mcp.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-	if !channelMCPExists(settings) {
-		t.Fatal("expected mcpServers.aweb in file")
-	}
-
-	aweb := settings["mcpServers"].(map[string]any)["aweb"].(map[string]any)
-	if aweb["command"] != "npx" {
-		t.Fatalf("expected command=npx, got %v", aweb["command"])
-	}
-	if aweb["cwd"] != tmp {
-		t.Fatalf("expected cwd=%s, got %v", tmp, aweb["cwd"])
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("calls=%v, want %v", *calls, want)
 	}
 }
 
-func TestSetupChannelMCPMergesExisting(t *testing.T) {
-	t.Parallel()
-	tmp := t.TempDir()
-	existing := map[string]any{
-		"mcpServers": map[string]any{
-			"other": map[string]any{"url": "http://example.com"},
-		},
-	}
-	data, _ := json.Marshal(existing)
-	if err := os.WriteFile(filepath.Join(tmp, ".mcp.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	result := SetupChannelMCP(tmp, false)
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %v", result.Error)
-	}
-	if !result.Updated {
-		t.Fatal("expected updated")
-	}
-
-	updatedData, err := os.ReadFile(filepath.Join(tmp, ".mcp.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(updatedData, &settings); err != nil {
-		t.Fatal(err)
-	}
-
-	if !channelMCPExists(settings) {
-		t.Fatal("expected mcpServers.aweb")
-	}
-	servers := settings["mcpServers"].(map[string]any)
-	if _, ok := servers["other"]; !ok {
-		t.Fatal("expected other server preserved")
-	}
-}
-
-func TestSetupChannelMCPAlreadyExists(t *testing.T) {
-	t.Parallel()
-	tmp := t.TempDir()
-	existing := map[string]any{
-		"mcpServers": map[string]any{
-			"aweb": map[string]any{"command": "npx", "args": []any{"@awebai/claude-channel"}, "cwd": "/old/path"},
-		},
-	}
-	data, _ := json.Marshal(existing)
-	if err := os.WriteFile(filepath.Join(tmp, ".mcp.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	result := SetupChannelMCP(tmp, false)
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %v", result.Error)
-	}
-	if !result.AlreadyExists {
-		t.Fatal("expected already exists")
-	}
-}
-
-func TestSetupChannelMCPRejectsSymlinkedConfig(t *testing.T) {
-	t.Parallel()
-	tmp := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "outside.json")
-	if err := os.WriteFile(outside, []byte(`{"mcpServers":{}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(tmp, ".mcp.json")); err != nil {
-		t.Fatal(err)
-	}
-
-	result := SetupChannelMCP(tmp, false)
+func TestEnsureClaudeChannelPluginReturnsErrorWhenRequired(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: true})
 	if result.Error == nil {
-		t.Fatal("expected symlinked .mcp.json to be rejected")
-	}
-	data, err := os.ReadFile(outside)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != `{"mcpServers":{}}` {
-		t.Fatalf("outside file mutated: %s", data)
+		t.Fatal("expected missing claude error")
 	}
 }
 
-func TestChannelMCPExistsEmpty(t *testing.T) {
-	t.Parallel()
-	if channelMCPExists(map[string]any{}) {
-		t.Fatal("expected false for empty settings")
+func TestEnsureClaudeChannelPluginSkipsWhenOptional(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: false})
+	if result.Error != nil || !result.Skipped {
+		t.Fatalf("result=%+v err=%v", result, result.Error)
+	}
+}
+
+func TestSetupChannelMCPDoesNotWriteMCPJSON(t *testing.T) {
+	withFakeClaudeOnPath(t)
+	calls := withFakeClaudePluginRunner(t, nil)
+	tmp := t.TempDir()
+	result := SetupChannelMCP(tmp, false)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("SetupChannelMCP should not write .mcp.json, stat err=%v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("plugin setup calls=%v", *calls)
+	}
+}
+
+func TestSetupChannelMCPReportsPluginErrors(t *testing.T) {
+	withFakeClaudeOnPath(t)
+	withFakeClaudePluginRunner(t, errors.New("boom"))
+	result := SetupChannelMCP(t.TempDir(), false)
+	if result.Error == nil {
+		t.Fatal("expected plugin setup error")
 	}
 }

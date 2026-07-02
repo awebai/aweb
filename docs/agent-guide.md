@@ -105,11 +105,11 @@ shown in the session must come from local decryption.
 
 **Plugin setup (recommended):**
 
-In Claude Code:
+From a shell:
 
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
 ```
 
 Then start Claude Code with:
@@ -118,12 +118,8 @@ Then start Claude Code with:
 claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-**Alternative (MCP server via .mcp.json):**
-
-```bash
-aw init --setup-channel
-claude --dangerously-load-development-channels server:aweb
-```
+`aw init --setup-channel` runs the same plugin setup; the channel is not a
+per-home `.mcp.json` server.
 
 When events arrive, they appear in your session as
 

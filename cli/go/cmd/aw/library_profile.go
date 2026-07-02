@@ -388,7 +388,7 @@ func configureMaterializedAgentHome(homeDir string) error {
 		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
 	}
 	if result := SetupChannelMCP(homeDir, false); result != nil && result.Error != nil {
-		return fmt.Errorf("set up channel MCP: %w", result.Error)
+		return fmt.Errorf("set up Claude Code aweb-channel plugin: %w", result.Error)
 	}
 	if result := SetupClaudeHooks(homeDir, false); result != nil && result.Error != nil {
 		return fmt.Errorf("set up Claude hooks: %w", result.Error)

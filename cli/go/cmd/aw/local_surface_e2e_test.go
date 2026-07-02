@@ -255,21 +255,6 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		prepareHome func(t *testing.T, home string) (outsidePath string, wantContent string)
 	}{
 		{
-			name: "unsafemcp",
-			prepareHome: func(t *testing.T, home string) (string, string) {
-				t.Helper()
-				outside := filepath.Join(t.TempDir(), "outside-mcp.json")
-				want := `{"mcpServers":{}}`
-				if err := os.WriteFile(outside, []byte(want), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(outside, filepath.Join(home, ".mcp.json")); err != nil {
-					t.Fatal(err)
-				}
-				return outside, want
-			},
-		},
-		{
 			name: "unsafeclaudedir",
 			prepareHome: func(t *testing.T, home string) (string, string) {
 				t.Helper()
@@ -507,17 +492,8 @@ func assertMaterializedHomeHasAwebCoordination(t *testing.T, home string) {
 			t.Fatalf("AGENTS.md missing coordination block %q:\n%s", want, text)
 		}
 	}
-	mcpRaw, err := os.ReadFile(filepath.Join(home, ".mcp.json"))
-	if err != nil {
-		t.Fatalf("materialized home missing channel MCP config: %v", err)
-	}
-	var mcp map[string]any
-	if err := json.Unmarshal(mcpRaw, &mcp); err != nil {
-		t.Fatalf("invalid .mcp.json: %v", err)
-	}
-	servers, _ := mcp["mcpServers"].(map[string]any)
-	if _, ok := servers["aweb"]; !ok {
-		t.Fatalf(".mcp.json missing aweb server: %s", mcpRaw)
+	if _, err := os.Stat(filepath.Join(home, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("materialized home unexpectedly has per-home channel .mcp.json: %v", err)
 	}
 	hooksRaw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil {

@@ -1,7 +1,7 @@
 ---
 name: aw:configure
-description: Check and set up the aweb channel connection. Verifies workspace binding, team-certificate bootstrap, and MCP server configuration.
-allowed-tools: Bash(aw *), Bash(cat *), Bash(test *), Bash(ls *)
+description: Check and set up the aweb channel connection. Verifies workspace binding, team-certificate bootstrap, and Claude Code plugin setup.
+allowed-tools: Bash(aw *), Bash(claude *), Bash(test *), Bash(ls *)
 ---
 
 # Configure aweb channel
@@ -34,10 +34,8 @@ Diagnose and fix the aweb channel setup for this project.
    aw service init --service <service-url> --team <team:namespace>
    ```
 
-   After `.aw/workspace.yaml` exists, continue with the channel MCP
-   configuration checks below.
-
-   Do not instruct the user to use legacy project bootstrap commands.
+   After `.aw/workspace.yaml` exists, continue with the channel plugin checks
+   below. Do not instruct the user to use legacy project bootstrap commands.
 
 2. **Verify the workspace is valid.**
 
@@ -49,39 +47,22 @@ Diagnose and fix the aweb channel setup for this project.
    binding. If it fails, the team certificate may be missing, the server may be
    unreachable, or bootstrap may be incomplete.
 
-3. **Check channel MCP configuration.**
+3. **Ensure the Claude Code channel plugin.**
 
    ```bash
-   cat .mcp.json 2>/dev/null || echo "MISSING"
+   claude plugin marketplace add awebai/claude-plugins
+   claude plugin install aweb-channel@awebai-marketplace
    ```
 
-   Look for an `mcpServers.aweb` entry. If it is missing, tell the user to run:
-
-   ```bash
-   aw init --setup-channel
-   ```
-
-   Or add the entry manually to `.mcp.json`:
-
-   ```json
-   {
-     "mcpServers": {
-       "aweb": {
-         "command": "npx",
-         "args": ["@awebai/claude-channel"],
-         "cwd": "<project directory>"
-       }
-     }
-   }
-   ```
-
-   The `cwd` must point to the directory containing `.aw/workspace.yaml`.
+   These commands are non-interactive and idempotent. `aw init --setup-channel`
+   runs the same plugin setup. Do not configure a per-home `.mcp.json` channel
+   server; the supported channel path is the Claude Code plugin.
 
 4. **Report status.** Summarize what was found and what the user still needs to
    do. If everything is configured, tell the user to start Claude Code with:
 
    ```bash
-   claude --dangerously-load-development-channels server:aweb
+   claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
    ```
 
 Reference model: `docs/aweb-sot.md`, `docs/awid-sot.md`, and

@@ -18,8 +18,8 @@ shipped profile.
 
 - You are a member of a team and run `aw` from your own workspace.
 - An `aw` binary with blueprint support (`aw team add … --runtime`).
-- `claude` (Claude Code) on `PATH`, with the `aweb-channel` plugin available
-  from the `awebai-marketplace` marketplace (it loads as a *plugin*, see step 3).
+- `claude` (Claude Code) on `PATH`. Setup can install the `aweb-channel`
+  plugin from the `awebai-marketplace` marketplace (it loads as a *plugin*, see step 2).
 - `tmux` — each agent runs `claude` interactively in its own window.
 
 ## The sequence (proven, exact)
@@ -35,16 +35,13 @@ team-cert + the evolvable `.aw/profile/`), `.claude/settings.json` (the
 `claude-code`); it is never inferred from the profile (see the composition
 contract).
 
-### 2. Remove the materialized `.mcp.json`
+### 2. Ensure the Claude Code channel plugin
 ```
-rm -f <HOME>/.mcp.json
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
 ```
-`aw team add` writes a `.mcp.json` that runs the channel as an npx MCP server
-(`npx @awebai/claude-channel`). **That is the wrong mechanism** — it shows a
-"setup issue: MCP" and does not connect. The live agents (`aw-developer`,
-`aw-coordinator`) have **no `.mcp.json`**; the channel is loaded as a Claude
-Code **plugin** (step 3). Remove the file. *(Open issue: `SetupChannelMCP`
-should not write this file for the plugin path — see "Open issues".)*
+These commands are non-interactive and idempotent. The live agents have **no
+channel `.mcp.json`**; the channel is loaded as a Claude Code **plugin**.
 
 ### 3. Start `claude` in a tmux window with the channel plugin
 ```
@@ -98,8 +95,8 @@ profile's mission.
 - **`aw run claude`** — the native wake-loop runner; it *does* run the agent,
   but it is explicitly out of scope for this flow (Juan's call). Use plain
   `claude` with the flags above.
-- **The materialized `.mcp.json` (npx channel server)** — wrong mechanism;
-  remove it (step 2). The channel is a plugin, not an MCP server.
+- **Per-home `.mcp.json` channel servers** — wrong mechanism. The channel is a
+  plugin, not an MCP server.
 
 ## Deterministic path (the goal; not yet available)
 
@@ -126,10 +123,6 @@ the Enter-keystroke pattern in step 4 is the way, or file `/feedback` for a
 
 ## Open issues
 
-- **`SetupChannelMCP` writes a `.mcp.json` for the plugin path** — it should not
-  (the plugin is the channel). The leftover `.mcp.json` is what causes "1 setup
-  issue: MCP"; even after `rm` the doctor may still flag MCP. Track + fix so a
-  materialized home is clean for the plugin path.
 - **Non-deterministic start** — the dev-channel confirmation (above) until
   allowlisting.
 
@@ -140,6 +133,6 @@ coordinator's. The coordinator decides what work and who is needed; AR
 provisions, onboards, and runs the agents. So this runbook is the source for
 the **AR profile's core instantiation skill**: the exact commands (steps 1-5),
 the Enter-keystroke handling with read-before-send, the dead-ends so it does not
-waste time on background launchers/`aw run`/`.mcp.json`, and mail-based onboarding
+waste time on background launchers/`aw run`/per-home channel `.mcp.json`, and mail-based onboarding
 after start. The coordinator profile only needs to know that it *requests*
 staffing from AR.

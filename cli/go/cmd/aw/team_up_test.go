@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func resetTeamUpDetectorsForTest(t *testing.T) {
@@ -14,6 +17,20 @@ func resetTeamUpDetectorsForTest(t *testing.T) {
 	oldDetect := teamUpDetectActiveHomes
 	t.Cleanup(func() { teamUpDetectActiveHomes = oldDetect })
 	teamUpDetectActiveHomes = func(string) (map[string]teamUpRunningProcess, error) { return map[string]teamUpRunningProcess{}, nil }
+}
+
+func resetTeamUpTmuxForTest(t *testing.T) {
+	t.Helper()
+	oldExists := teamUpSessionExists
+	oldRun := teamUpRunTmux
+	oldOutput := teamUpRunTmuxOutput
+	oldWait := teamUpConfirmClaudePromptWait
+	t.Cleanup(func() {
+		teamUpSessionExists = oldExists
+		teamUpRunTmux = oldRun
+		teamUpRunTmuxOutput = oldOutput
+		teamUpConfirmClaudePromptWait = oldWait
+	})
 }
 
 func writeMaterializedAgentForTeamUp(t *testing.T, root, name, runtimeKind string) string {
@@ -55,7 +72,7 @@ func TestTeamUpPlanEnumeratesMaterializedAgents(t *testing.T) {
 	if len(plan.Agents) != 2 {
 		t.Fatalf("agents=%+v", plan.Agents)
 	}
-	if plan.Agents[0].Name != "developer" || plan.Agents[0].HomeDir != devHome || plan.Agents[0].Action != teamUpActionStart || strings.Join(plan.Agents[0].Command, " ") != "claude --dangerously-skip-permissions --dangerously-load-development-channels server:aweb" {
+	if plan.Agents[0].Name != "developer" || plan.Agents[0].HomeDir != devHome || plan.Agents[0].Action != teamUpActionStart || strings.Join(plan.Agents[0].Command, " ") != "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" {
 		t.Fatalf("developer plan=%+v", plan.Agents[0])
 	}
 	if plan.Agents[1].Name != "reviewer" || plan.Agents[1].HomeDir != piHome || strings.Join(plan.Agents[1].Command, " ") != "pi" {
@@ -141,15 +158,198 @@ func TestPrintTeamUpDryRunPlan(t *testing.T) {
 	oldJSON := jsonFlag
 	jsonFlag = false
 	t.Cleanup(func() { jsonFlag = oldJSON })
-	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: "/tmp/dev", RuntimeKind: "claude-code", Command: []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", "server:aweb"}, Action: teamUpActionStart}}}
+	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: "/tmp/dev", RuntimeKind: "claude-code", Command: []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", "plugin:aweb-channel@awebai-marketplace"}, Action: teamUpActionStart}}}
 	var out bytes.Buffer
 	if err := printTeamUpPlan(&out, plan); err != nil {
 		t.Fatalf("printTeamUpPlan: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"tmux session: aw-team", "reconcile: 1 to start, 0 already up", "developer (claude-code): start", "claude --dangerously-skip-permissions --dangerously-load-development-channels server:aweb"} {
+	for _, want := range []string{"tmux session: aw-team", "reconcile: 1 to start, 0 already up", "developer (claude-code): start", "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		sessionExists bool
+		wantPrefix    string
+	}{
+		{name: "new-session", sessionExists: false, wantPrefix: "new-session -d -s aw-team -n developer "},
+		{name: "new-window", sessionExists: true, wantPrefix: "new-window -t aw-team -n developer "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTeamUpTmuxForTest(t)
+			teamUpSessionExists = func(string) bool { return tc.sessionExists }
+			var got []string
+			teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+				got = append(got, strings.Join(args, " "))
+				return nil
+			}
+			agent := teamUpAgentPlan{Name: "developer", HomeDir: "/tmp/dev home", Command: []string{"claude", "--flag"}}
+			if err := launchAgentWindow(nil, "aw-team", agent); err != nil {
+				t.Fatalf("launchAgentWindow: %v", err)
+			}
+			if len(got) != 1 || !strings.HasPrefix(got[0], tc.wantPrefix) || !strings.Contains(got[0], "cd '/tmp/dev home' && exec 'claude' '--flag'") {
+				t.Fatalf("tmux calls=%v", got)
+			}
+		})
+	}
+}
+
+func TestConfirmClaudeChannelPromptAnswersTrustThenDevChannelPrompts(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 2 * time.Second
+	outputs := []string{
+		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n",
+		"WARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n",
+		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n",
+	}
+	captures := 0
+	var sent []string
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		if captures >= len(outputs) {
+			return outputs[len(outputs)-1], nil
+		}
+		out := outputs[captures]
+		captures++
+		return out, nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		sent = append(sent, strings.Join(args, " "))
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
+	}
+	want := []string{"send-keys -t aw-team:developer Enter", "send-keys -t aw-team:developer Enter"}
+	if strings.Join(sent, "|") != strings.Join(want, "|") {
+		t.Fatalf("sent=%v, want %v", sent, want)
+	}
+}
+
+func TestConfirmClaudeChannelPromptDoesNotTreatBypassAloneAsComplete(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 2 * time.Second
+	outputs := []string{
+		"WARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n⏵⏵ bypass permissions on\n",
+		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\n⏵⏵ bypass permissions on\n",
+	}
+	captures := 0
+	var sent []string
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		if captures >= len(outputs) {
+			return outputs[len(outputs)-1], nil
+		}
+		out := outputs[captures]
+		captures++
+		return out, nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		sent = append(sent, strings.Join(args, " "))
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
+	}
+	if len(sent) != 1 || sent[0] != "send-keys -t aw-team:developer Enter" {
+		t.Fatalf("sent=%v", sent)
+	}
+}
+
+func TestConfirmClaudeChannelPromptHandlesStaleTrustTextAboveDevPrompt(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 2 * time.Second
+	outputs := []string{
+		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n",
+		"Is this a project you created or one you trust?\n1. Yes, I trust this folder\n2. No, exit\n\nWARNING: Loading development channels\n1. I am using this for local development\n2. Exit\n",
+		"Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n",
+	}
+	captures := 0
+	var sent []string
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		if captures >= len(outputs) {
+			return outputs[len(outputs)-1], nil
+		}
+		out := outputs[captures]
+		captures++
+		return out, nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		sent = append(sent, strings.Join(args, " "))
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
+	}
+	want := []string{"send-keys -t aw-team:developer Enter", "send-keys -t aw-team:developer Enter"}
+	if strings.Join(sent, "|") != strings.Join(want, "|") {
+		t.Fatalf("sent=%v, want %v", sent, want)
+	}
+}
+
+func TestConfirmClaudeChannelPromptSendsEnterAfterSeeingPrompt(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 2 * time.Second
+	captures := 0
+	var sent []string
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		captures++
+		if captures == 1 {
+			return "1. I am using this for local development\n2. Exit\n", nil
+		}
+		return "Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n", nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		sent = append(sent, strings.Join(args, " "))
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
+	}
+	if len(sent) != 1 || sent[0] != "send-keys -t aw-team:developer Enter" {
+		t.Fatalf("sent=%v", sent)
+	}
+}
+
+func TestConfirmClaudeChannelPromptAlreadyCompleteSendsNothing(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 2 * time.Second
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		return "Channels (experimental) messages from plugin:aweb-channel@awebai-marketplace inject directly in this session\nbypass permissions on\n", nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		t.Fatalf("send-keys should not run when channel is already complete: %v", args)
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
+	}
+}
+
+func TestConfirmClaudeChannelPromptDoesNotSendBlindBeforePrompt(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	teamUpConfirmClaudePromptWait = 20 * time.Millisecond
+	teamUpRunTmuxOutput = func(args ...string) (string, error) { return "loading plugin...", nil }
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		t.Fatalf("send-keys should not run before prompt is visible: %v", args)
+		return nil
+	}
+	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
+	err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	for _, want := range []string{"timed out waiting", "no known prompt (trust-folder / dev-channel)", "prompt wording may have changed", "claudeChannelPromptVisible", "claudeTrustFolderPromptVisible", "loading plugin..."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("timeout error missing %q:\n%v", want, err)
 		}
 	}
 }

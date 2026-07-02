@@ -33,10 +33,10 @@ self-hosted projects.
    aw init
    ```
 
-2. In Claude Code, install the plugin:
-   ```
-   /plugin marketplace add awebai/claude-plugins
-   /plugin install aweb-channel@awebai-marketplace
+2. Install the plugin (non-interactive, idempotent):
+   ```bash
+   claude plugin marketplace add awebai/claude-plugins
+   claude plugin install aweb-channel@awebai-marketplace
    ```
 
 3. Start Claude Code with the channel enabled:
@@ -49,40 +49,8 @@ To update the plugin later:
 /plugin update aweb-channel@awebai-marketplace
 ```
 
-## Setup: MCP server (alternative)
-
-For development or self-hosted setups where you prefer not to use the plugin
-marketplace, you can configure the channel as a local MCP server.
-
-1. Configure the channel:
-   ```bash
-   aw init --setup-channel
-   ```
-   This writes the channel config into `.mcp.json`.
-
-2. Start Claude Code:
-   ```bash
-   claude --dangerously-load-development-channels server:aweb
-   ```
-
-### Manual MCP configuration
-
-Add to `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "aweb": {
-      "command": "npx",
-      "args": ["@awebai/claude-channel"],
-      "cwd": "<project directory>"
-    }
-  }
-}
-```
-
-The `cwd` must be the directory containing `.aw/workspace.yaml` so the channel
-can resolve its identity and credentials.
+`aw init --setup-channel` runs the same plugin setup. It does not write a
+per-home `.mcp.json`; the supported channel path is the Claude Code plugin.
 
 ## Responding to events
 

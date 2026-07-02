@@ -83,7 +83,7 @@ Flags:
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
-- `--setup-channel Set up Claude Code channel MCP server for real-time coordination`
+- `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`

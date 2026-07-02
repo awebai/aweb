@@ -1,73 +1,63 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/awebai/aw/internal/pathpreflight"
 )
 
-func channelMCPExists(settings map[string]any) bool {
-	servers, ok := settings["mcpServers"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, ok = servers["aweb"]
-	return ok
+const (
+	claudeChannelMarketplace = "awebai/claude-plugins"
+	claudeChannelPlugin      = "aweb-channel@awebai-marketplace"
+	claudeChannelSpec        = "plugin:" + claudeChannelPlugin
+)
+
+var runClaudeChannelPluginCommand = runClaudeChannelPluginCommandExec
+
+func runClaudeChannelPluginCommandExec(args ...string) error {
+	cmd := exec.Command("claude", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func addChannelMCP(settings map[string]any, cwd string) {
-	servers, ok := settings["mcpServers"].(map[string]any)
-	if !ok {
-		servers = map[string]any{}
-		settings["mcpServers"] = servers
-	}
-	servers["aweb"] = map[string]any{
-		"command": "npx",
-		"args":    []string{"@awebai/claude-channel"},
-		"cwd":     cwd,
-	}
+type channelPluginOptions struct {
+	RequireClaude bool
 }
 
-func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
-	result := &claudeHooksResult{
-		FilePath: filepath.Join(repoRoot, ".mcp.json"),
-	}
-
-	if err := pathpreflight.PreflightFile(result.FilePath, "channel MCP config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
-		result.Error = err
-		result.Skipped = true
-		return result
-	}
-
-	content, err := os.ReadFile(result.FilePath)
-	if err != nil && !os.IsNotExist(err) {
-		result.Error = fmt.Errorf("reading %s: %w", result.FilePath, err)
-		result.Skipped = true
-		return result
-	}
-
-	settings := map[string]any{}
-	if len(content) > 0 {
-		if err := json.Unmarshal(content, &settings); err != nil {
-			result.Error = fmt.Errorf("parsing %s: %w", result.FilePath, err)
+func EnsureClaudeChannelPlugin(opts channelPluginOptions) *claudeHooksResult {
+	result := &claudeHooksResult{FilePath: "Claude Code aweb-channel plugin"}
+	if _, err := exec.LookPath("claude"); err != nil {
+		if opts.RequireClaude {
+			result.Error = fmt.Errorf("claude is required to install the aweb-channel plugin; install Claude Code and try again")
+		} else {
 			result.Skipped = true
-			return result
 		}
-	}
-
-	if channelMCPExists(settings) {
-		result.AlreadyExists = true
 		return result
 	}
+	if err := runClaudeChannelPluginCommand("plugin", "marketplace", "add", claudeChannelMarketplace); err != nil {
+		result.Error = fmt.Errorf("claude plugin marketplace add %s: %w", claudeChannelMarketplace, err)
+		return result
+	}
+	if err := runClaudeChannelPluginCommand("plugin", "install", claudeChannelPlugin); err != nil {
+		result.Error = fmt.Errorf("claude plugin install %s: %w", claudeChannelPlugin, err)
+		return result
+	}
+	result.Created = true
+	return result
+}
 
+// SetupChannelMCP is retained as the setup hook called by init/materialization,
+// but it no longer writes .mcp.json. The working channel path is the Claude Code
+// plugin, installed idempotently when Claude Code is available.
+func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	result := &claudeHooksResult{FilePath: filepath.Join(repoRoot, ".mcp.json")}
 	if askConfirmation {
 		answer, err := promptString(
-			"Set up Claude Code channel for real-time coordination?\n"+
-				"  (Requires starting Claude Code with: claude --dangerously-load-development-channels server:aweb)\n"+
+			"Set up Claude Code aweb-channel plugin for real-time coordination?\n"+
+				"  (Requires starting Claude Code with: claude --dangerously-load-development-channels "+claudeChannelSpec+")\n"+
 				"  (y/n)", "y")
 		if err != nil {
 			result.Error = err
@@ -80,32 +70,9 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 			return result
 		}
 	}
-
-	addChannelMCP(settings, repoRoot)
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		result.Error = fmt.Errorf("marshaling settings: %w", err)
-		result.Skipped = true
-		return result
-	}
-	if err := pathpreflight.PreflightFile(result.FilePath, "channel MCP config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
-		result.Error = err
-		result.Skipped = true
-		return result
-	}
-	if err := os.WriteFile(result.FilePath, append(data, '\n'), 0o644); err != nil {
-		result.Error = fmt.Errorf("writing %s: %w", result.FilePath, err)
-		result.Skipped = true
-		return result
-	}
-
-	if len(content) == 0 {
-		result.Created = true
-	} else {
-		result.Updated = true
-	}
-	return result
+	pluginResult := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: false})
+	pluginResult.FilePath = result.FilePath
+	return pluginResult
 }
 
 func printChannelMCPResult(result *claudeHooksResult) {
@@ -113,48 +80,30 @@ func printChannelMCPResult(result *claudeHooksResult) {
 		return
 	}
 	if result.Error != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not set up channel MCP server: %v\n", result.Error)
+		fmt.Fprintf(os.Stderr, "Warning: could not set up Claude Code aweb-channel plugin: %v\n", result.Error)
 		printManualChannelInstructions()
-		return
-	}
-	if result.AlreadyExists {
-		fmt.Println("Channel MCP server: already configured in .mcp.json")
-		printChannelStartInstructions()
 		return
 	}
 	if result.Skipped {
-		fmt.Println("Channel MCP server: skipped")
+		fmt.Println("Claude Code aweb-channel plugin: skipped")
 		printManualChannelInstructions()
 		return
 	}
-	if result.Created {
-		fmt.Printf("Created %s with channel MCP server\n", result.FilePath)
-		printChannelStartInstructions()
-		return
-	}
-	if result.Updated {
-		fmt.Printf("Added channel MCP server to %s\n", result.FilePath)
+	if result.Created || result.Updated || result.AlreadyExists {
+		fmt.Println("Claude Code aweb-channel plugin: installed or already present")
 		printChannelStartInstructions()
 	}
 }
 
 func printChannelStartInstructions() {
 	fmt.Println("  Start Claude Code with:")
-	fmt.Println("    claude --dangerously-load-development-channels server:aweb")
-	fmt.Println("  Or install the plugin instead: /plugin install aweb-channel@awebai-marketplace")
+	fmt.Println("    claude --dangerously-load-development-channels " + claudeChannelSpec)
 }
 
 func printManualChannelInstructions() {
 	fmt.Println()
-	fmt.Println("To enable the channel MCP server, add to .mcp.json:")
-	fmt.Println(`  {
-    "mcpServers": {
-      "aweb": {
-        "command": "npx",
-        "args": ["@awebai/claude-channel"],
-        "cwd": "<workspace directory>"
-      }
-    }
-  }`)
+	fmt.Println("To enable the aweb channel for Claude Code, install the plugin:")
+	fmt.Println("    claude plugin marketplace add " + claudeChannelMarketplace)
+	fmt.Println("    claude plugin install " + claudeChannelPlugin)
 	printChannelStartInstructions()
 }

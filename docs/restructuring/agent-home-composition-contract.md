@@ -52,7 +52,6 @@ A bound (non-empty) profile materializes to:
     <skill-name>/SKILL.md
   artifacts/                     # installed
     <artifact files>
-  .mcp.json                      # aweb channel MCP server config (§7)
   .claude/settings.json          # aw notify PostToolUse hook (§7)
   .aw/
     profile/                     # the evolvable profile (§8)
@@ -193,7 +192,7 @@ materialization also converges the home with the normal `aw init` agent setup:
 
 - append/refresh the team's active aweb coordination instructions in `AGENTS.md`
   between `<!-- AWEB:START -->` and `<!-- AWEB:END -->` markers;
-- create/update `.mcp.json` with the `aweb` channel MCP server;
+- ensure the Claude Code `aweb-channel` plugin is installed when Claude Code is available;
 - create/update `.claude/settings.json` with the `aw notify` `PostToolUse` hook.
 
 The coordination block is not duplicated in public profiles or blueprints. It is

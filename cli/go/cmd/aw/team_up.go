@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
@@ -62,7 +63,13 @@ type teamUpRunningProcess struct {
 	CWD     string
 }
 
-var teamUpDetectActiveHomes = detectTeamUpActiveHomes
+var (
+	teamUpDetectActiveHomes       = detectTeamUpActiveHomes
+	teamUpSessionExists           = tmuxSessionExists
+	teamUpRunTmux                 = runTmux
+	teamUpRunTmuxOutput           = runTmuxOutput
+	teamUpConfirmClaudePromptWait = 45 * time.Second
+)
 
 func init() {
 	teamUpAttach = true
@@ -96,8 +103,15 @@ func runTeamHumanUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	attach := teamUpAttach && !teamUpNoAttach
-	if err := executeTeamUpPlan(cmd, plan, teamUpRecreate, attach); err != nil {
+	started, err := executeTeamUpPlan(cmd, plan, teamUpRecreate, false)
+	if err != nil {
 		return err
+	}
+	if err := confirmStartedClaudeChannelPrompts(plan.Session, started); err != nil {
+		return err
+	}
+	if attach && tmuxSessionExists(plan.Session) {
+		return attachTeamUpSession(cmd, plan.Session)
 	}
 	return nil
 }
@@ -195,7 +209,7 @@ func readTeamUpRuntimeKind(home string) (string, error) {
 func teamUpCommandForRuntime(runtimeKind string) ([]string, error) {
 	switch strings.TrimSpace(runtimeKind) {
 	case "claude-code":
-		return []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", "server:aweb"}, nil
+		return []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", claudeChannelSpec}, nil
 	case "pi":
 		return []string{"pi"}, nil
 	case "codex", "local-shell":
@@ -223,8 +237,8 @@ func preflightTeamUpCommands(plan teamUpPlan) error {
 		}
 	}
 	if needsClaude {
-		if _, err := exec.LookPath("claude"); err != nil {
-			return fmt.Errorf("claude is required for one or more claude-code agents; install Claude Code and try again")
+		if result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: true}); result != nil && result.Error != nil {
+			return result.Error
 		}
 	}
 	if needsPi {
@@ -235,40 +249,32 @@ func preflightTeamUpCommands(plan teamUpPlan) error {
 	return nil
 }
 
-func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, attach bool) error {
+func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, attach bool) ([]teamUpAgentPlan, error) {
 	starts := teamUpAgentsToStart(plan)
-	exists := tmuxSessionExists(plan.Session)
+	exists := teamUpSessionExists(plan.Session)
 	if exists && recreate {
-		if err := runTmux(cmd, "kill-session", "-t", plan.Session); err != nil {
-			return err
+		if err := teamUpRunTmux(cmd, "kill-session", "-t", plan.Session); err != nil {
+			return nil, err
 		}
 		exists = false
 	}
 	if len(starts) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "aw team up: no missing agents to start in session %q\n", plan.Session)
 		if attach && exists {
-			return attachTeamUpSession(cmd, plan.Session)
+			return nil, attachTeamUpSession(cmd, plan.Session)
 		}
-		return nil
+		return nil, nil
 	}
-	for i, agent := range starts {
-		shellCmd := teamUpShellCommand(agent)
-		if !exists && i == 0 {
-			if err := runTmux(cmd, "new-session", "-d", "-s", plan.Session, "-n", safeTmuxName(agent.Name), shellCmd); err != nil {
-				return err
-			}
-			exists = true
-			continue
-		}
-		if err := runTmux(cmd, "new-window", "-t", plan.Session, "-n", safeTmuxName(agent.Name), shellCmd); err != nil {
-			return err
+	for _, agent := range starts {
+		if err := launchAgentWindow(cmd, plan.Session, agent); err != nil {
+			return nil, err
 		}
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "aw team up: started %d missing agent(s) in tmux session %q\n", len(starts), plan.Session)
 	if attach {
-		return attachTeamUpSession(cmd, plan.Session)
+		return starts, attachTeamUpSession(cmd, plan.Session)
 	}
-	return nil
+	return starts, nil
 }
 
 func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {
@@ -279,6 +285,14 @@ func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {
 		}
 	}
 	return starts
+}
+
+func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan) error {
+	shellCmd := teamUpShellCommand(agent)
+	if !teamUpSessionExists(session) {
+		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", safeTmuxName(agent.Name), shellCmd)
+	}
+	return teamUpRunTmux(cmd, "new-window", "-t", session, "-n", safeTmuxName(agent.Name), shellCmd)
 }
 
 func tmuxSessionExists(session string) bool {
@@ -377,20 +391,122 @@ func canonicalTeamUpPath(path string) string {
 
 func attachTeamUpSession(cmd *cobra.Command, session string) error {
 	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
-		return runTmux(cmd, "switch-client", "-t", session)
+		return teamUpRunTmux(cmd, "switch-client", "-t", session)
 	}
-	return runTmux(cmd, "attach-session", "-t", session)
+	return teamUpRunTmux(cmd, "attach-session", "-t", session)
 }
 
 func runTmux(cmd *cobra.Command, args ...string) error {
 	c := exec.Command("tmux", args...)
-	c.Stdin = cmd.InOrStdin()
-	c.Stdout = cmd.OutOrStdout()
-	c.Stderr = cmd.ErrOrStderr()
+	if cmd != nil {
+		c.Stdin = cmd.InOrStdin()
+		c.Stdout = cmd.OutOrStdout()
+		c.Stderr = cmd.ErrOrStderr()
+	}
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+func runTmuxOutput(args ...string) (string, error) {
+	data, err := exec.Command("tmux", args...).CombinedOutput()
+	if err != nil {
+		return string(data), fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
+	}
+	return string(data), nil
+}
+
+func confirmStartedClaudeChannelPrompts(session string, started []teamUpAgentPlan) error {
+	deadline := time.Now().Add(teamUpConfirmClaudePromptWait)
+	for _, agent := range started {
+		if agent.RuntimeKind != "claude-code" {
+			continue
+		}
+		if err := confirmClaudeChannelPrompt(session, agent, deadline); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func confirmClaudeChannelPrompt(session string, agent teamUpAgentPlan, deadline time.Time) error {
+	target := teamUpWindowTarget(session, agent.Name)
+	var last string
+	answeredPrompt := ""
+	for time.Now().Before(deadline) {
+		pane, err := teamUpRunTmuxOutput("capture-pane", "-t", target, "-p")
+		if err == nil {
+			last = pane
+			if claudeChannelPromptComplete(pane) {
+				return nil
+			}
+			prompt := claudeBlockingPromptKind(pane)
+			if prompt == "" {
+				answeredPrompt = ""
+			} else if prompt != answeredPrompt {
+				if err := teamUpRunTmux(nil, "send-keys", "-t", target, "Enter"); err != nil {
+					return err
+				}
+				answeredPrompt = prompt
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for Claude Code to load the aweb channel in tmux window %q within %s; no known prompt (trust-folder / dev-channel) reached completion. Claude's prompt wording may have changed; update the prompt signatures in team_up.go (claudeChannelPromptVisible / claudeTrustFolderPromptVisible). Last pane output:\n%s", target, teamUpConfirmClaudePromptWait, last)
+}
+
+func teamUpWindowTarget(session, agentName string) string {
+	return safeTmuxName(session) + ":" + safeTmuxName(agentName)
+}
+
+func claudeBlockingPromptKind(pane string) string {
+	lower := strings.ToLower(pane)
+	trustIdx := claudeTrustFolderPromptIndex(lower)
+	channelIdx := claudeChannelPromptIndex(lower)
+	switch {
+	case trustIdx < 0 && channelIdx < 0:
+		return ""
+	case channelIdx > trustIdx:
+		return "dev-channel"
+	default:
+		return "trust-folder"
+	}
+}
+
+func claudeTrustFolderPromptVisible(pane string) bool {
+	return claudeTrustFolderPromptIndex(strings.ToLower(pane)) >= 0
+}
+
+func claudeTrustFolderPromptIndex(lower string) int {
+	return maxStringIndex(lower, "trust this folder", "is this a project you created or one you trust")
+}
+
+func claudeChannelPromptVisible(pane string) bool {
+	return claudeChannelPromptIndex(strings.ToLower(pane)) >= 0
+}
+
+func claudeChannelPromptIndex(lower string) int {
+	idx := strings.LastIndex(lower, "i am using this for local development")
+	if idx < 0 || !strings.Contains(lower[idx:], "exit") {
+		return -1
+	}
+	return idx
+}
+
+func maxStringIndex(s string, needles ...string) int {
+	maxIdx := -1
+	for _, needle := range needles {
+		if idx := strings.LastIndex(s, needle); idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+	return maxIdx
+}
+
+func claudeChannelPromptComplete(pane string) bool {
+	lower := strings.ToLower(pane)
+	return strings.Contains(lower, "messages from plugin:aweb-channel")
 }
 
 func printTeamUpPlan(out interface{ Write([]byte) (int, error) }, plan teamUpPlan) error {
