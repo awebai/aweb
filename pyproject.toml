@@ -49,7 +49,7 @@ packages = ["src/library"]
 # pytest pythonpath below.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "0de73deb73c133c7fb85ad3de3d5827616e19500" }
-aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "89f7a5a50c863cba90bc9aa9a3ba1d5c506e21ca" }
+aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "316de899ae3df402269494a2f59f3841921f5ce9" }
 
 [dependency-groups]
 dev = [

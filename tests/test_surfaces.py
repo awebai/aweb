@@ -83,6 +83,24 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     assert "aw team add bob@aweb.team/reviewer=claude-code" in html
     assert "aw agent start alice --runtime claude-code" in html
     assert "AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code" in html
+    assert 'href="https://awid.ai" class="brand-word"' in html
+    assert 'href="https://aweb.ai" class="brand-word"' in html
+
+
+def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
+    landing = _client().get("/").text
+    reference = _client().get("/reference").text
+    for html in (landing, reference):
+        assert "brand-mark" not in html
+        assert (
+            'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. '
+            '<span class="brand-word">awid</span> is the identity authority.'
+        ) in html
+        assert "Public blueprints and private team shelves for " in html
+        assert '<span class="brand-word">awid</span> teams' in html
+
+    assert '<span class="brand-word">aweb</span> protocol' in landing
+    assert '<a href="https://awid.ai" class="brand-word">awid</a> identity' in landing
 
 
 def test_reference_page_documents_every_operation_dual() -> None:

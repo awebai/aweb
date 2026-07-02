@@ -38,7 +38,7 @@ _NAV_LINKS = (
     NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Public blueprints and private team shelves for <span class=\"brand-mark\">awid</span> teams — "
+    "Public blueprints and private team shelves for <span class=\"brand-word\">awid</span> teams — "
     "adopt, bind, materialize, and evolve your agents' profiles."
 )
 _FOOTER_COLUMNS = (
@@ -60,7 +60,7 @@ _FOOTER_COLUMNS = (
     ),
 )
 _FOOTER_BOTTOM = (
-    'library is a Native Agentic App on the <span class="brand-mark">aweb</span>.ai hub. <span class="brand-mark">awid</span> is the identity authority.'
+    'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority.'
 )
 # library's domain values for the shared docs generators: live path-param values
 # that make the public catalog reads genuinely runnable, the public-reads phrase,
@@ -181,7 +181,7 @@ _WHY_SECTION = """    <section class="section section--tint">
             <p class="kicker">Why this exists</p>
             <h2>Agents need evolving job descriptions to work as a team</h2>
             <p class="why-need">A coordinator routes the work, a developer writes the code, a reviewer checks it. Each role needs a clear, stable account of its job.</p>
-            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
+            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-word">awid</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
           </div>
           <div>
             <p class="kicker" style="color:var(--faint)">What library gives you</p>
@@ -212,7 +212,7 @@ _WHATIS_SECTION = """    <section class="section">
         </style>
         <p class="kicker">What it is</p>
         <h2 class="whatis-h2">A Native Agentic App</h2>
-        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the <span class="brand-mark">aweb</span> protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
+        <p class="whatis-lead">library is built for agents from the ground up: its whole API is part of the <span class="brand-word">aweb</span> protocol, so any agent — or person — can discover and drive it without writing custom code.</p>
         <ul class="whatis-grid">
           <li>
             <p class="kicker">CLI-native API</p>
@@ -228,7 +228,7 @@ _WHATIS_SECTION = """    <section class="section">
           </li>
           <li>
             <p class="kicker">Verified by identity</p>
-            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai" class="brand-mark">awid</a> — auditable and tamper-evident.</p>
+            <p>The manifest is public and pinned by a digest; every call is signed with your team's <a href="https://awid.ai" class="brand-word">awid</a> — auditable and tamper-evident.</p>
           </li>
         </ul>
         <p class="whatis-practice">In practice: a person and an agent run the exact same <code>aw library</code> commands. Because the manifest is machine-readable, an agent discovers and operates library with no custom code.</p>
@@ -262,7 +262,7 @@ _ENGINEERS_SECTION = """    <section class="section section--tint" id="engineers
           </div>
           <div>
             <dt>awid-signed</dt>
-            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai" class="brand-mark">awid</a> identity, and the signer is recorded with each change.</dd>
+            <dd>No app accounts or API keys. Every write is signed by your team's <a href="https://awid.ai" class="brand-word">awid</a> identity, and the signer is recorded with each change.</dd>
           </div>
           <div>
             <dt>non-destructive merge</dt>
