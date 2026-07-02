@@ -23,16 +23,44 @@ materializes them. "Public" is a publish, not a flag.
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
 pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team interactively; `aw team add` materializes starter agents from the
-`aweb.team` blueprint over a public read (no Library plugin on aw 1.30+);
-`aw agent start` runs them.
+and first team; `aw team add` materializes starter agents from the `aweb.team`
+blueprint over a public read (no Library plugin on aw 1.30+); then you run each
+agent **interactively in its home** with its runtime.
 
 ```bash
+# Install the aw CLI, create your account + first team
 npm install -g @awebai/aw
 aw init
+
+# Add starter agents from the aweb.team blueprint
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code
-aw agent start alice --runtime claude-code
+```
+
+Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
+agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
+directly in the agent home.
+
+**Claude Code** — install the channel plugin once, inside Claude Code:
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+then launch it in the agent home:
+
+```bash
+cd agents/instances/alice
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+**pi** — install the extension once, then launch it in the agent home:
+
+```bash
+pi install npm:@awebai/pi@latest
+cd agents/instances/alice
+pi
 ```
 
 Add an agent to an existing hosted team with a team API key (no dashboard
@@ -42,10 +70,8 @@ session; the key is the whole credential):
 AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
 ```
 
-The runtime suffix (`=claude-code` above) is a parameter, not a divergence:
-`claude-code|codex|pi|local-shell` — a surface may showcase whichever it
-prefers. The blueprint is always `aweb.team`; override it with `--blueprint`
-(or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+The blueprint is always `aweb.team`; override it with `--blueprint` (or
+`AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
 `AWEB_LIBRARY_URL`).
 
 The authenticated shelf/evolution loop is opt-in. Install the library plugin only
@@ -60,7 +86,7 @@ to choose the runtime; they are not auto-applied.
 ## How to call it
 
 The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
-then aw agent start NAME --runtime RUNTIME. The aw library plugin verbs are the authenticated shelf surface for teams that
+then cd agents/instances/NAME and launch Claude Code or pi directly. The aw library plugin verbs are the authenticated shelf surface for teams that
 want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same
 surface; call them directly with aw id request --team-auth (the low-level escape

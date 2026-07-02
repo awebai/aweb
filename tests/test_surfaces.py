@@ -26,7 +26,10 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     # Native Agentic App framing: core aw onboarding plus opt-in shelf verbs.
     assert "Native Agentic App" in response.text
     assert "aw team add alice@aweb.team/developer=claude-code" in response.text
-    assert "aw agent start alice --runtime claude-code" in response.text
+    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in response.text
+    assert "pi install npm:@awebai/pi@latest" in response.text
+    assert "aw agent start" not in response.text
+    assert "aw run" not in response.text
     assert "aw plugin install" in response.text
     assert "aw library" in response.text
 
@@ -45,9 +48,15 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "aw init" in text
     assert "aw team add alice@aweb.team/developer=claude-code" in text
     assert "aw team add bob@aweb.team/reviewer=claude-code" in text
-    assert "aw agent start alice --runtime claude-code" in text
+    assert "/plugin marketplace add awebai/claude-plugins" in text
+    assert "/plugin install aweb-channel@awebai-marketplace" in text
+    assert "cd agents/instances/alice" in text
+    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in text
+    assert "pi install npm:@awebai/pi@latest" in text
+    assert "\npi\n" in text
+    assert "aw agent start" not in text
+    assert "aw run" not in text
     assert "AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code" in text
-    assert "claude-code|codex|pi|local-shell" in text
     assert "--blueprint" in text
     assert "AWEB_BLUEPRINT" in text
     assert "--library-url" in text
@@ -81,7 +90,12 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     assert "Browse the catalog, build your shelf, run your team." in html
     assert "aw team add alice@aweb.team/developer=claude-code" in html
     assert "aw team add bob@aweb.team/reviewer=claude-code" in html
-    assert "aw agent start alice --runtime claude-code" in html
+    assert "/plugin marketplace add awebai/claude-plugins" in html
+    assert "/plugin install aweb-channel@awebai-marketplace" in html
+    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in html
+    assert "pi install npm:@awebai/pi@latest" in html
+    assert "aw agent start" not in html
+    assert "aw run" not in html
     assert "AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code" in html
     assert 'href="https://awid.ai" class="brand-word"' in html
     assert 'href="https://aweb.ai" class="brand-word"' in html

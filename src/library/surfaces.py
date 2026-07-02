@@ -355,23 +355,42 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>Install aw, add agents, start one</h2>
+          <h2>Install aw, add agents, run one interactively</h2>
           <p>The minimal do-this-now onboarding. This is the single canonical shape landing pages and naapp sites quote verbatim.</p>
         </div>
+        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <code>aweb.team</code> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
         <div class="cmd-panel">
-          <p class="cmd-label">Canonical onboarding block</p>
-          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw
+          <p class="cmd-label">Install the aw CLI, create your account + first team, then add starter agents from aweb.team</p>
+          <div class="cmd-list"><div class="cmd"><pre># Install the aw CLI, create your account + first team
+npm install -g @awebai/aw
 aw init
+
+# Add starter agents from the aweb.team blueprint
 aw team add alice@aweb.team/developer=claude-code
-aw team add bob@aweb.team/reviewer=claude-code
-aw agent start alice --runtime claude-code</pre>{copy}</div></div>
+aw team add bob@aweb.team/reviewer=claude-code</pre>{copy}</div></div>
         </div>
-        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team interactively; <code>aw team add</code> materializes starter agents from the <code>aweb.team</code> blueprint over a public read (no Library plugin on aw 1.30+); <code>aw agent start</code> runs them.</p>
+        <p class="prose-outro">Then run an agent. <strong>Two runtimes work — Claude Code or pi.</strong> Materialize the agent for the runtime you will run (<code>=claude-code</code> or <code>=pi</code>), then launch it directly in the agent home.</p>
+        <p class="prose-outro"><strong>Claude Code</strong> — install the channel plugin once, inside Claude Code:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace</pre>{copy}</div></div>
+        </div>
+        <p class="prose-outro">Then launch it in the agent home:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>cd agents/instances/alice
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace</pre>{copy}</div></div>
+        </div>
+        <p class="prose-outro"><strong>pi</strong> — install the extension once, then launch it in the agent home:</p>
+        <div class="cmd-panel">
+          <div class="cmd-list"><div class="cmd"><pre>pi install npm:@awebai/pi@latest
+cd agents/instances/alice
+pi</pre>{copy}</div></div>
+        </div>
         <p class="prose-outro"><strong>Add an agent to an existing hosted team</strong> with a team API key (no dashboard session; the key is the whole credential):</p>
         <div class="cmd-panel">
           <div class="cmd-list"><div class="cmd"><pre>AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code</pre>{copy}</div></div>
         </div>
-        <p class="prose-outro">The runtime suffix (<code>=claude-code</code> above) is a parameter, not a divergence: <code>claude-code|codex|pi|local-shell</code> — a surface may showcase whichever it prefers. The blueprint is always <code>aweb.team</code>; override it with <code>--blueprint</code> (or <code>AWEB_BLUEPRINT</code>) and the catalog provider with <code>--library-url</code> (or <code>AWEB_LIBRARY_URL</code>).</p>
+        <p class="prose-outro">The blueprint is always <code>aweb.team</code>; override it with <code>--blueprint</code> (or <code>AWEB_BLUEPRINT</code>) and the catalog provider with <code>--library-url</code> (or <code>AWEB_LIBRARY_URL</code>).</p>
         <p class="prose-outro"><strong>Optional evolution loop:</strong> install the library plugin only when you want the authenticated shelf surface — private copies, proposals, approvals, and updates from source:</p>
         <div class="cmd-panel">
           <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
@@ -449,16 +468,44 @@ materializes them. "Public" is a publish, not a flag.
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
 pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team interactively; `aw team add` materializes starter agents from the
-`aweb.team` blueprint over a public read (no Library plugin on aw 1.30+);
-`aw agent start` runs them.
+and first team; `aw team add` materializes starter agents from the `aweb.team`
+blueprint over a public read (no Library plugin on aw 1.30+); then you run each
+agent **interactively in its home** with its runtime.
 
 ```bash
+# Install the aw CLI, create your account + first team
 npm install -g @awebai/aw
 aw init
+
+# Add starter agents from the aweb.team blueprint
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code
-aw agent start alice --runtime claude-code
+```
+
+Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
+agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
+directly in the agent home.
+
+**Claude Code** — install the channel plugin once, inside Claude Code:
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+then launch it in the agent home:
+
+```bash
+cd agents/instances/alice
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+**pi** — install the extension once, then launch it in the agent home:
+
+```bash
+pi install npm:@awebai/pi@latest
+cd agents/instances/alice
+pi
 ```
 
 Add an agent to an existing hosted team with a team API key (no dashboard
@@ -468,10 +515,8 @@ session; the key is the whole credential):
 AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
 ```
 
-The runtime suffix (`=claude-code` above) is a parameter, not a divergence:
-`claude-code|codex|pi|local-shell` — a surface may showcase whichever it
-prefers. The blueprint is always `aweb.team`; override it with `--blueprint`
-(or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+The blueprint is always `aweb.team`; override it with `--blueprint` (or
+`AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
 `AWEB_LIBRARY_URL`).
 
 The authenticated shelf/evolution loop is opt-in. Install the library plugin only
@@ -486,7 +531,7 @@ to choose the runtime; they are not auto-applied.
 ## How to call it
 
 The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
-then aw agent start NAME --runtime RUNTIME. The aw library plugin verbs are the authenticated shelf surface for teams that
+then cd agents/instances/NAME and launch Claude Code or pi directly. The aw library plugin verbs are the authenticated shelf surface for teams that
 want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same
 surface; call them directly with aw id request --team-auth (the low-level escape
