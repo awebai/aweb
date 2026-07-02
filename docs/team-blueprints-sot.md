@@ -499,16 +499,46 @@ profile-bound agents use the shipped team and agent runtime verbs.
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
 pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team interactively; `aw team add` materializes starter agents from the
-`aweb.team` blueprint over a public read (no Library plugin on aw 1.30+);
-`aw agent start` runs them.
+and first team; `aw team add` materializes starter agents from the `aweb.team`
+blueprint over a public read (no Library plugin on aw 1.30+); then you run each
+agent **interactively in its home** with its runtime.
 
 ```bash
+# Install the aw CLI, create your account + first team
 npm install -g @awebai/aw
 aw init
+
+# Add starter agents from the aweb.team blueprint
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code
-aw agent start alice --runtime claude-code
+```
+
+Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
+agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
+directly in the agent home. `aw agent start` and `aw run` are **not** the
+interactive run path — Claude Code and pi are interactive and must be launched
+directly.
+
+**Claude Code** — install the channel plugin once, inside Claude Code:
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+then launch it in the agent home:
+
+```bash
+cd agents/instances/alice
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+**pi** — install the extension once, then launch it in the agent home:
+
+```bash
+pi install npm:@awebai/pi@latest
+cd agents/instances/alice
+pi
 ```
 
 Add an agent to an **existing hosted team** with a team API key (no dashboard
@@ -518,10 +548,8 @@ session; the key is the whole credential):
 AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
 ```
 
-The runtime suffix (`=claude-code` above) is a parameter, not a divergence:
-`claude-code|codex|pi|local-shell` — a surface may showcase whichever it
-prefers. The blueprint is always `aweb.team`; override it with `--blueprint`
-(or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+The blueprint is always `aweb.team`; override it with `--blueprint` (or
+`AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
 `AWEB_LIBRARY_URL`).
 
 ### Fuller dev-team flow (named team + roster)
@@ -533,8 +561,10 @@ needed when you want a named team beyond the one `aw init` creates.
 aw blueprint inspect aweb.team
 aw team create eng
 aw team add developer@aweb.team/developer=claude-code
-aw agent start developer --runtime claude-code
 ```
+
+Run agents with their runtime as in the Getting started block above (Claude
+Code with the channel plugin, or pi with its extension).
 
 `aw team add` materializes the profile from the public blueprint catalog with a
 direct read — no Library plugin required (aw 1.30+). The blueprint defaults to
