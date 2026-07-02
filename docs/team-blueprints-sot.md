@@ -85,21 +85,21 @@ The company's canonical, versioned operating knowledge for agents, delivered as
 a cert-authed app.
 
 It contains profiles, skills, playbooks, memory, policies, app recipes, evals,
-and glossary/context that should be reused across teams. It is the app-owned
-source of reusable artifacts between the public catalog and one team's installed
-copy:
+and glossary/context that should be reused across teams. In the shipped
+materialization path, the public catalog read is independent from the private
+team shelf:
 
 ```text
-Aweb/catalog profile
-  -> library.aweb.ai company entry
-    -> team-installed snapshot
-      -> runtime instance
+public blueprint profile (for example aweb.team/developer)
+  -> aw local materialization into agents/instances/<name>
+     -> optional later adoption/evolution through the library.aweb.ai shelf
 ```
 
 `library.aweb.ai` is **not** live mutable role text, and it is not part of
 aweb core. It is a versioned source of truth with diffs, approvals, provenance,
-rollback, and promotion flows. Teams pin versions from the library; they do not
-automatically change every time the library changes.
+rollback, and promotion flows. Public materialization does not require the
+Library plugin or a private shelf; teams opt into the shelf when they want the
+profile proposal/approval/update loop.
 
 Core's job is only to enforce identity, team authority, app grants, installed
 pins, and runtime facts. The library app produces versioned artifacts and
@@ -126,9 +126,11 @@ A repo or directory that describes a useful AI team shape: profiles, suggested
 apps, capability requests, runtime hints, workflows, launch instructions, and
 human-facing explanation.
 
-A blueprint is a **seed, not a dependency**. Applying a blueprint installs a
-snapshot into the customer's team/repo. The customer owns and evolves that
-installed copy.
+A blueprint is a **seed, not a dependency**. Applying a blueprint materializes a
+pinned local snapshot into agent homes. The customer owns and evolves the
+installed copy. For the 1.30.0+ launch path, `aweb.team` is the single maintained
+seed blueprint; the older development/support seed refs were folded into that
+catalog entry and should not be used in new docs.
 
 ### Agent profile
 
@@ -164,8 +166,11 @@ more runtimes. Examples: `coordinator`, `developer`, `reviewer`,
 ### Instance
 
 A live runnable home for an agent/profile binding on a specific machine or
-runtime. Instances may be local directories with `.aw` state and symlinks into
-installed profiles, hosted custodial MCP identities, or future hosted runners.
+runtime. Current local instances are directories with `.aw` state, materialized
+profile files under `.aw/profile/`, harness entry files such as `AGENTS.md` (and
+`CLAUDE.md` for Claude Code), and local skills/artifacts copied from the profile
+payload. Hosted custodial MCP identities and future hosted runners are runtime
+bindings for the same agent/profile model.
 
 Instance directories are runtime state. Profiles are operating assets.
 
@@ -513,32 +518,33 @@ aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code
 ```
 
-Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
-agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
-directly in the agent home. Claude Code and pi are interactive and must be
-started directly by the operator from that home.
-
-**Claude Code** — install the channel plugin once, inside Claude Code:
-
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
-```
-
-then launch it in the agent home:
+Then run agents. Materialization supports `claude-code`, `codex`, `pi`, and
+`local-shell` (`claude-code` is the default), but the current `aw team up` tmux
+launcher starts only `claude-code` and `pi` homes. It preflights the Claude
+plugin and Pi extension before launch:
 
 ```bash
-cd agents/instances/alice
+aw team up --dry-run
+aw team up
+```
+
+`aw team up` launches Claude Code with:
+
+```bash
 claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-**pi** — install the extension once, then launch it in the agent home:
+and launches Pi with:
 
 ```bash
-pi install npm:@awebai/pi@latest
-cd agents/instances/alice
-pi
+pi --approve
 ```
+
+It auto-answers the known Claude trust-folder and development-channel prompts.
+Pi startup is unattended: `pi --approve` trusts the project-local files, so Pi
+does not show its trust-folder prompt. Codex and local-shell homes can be
+materialized, but they must be started manually from the materialized home and
+should poll `aw mail inbox` / `aw chat pending`.
 
 Add an agent to an **existing hosted team** with a team API key (no dashboard
 session; the key is the whole credential):
@@ -547,9 +553,10 @@ session; the key is the whole credential):
 AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
 ```
 
-The blueprint is always `aweb.team`; override it with `--blueprint` (or
+The default seed blueprint is `aweb.team`; override it with `--blueprint` (or
 `AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
-`AWEB_LIBRARY_URL`).
+`AWEB_LIBRARY_URL`). The catalog URL precedence is `--library-url`, then
+`AWEB_LIBRARY_URL`, then `https://library.aweb.ai`.
 
 ### Fuller dev-team flow (named team + roster)
 
@@ -562,8 +569,9 @@ aw team create eng
 aw team add developer@aweb.team/developer=claude-code
 ```
 
-Run agents with their runtime as in the Getting started block above (Claude
-Code with the channel plugin, or pi with its extension).
+Run agents with `aw team up` as in the Getting started block above, or start a
+materialized home manually when using a runtime that `aw team up` does not launch
+yet.
 
 `aw team add` materializes the profile from the public blueprint catalog with a
 direct read — no Library plugin required (aw 1.30+). The blueprint defaults to
@@ -571,7 +579,10 @@ direct read — no Library plugin required (aw 1.30+). The blueprint defaults to
 `--blueprint` (or `AWEB_BLUEPRINT`) and the catalog provider with `--library-url`
 (or `AWEB_LIBRARY_URL`). The Library **shelf** — the propose/approve profile
 evolution loop — is a separate opt-in app a team installs when it wants it:
-`aw plugin install https://library.aweb.ai/.well-known/aweb-app.json`.
+`aw plugin install https://library.aweb.ai/.well-known/aweb-app.json`. See
+[`blueprint-materialization-contract.md`](blueprint-materialization-contract.md)
+for the payload/pin contract and [`running-agents.md`](running-agents.md) for the
+runtime launcher behavior.
 
 A roster can also be seeded during create:
 
@@ -597,25 +608,26 @@ Do not implement blueprint application as a second team-setup system.
 
 ### Installed ownership
 
-Once applied, the team owns the installed copy:
+Once applied, the materialized home owns a local pinned copy:
 
-- files are visible and versioned;
+- files are visible in the agent home;
+- `.aw/profile/ref.json` records the blueprint/profile/version/digest and runtime;
 - local modifications are expected;
 - agents can propose patches;
 - humans/coordinators review changes;
-- updates from upstream are diffs, not live mutations.
+- updates from upstream are diffs or explicit re-materialization, not live mutations.
 
 There is no live dependency on the source blueprint at runtime.
 
-Teams may install from:
+Teams may materialize from:
 
-- the public/catalog source directly;
-- a `library.aweb.ai` profile/blueprint version;
+- the public catalog source directly;
+- a `library.aweb.ai` shelf profile after installing the Library plugin;
 - a repo-local or local-directory blueprint.
 
-The important invariant is that execution uses a pinned team-installed snapshot.
-Learning and updates flow through proposals and promotion, not implicit live
-mutation.
+The important invariant is that execution uses a pinned local materialized
+snapshot. Learning and updates flow through proposals and promotion, not implicit
+live mutation.
 
 ### Non-dev teams
 
@@ -805,11 +817,12 @@ aw agent profile show <name>
 
 `team create` / `team add` with profile selectors must:
 
-- validate the blueprint/profile source fetched through Library or a local source;
-- copy/adopt a pinned shelf snapshot of profiles/resources into the team;
+- validate the blueprint/profile source fetched through the public catalog or a local source;
+- materialize a pinned profile payload into the agent home without requiring the private shelf;
+- keep the shelf import/bind/update loop as an explicit Library plugin path;
 - write no `.aw` keys/certs/tokens into committed profile resources;
 - create or update a reviewable local layout;
-- record blueprint source/version/digest;
+- record blueprint source/version/digest and selected runtime;
 - show app/capability/subscription requests as setup hints, not grants;
 - stop before any app action that needs human approval;
 - be idempotent enough that a failed run can be resumed or inspected.
@@ -872,20 +885,18 @@ claude --dangerously-skip-permissions --dangerously-load-development-channels pl
 
 aw team add agent-resources@aweb.team/agent-resources=pi
 cd agents/instances/agent-resources
-pi
+pi --approve
 ```
 
-For local runtimes, `aw team add NAME@BLUEPRINT/PROFILE` should be able to:
+For local runtimes, the shipped `aw team add NAME@BLUEPRINT/PROFILE` path:
 
-- create/admit the agent identity into the team;
-- create the instance home;
-- bind the installed profile;
-- symlink/copy profile resources as appropriate;
-- create a worktree if the profile/runtime requests one;
-- install or verify the team certificate;
-- write harness adapter config;
-- register the instance/workspace with aweb;
-- show the exact manual launch command for the selected harness.
+- creates/admit the agent identity into the team;
+- creates the instance home under `agents/instances/<name>` unless `--home` is used;
+- materializes profile resources and `.aw/profile/` provenance directly from the public catalog or local source;
+- installs or verifies the team certificate;
+- connects the instance/workspace with aweb when needed;
+- writes harness adapter docs/config;
+- leaves runtime launch to `aw team up` or a manual start from the selected home.
 
 For hosted MCP runtimes, the dashboard/Team Builder flow should create or select
 the hosted custodial identity, bind it to the profile and effective app grants,
@@ -905,13 +916,39 @@ that home using the command printed by setup docs or profile guidance.
 The product requirement is that the human does not need to remember the right
 directory, symlinks, env vars, or startup command after materialization.
 
-`aw team up` is an optional local convenience for this handoff: it reads the
-materialized `agents/instances/*` roster and starts one tmux window per
-supported interactive harness. It is not the team definition or a hosted runtime
-service; it only launches the already-materialized local homes.
+`aw team up` is the shipped local convenience for this handoff. It reads the
+materialized `agents/instances/*` roster, builds a tmux plan, and starts one
+window per supported interactive harness. It is not the team definition or a
+hosted runtime service; it only launches already-materialized local homes.
+
+Current behavior:
+
+- supported launch runtimes: `claude-code` and `pi`;
+- unsupported-by-launch but valid materialization runtimes: `codex` and
+  `local-shell`;
+- idempotent reconcile skips an agent home when a running process already has
+  that home as its current working directory;
+- `--force` bypasses that active-home skip;
+- `--recreate` kills and recreates the tmux session;
+- preflight installs/verifies the Claude `aweb-channel` plugin or Pi extension
+  before starting windows;
+- Claude starts with `claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace`;
+- `aw team up` auto-answers the known Claude trust-folder and development-channel prompts;
+- Pi starts as `pi --approve`, which trusts the project-local files so Pi does
+  not show its trust-folder prompt.
 
 This is deliberately operational. If a company cannot quickly add one more
 agent and start it in the right home, the blueprint model will feel theoretical.
+
+Implementation anchors for the shipped claims above:
+
+- public materialization defaults: `cli/go/cmd/aw/library_profile.go:21`, `cli/go/cmd/aw/library_profile.go:23`, `cli/go/cmd/aw/library_profile.go:24`, `cli/go/cmd/aw/library_profile.go:25`, `cli/go/cmd/aw/library_profile.go:424`, `cli/go/cmd/aw/library_profile.go:434`;
+- public catalog GET and local materialization path: `cli/go/cmd/aw/library_profile.go:466`, `cli/go/cmd/aw/library_profile.go:471`, `cli/go/cmd/aw/team_human.go:1204`;
+- shelf/plugin path is separate: `cli/go/cmd/aw/library_profile.go:265`, `cli/go/cmd/aw/library_profile.go:612`; regression coverage asserts public team materialization does not import to shelf or call `/v1/materialize` at `cli/go/cmd/aw/local_surface_e2e_test.go:422` and `cli/go/cmd/aw/local_surface_e2e_test.go:426`;
+- `aw team add` agent spec, local/global scope, runtime/catalog flags, and `agents/instances` root: `cli/go/cmd/aw/team_human.go:74`, `cli/go/cmd/aw/team_human.go:161`, `cli/go/cmd/aw/team_human.go:162`, `cli/go/cmd/aw/team_human.go:165`, `cli/go/cmd/aw/team_human.go:166`, `cli/go/cmd/aw/team_human.go:167`, `cli/go/cmd/aw/team_human.go:1089`;
+- materialization runtimes: `cli/go/cmd/aw/library_profile.go:597`;
+- `aw team up` launch scope, commands, active-home skip, preflight, and Claude prompt handling: `cli/go/cmd/aw/team_up.go:30`, `cli/go/cmd/aw/team_up.go:175`, `cli/go/cmd/aw/team_up.go:209`, `cli/go/cmd/aw/team_up.go:222`, `cli/go/cmd/aw/team_up.go:420`, `cli/go/cmd/aw/team_up.go:463`;
+- channel installers: `cli/go/cmd/aw/channel_setup.go:14`, `cli/go/cmd/aw/channel_setup.go:17`, `cli/go/cmd/aw/channel_setup.go:41`, `cli/go/cmd/aw/channel_setup.go:63`.
 
 ### App/capability commands
 
@@ -1028,13 +1065,13 @@ it should not become a second core control plane.
 
 ### Local dev runtime
 
-The first wedge can use direct local runtime handoff:
+The first wedge uses materialized local homes plus runtime handoff:
 
-- Claude Code sessions launched in instance directories;
-- Codex sessions launched in instance directories;
-- worktree creation for developer agents;
-- channel/event subscription for wakeups;
-- optional operator-managed `tmux` sessions for interactive harnesses.
+- Claude Code sessions launched in instance directories, with the aweb-channel plugin;
+- Pi sessions launched in instance directories, with the Pi aweb extension;
+- Codex and local-shell homes materialized for manual launch and polling;
+- channel/event subscription for wakeups where the selected harness supports it;
+- `aw team up` as the operator-managed tmux launcher for supported interactive harnesses.
 
 Do not expose "tmux team" as the product. The product is an AI team; tmux is
 only an optional local terminal/session tool.
@@ -1101,7 +1138,7 @@ V1 blueprint:
 - GitHub/dev app integration where available;
 - signed audit log;
 - secret-mediated execution through `aw do` or app-native secret use;
-- local Claude Code/Codex runtime binding;
+- local Claude Code/Pi runtime launch, with Codex/local-shell materialization available for manual operation;
 - optional hosted MCP coordinator or assistant;
 - human workroom with activity, approvals, and status.
 
@@ -1117,12 +1154,12 @@ The customer flow:
 
 This should work before marketplace/profile hosting is built.
 
-Wedge v1 has zero dependency on `library.aweb.ai`. It reads blueprints from a
-local directory or git source, applies a pinned installed snapshot, grants apps
-through existing app-grant rails, and hands operators clear direct runtime
-launch guidance for Claude Code, Pi, or another selected harness. The library
-app adds company-level learning later; it is not required for initial team
-creation.
+Wedge v1 has zero dependency on the private Library shelf. It can read public
+profile payloads from a provider-agnostic Library catalog URL or from local
+blueprint sources, materializes a pinned local snapshot, grants apps through
+existing app-grant rails, and hands operators clear `aw team up` or manual
+runtime launch guidance. The Library shelf app adds company-level learning later;
+it is not required for initial team creation.
 
 The quality bar for first-party blueprints is product-level, not sample-code
 level. A blueprint must be something a company can actually start from: clear
@@ -1139,7 +1176,7 @@ Near-term migration:
 3. Add `profile.yaml` to each existing soul/profile directory.
 4. Add `required_apps`, `subscriptions`, and `artifacts` fields where useful.
 5. Add `aw blueprint inspect` for local dirs first.
-6. Add `aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` that copy/adopt a snapshot and show a plan.
+6. Add `aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` that materialize a pinned local snapshot and show a plan.
 7. Keep existing `spawn-instance`/`retire-instance` skills as compatibility
    documentation while CLI commands mature.
 8. Add dashboard read-only visualization of installed blueprint/profile state.
@@ -1164,7 +1201,7 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
 - First blueprint source syntax: GitHub shorthand, full URL, local dir, or all
   three?
 - How much local-dir materialization is needed beyond `aw blueprint inspect` and
-  the Library-backed `aw team create` / `aw team add` launch path?
+  the public-catalog `aw team create` / `aw team add` launch path?
 - Which app is first for external capabilities: GitHub, Tasks, Messages, or Dev?
 - What is the minimal signed audit trail in v1?
 - How hosted MCP profile binding appears in the dashboard.
@@ -1177,10 +1214,9 @@ Do not build a hosted mutable profile editor first. That path recreates roles.
 - Whether community catalog lives in a repo first or in hosted aweb.ai.
 
 The default answers are: keep compatibility with current soul layout, support
-local dir first, make `aw blueprint inspect` the read-only primitive and use
-`aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` for the launch setup path,
-prove with engineering blueprint, prioritize native `aw` team creation and
-direct harness launch guidance, specify `library.aweb.ai` as an app rather than
-a core layer, prove the learning loop with memory before broadening it, and
-defer public hosted catalog until the git/local flow and library-app promotion
-loop work.
+local dir where useful, make `aw blueprint inspect` the read-only primitive and
+use `aw team create` / `aw team add NAME@BLUEPRINT/PROFILE` for the launch setup
+path, prove with the `aweb.team` seed blueprint, prioritize native `aw` team
+creation and `aw team up`/direct harness launch guidance, specify the private
+`library.aweb.ai` shelf as an app rather than a core layer, and prove the
+learning loop with memory before broadening it.

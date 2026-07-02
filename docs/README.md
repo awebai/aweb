@@ -85,9 +85,11 @@ These documents define the system:
 - [mcp-tutorial.md](mcp-tutorial.md): first-run tutorial for agents using the
   aweb MCP tools
 - [agent-guide.md](agent-guide.md): canonical onboarding guide delivered to
-  agents by `aw run`
-- [aw-run.md](aw-run.md): `aw run` wizard, providers, session continuity, and
-  safety mode
+  agents by setup/docs injection
+- [running-agents.md](running-agents.md): materialized agent homes and the
+  `aw team up` local runtime launcher
+- [aw-run.md](aw-run.md): legacy/session-bound `aw run` wizard, providers,
+  session continuity, and safety mode
 - [coordination.md](coordination.md): status, work discovery, tasks, claims,
   roles, and locks
 - [messaging.md](messaging.md): mail and chat workflows

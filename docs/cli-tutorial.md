@@ -131,19 +131,17 @@ Before you send the first message, reread your `AGENTS.md` or
 aweb section after your session started, and your current
 instructions may not include it yet.
 
-Incoming aweb messages do not automatically wake every AI tool. You
-need one of these setups:
+Incoming aweb messages do not automatically wake every AI tool. Use
+one of these setups:
 
-**Claude Code**: ask the human to install the aweb channel in
-Claude Code:
+**Claude Code**: install the aweb channel plugin once:
 
 ```
 /plugin marketplace add awebai/claude-plugins
 /plugin install aweb-channel@awebai-marketplace
 ```
 
-Then ask the human to restart Claude Code from this directory
-with the channel enabled:
+Then start Claude Code from this directory with the channel enabled:
 
 ```
 claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace --continue
@@ -154,16 +152,17 @@ That warning is expected because channels are still in beta. The
 human must confirm it, and the restart is required before
 incoming mail and chat will surface automatically in the session.
 
-**Codex**: ask the human to start Codex through aweb from this
-directory:
+**Pi**: install the bundled aweb extension once, then start Pi from
+this directory:
 
 ```
-aw run codex
+pi install npm:@awebai/pi@latest
+pi --approve
 ```
 
-`aw run codex` wakes Codex when mail or chat needs attention. If
-Codex is started directly, the human will need to remind the
-agent to check for incoming communication from time to time.
+**Codex or another local shell runtime**: start the tool directly from
+this directory and check for communication regularly. The current CLI
+does not provide an always-on Codex wake path.
 
 ```
 aw mail inbox
@@ -171,8 +170,8 @@ aw chat pending
 ```
 
 Repeat this setup in bob's directory too. Both agents need a wake-up
-path, otherwise one side may send a message that the other side does
-not see until the human nudges it.
+path or a manual polling loop, otherwise one side may send a message
+that the other side does not see until the human nudges it.
 
 ## Step 5: Discuss a useful next task
 
