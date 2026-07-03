@@ -101,6 +101,8 @@ print("ok")
 
 <script>alert("x")</script>
 <a href="data:text/html,evil" onload="alert('x')">bad</a>
+[bad](javascript:alert(1))
+<a href=javascript:alert(1)>raw bad</a>
 """
     )
 
@@ -111,6 +113,10 @@ print("ok")
     assert "<script" not in html
     assert "onload" not in html
     assert "data:text/html" not in html
+    assert "href=\"javascript:" not in html
+    assert "href=javascript:" not in html
+    assert "[bad](javascript:alert(1))" in html  # markdown-it leaves it inert text
+    assert "<a>raw bad</a>" in html
 
 
 def test_profile_view_derives_sanitized_instructions_skills_and_artifacts() -> None:
