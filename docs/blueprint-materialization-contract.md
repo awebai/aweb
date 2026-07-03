@@ -144,6 +144,14 @@ profile pin**:
   is not needed to materialize or refresh a single profile; if full blueprint
   provenance is wanted later, add an optional `blueprint_digest` field — a clean
   additive change, not a v1 requirement.
+- **Ref resolution is first-publisher-exclusive (consumer guarantee).** A
+  `blueprint_ref` resolves only to its first publisher's live catalog row, and
+  the `aweb.*` namespace prefix is first-party-reserved. A deleted first-party
+  ref returns **404** and is never remapped to another publisher — publish-side
+  reservation guards prevent a squatter from later publishing a row that would
+  satisfy the bare-ref read. So materializing a deleted or unowned ref fails to
+  resolve; §5's network-before-disk ordering means nothing is written, and a
+  different owner's payload is never silently substituted.
 
 ## 5. Materialization semantics
 
