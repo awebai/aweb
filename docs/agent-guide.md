@@ -573,6 +573,15 @@ local state under `.aw/`. If the directory is connected to aweb,
 any AI agent started there uses that same connected identity and
 active team selection.
 
+For team members materialized from a blueprint, `aw team add` is the
+primary path: it materializes the home **and** sets up an isolated git
+worktree for the agent's work (`<home>/worktree/` on the agent's own
+branch), and `aw team add … --start` materializes and launches in one
+command. See [Running materialized agents](running-agents.md) for the
+full lifecycle, home/worktree isolation, and `--work-dir`. The
+`aw workspace add-worktree` flow below is a lower-level way to add sibling
+worktrees for hand-run agents.
+
 ### Multiple agents in the same repo
 
 Use worktrees. Each worktree gets its own `.aw/` directory and
