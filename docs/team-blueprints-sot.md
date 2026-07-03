@@ -523,7 +523,11 @@ aw team up
 
 `aweb.team` comes from [library.aweb.ai](https://library.aweb.ai), the open
 blueprint library — we maintain it with high-quality profiles anyone can start
-from.
+from. Browse what each profile is: the
+[`aweb.team` blueprint](https://library.aweb.ai/blueprints/aweb.team) and its
+profiles, for example
+[developer](https://library.aweb.ai/blueprints/aweb.team/profiles/developer) and
+[reviewer](https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer).
 
 Then run agents. Materialization supports `claude-code`, `codex`, `pi`, and
 `local-shell` (`claude-code` is the default), but the current `aw team up` tmux
