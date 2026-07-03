@@ -35,6 +35,36 @@ aw team add local-dev@aweb.team/developer:local=claude-code
 aw team add public-reviewer@aweb.team/reviewer:global=pi
 ```
 
+### Home isolation: `worktree/` and `work-main/`
+
+`aw team add` separates the agent's **home** (identity + body, where `aw`
+resolves its identity) from its **work** (where the agent runs `git` and
+builds), so an agent's git work never touches the checkout it was created from.
+When the home is inside a git repo, `aw team add`:
+
+- creates **`<home>/worktree/`** — a git worktree on a branch named after the
+  agent — as the agent's isolated place for `git`/build, and
+- adds the home to that repo's `.gitignore`.
+
+Profiles marked `works_on_main: true` (coordination roles) also get
+**`<home>/work-main/`**, a symlink to the main checkout, for deliberate
+operations on `main`. Code roles (`works_on_main: false`) get `worktree/` only.
+The rule each profile instructs its agent to follow: **run `aw` from the home,
+run all `git` and builds from `worktree/`, and touch `main` only through the
+named `work-main/`.**
+
+Point the worktree at a **separate** project repo with `--work-dir`:
+
+```bash
+aw team add alice@aweb.team/developer=pi --work-dir ~/prj/my-project
+```
+
+The worktree is then a worktree of `~/prj/my-project` (whose own checkout is
+left untouched), while the home can live anywhere. If the home is **not** in a
+git repo and no `--work-dir` is given, worktree setup is skipped and the agent
+works in its home directly — so non-git setups still work, just without an
+isolated worktree.
+
 ## 2. Public blueprint source
 
 `aw team add` and `aw team create --agent ...` read public profile payloads from
@@ -107,6 +137,21 @@ The command is an idempotent reconcile: it skips a home that is already the
 current working directory of a running process. Use `--force` to ignore that
 running-process check, or `--recreate` to kill and recreate the tmux session.
 
+## 4. One command: `aw team add --start`
+
+`aw team add … --start` materializes the home, sets up the worktree isolation
+above, and launches the agent in tmux in a single step — the same launch path
+as `aw team up` (channel preflight, trust/dev-channel prompt auto-answering,
+`pi --approve`). Use it to instantiate and run one agent at once:
+
+```bash
+aw team add alice@aweb.team/developer=pi --start
+```
+
+`--start` requires exactly one agent and is rejected with `--layout-only`. It
+takes the same `--session` / `--attach` / `--no-attach` options as `aw team up`,
+and skips launching if the home is already a running process's cwd.
+
 ## Implementation anchors
 
 These claims were checked against the current CLI implementation:
@@ -117,4 +162,6 @@ These claims were checked against the current CLI implementation:
 - Supported materialization runtimes: `cli/go/cmd/aw/library_profile.go:597`.
 - `aw team add` specs, local/global flags, runtime/library/blueprint flags, and `agents/instances` root: `cli/go/cmd/aw/team_human.go:74`, `cli/go/cmd/aw/team_human.go:161`, `cli/go/cmd/aw/team_human.go:162`, `cli/go/cmd/aw/team_human.go:165`, `cli/go/cmd/aw/team_human.go:166`, `cli/go/cmd/aw/team_human.go:167`, `cli/go/cmd/aw/team_human.go:1089`.
 - `aw team up` tmux scope, active-home reconcile, runtime commands, preflight, and prompt auto-answering: `cli/go/cmd/aw/team_up.go:30`, `cli/go/cmd/aw/team_up.go:165`, `cli/go/cmd/aw/team_up.go:175`, `cli/go/cmd/aw/team_up.go:209`, `cli/go/cmd/aw/team_up.go:222`, `cli/go/cmd/aw/team_up.go:420`, `cli/go/cmd/aw/team_up.go:463`.
+- Home worktree isolation, `--work-dir` resolution, `.gitignore` update, and `work-main`: `cli/go/cmd/aw/team_human.go:1317`, `cli/go/cmd/aw/team_human.go:1375`, `cli/go/cmd/aw/team_human.go:1447`, and the `--work-dir` flag at `cli/go/cmd/aw/team_human.go:177`.
+- `aw team add --start` (materialize + isolate + launch via the team-up path): `cli/go/cmd/aw/team_human.go:172`, `cli/go/cmd/aw/team_human.go:1269`.
 - Channel installers: `cli/go/cmd/aw/channel_setup.go:14`, `cli/go/cmd/aw/channel_setup.go:17`, `cli/go/cmd/aw/channel_setup.go:41`, `cli/go/cmd/aw/channel_setup.go:63`.
