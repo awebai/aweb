@@ -17,12 +17,13 @@ import (
 )
 
 var (
-	teamUpSession  string
-	teamUpDryRun   bool
-	teamUpAttach   bool
-	teamUpNoAttach bool
-	teamUpRecreate bool
-	teamUpForce    bool
+	teamUpSession   string
+	teamUpDryRun    bool
+	teamUpAttach    bool
+	teamUpNoAttach  bool
+	teamUpRecreate  bool
+	teamUpForce     bool
+	teamUpForceKill bool
 )
 
 var teamHumanUpCmd = &cobra.Command{
@@ -78,6 +79,7 @@ func init() {
 	teamHumanUpCmd.Flags().BoolVar(&teamUpAttach, "attach", true, "Attach or switch to the tmux session after launch")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after launch")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpRecreate, "recreate", false, "Kill and recreate an existing tmux session")
+	teamHumanUpCmd.Flags().BoolVar(&teamUpForceKill, "force-kill", false, "Allow --recreate to kill a tmux session that contains running agent windows")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpForce, "force", false, "Start even when another process already has an agent home as its cwd")
 	teamHumanCmd.AddCommand(teamHumanUpCmd)
 }
@@ -103,7 +105,7 @@ func runTeamHumanUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	attach := teamUpAttach && !teamUpNoAttach
-	started, err := executeTeamUpPlan(cmd, plan, teamUpRecreate, false)
+	started, err := executeTeamUpPlan(cmd, plan, teamUpRecreate, teamUpForceKill, false)
 	if err != nil {
 		return err
 	}
@@ -249,10 +251,15 @@ func preflightTeamUpCommands(plan teamUpPlan) error {
 	return nil
 }
 
-func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, attach bool) ([]teamUpAgentPlan, error) {
+func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, forceKill, attach bool) ([]teamUpAgentPlan, error) {
 	starts := teamUpAgentsToStart(plan)
 	exists := teamUpSessionExists(plan.Session)
 	if exists && recreate {
+		if !forceKill {
+			if err := guardTeamUpRecreate(plan); err != nil {
+				return nil, err
+			}
+		}
 		if err := teamUpRunTmux(cmd, "kill-session", "-t", plan.Session); err != nil {
 			return nil, err
 		}
@@ -275,6 +282,67 @@ func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, attach boo
 		return starts, attachTeamUpSession(cmd, plan.Session)
 	}
 	return starts, nil
+}
+
+func guardTeamUpRecreate(plan teamUpPlan) error {
+	live, err := liveTeamUpAgentsInSession(plan)
+	if err != nil {
+		return err
+	}
+	if len(live) == 0 {
+		return nil
+	}
+	return fmt.Errorf("refusing aw team up --recreate for tmux session %q because it contains running agent window(s): %s. Use a throwaway --session for dogfood, or pass --force-kill to intentionally kill this session", plan.Session, strings.Join(live, ", "))
+}
+
+func liveTeamUpAgentsInSession(plan teamUpPlan) ([]string, error) {
+	if len(plan.Agents) == 0 {
+		return nil, nil
+	}
+	windows, err := teamUpSessionWindowNames(plan.Session)
+	if err != nil {
+		return nil, fmt.Errorf("inspect tmux session %q before --recreate: %w", plan.Session, err)
+	}
+	if len(windows) == 0 {
+		return nil, nil
+	}
+	agentsDir := filepath.Dir(plan.Agents[0].HomeDir)
+	activeHomes, err := teamUpDetectActiveHomes(agentsDir)
+	if err != nil {
+		return nil, err
+	}
+	var live []string
+	for _, agent := range plan.Agents {
+		if !windows[teamUpWindowName(agent.Name)] {
+			continue
+		}
+		proc, ok := activeHomes[canonicalTeamUpPath(agent.HomeDir)]
+		if !ok {
+			continue
+		}
+		label := agent.Name
+		if proc.PID > 0 {
+			label = fmt.Sprintf("%s(pid %d)", agent.Name, proc.PID)
+		}
+		live = append(live, label)
+	}
+	sort.Strings(live)
+	return live, nil
+}
+
+func teamUpSessionWindowNames(session string) (map[string]bool, error) {
+	out, err := teamUpRunTmuxOutput("list-windows", "-t", session, "-F", "#W")
+	if err != nil {
+		return nil, err
+	}
+	windows := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			windows[name] = true
+		}
+	}
+	return windows, nil
 }
 
 func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {

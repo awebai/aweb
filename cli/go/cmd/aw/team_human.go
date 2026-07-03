@@ -1292,7 +1292,7 @@ func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session s
 			return err
 		}
 	}
-	started, err := executeTeamUpPlan(cmd, launchPlan, false, false)
+	started, err := executeTeamUpPlan(cmd, launchPlan, false, false, false)
 	if err != nil {
 		return err
 	}

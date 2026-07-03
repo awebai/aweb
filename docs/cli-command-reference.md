@@ -1035,6 +1035,7 @@ Flags:
 - `--attach Attach or switch to the tmux session after launch (default true)`
 - `--dry-run Print the tmux launch plan without running it`
 - `--force Start even when another process already has an agent home as its cwd`
+- `--force-kill Allow --recreate to kill a tmux session that contains running agent windows`
 - `-h, --help help for up`
 - `--no-attach Do not attach or switch to the tmux session after launch`
 - `--recreate Kill and recreate an existing tmux session`

@@ -229,6 +229,90 @@ func TestPrintTeamUpDryRunPlan(t *testing.T) {
 	}
 }
 
+func TestTeamUpRecreateRefusesSessionWithRunningAgentWindow(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	root := t.TempDir()
+	home := writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: home, RuntimeKind: "pi", Command: []string{"pi", "--approve"}, Action: teamUpActionStart}}}
+	teamUpSessionExists = func(string) bool { return true }
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		if strings.Join(args, " ") == "list-windows -t aw-team -F #W" {
+			return "developer\nzsh\n", nil
+		}
+		return "", nil
+	}
+	teamUpDetectActiveHomes = func(string) (map[string]teamUpRunningProcess, error) {
+		return map[string]teamUpRunningProcess{canonicalTeamUpPath(home): {PID: 123, Command: "pi", CWD: home}}, nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		t.Fatalf("tmux should not kill protected session: %v", args)
+		return nil
+	}
+	_, err := executeTeamUpPlan(&cobra.Command{}, plan, true, false, false)
+	if err == nil || !strings.Contains(err.Error(), "refusing aw team up --recreate") || !strings.Contains(err.Error(), "developer(pid 123)") || !strings.Contains(err.Error(), "--force-kill") {
+		t.Fatalf("expected protected recreate error, got %v", err)
+	}
+}
+
+func TestTeamUpRecreateForceKillAllowsSessionKill(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	root := t.TempDir()
+	home := writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: home, RuntimeKind: "pi", Command: []string{"pi", "--approve"}, Action: teamUpActionStart}}}
+	killed := false
+	teamUpSessionExists = func(session string) bool { return session == "aw-team" && !killed }
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		t.Fatalf("guard should be skipped with forceKill: %v", args)
+		return "", nil
+	}
+	var calls []string
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		if strings.Join(args, " ") == "kill-session -t aw-team" {
+			killed = true
+		}
+		return nil
+	}
+	if _, err := executeTeamUpPlan(&cobra.Command{}, plan, true, true, false); err != nil {
+		t.Fatalf("executeTeamUpPlan: %v", err)
+	}
+	if len(calls) < 2 || calls[0] != "kill-session -t aw-team" || !strings.Contains(calls[1], "new-session -d -s aw-team -n developer") {
+		t.Fatalf("tmux calls=%v", calls)
+	}
+}
+
+func TestTeamUpRecreateAllowsSessionWithoutRunningAgentWindow(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	root := t.TempDir()
+	home := writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: home, RuntimeKind: "pi", Command: []string{"pi", "--approve"}, Action: teamUpActionStart}}}
+	killed := false
+	teamUpSessionExists = func(session string) bool { return session == "aw-team" && !killed }
+	teamUpRunTmuxOutput = func(args ...string) (string, error) {
+		return "zsh\n", nil
+	}
+	teamUpDetectActiveHomes = func(string) (map[string]teamUpRunningProcess, error) {
+		return map[string]teamUpRunningProcess{canonicalTeamUpPath(home): {PID: 123, Command: "pi", CWD: home}}, nil
+	}
+	var calls []string
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		if strings.Join(args, " ") == "kill-session -t aw-team" {
+			killed = true
+		}
+		return nil
+	}
+	if _, err := executeTeamUpPlan(&cobra.Command{}, plan, true, false, false); err != nil {
+		t.Fatalf("executeTeamUpPlan: %v", err)
+	}
+	if len(calls) < 2 || calls[0] != "kill-session -t aw-team" {
+		t.Fatalf("tmux calls=%v", calls)
+	}
+}
+
 func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

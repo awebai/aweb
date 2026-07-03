@@ -135,7 +135,12 @@ trusts the project-local files, so Pi does not show its trust-folder prompt.
 
 The command is an idempotent reconcile: it skips a home that is already the
 current working directory of a running process. Use `--force` to ignore that
-running-process check, or `--recreate` to kill and recreate the tmux session.
+running-process check. `--recreate` kills and recreates the tmux session only
+when the target session does not contain running agent windows; if it does,
+`aw team up` refuses unless you pass the explicit `--force-kill` override.
+Dogfood/test launches should use a throwaway `--session` name, and direct tmux
+experiments should use an isolated socket such as `tmux -L awdogfood ...` so
+they cannot touch the live agent tmux server.
 
 ## 4. One command: `aw team add --start`
 
