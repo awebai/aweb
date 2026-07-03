@@ -69,18 +69,31 @@ def _blueprint() -> dict:
     }
 
 
-def test_blueprint_roster_table_has_rows_counts_ranges_and_profile_links() -> None:
+def test_blueprint_roster_is_one_listing_with_linked_roles_missions_and_counts() -> None:
+    """The blueprint page has a single role listing (the roster): per role a name
+    linking to the profile, the mission, and the default composition count/range.
+    There is no separate profiles/cards section duplicating the same roles."""
     html = browse.render_blueprint_page(public_origin=ORIGIN, blueprint=_blueprint())
     assert 'class="browse-roster"' in html
     assert '<a href="/blueprints/aweb.team/profiles/coordinator">coordinator</a>' in html
     assert '<a href="/blueprints/aweb.team/profiles/developer">developer</a>' in html
     # default with a range renders the range; default == range collapses to a bare number.
     assert "(1&ndash;4)" in html
-    assert "claude-code · pi" in html
     # tags, meta, first missions all present.
     assert "browse-tag" in html
     assert "Stand up a three-role team." in html
-    assert "browse-profile-card" in html
+    # the roster is the only role listing — the duplicate profile-cards section is gone.
+    assert 'class="browse-profile-card"' not in html
+    assert "<h2 class=\"browse-section-title\">Profiles</h2>" not in html
+
+
+def test_blueprint_page_has_no_runtime_column_or_tool_stamp() -> None:
+    """Runtime is a staffing-time parameter, not a role property. The blueprint page
+    must not present a runtime column that reads as per-role tool lock-in."""
+    html = browse.render_blueprint_page(public_origin=ORIGIN, blueprint=_blueprint())
+    assert "<th>Runtime</th>" not in html
+    assert "browse-roster__runtime" not in html
+    assert "claude-code" not in html  # no tool stamp anywhere on the blueprint page
 
 
 def test_blueprint_long_digest_is_truncated_with_full_value_in_title() -> None:
@@ -106,7 +119,7 @@ def test_blueprint_without_recommendation_renders_dash_not_error() -> None:
     bp = _blueprint()
     bp["roster"] = [{"profile_ref": "loner", "mission": "Solo."}]
     html = browse.render_blueprint_page(public_origin=ORIGIN, blueprint=bp)
-    assert "&mdash;" in html  # null default and null runtime both fall back to a dash
+    assert "&mdash;" in html  # a null default count falls back to a dash
     assert "loner" in html
 
 
@@ -173,6 +186,16 @@ def test_profile_memory_policy_accepts_string_or_mapping() -> None:
     p["memory_policy"] = {"scope": "shared-only", "retention": "durable"}
     html = browse.render_profile_page(public_origin=ORIGIN, profile=p)
     assert "scope" in html and "shared-only" in html
+
+
+def test_profile_frames_runtime_as_portable_not_a_tool_stamp() -> None:
+    """Runtime is a staffing-time parameter: the profile behaves the same on any
+    runtime. The page states that instead of stamping a specific tool onto the role."""
+    html = browse.render_profile_page(public_origin=ORIGIN, profile=_profile())
+    assert "runs on" in html and "any runtime" in html
+    # the specific runtime hint is not presented as a property of the role.
+    assert "<b>runtime</b>" not in html
+    assert "claude-code" not in html.split('class="browse-meta"')[1].split("</div>")[0]
 
 
 # ----------------------------------------------------------------------- skill

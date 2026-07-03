@@ -75,16 +75,6 @@ _STYLE = """<style>
   .browse-roster__mission { color: var(--muted); }
   .browse-roster__count { font: 500 var(--step-0)/1 var(--font-mono); color: var(--ink); white-space: nowrap; }
   .browse-roster__count .range { color: var(--faint); }
-  .browse-roster__runtime { font: 500 var(--step--1)/1 var(--font-mono); color: var(--muted); white-space: nowrap; }
-
-  .browse-profiles { list-style: none; margin: var(--s4) 0 0; padding: 0; display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--s3); }
-  .browse-profile-card { display: block; padding: var(--s4); background: var(--surface); border: 1px solid var(--line);
-    border-radius: var(--radius); text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
-  .browse-profile-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-lg); }
-  .browse-profile-card__title { font: 600 var(--step-1)/1.1 var(--font-mono); color: var(--ink); margin: 0; }
-  .browse-profile-card__mission { color: var(--muted); font-size: var(--step--1); margin: var(--s2) 0 0; }
-  .browse-profile-card__foot { margin: var(--s3) 0 0; font: 600 0.72rem/1 var(--font-mono); color: var(--accent); }
 
   .browse-specs { margin: var(--s4) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
   .browse-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
@@ -283,13 +273,11 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
             count_html = f'{default} <span class="range">({lo}&ndash;{hi})</span>'
         else:
             count_html = f"{default}"
-        runtimes = r.get("runtime_hints") or []
         rows.append(
             f"""            <tr>
               <td class="browse-roster__name"><a href="{_profile_href(_e(ref), _e(pref))}">{_e(pref)}</a></td>
               <td class="browse-roster__mission">{_e(r.get('mission') or '')}</td>
               <td class="browse-roster__count">{count_html}</td>
-              <td class="browse-roster__runtime">{_e(' · '.join(runtimes)) or '&mdash;'}</td>
             </tr>"""
         )
     roster_section = (
@@ -297,11 +285,11 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
       <div class="wrap">
         <div class="browse-section-head">
           <h2 class="browse-section-title">Roster</h2>
-          <p>The roles this blueprint ships, with the default number of each and the range you can scale to.</p>
+          <p>The roles this blueprint ships and how many of each you get by default. Open a role to see its full mission, how it works, and its skills.</p>
         </div>
         <div class="browse-table-scroll">
           <table class="browse-roster">
-            <thead><tr><th>Role</th><th>Mission</th><th>Default</th><th>Runtime</th></tr></thead>
+            <thead><tr><th>Role</th><th>Mission</th><th>Default</th></tr></thead>
             <tbody>
 {chr(10).join(rows)}
             </tbody>
@@ -310,32 +298,6 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
       </div>
     </section>"""
         if rows
-        else ""
-    )
-
-    cards = []
-    for r in roster:
-        pref = r.get("profile_ref") or r.get("name") or ""
-        cards.append(
-            f"""          <a class="browse-profile-card" href="{_profile_href(_e(ref), _e(pref))}">
-            <h3 class="browse-profile-card__title">{_e(pref)}</h3>
-            <p class="browse-profile-card__mission">{_e(r.get('mission') or '')}</p>
-            <p class="browse-profile-card__foot">View profile &rarr;</p>
-          </a>"""
-        )
-    profiles_section = (
-        f"""    <section class="browse-section">
-      <div class="wrap">
-        <div class="browse-section-head">
-          <h2 class="browse-section-title">Profiles</h2>
-          <p>Open a role to see its full mission, how it works, and its skills.</p>
-        </div>
-        <div class="browse-profiles">
-{chr(10).join(cards)}
-        </div>
-      </div>
-    </section>"""
-        if cards
         else ""
     )
 
@@ -370,7 +332,6 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
       </div>
     </section>
 {roster_section}
-{profiles_section}
 {missions_section}"""
     return naapp.page(site, _STYLE + "\n" + body)
 
@@ -453,9 +414,10 @@ def render_profile_page(*, public_origin: str, profile: dict[str, Any]) -> str:
     meta_bits = [f"<span><b>version</b> {_e(profile.get('version') or '')}</span>"]
     if profile.get("digest"):
         meta_bits.append(_digest_bit(profile["digest"]))
-    runtime_hints = profile.get("runtime_hints") or []
-    if runtime_hints:
-        meta_bits.append(f"<span><b>runtime</b> {_e(' · '.join(runtime_hints))}</span>")
+    # Runtime is a staffing-time parameter, not a role property: the profile
+    # behaves the same on any runtime. State that plainly instead of stamping a
+    # tool onto the role.
+    meta_bits.append("<span><b>runs on</b> any runtime</span>")
 
     body = f"""    <section class="browse-hero">
       <div class="wrap">
