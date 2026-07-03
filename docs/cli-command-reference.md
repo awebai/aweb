@@ -867,6 +867,7 @@ controller operations remain under `aw id team`.
 Subcommands:
 - `add` Add agents to this team's agents/instances layout
 - `create` Create a local empty-profile team workspace
+- `extend` Add agents to an existing team by discovering membership authority
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
@@ -930,6 +931,27 @@ Flags:
 - `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
 - `--service string Hosted service URL for dashboard guidance`
 - `--username string Hosted username to create when founding through managed aweb onboarding`
+
+## `team extend`
+
+### `team extend`
+
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key/AWEB_API_KEY wins; otherwise the current workspace or an invite-capable agents/instances home is used.
+
+Flags:
+- `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
+- `--attach Attach or switch to the tmux session after --start launch (default true)`
+- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
+- `--global Add a global AWID identity/address-backed agent`
+- `-h, --help help for extend`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
+- `--local Add a local team-scoped agent identity (default)`
+- `--no-attach Do not attach or switch to the tmux session after --start launch`
+- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
+- `--session string tmux session name for --start (default: active team name or aw-team)`
+- `--start Launch the added agent in tmux after materializing it`
+- `--team-id string Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team`
+- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
 
 ## `team invite`
 
