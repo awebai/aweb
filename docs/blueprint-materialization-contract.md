@@ -70,10 +70,17 @@ profile-relative. `profile.yaml` MUST be present. `profile.yaml` fields:
 
 - required: `id` (becomes `profile_ref`), `version`;
 - descriptive: `name`, `mission`, `accepted_work[]`, `runtime_assumptions[]`,
-  `runtime_hints[]`, `memory_policy{}`, `expected_apps[]`,
-  `event_subscriptions[]`, `approval_required[]`;
+  `memory_policy{}`, `expected_apps[]`, `event_subscriptions[]`,
+  `approval_required[]`;
 - materialized assets: `instructions` (path), `skills[]`, `artifacts[]` (each
   `{path, kind}`).
+
+`runtime_hints[]` is **deprecated and removed** from the profile/blueprint model:
+runtime is a staffing-time parameter (`=RUNTIME` / `--runtime`, default
+`claude-code`), not a property of a role. `runtime_assumptions[]` — the real
+environment expectations (shell, git, `aw` CLI) — stays. Consumers MUST NOT
+derive a `=RUNTIME` default from any per-role hint; payloads omitting the field
+parse as empty.
 
 ### 2.3 Blueprint payload (`import-payload.v1`)
 
@@ -133,7 +140,7 @@ profile pin**:
   "version": "0.1.3",
   "digest": "sha256:<profile digest per §3>",
   "files": [ { "path": "...", "content_utf8": "...", "sha256": "sha256:..." }, ... ],
-  "name": "...", "mission": "...", "runtime_assumptions": [...], "runtime_hints": [...], ...
+  "name": "...", "mission": "...", "runtime_assumptions": [...], ...
 }
 ```
 
