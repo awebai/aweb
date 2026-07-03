@@ -546,6 +546,22 @@ does not show its trust-folder prompt. Codex and local-shell homes can be
 materialized, but they must be started manually from the materialized home and
 should poll `aw mail inbox` / `aw chat pending`.
 
+**One command — materialize and launch together.** `aw team add … --start`
+materializes the home *and* launches the agent in one step (the same launch path
+as `aw team up`), so you add and run a single agent at once:
+
+```bash
+aw team add alice@aweb.team/developer=claude-code --start
+```
+
+`aw team add` also sets up **home isolation**: the agent's git work happens in an
+isolated `<home>/worktree/` on its own branch (plus a `work-main/` symlink for
+coordination roles), so an agent never touches the checkout it was created from.
+Point the worktree at a separate project repo with `--work-dir`, or run in a
+non-git directory to skip it. See
+[Running materialized agents](running-agents.md) for the full lifecycle,
+worktree isolation, and `--work-dir`.
+
 Add an agent to an **existing hosted team** with a team API key (no dashboard
 session; the key is the whole credential):
 
