@@ -929,6 +929,7 @@ Flags:
 - `--registry string Registry origin override for --byot`
 - `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
 - `--service string Hosted service URL for dashboard guidance`
+- `--username string Hosted username to create when founding through managed aweb onboarding`
 
 ## `team invite`
 
