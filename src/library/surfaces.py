@@ -32,6 +32,7 @@ _CONTAINER_SKILLS_DIR = Path("/app/skills")
 # landing body and llms.txt prose.
 _VERB = "library"
 _NAV_LINKS = (
+    NavLink("Blueprints", "/blueprints"),
     NavLink("Reference", "/reference"),
     NavLink("Skills", "/skills/"),
     NavLink("awid", "https://awid.ai"),
@@ -45,6 +46,7 @@ _FOOTER_COLUMNS = (
     FooterColumn(
         "Agents",
         (
+            NavLink("Blueprints", "/blueprints"),
             NavLink("llms.txt", "/llms.txt"),
             NavLink("API reference", "/reference"),
             NavLink("Skills", "/skills/"),
@@ -462,6 +464,17 @@ The model is structural: blueprints are the public, versioned catalog; a team's
 shelf holds its private working copies. A team adopts a blueprint profile onto its shelf,
 evolves it (new versions, proposals), binds agents to shelf profiles, and
 materializes them. "Public" is a publish, not a flag.
+
+
+## Browse the catalog
+
+Human-readable pages render the live catalog for a person choosing a role — the
+same data the /v1/blueprints endpoints serve as JSON:
+
+- Catalog index:  {origin}/blueprints
+- A blueprint:    {origin}/blueprints/BLUEPRINT_REF
+- A profile:      {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
+- A skill:        {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
 
 
 ## Getting started
