@@ -36,9 +36,9 @@ aw team add <name>@aweb.team/<role>=<runtime> --start \
   the channel on its own.
 - **`--session <name>` + `--no-attach`** — put the window in a named tmux
   session and don't attach. Use a **fresh/throwaway** session so you never touch
-  a live team's session. **NEVER `--recreate`** a session that has running
-  agents (it kills them; use a throwaway `--session` or, only if you truly mean
-  it, `--force-kill`).
+  a live team's session. `--recreate` is refused when the target session holds
+  running agent windows; `--force-kill` is the explicit override that kills
+  them. Prefer a fresh `--session` over ever reaching for `--force-kill`.
 - **`--home`** overrides the default `agents/instances/<name>`. Never move or
   rename a home after materialization — aweb registers the identity at its path.
 
