@@ -52,6 +52,64 @@ def normalize_tags(tags: list[Any]) -> list[str]:
 
 # --- Public blueprints (the catalog) -----------------------------------------------
 
+_AWEB_BLUEPRINT_PREFIX = "aweb."
+
+
+async def _ensure_blueprint_ref_publishable(
+    tx: Any, *, owner_team: str, blueprint_ref: str
+) -> None:
+    """Reserve/check the public blueprint ref before minting catalog rows.
+
+    Public reads resolve by bare blueprint_ref, so refs are globally exclusive:
+    the first publisher owns the ref permanently. The first publisher of any
+    aweb.* ref also reserves that prefix for first-party blueprints, including
+    refs that do not currently exist or were deleted from the catalog.
+    """
+    if blueprint_ref.startswith(_AWEB_BLUEPRINT_PREFIX):
+        prefix_inserted = await tx.fetch_one(
+            """
+            INSERT INTO {{tables.blueprint_ref_prefix_owners}} (ref_prefix, owner_team)
+            VALUES ($1, $2)
+            ON CONFLICT (ref_prefix) DO NOTHING
+            RETURNING owner_team
+            """,
+            _AWEB_BLUEPRINT_PREFIX,
+            owner_team,
+        )
+        prefix_owner = prefix_inserted or await tx.fetch_one(
+            "SELECT owner_team FROM {{tables.blueprint_ref_prefix_owners}} WHERE ref_prefix = $1",
+            _AWEB_BLUEPRINT_PREFIX,
+        )
+        if prefix_owner is not None and prefix_owner["owner_team"] != owner_team:
+            raise HTTPException(
+                status_code=409,
+                detail="aweb.* blueprint refs are reserved to their first-party owner",
+            )
+
+    inserted = await tx.fetch_one(
+        """
+        INSERT INTO {{tables.blueprint_ref_owners}} (blueprint_ref, owner_team)
+        VALUES ($1, $2)
+        ON CONFLICT (blueprint_ref) DO NOTHING
+        RETURNING owner_team
+        """,
+        blueprint_ref,
+        owner_team,
+    )
+    if inserted is not None:
+        return
+
+    row = await tx.fetch_one(
+        "SELECT owner_team FROM {{tables.blueprint_ref_owners}} WHERE blueprint_ref = $1",
+        blueprint_ref,
+    )
+    if row is not None and row["owner_team"] != owner_team:
+        if blueprint_ref.startswith(_AWEB_BLUEPRINT_PREFIX):
+            detail = "aweb.* blueprint refs are reserved to their first-party owner"
+        else:
+            detail = f"Blueprint ref '{blueprint_ref}' is already owned by another team"
+        raise HTTPException(status_code=409, detail=detail)
+
 
 async def publish_blueprint(
     db: AsyncDatabaseManager, *, principal: Principal, payload: dict[str, Any]
@@ -72,6 +130,9 @@ async def _persist_blueprint(
     db: AsyncDatabaseManager, *, principal: Principal, blueprint: ParsedBlueprint
 ) -> None:
     async with db.transaction() as tx:
+        await _ensure_blueprint_ref_publishable(
+            tx, owner_team=principal.team_id, blueprint_ref=blueprint.blueprint_ref
+        )
         await tx.execute(
             """
             INSERT INTO {{tables.blueprints}}
@@ -289,10 +350,9 @@ async def delete_blueprint(
         # intentionally NOT scoped by team_id. A public blueprint can be imported
         # onto any team's shelf, so deleting it must NULL every adopter's source pin,
         # not just the owner's, or other teams orphan. Do not add a team_id predicate.
-        # The match is by source_blueprint_ref alone (the shelf row records no source
-        # owner_team): if two teams ever owned the same blueprint_ref, this would
-        # detach all dependents of that ref. Safe today (refs are single-owner);
-        # tracked for a per-owner detach (record source_owner_team) if that changes.
+        # The match is by source_blueprint_ref alone. Public blueprint refs are
+        # globally exclusive (first publisher owns the ref), so this safely detaches
+        # all dependents of exactly that public source ref.
         await tx.execute(
             "UPDATE {{tables.shelf_profiles}} SET"
             " source_blueprint_ref = NULL, source_blueprint_version = NULL, source_blueprint_digest = NULL,"
