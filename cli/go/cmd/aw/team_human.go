@@ -431,9 +431,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		alias = strings.ToLower(teamName)
 	}
 	if teamHumanCreateBYOT {
-		if len(agentSpecs) > 0 {
-			return usageError("aw team create --byot --agent is not supported yet; create the BYOT team, then use aw team add [NAME@]BLUEPRINT/PROFILE[:SCOPE]")
-		}
 		name := strings.TrimSpace(teamHumanCreateName)
 		if name == "" {
 			name = teamName
@@ -453,7 +450,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
-		return runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil)
+		if err := runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector, firstSpec.LocalBlueprintDir); err != nil {
+			return err
+		}
+		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
@@ -723,13 +723,13 @@ func resolveTeamHumanCreateFirstAgentScope() (string, error) {
 }
 
 func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) error {
-	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector)
-}
-
-func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector) error {
 	if selector != nil {
 		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
+	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil, "")
+}
+
+func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector, localBlueprintDir string) error {
 	domain := awconfig.NormalizeDomain(explicitDomain)
 	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if domain == "" {
@@ -827,6 +827,18 @@ func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegis
 	// ready-to-run identity, so the worktree binding is written now.
 	if err := recordAcceptedTeamMembership(wd, accepted, bootstrap.Certificate, strings.TrimSpace(registry.DefaultRegistryURL), awebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return err
+	}
+	if selector != nil {
+		if strings.TrimSpace(localBlueprintDir) != "" {
+			if _, _, err := applyLocalBlueprintProfileToHome(wd, *selector, localBlueprintDir, true); err != nil {
+				return err
+			}
+			if err := configureMaterializedAgentHome(wd); err != nil {
+				return err
+			}
+		} else if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(wd, *selector, true); err != nil {
+			return err
+		}
 	}
 	printOutput(teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, formatTeamCreate)
 	return nil
