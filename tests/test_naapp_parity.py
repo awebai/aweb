@@ -14,13 +14,30 @@ from library.surfaces import aweb_css, llms_txt, render_landing_page, render_ref
 _GOLDEN = Path(__file__).resolve().parent / "golden"
 _ORIGIN = "https://library.aweb.ai"
 
+# The landing renders a catalog teaser from the live catalog summaries; the golden
+# captures it with a stable representative blueprint so the whole page — teaser
+# included — is byte-checked.
+_LANDING_BLUEPRINTS = [
+    {
+        "blueprint_ref": "aweb.team",
+        "name": "aweb AI Team",
+        "summary": (
+            "A complete AI team — coordinator, developers, reviewer, agent-resources, "
+            "plus the opt-in roles."
+        ),
+    }
+]
+
 
 def _golden(name: str) -> str:
     return (_GOLDEN / name).read_text(encoding="utf-8")
 
 
 def test_landing_is_byte_identical() -> None:
-    assert render_landing_page(public_origin=_ORIGIN) == _golden("landing.html")
+    assert (
+        render_landing_page(public_origin=_ORIGIN, blueprints=_LANDING_BLUEPRINTS)
+        == _golden("landing.html")
+    )
 
 
 def test_reference_is_byte_identical() -> None:

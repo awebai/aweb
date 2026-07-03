@@ -4,6 +4,7 @@ import os
 import re
 from html import escape
 from pathlib import Path
+from typing import Any
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
@@ -307,9 +308,49 @@ def _skills_dir() -> Path:
     return _SKILLS_DIR
 
 
-def render_landing_page(*, public_origin: str) -> str:
+def _catalog_teaser(blueprints: Any) -> str:
+    """A landing section that presents the live catalog — each blueprint's name,
+    one-line summary, and a link into its page — rendered from the same catalog
+    summary data the browse pages use, so new blueprints appear here automatically.
+    Renders nothing when the catalog is empty."""
+    cards = []
+    for bp in list(blueprints or ())[:6]:
+        ref = bp.get("blueprint_ref")
+        if not ref:
+            continue
+        name = bp.get("name") or ref
+        summary = bp.get("summary") or bp.get("description") or ""
+        cards.append(
+            f'          <a class="card" href="/blueprints/{escape(str(ref), quote=True)}"'
+            ' style="text-decoration:none;color:inherit;display:block">\n'
+            f"            <h3>{escape(str(name))}</h3>\n"
+            f"            <p>{escape(str(summary))}</p>\n"
+            '            <p style="margin-top:var(--s3);font:600 var(--step--1)/1 var(--font-mono);'
+            f'color:var(--accent)">{escape(str(ref))} &rarr;</p>\n'
+            "          </a>"
+        )
+    if not cards:
+        return ""
+    grid = "\n".join(cards)
+    return f"""    <section class="section section--tint" id="catalog">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">On the shelf</p>
+          <h2>Teams you can adopt today</h2>
+          <p>Every blueprint is a versioned team you can stand up in minutes, then evolve on your own shelf. Open one to see its roles, missions, and skills.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+{grid}
+        </div>
+        <p style="margin-top:var(--s4)"><a href="/blueprints" style="color:var(--accent);font-weight:550">Browse the full catalog &rarr;</a></p>
+      </div>
+    </section>"""
+
+
+def render_landing_page(*, public_origin: str, blueprints: Any = None) -> str:
     origin = escape(public_origin.rstrip("/"), quote=True)
     copy = naapp.COPY_BTN
+    catalog_teaser = _catalog_teaser(blueprints)
     site = _site(
         public_origin=public_origin,
         title="library — agent profiles for AWID teams",
@@ -330,6 +371,8 @@ def render_landing_page(*, public_origin: str) -> str:
         <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/library" style="color:var(--accent);font-weight:550">github.com/awebai/library</a></p>
       </div>
     </section>
+
+{catalog_teaser}
 
 {_WHY_SECTION}
 

@@ -121,6 +121,40 @@ def test_llms_txt_lists_browse_page_urls_for_agent_discovery() -> None:
     assert "/blueprints/aweb.team/profiles/developer" in text
 
 
+def test_landing_catalog_teaser_renders_from_blueprints() -> None:
+    """The landing presents the live catalog — each blueprint's name, summary, and a
+    link into its page — from the catalog summary data, so a visitor discovers what
+    is on the shelf. Rendered from data, not hardcoded, so new blueprints appear."""
+    from library.surfaces import render_landing_page
+
+    html = render_landing_page(
+        public_origin="https://library.aweb.ai",
+        blueprints=[
+            {
+                "blueprint_ref": "aweb.team",
+                "name": "aweb AI Team",
+                "summary": "A complete AI team — coordinator, developers, reviewer.",
+            }
+        ],
+    )
+    assert 'id="catalog"' in html
+    assert "aweb AI Team" in html
+    assert "A complete AI team" in html
+    assert 'href="/blueprints/aweb.team"' in html
+    # a link into the full catalog, and the ref shown in mono.
+    assert 'href="/blueprints"' in html
+
+
+def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
+    """With no catalog data (e.g. the DB is unavailable) the landing still renders,
+    simply without the teaser."""
+    from library.surfaces import render_landing_page
+
+    html = render_landing_page(public_origin="https://library.aweb.ai", blueprints=[])
+    assert 'id="catalog"' not in html
+    assert "Where teams choose, keep, and improve" in html  # the rest of the page renders
+
+
 def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
     landing = _client().get("/").text
     reference = _client().get("/reference").text

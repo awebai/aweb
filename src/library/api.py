@@ -113,7 +113,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def landing_route() -> HTMLResponse:
-        return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
+        # The catalog teaser is rendered from the live catalog, but it is a
+        # best-effort enhancement: the landing is the front door and must render
+        # even when the database is unavailable, so a catalog read is soft.
+        blueprints: list[dict] = []
+        database = holder.get("db")
+        if isinstance(database, LibraryDatabase):
+            try:
+                blueprints = await list_blueprints(database.db, tags=None)
+            except Exception:
+                blueprints = []
+        return HTMLResponse(
+            render_landing_page(public_origin=resolved.public_origin, blueprints=blueprints)
+        )
 
     def _aweb_css_response(immutable: bool) -> Response:
         # The fingerprinted URL is content-addressed, so it can be cached forever;
