@@ -55,10 +55,19 @@ WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aw-extend-dogfood.XXXXXX")"
 DOGFOOD_TMUX_TMPDIR="$WORK_ROOT/tmux"
 mkdir -p "$DOGFOOD_TMUX_TMPDIR"
 cleanup() {
-  if [ "${DOGFOOD_TMUX:-0}" = "1" ]; then
-    TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" tmux kill-server 2>/dev/null || true
+  # NEVER `tmux kill-server`: it nukes EVERY session on the target socket, and an
+  # empty/unset TMUX_TMPDIR silently targets the DEFAULT socket where the live
+  # team runs — that is exactly how a dogfood run took the whole team down once.
+  # Only touch the isolated throwaway socket, only kill the specific session, and
+  # only after proving the socket dir is a real directory under our mktemp WORK_ROOT.
+  if [ "${DOGFOOD_TMUX:-0}" = "1" ] \
+     && [ -n "${WORK_ROOT:-}" ] \
+     && [ -n "${DOGFOOD_TMUX_TMPDIR:-}" ] \
+     && [ -d "$DOGFOOD_TMUX_TMPDIR" ] \
+     && case "$DOGFOOD_TMUX_TMPDIR" in "$WORK_ROOT"/*) true ;; *) false ;; esac; then
+    TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" tmux kill-session -t aw-extend-dogfood 2>/dev/null || true
   fi
-  rm -rf "$WORK_ROOT"
+  [ -n "${WORK_ROOT:-}" ] && rm -rf "$WORK_ROOT"
 }
 trap cleanup EXIT
 
