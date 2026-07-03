@@ -485,7 +485,9 @@ aw blueprint inspect ./aweb-team-dev-simple
 aw blueprint inspect github.com/awebai/aweb-team-dev-simple
 ```
 
-Later:
+Planned (hosted-catalog discovery — **not in the shipped CLI yet**; today use
+`aw blueprint inspect` with a path, `github.com/...`, or a blueprint ref like
+`aweb.team`):
 
 ```bash
 aw blueprint search engineering
@@ -603,14 +605,18 @@ The default seed blueprint is `aweb.team`; override it with `--blueprint` (or
 
 ### Fuller dev-team flow (named team + roster)
 
-The lifecycle example with an explicitly named team; `aw team create` is only
-needed when you want a named team beyond the one `aw init` creates.
+The one-command `aw team create … --agent …` in Getting started wraps these
+composable primitives. Use them directly when you want to inspect first, create
+the team and add members in separate steps, or grow a team later:
 
 ```bash
-aw blueprint inspect aweb.team
-aw team create eng
-aw team add developer@aweb.team/developer=claude-code
+aw blueprint inspect aweb.team          # see the proposed team and its profiles
+aw team create eng                       # create the team
+aw team add developer@aweb.team/developer=claude-code   # add a member from the team workspace
 ```
+
+(To add members from outside the team workspace — a fresh dir or another home —
+use `aw team extend <agent-spec>...` with a team API key or discovered authority.)
 
 Run agents with `aw team up` as in the Getting started block above, or start a
 materialized home manually when using a runtime that `aw team up` does not launch
