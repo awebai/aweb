@@ -36,8 +36,9 @@ _STYLE = """<style>
   .browse-title.is-id { font-family: var(--font-mono); font-weight: 600; letter-spacing: -0.01em; word-break: break-word; }
   .browse-summary { color: var(--muted); font-size: var(--step-1); max-width: 60ch; margin: var(--s3) 0 0; }
   .browse-meta { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; margin: var(--s4) 0 0;
-    font: 500 var(--step--1)/1.4 var(--font-mono); color: var(--faint); align-items: center; }
-  .browse-meta span { display: inline-flex; align-items: center; gap: 0.4rem; }
+    font: 500 var(--step--1)/1.4 var(--font-mono); color: var(--faint); align-items: center;
+    min-width: 0; overflow-wrap: anywhere; }
+  .browse-meta span { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; }
   .browse-meta span + span::before { content: "\\00b7"; margin-right: 0.9rem; color: var(--line-strong); }
   .browse-meta b { color: var(--muted); font-weight: 600; }
 
@@ -184,6 +185,19 @@ def _memory_policy_html(policy: Any) -> str:
     if isinstance(policy, list):
         return _list_items([str(v) for v in policy])
     return _e(policy)
+
+
+def _digest_bit(digest: Any) -> str:
+    """A meta item for a content digest. The full value is long and not meant to
+    be read inline, so show the algorithm plus a short prefix and carry the full
+    digest in a title tooltip."""
+    full = str(digest)
+    if ":" in full:
+        algo, rest = full.split(":", 1)
+        shown = f"{algo}:{rest[:10]}…" if len(rest) > 12 else full
+    else:
+        shown = f"{full[:16]}…" if len(full) > 18 else full
+    return f'<span title="{escape(full, quote=True)}"><b>digest</b> {_e(shown)}</span>'
 
 
 def _profile_href(blueprint_ref: str, profile_ref: str) -> str:
@@ -341,7 +355,7 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
 
     meta_bits = [f"<span><b>version</b> {_e(blueprint.get('version') or '')}</span>"]
     if blueprint.get("digest"):
-        meta_bits.append(f"<span><b>digest</b> {_e(blueprint['digest'])}</span>")
+        meta_bits.append(_digest_bit(blueprint["digest"]))
     if roster:
         meta_bits.append(f"<span><b>{len(roster)}</b> profiles</span>")
 
@@ -438,7 +452,7 @@ def render_profile_page(*, public_origin: str, profile: dict[str, Any]) -> str:
 
     meta_bits = [f"<span><b>version</b> {_e(profile.get('version') or '')}</span>"]
     if profile.get("digest"):
-        meta_bits.append(f"<span><b>digest</b> {_e(profile['digest'])}</span>")
+        meta_bits.append(_digest_bit(profile["digest"]))
     runtime_hints = profile.get("runtime_hints") or []
     if runtime_hints:
         meta_bits.append(f"<span><b>runtime</b> {_e(' · '.join(runtime_hints))}</span>")

@@ -83,6 +83,18 @@ def test_blueprint_roster_table_has_rows_counts_ranges_and_profile_links() -> No
     assert "browse-profile-card" in html
 
 
+def test_blueprint_long_digest_is_truncated_with_full_value_in_title() -> None:
+    """A full content digest is long and unbroken; showing it whole overflows the
+    meta line on mobile. Truncate for display, keep the full value in a tooltip."""
+    bp = _blueprint()
+    full = "sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134"
+    bp["digest"] = full
+    html = browse.render_blueprint_page(public_origin=ORIGIN, blueprint=bp)
+    assert html.count(full) == 1  # appears once, only in the tooltip
+    assert f'title="{full}"' in html  # full value available on hover
+    assert "sha256:2bcea6a06d…" in html  # readable prefix shown as visible text
+
+
 def test_blueprint_hero_uses_mono_identity_title_and_breadcrumb() -> None:
     html = browse.render_blueprint_page(public_origin=ORIGIN, blueprint=_blueprint())
     assert '<h1 class="browse-title is-id">aweb.team</h1>' in html

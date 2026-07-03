@@ -29,6 +29,10 @@ same data the /v1/blueprints endpoints serve as JSON:
 - A profile:      https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
 - A skill:        https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
 
+For example, the starter team: https://library.aweb.ai/blueprints/aweb.team,
+https://library.aweb.ai/blueprints/aweb.team/profiles/developer, and
+https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer.
+
 
 ## Getting started
 

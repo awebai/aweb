@@ -101,6 +101,26 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     assert 'href="https://aweb.ai" class="brand-word"' in html
 
 
+def test_landing_get_started_links_blueprint_and_quoted_profiles() -> None:
+    """Get-started hyperlinks what its commands quote — the aweb.team blueprint and
+    the developer/reviewer profiles named in the commands — so a reader can see what
+    they are adopting. The links live in prose, never inside the copy-paste <pre>."""
+    html = _client().get("/").text
+    assert 'href="/blueprints/aweb.team"' in html
+    assert 'href="/blueprints/aweb.team/profiles/developer"' in html
+    assert 'href="/blueprints/aweb.team/profiles/reviewer"' in html
+    # the command block itself stays copy-paste clean — no anchor tags inside <pre>.
+    pre_blocks = html.split("<pre>")[1:]
+    for block in pre_blocks:
+        assert "</a>" not in block.split("</pre>")[0]
+
+
+def test_llms_txt_lists_browse_page_urls_for_agent_discovery() -> None:
+    text = _client().get("/llms.txt").text
+    assert "/blueprints" in text
+    assert "/blueprints/aweb.team/profiles/developer" in text
+
+
 def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
     landing = _client().get("/").text
     reference = _client().get("/reference").text

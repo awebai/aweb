@@ -360,7 +360,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <h2>Install aw, add agents, run one interactively</h2>
           <p>The minimal do-this-now onboarding. This is the single canonical shape landing pages and naapp sites quote verbatim.</p>
         </div>
-        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <code>aweb.team</code> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
+        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550"><code>aweb.team</code></a> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
         <div class="cmd-panel">
           <p class="cmd-label">Install the aw CLI, create your account + first team, then add starter agents from aweb.team</p>
           <div class="cmd-list"><div class="cmd"><pre># Install the aw CLI, create your account + first team
@@ -371,6 +371,7 @@ aw init
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code</pre>{copy}</div></div>
         </div>
+        <p class="prose-outro" style="font-size:var(--step--1);color:var(--muted)">See what these commands add before you run them: the <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a> profiles from <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a>.</p>
         <p class="prose-outro">Then run an agent. <strong>Two runtimes work — Claude Code or pi.</strong> Materialize the agent for the runtime you will run (<code>=claude-code</code> or <code>=pi</code>), then launch it directly in the agent home.</p>
         <p class="prose-outro"><strong>Claude Code</strong> — install the channel plugin once, inside Claude Code:</p>
         <div class="cmd-panel">
@@ -475,6 +476,10 @@ same data the /v1/blueprints endpoints serve as JSON:
 - A blueprint:    {origin}/blueprints/BLUEPRINT_REF
 - A profile:      {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
 - A skill:        {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
+
+For example, the starter team: {origin}/blueprints/aweb.team,
+{origin}/blueprints/aweb.team/profiles/developer, and
+{origin}/blueprints/aweb.team/profiles/reviewer.
 
 
 ## Getting started
