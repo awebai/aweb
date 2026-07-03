@@ -71,9 +71,11 @@ Branch `aw-developer-aaeq23` (`be1225f7`, unmerged): adds `--username` to
 wizard — the pattern is `usageError("missing required flag: --<name>")`
 when non-interactive. `extend` has no wizard, so it applies the same error
 style directly at argument/flag validation; there is nothing to prompt for
-by design. If aaeq.23's final shape adds shared helpers on
-`team_human.go`, `extend` adopts them at rebase time — coordinate with
-aw-developer before the first implementation commit.
+by design. aw-developer confirmed `be1225f7` is representative and will
+flag any shape change; one constraint from that exchange binds the
+anchor-extraction refactor: the hosted-create validation seam — the
+`validateHostedNonInteractiveRequired` call sitting before the wizard
+invocation — stays intact if the refactor crosses it.
 
 ## The mismatch-rollback auth requirement (first-class)
 
