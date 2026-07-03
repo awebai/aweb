@@ -37,6 +37,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldServiceURL := teamHumanCreateServiceURL
 	oldRegistryURL := teamHumanCreateRegistryURL
 	oldAlias := teamHumanCreateAlias
+	oldCreateUsername := teamHumanCreateUsername
 	oldCreateHome := teamHumanCreateHome
 	oldCreateRuntime := teamHumanCreateRuntime
 	oldCreateLibraryURL := teamHumanCreateLibraryURL
@@ -75,6 +76,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanCreateServiceURL = oldServiceURL
 		teamHumanCreateRegistryURL = oldRegistryURL
 		teamHumanCreateAlias = oldAlias
+		teamHumanCreateUsername = oldCreateUsername
 		teamHumanCreateHome = oldCreateHome
 		teamHumanCreateRuntime = oldCreateRuntime
 		teamHumanCreateLibraryURL = oldCreateLibraryURL
@@ -111,6 +113,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanCreateServiceURL = ""
 	teamHumanCreateRegistryURL = ""
 	teamHumanCreateAlias = ""
+	teamHumanCreateUsername = ""
 	teamHumanCreateHome = ""
 	teamHumanCreateRuntime = ""
 	teamHumanCreateLibraryURL = ""
@@ -713,6 +716,24 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateHostedRegistryFailsNonInteractiveWithoutUsername(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "https://app.aweb.ai")
+	t.Setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+	t.Chdir(t.TempDir())
+
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		t.Fatalf("guidedOnboardingWizard should not run when required non-TTY flags are missing: %+v", req)
+		return nil, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "missing required flag: --username") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
@@ -720,6 +741,7 @@ func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *test
 	t.Setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
 	root := t.TempDir()
 	t.Chdir(root)
+	teamHumanCreateUsername = "eng-user"
 
 	var got guidedOnboardingRequest
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -743,6 +765,9 @@ func TestTeamHumanCreateHostedRegistryUsesGuidedOnboardingWhenNoIdentity(t *test
 	}
 	if !got.NonInteractive {
 		t.Fatalf("expected non-interactive request when not TTY: %+v", got)
+	}
+	if got.Username != "eng-user" {
+		t.Fatalf("username=%q want eng-user", got.Username)
 	}
 	if got.Alias != "eng" {
 		t.Fatalf("alias=%q want eng", got.Alias)
@@ -1150,6 +1175,7 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	t.Setenv(initAPIKeyEnvVar, "")
 	teamHumanCreateFirstGlobal = true
 	teamHumanCreateServiceURL = "https://app.example"
+	teamHumanCreateUsername = "eng-user"
 	var captured guidedOnboardingRequest
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 		captured = req

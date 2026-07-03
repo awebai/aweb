@@ -28,6 +28,7 @@ var (
 	teamHumanCreateServiceURL  string
 	teamHumanCreateRegistryURL string
 	teamHumanCreateAlias       string
+	teamHumanCreateUsername    string
 	teamHumanCreateHome        string
 	teamHumanCreateRuntime     string
 	teamHumanCreateLibraryURL  string
@@ -157,6 +158,7 @@ func init() {
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstGlobal, "first-agent-global", false, "Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
 	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
+	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateUsername, "username", "", "Hosted username to create when founding through managed aweb onboarding")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
@@ -531,7 +533,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope, selector); err != nil {
+		if err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, strings.TrimSpace(teamHumanCreateUsername), alias, firstAgentScope, selector); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
@@ -652,7 +654,7 @@ func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	return false, nil
 }
 
-func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAgentScope string, selector *libraryProfileSelector) error {
+func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, username, alias, firstAgentScope string, selector *libraryProfileSelector) error {
 	canPrompt := initIsTTY() && !jsonFlag
 	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
 	firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
@@ -662,7 +664,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAg
 		requestAlias = ""
 		requestName = alias
 	}
-	result, err := guidedOnboardingWizard(guidedOnboardingRequest{
+	req := guidedOnboardingRequest{
 		WorkingDir:         wd,
 		PromptIn:           os.Stdin,
 		PromptOut:          os.Stderr,
@@ -670,7 +672,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAg
 		RegistryURL:        registryURL,
 		ServerName:         serverFlag,
 		BYOD:               false,
-		Username:           strings.TrimSpace(initUsername),
+		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(username, initUsername)),
 		Domain:             strings.TrimSpace(initDomain),
 		Alias:              requestAlias,
 		Name:               requestName,
@@ -683,7 +685,11 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, alias, firstAg
 		DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
 		AskPostCreateSetup: askPostCreateSetup,
 		NonInteractive:     !canPrompt,
-	})
+	}
+	if err := validateHostedNonInteractiveRequired(req); err != nil {
+		return err
+	}
+	result, err := guidedOnboardingWizard(req)
 	if err != nil {
 		return err
 	}
