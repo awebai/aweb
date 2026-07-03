@@ -503,20 +503,27 @@ profile-bound agents use the shipped team and agent runtime verbs.
 ### Getting started (canonical — onboarding surfaces quote this block)
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
-pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team; `aw team add` materializes starter agents from the `aweb.team`
-blueprint over a public read (no Library plugin on aw 1.30+); then you run each
-agent **interactively in its home** with its runtime.
+pages and naapp sites quote verbatim. `aw team create` creates your team and
+materializes its starter agents from the `aweb.team` blueprint in one command —
+a public catalog read, no Library plugin (aw 1.32+) — then `aw team up` launches
+them.
 
 ```bash
-# Install the aw CLI, create your account + first team
+# Install the aw CLI
 npm install -g @awebai/aw
-aw init
 
-# Add starter agents from the aweb.team blueprint
-aw team add alice@aweb.team/developer=claude-code
-aw team add bob@aweb.team/reviewer=claude-code
+# Create your team and its starter agents in one command
+aw team create eng --username <you> \
+  --agent alice@aweb.team/developer=claude-code \
+  --agent bob@aweb.team/reviewer=pi
+
+# Launch the team
+aw team up
 ```
+
+`aweb.team` comes from [library.aweb.ai](https://library.aweb.ai), the open
+blueprint library — we maintain it with high-quality profiles anyone can start
+from.
 
 Then run agents. Materialization supports `claude-code`, `codex`, `pi`, and
 `local-shell` (`claude-code` is the default), but the current `aw team up` tmux
@@ -562,11 +569,27 @@ non-git directory to skip it. See
 [Running materialized agents](running-agents.md) for the full lifecycle,
 worktree isolation, and `--work-dir`.
 
-Add an agent to an **existing hosted team** with a team API key (no dashboard
-session; the key is the whole credential):
+**Grow an existing team.** To add members later, use `aw team extend` — it adds
+agents from the same blueprint, discovering the authority from your team context:
 
 ```bash
-AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+aw team extend charlie@aweb.team/developer=pi
+```
+
+From any directory (no team context), an explicit team API key is the whole
+credential — no dashboard session:
+
+```bash
+AWEB_URL=<url> AWEB_API_KEY=<key> aw team extend alice@aweb.team/developer=claude-code
+```
+
+**Self-hosted (BYOT).** To create and populate a team you control end to end,
+add `--byot` and your namespace:
+
+```bash
+aw team create eng --byot --namespace <your-domain> --username <you> \
+  --agent alice@aweb.team/developer=claude-code --agent bob@aweb.team/reviewer=pi
+aw team up
 ```
 
 The default seed blueprint is `aweb.team`; override it with `--blueprint` (or
