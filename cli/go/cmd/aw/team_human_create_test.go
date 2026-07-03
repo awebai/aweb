@@ -58,6 +58,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddRuntime := teamHumanAddRuntime
 	oldAddLibraryURL := teamHumanAddLibraryURL
 	oldAddBlueprint := teamHumanAddBlueprint
+	oldExtendAPIKey := teamHumanExtendAPIKey
+	oldExtendTeamID := teamHumanExtendTeamID
 	oldAddSpecOverride := teamHumanAddSpecOverride
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
@@ -97,6 +99,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddRuntime = oldAddRuntime
 		teamHumanAddLibraryURL = oldAddLibraryURL
 		teamHumanAddBlueprint = oldAddBlueprint
+		teamHumanExtendAPIKey = oldExtendAPIKey
+		teamHumanExtendTeamID = oldExtendTeamID
 		teamHumanAddSpecOverride = oldAddSpecOverride
 	})
 	initIsTTY = func() bool { return false }
@@ -134,6 +138,8 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddRuntime = ""
 	teamHumanAddLibraryURL = ""
 	teamHumanAddBlueprint = ""
+	teamHumanExtendAPIKey = ""
+	teamHumanExtendTeamID = ""
 	teamHumanAddSpecOverride = nil
 }
 
