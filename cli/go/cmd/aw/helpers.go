@@ -1008,11 +1008,7 @@ func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName
 }
 
 func isTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func sanitizeSlug(s string) string {
