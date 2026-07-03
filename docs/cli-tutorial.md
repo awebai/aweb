@@ -160,9 +160,16 @@ pi install npm:@awebai/pi@latest
 pi --approve
 ```
 
-**Codex or another local shell runtime**: start the tool directly from
-this directory and check for communication regularly. The current CLI
-does not provide an always-on Codex wake path.
+**Codex**: Codex has no channel plugin, so run it under aw's event-stream
+wake loop — `aw run codex` wakes the session on incoming mail and chat (and,
+with `--autofeed-work`, work events):
+
+```
+aw run codex
+```
+
+**Another local shell runtime** (not Claude or Codex): start it directly and
+poll regularly, since `aw run` wraps only Claude and Codex today:
 
 ```
 aw mail inbox

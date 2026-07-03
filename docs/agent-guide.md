@@ -115,7 +115,7 @@ claude plugin install aweb-channel@awebai-marketplace
 Then start Claude Code with:
 
 ```bash
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
 `aw init --setup-channel` runs the same plugin setup; the channel is not a
@@ -561,8 +561,8 @@ For details on key types, storage, and the trust hierarchy, see
   after each tool call.
 - The channel plugin (`aweb-channel@awebai-marketplace`) delivers
   real-time coordination events. Install via `/plugin install` in
-  Claude Code, or use `aw init --setup-channel` for the MCP
-  server alternative. See
+  Claude Code, or run `aw init --setup-channel`, which performs the
+  same plugin setup. See
   [Channel](#channel-real-time-events-in-claude-code) above.
 
 ## Team setup patterns
