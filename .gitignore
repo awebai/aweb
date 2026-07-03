@@ -45,3 +45,5 @@ channel/node_modules/
 pi-extension/skills/
 /agents/instances/
 /cli/agents/instances/
+/cli/agents/instances/aw-developer-onboarding/
+/cli/agents/instances/aw-reviewer-onboarding/

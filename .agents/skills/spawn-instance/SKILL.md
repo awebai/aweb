@@ -1,74 +1,59 @@
 ---
 name: spawn-instance
-description: Add a teammate — create an instance of a soul with its own new aweb identity and home, plus its own git worktree for developers. Use when a human asks for a teammate or assigned work needs one.
+description: Add a teammate — one command (`aw team add … --start`) materializes an instance's home from a blueprint profile, sets up its isolated git worktree, and launches it. Use when a human asks for a teammate or assigned work needs one.
 ---
 
-# Spawn an instance of a soul
+# Spawn an instance (a teammate)
 
-Souls (`agents/souls/<role>/`) are the canonical agent bodies. An
-**instance** is a runnable copy with its **own new aweb identity**:
+An **instance** is a runnable teammate with its own aweb identity, a home, and —
+for code roles — an isolated git worktree. Since aw 1.31, **`aw team add … --start`
+does the whole thing in one command**: it materializes the home from a blueprint
+profile, sets up the worktree isolation, and launches the runtime — no manual
+invite / accept / init / symlink / `git worktree add` dance.
 
-- **Home** — `agents/instances/<name>/`: holds the body (`AGENTS.md`
-  symlinked to the soul) and the identity (`.aw`). The session runs here.
-- **`work`** — where it does the job, per the soul's `soul.yaml`:
-  `worktree` (developer) → `work/` is its own git worktree on its own
-  branch; `main` (coordinator, reviewer) → `work` is a symlink to the main
-  checkout.
+Spawn when a human asks, or when assigned work needs a teammate — not on your own
+initiative to "get help".
 
-**Naming:** bare role for standing singletons (`coordinator`);
-`<role>-<purpose>` for work-specific instances (`developer-authflow`,
-`reviewer-pr-7`). Spawn when a human asks, or when assigned work needs a
-teammate — not on your own initiative to "get help".
+## Spawn — one command, from your own instance home
 
-## Prepare — run as one block, from your own instance home
-
-`aw` reads your identity from the current directory's `.aw`, so run this
-from your own home:
+`aw` reads your identity from the current directory's `.aw`, so run this from
+your own home (it uses your team's authority to add the member):
 
 ```bash
-role=<role>; name=<name>          # e.g.  role=developer  name=developer-authflow
-
-REPO="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"   # main checkout, even from a worktree
-inst="$REPO/agents/instances/$name"
-work=$(awk -F': *' '/^work:/{print $2}' "$REPO/agents/souls/$role/soul.yaml" | awk '{print $1}')
-
-# 1) Invite from your own identity; capture the token.
-TOKEN="$(aw id team invite 2>&1 | awk '/^Token:/{print $2}')"
-[ -n "$TOKEN" ] || { echo "no token — run from your OWN instance home"; exit 1; }
-
-# 2) Make the home; the new identity joins the team there.
-mkdir -p "$inst"
-( cd "$inst" && aw id team accept-invite "$TOKEN" --alias "$name" && aw init --do-not-touch-agents-md --alias "$name" )
-
-# 3) Wire the body, and harness links (Claude Code shown).
-ln -sfn "$REPO/agents/souls/$role/AGENTS.md" "$inst/AGENTS.md"
-ln -sfn AGENTS.md "$inst/CLAUDE.md"
-
-# 4) The work location.
-if [ "$work" = worktree ]; then
-  git -C "$REPO" worktree add "$inst/work" -b "$name"
-else
-  ln -sfn "$REPO" "$inst/work"
-fi
-
-echo "ready — home: $inst"
+aw team add <name>@aweb.team/<role>=<runtime> --start \
+  --home <abs/path/to/agents/instances/<name>> \
+  --session <tmux-session> --no-attach
 ```
 
-If you have no connected instance yet (or your CLI predates
-`aw id team invite`), use the dashboard instead of steps 1–2: create the
-home directory and run the dashboard-generated
-`AWEB_API_KEY=... AWEB_URL=... aw init ...` from it. The rest is the same.
+- **`<role>`** is a profile in the blueprint (`developer`, `reviewer`,
+  `proofreader`, …); **`<runtime>`** is `claude-code` or `pi`. Override the
+  blueprint with `--blueprint` / `AWEB_BLUEPRINT` (default `aweb.team`).
+- **`--start`** materializes the home from the **public blueprint** (an
+  auth-less read), sets up **`<home>/worktree/`** — a git worktree on the
+  agent's own branch — plus a **`work-main/`** symlink for coordination roles
+  (`works_on_main`), then launches the runtime in tmux with channel preflight,
+  trust/dev-channel prompt auto-answering, and `pi --approve`. It connects to
+  the channel on its own.
+- **`--session <name>` + `--no-attach`** — put the window in a named tmux
+  session and don't attach. Use a **fresh/throwaway** session so you never touch
+  a live team's session. `--recreate` is refused when the target session holds
+  running agent windows; `--force-kill` is the explicit override that kills
+  them. Prefer a fresh `--session` over ever reaching for `--force-kill`.
+- **`--home`** overrides the default `agents/instances/<name>`. Never move or
+  rename a home after materialization — aweb registers the identity at its path.
 
-> ⚠️ **Never move or rename an instance home after `aw init`** — aweb
-> registers the workspace at its path. Re-mint in place to relocate.
+The agent runs `aw` from its home and does all `git`/builds from `worktree/`.
 
-## Launch
+Verify: `aw workspace status` shows the new member active; the tmux pane shows
+the runtime up (claude: `bypass permissions on`; pi: `✓ aweb connected`).
 
-Hand the human the launch command (don't start sessions a human will
-drive):
+## Materialize now, run later (two-step)
 
-```bash
-cd agents/instances/<name> && claude    # or pi/codex, per the soul's runtime
-```
+Drop `--start` to just materialize + isolate the home; launch it later with
+`aw team up` (same launch path). Use this when you want the home staged before
+running it.
 
-When the teammate is no longer needed, use the `retire-instance` skill.
+## Retire
+
+When the teammate is no longer needed, use the `retire-instance` skill (revoke
+the membership, remove the worktree + home).
