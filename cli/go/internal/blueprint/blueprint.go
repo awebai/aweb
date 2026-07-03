@@ -68,6 +68,7 @@ type Profile struct {
 	Instructions       string         `json:"instructions" yaml:"instructions"`
 	RuntimeAssumptions []string       `json:"runtime_assumptions" yaml:"runtime_assumptions"`
 	Scope              string         `json:"scope,omitempty" yaml:"scope,omitempty"`
+	WorksOnMain        bool           `json:"works_on_main,omitempty" yaml:"works_on_main,omitempty"`
 	MemoryPolicy       map[string]any `json:"memory_policy" yaml:"memory_policy"`
 	ExpectedApps       []string       `json:"expected_apps,omitempty" yaml:"expected_apps"`
 	EventSubscriptions []Subscription `json:"event_subscriptions,omitempty" yaml:"event_subscriptions"`

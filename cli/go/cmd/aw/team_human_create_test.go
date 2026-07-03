@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
+	"github.com/spf13/cobra"
 )
 
 func resetTeamHumanCreateGlobals(t *testing.T) {
@@ -46,7 +48,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddLocal := teamHumanAddLocal
 	oldAddGlobal := teamHumanAddGlobal
 	oldAddLayoutOnly := teamHumanAddLayoutOnly
+	oldAddStart := teamHumanAddStart
+	oldAddAttach := teamHumanAddAttach
+	oldAddNoAttach := teamHumanAddNoAttach
+	oldAddSession := teamHumanAddSession
 	oldAddHome := teamHumanAddHome
+	oldAddWorkDir := teamHumanAddWorkDir
 	oldAddRuntime := teamHumanAddRuntime
 	oldAddLibraryURL := teamHumanAddLibraryURL
 	oldAddBlueprint := teamHumanAddBlueprint
@@ -79,7 +86,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddLocal = oldAddLocal
 		teamHumanAddGlobal = oldAddGlobal
 		teamHumanAddLayoutOnly = oldAddLayoutOnly
+		teamHumanAddStart = oldAddStart
+		teamHumanAddAttach = oldAddAttach
+		teamHumanAddNoAttach = oldAddNoAttach
+		teamHumanAddSession = oldAddSession
 		teamHumanAddHome = oldAddHome
+		teamHumanAddWorkDir = oldAddWorkDir
 		teamHumanAddRuntime = oldAddRuntime
 		teamHumanAddLibraryURL = oldAddLibraryURL
 		teamHumanAddBlueprint = oldAddBlueprint
@@ -110,7 +122,12 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddLocal = false
 	teamHumanAddGlobal = false
 	teamHumanAddLayoutOnly = false
+	teamHumanAddStart = false
+	teamHumanAddAttach = true
+	teamHumanAddNoAttach = false
+	teamHumanAddSession = ""
 	teamHumanAddHome = ""
+	teamHumanAddWorkDir = ""
 	teamHumanAddRuntime = ""
 	teamHumanAddLibraryURL = ""
 	teamHumanAddBlueprint = ""
@@ -144,6 +161,192 @@ func TestFormatTeamHumanAddDistinguishesProfileBoundAgent(t *testing.T) {
 	}
 	if strings.Contains(out, "Added 1 empty-profile agent") {
 		t.Fatalf("profile-bound output used empty-profile wording:\n%s", out)
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreeCreatesIsolatedBranchAndGitignore(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	home := filepath.Join(repo, "agents", "instances", "developer")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "profile.yaml"), []byte("id: developer\nworks_on_main: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(repo, plan, ""); err != nil {
+		t.Fatalf("setupTeamAddedAgentWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "worktree", ".git")); err != nil {
+		t.Fatalf("worktree .git missing: %v", err)
+	}
+	branchOut, err := exec.Command("git", "-C", filepath.Join(home, "worktree"), "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("worktree branch: %v", err)
+	}
+	if got := strings.TrimSpace(string(branchOut)); got != "developer" {
+		t.Fatalf("worktree branch=%q", got)
+	}
+	parentBranch, err := exec.Command("git", "-C", repo, "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("parent branch: %v", err)
+	}
+	if got := strings.TrimSpace(string(parentBranch)); got == "developer" {
+		t.Fatal("parent repo branch changed to developer")
+	}
+	gitignore, err := os.ReadFile(filepath.Join(canonicalTeamUpPath(repo), ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), "/agents/instances/developer/") {
+		t.Fatalf("home not gitignored:\n%s", string(gitignore))
+	}
+	if _, err := os.Lstat(filepath.Join(home, "work-main")); !os.IsNotExist(err) {
+		t.Fatalf("developer should not get work-main, err=%v", err)
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreeUsesSeparateWorkDir(t *testing.T) {
+	workRepo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, workRepo, "https://github.com/acme/work.git")
+	home := filepath.Join(t.TempDir(), "agent-home")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "profile.yaml"), []byte("id: developer\nworks_on_main: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(filepath.Dir(home), plan, workRepo); err != nil {
+		t.Fatalf("setupTeamAddedAgentWorktree: %v", err)
+	}
+	branchOut, err := exec.Command("git", "-C", filepath.Join(home, "worktree"), "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("worktree branch: %v", err)
+	}
+	if got := strings.TrimSpace(string(branchOut)); got != "developer" {
+		t.Fatalf("worktree branch=%q", got)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(home), ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("non-git home parent should not get .gitignore, err=%v", err)
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreeSkipsOutsideGitWithoutWorkDir(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "agent-home")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(filepath.Dir(home), plan, ""); err != nil {
+		t.Fatalf("setupTeamAddedAgentWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "worktree")); !os.IsNotExist(err) {
+		t.Fatalf("non-git home without --work-dir should not get worktree, err=%v", err)
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreeGitignoresHomeRepoButUsesWorkDirRepo(t *testing.T) {
+	homeRepo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, homeRepo, "https://github.com/acme/home.git")
+	workRepo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, workRepo, "https://github.com/acme/work.git")
+	home := filepath.Join(homeRepo, "agents", "instances", "reviewer")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "profile.yaml"), []byte("id: reviewer\nworks_on_main: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "reviewer", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(homeRepo, plan, workRepo); err != nil {
+		t.Fatalf("setupTeamAddedAgentWorktree: %v", err)
+	}
+	branchOut, err := exec.Command("git", "-C", filepath.Join(home, "worktree"), "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("worktree branch: %v", err)
+	}
+	if got := strings.TrimSpace(string(branchOut)); got != "reviewer" {
+		t.Fatalf("worktree branch=%q", got)
+	}
+	gitignore, err := os.ReadFile(filepath.Join(canonicalTeamUpPath(homeRepo), ".gitignore"))
+	if err != nil {
+		t.Fatalf("read home repo .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), "/agents/instances/reviewer/") {
+		t.Fatalf("home repo .gitignore missing home:\n%s", string(gitignore))
+	}
+	target, err := os.Readlink(filepath.Join(home, "work-main"))
+	if err != nil {
+		t.Fatalf("work-main symlink missing: %v", err)
+	}
+	if target != canonicalTeamUpPath(workRepo) {
+		t.Fatalf("work-main target=%q, want %q", target, canonicalTeamUpPath(workRepo))
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreeCreatesWorkMainForWorksOnMain(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	home := filepath.Join(repo, "agents", "instances", "reviewer")
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "profile.yaml"), []byte("id: reviewer\nworks_on_main: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "reviewer", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(repo, plan, ""); err != nil {
+		t.Fatalf("setupTeamAddedAgentWorktree: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(home, "work-main"))
+	if err != nil {
+		t.Fatalf("work-main symlink missing: %v", err)
+	}
+	if target != canonicalTeamUpPath(repo) {
+		t.Fatalf("work-main target=%q, want %q", target, canonicalTeamUpPath(repo))
+	}
+}
+
+func TestStartTeamAddedAgentUsesTeamUpLaunchPrimitives(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	withFakeCommandOnPath(t, "tmux")
+	withFakePiOnPath(t)
+	withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		return []byte("User packages:\n  npm:@awebai/pi\n"), nil
+	})
+	home := writeMaterializedAgentForTeamUp(t, t.TempDir(), "developer", "pi")
+	var calls []string
+	teamUpSessionExists = func(string) bool { return len(calls) > 0 }
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	if err := startTeamAddedAgent(&cobra.Command{}, plan, "aw-team", false); err != nil {
+		t.Fatalf("startTeamAddedAgent: %v", err)
+	}
+	if len(calls) != 1 || !strings.Contains(calls[0], "new-session -d -s aw-team -n developer") || !strings.Contains(calls[0], "exec 'pi' '--approve'") {
+		t.Fatalf("tmux calls=%v", calls)
+	}
+}
+
+func TestStartTeamAddedAgentSkipsWhenHomeAlreadyRunning(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	home := writeMaterializedAgentForTeamUp(t, t.TempDir(), "developer", "pi")
+	teamUpDetectActiveHomes = func(string) (map[string]teamUpRunningProcess, error) {
+		return map[string]teamUpRunningProcess{canonicalTeamUpPath(home): {PID: 123, Command: "pi", CWD: home}}, nil
+	}
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		t.Fatalf("tmux should not launch already-running home: %v", args)
+		return nil
+	}
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	if err := startTeamAddedAgent(&cobra.Command{}, plan, "aw-team", false); err != nil {
+		t.Fatalf("startTeamAddedAgent: %v", err)
 	}
 }
 

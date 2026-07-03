@@ -886,6 +886,7 @@ Flags:
 Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
 Flags:
+- `--attach Attach or switch to the tmux session after --start launch (default true)`
 - `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
 - `--global Add a global AWID identity/address-backed agent`
 - `-h, --help help for add`
@@ -893,7 +894,11 @@ Flags:
 - `--layout-only Only create agents/instances/<name>; do not create identity state`
 - `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
 - `--local Add a local team-scoped agent identity (default)`
+- `--no-attach Do not attach or switch to the tmux session after --start launch`
 - `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
+- `--session string tmux session name for --start (default: active team name or aw-team)`
+- `--start Launch the added agent in tmux after materializing it`
+- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
 
 ## `team create`
 

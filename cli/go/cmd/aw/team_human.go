@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	blueprintpkg "github.com/awebai/aw/internal/blueprint"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -39,7 +41,12 @@ var (
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
 	teamHumanAddLayoutOnly     bool
+	teamHumanAddStart          bool
+	teamHumanAddAttach         bool
+	teamHumanAddNoAttach       bool
+	teamHumanAddSession        string
 	teamHumanAddHome           string
+	teamHumanAddWorkDir        string
 	teamHumanAddRuntime        string
 	teamHumanAddLibraryURL     string
 	teamHumanAddBlueprint      string
@@ -160,8 +167,14 @@ func init() {
 
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
+	teamHumanAddAttach = true
 	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
+	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: active team name or aw-team)")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
+	teamHumanAddCmd.Flags().StringVar(&teamHumanAddWorkDir, "work-dir", "", "Git repo to use for the agent's worktree (default: repo containing the home, if any)")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
 	teamHumanAddCmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
@@ -1070,6 +1083,9 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 	if teamHumanAddLocal && teamHumanAddGlobal {
 		return usageError("--local and --global cannot be used together")
 	}
+	if teamHumanAddStart && teamHumanAddLayoutOnly {
+		return usageError("aw team add --start cannot be used with --layout-only")
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -1109,6 +1125,9 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			homeDir = explicitHome
 		}
 		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope, LocalBlueprintDir: spec.LocalBlueprintDir})
+	}
+	if teamHumanAddStart && len(plans) != 1 {
+		return usageError("aw team add --start requires exactly one agent")
 	}
 	for _, plan := range plans {
 		if plan.Profile != nil {
@@ -1178,8 +1197,11 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			plans[i].CertPath = accepted.Output.CertPath
 			plans[i].Connected = apiKeyBootstrapMode
 		}
+		rollbackOnErr := func(err error) error {
+			return err
+		}
 		if plans[i].Profile != nil {
-			rollbackOnErr := func(err error) error {
+			rollbackOnErr = func(err error) error {
 				if !createdProfileIdentity {
 					return err
 				}
@@ -1217,6 +1239,9 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 				return rollbackOnErr(err)
 			}
 		}
+		if err := setupTeamAddedAgentWorktree(wd, plans[i], teamHumanAddWorkDir); err != nil {
+			return rollbackOnErr(err)
+		}
 	}
 	noLibrary := true
 	noProfile := true
@@ -1227,8 +1252,246 @@ func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
+	if teamHumanAddStart && len(plans) == 1 {
+		session := strings.TrimSpace(teamHumanAddSession)
+		if session == "" {
+			session = defaultTeamUpSessionName(repoRoot)
+		}
+		attach := teamHumanAddAttach && !teamHumanAddNoAttach
+		if err := startTeamAddedAgent(cmd, plans[0], session, attach); err != nil {
+			return err
+		}
+	}
 	printOutput(teamHumanAddOutput{Status: "added", AgentsRoot: agentsRoot, HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session string, attach bool) error {
+	runtimeKind, err := readTeamUpRuntimeKind(plan.HomeDir)
+	if err != nil {
+		return fmt.Errorf("%s: %w", plan.Name, err)
+	}
+	command, err := teamUpCommandForRuntime(runtimeKind)
+	if err != nil {
+		return fmt.Errorf("%s: %w", plan.Name, err)
+	}
+	agent := teamUpAgentPlan{Name: plan.Name, HomeDir: plan.HomeDir, RuntimeKind: runtimeKind, Command: command, Action: teamUpActionStart}
+	proc, running, err := teamAddedAgentRunningProcess(plan.HomeDir)
+	if err != nil {
+		return err
+	}
+	if running {
+		agent.Action = teamUpActionSkip
+		agent.Reason = "process already has agent home as cwd"
+		agent.RunningPID = proc.PID
+		agent.RunningCmd = proc.Command
+	}
+	launchPlan := teamUpPlan{Session: teamUpTmuxName(firstNonEmptyLibraryValue(session, "aw-team")), Agents: []teamUpAgentPlan{agent}}
+	if agent.Action == teamUpActionStart {
+		if err := preflightTeamUpCommands(launchPlan); err != nil {
+			return err
+		}
+	}
+	started, err := executeTeamUpPlan(cmd, launchPlan, false, false)
+	if err != nil {
+		return err
+	}
+	if err := confirmStartedClaudeChannelPrompts(launchPlan.Session, started); err != nil {
+		return err
+	}
+	if attach && tmuxSessionExists(launchPlan.Session) {
+		return attachTeamUpSession(cmd, launchPlan.Session)
+	}
+	return nil
+}
+
+func teamAddedAgentRunningProcess(homeDir string) (teamUpRunningProcess, bool, error) {
+	active, err := teamUpDetectActiveHomes(filepath.Dir(homeDir))
+	if err != nil {
+		return teamUpRunningProcess{}, false, err
+	}
+	proc, ok := active[canonicalTeamUpPath(homeDir)]
+	return proc, ok, nil
+}
+
+func setupTeamAddedAgentWorktree(anchorDir string, plan teamHumanAddedAgent, workDir string) error {
+	if strings.TrimSpace(plan.HomeDir) == "" {
+		return nil
+	}
+	homeRepoRoot, homeInRepo, err := teamAddGitRepoRootForHome(anchorDir, plan.HomeDir)
+	if err != nil {
+		return err
+	}
+	workRepoRoot := ""
+	if strings.TrimSpace(workDir) != "" {
+		workRepoRoot, err = teamAddGitRepoRootForWorkDir(anchorDir, workDir)
+		if err != nil {
+			return err
+		}
+	} else if homeInRepo {
+		workRepoRoot = homeRepoRoot
+	} else {
+		return nil
+	}
+	if homeInRepo {
+		if err := ensureTeamAddHomeGitignored(homeRepoRoot, plan.HomeDir); err != nil {
+			return err
+		}
+	}
+	worktreeDir := filepath.Join(plan.HomeDir, "worktree")
+	if err := ensureTeamAddGitWorktree(workRepoRoot, worktreeDir, plan.Name); err != nil {
+		return err
+	}
+	worksOnMain, err := teamAddedAgentWorksOnMain(plan)
+	if err != nil {
+		return err
+	}
+	if worksOnMain {
+		if err := ensureTeamAddWorkMainLink(plan.HomeDir, workRepoRoot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func teamAddGitRepoRootForHome(anchorDir, homeDir string) (string, bool, error) {
+	probeDir := anchorDir
+	if parent := filepath.Dir(homeDir); strings.TrimSpace(parent) != "" {
+		probeDir = parent
+	}
+	repoRoot, err := currentGitWorktreeRootFromDir(probeDir)
+	if err != nil {
+		return "", false, nil
+	}
+	canonicalRepoRoot := canonicalTeamUpPath(repoRoot)
+	canonicalHome := canonicalTeamUpPath(homeDir)
+	rel, err := filepath.Rel(canonicalRepoRoot, canonicalHome)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", false, nil
+	}
+	return canonicalRepoRoot, true, nil
+}
+
+func teamAddGitRepoRootForWorkDir(anchorDir, workDir string) (string, error) {
+	resolved := strings.TrimSpace(workDir)
+	if resolved == "" {
+		return "", fmt.Errorf("--work-dir is required")
+	}
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(anchorDir, resolved)
+	}
+	repoRoot, err := currentGitWorktreeRootFromDir(resolved)
+	if err != nil {
+		return "", fmt.Errorf("--work-dir %s is not inside a git repo: %w", workDir, err)
+	}
+	return canonicalTeamUpPath(repoRoot), nil
+}
+
+func ensureTeamAddHomeGitignored(repoRoot, homeDir string) error {
+	rel, err := filepath.Rel(canonicalTeamUpPath(repoRoot), canonicalTeamUpPath(homeDir))
+	if err != nil {
+		return err
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || strings.HasPrefix(rel, "../") {
+		return nil
+	}
+	gitignore := filepath.Join(repoRoot, ".gitignore")
+	pattern := "/" + strings.TrimPrefix(rel, "/") + "/"
+	content, err := os.ReadFile(gitignore)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return nil
+		}
+	}
+	prefix := ""
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		prefix = "\n"
+	}
+	return os.WriteFile(gitignore, append(content, []byte(prefix+pattern+"\n")...), 0o644)
+}
+
+func ensureTeamAddGitWorktree(repoRoot, worktreeDir, branch string) error {
+	if info, err := os.Stat(worktreeDir); err == nil && info.IsDir() {
+		if _, gitErr := os.Stat(filepath.Join(worktreeDir, ".git")); gitErr == nil {
+			return nil
+		}
+		return fmt.Errorf("%s exists but is not a git worktree", worktreeDir)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
+		return err
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("agent branch name is required")
+	}
+	if exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil {
+		cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", worktreeDir, branch)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git worktree add %s %s: %w%s", worktreeDir, branch, err, formatCommandOutput(out))
+		}
+		return nil
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", worktreeDir, "-b", branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree add %s -b %s: %w%s", worktreeDir, branch, err, formatCommandOutput(out))
+	}
+	return nil
+}
+
+func teamAddedAgentWorksOnMain(plan teamHumanAddedAgent) (bool, error) {
+	profilePath := filepath.Join(plan.HomeDir, ".aw", "profile", "profile.yaml")
+	data, err := os.ReadFile(profilePath)
+	if err == nil {
+		var raw struct {
+			WorksOnMain *bool `yaml:"works_on_main" json:"works_on_main"`
+		}
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return false, fmt.Errorf("parse %s: %w", profilePath, err)
+		}
+		if raw.WorksOnMain != nil {
+			return *raw.WorksOnMain, nil
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return teamAgentLikelyWorksOnMain(plan), nil
+}
+
+func teamAgentLikelyWorksOnMain(plan teamHumanAddedAgent) bool {
+	labels := []string{plan.Name}
+	if plan.Profile != nil {
+		labels = append(labels, plan.Profile.ProfileRef)
+	}
+	for _, label := range labels {
+		lower := strings.ToLower(strings.TrimSpace(label))
+		for _, token := range []string{"coordinator", "reviewer", "proofreader", "deployer", "reliability", "maintainer"} {
+			if strings.Contains(lower, token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ensureTeamAddWorkMainLink(homeDir, repoRoot string) error {
+	link := filepath.Join(homeDir, "work-main")
+	if info, err := os.Lstat(link); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("%s exists and is not a symlink", link)
+		}
+		if err := os.Remove(link); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(repoRoot, link)
 }
 
 type justCreatedTeamMemberRollbackTarget struct {
