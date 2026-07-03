@@ -155,6 +155,62 @@ def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
     assert "Where teams choose, keep, and improve" in html  # the rest of the page renders
 
 
+class _FakeLibraryDatabase:
+    def __init__(self, _settings: Settings) -> None:
+        self.db = object()
+
+    async def connect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+
+def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> None:
+    """Route-level guard: with a DB present but the catalog read failing, the front
+    door stays up and omits only the best-effort catalog teaser."""
+
+    async def broken_list_blueprints(_db, *, tags):
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
+    monkeypatch.setattr(library_api, "list_blueprints", broken_list_blueprints)
+
+    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert 'id="catalog"' not in response.text
+    assert "Where teams choose, keep, and improve" in response.text
+
+
+def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
+    """Route-level success counterpart: catalog summaries from the live-read path
+    are passed into the teaser renderer."""
+
+    async def fake_list_blueprints(_db, *, tags):
+        return [
+            {
+                "blueprint_ref": "aweb.team",
+                "name": "aweb AI Team",
+                "summary": "A complete AI team — coordinator, developers, reviewer.",
+            }
+        ]
+
+    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
+    monkeypatch.setattr(library_api, "list_blueprints", fake_list_blueprints)
+
+    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="catalog"' in response.text
+    assert "aweb AI Team" in response.text
+    assert "A complete AI team" in response.text
+    assert 'href="/blueprints/aweb.team"' in response.text
+
+
 def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
     landing = _client().get("/").text
     reference = _client().get("/reference").text
