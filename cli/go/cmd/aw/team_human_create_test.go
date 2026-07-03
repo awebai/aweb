@@ -722,6 +722,57 @@ func TestTeamHumanAddRejectsLayoutOnlyWithLibraryProfile(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateAgentDevNullMissingUsernameErrorsClearly(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "")
+	t.Setenv("AWID_REGISTRY_URL", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(t.TempDir())
+	initIsTTY = isTTY
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	oldStdin := os.Stdin
+	os.Stdin = devNull
+	t.Cleanup(func() { os.Stdin = oldStdin })
+	teamHumanCreateAgents = []string{"alice@aweb.team/developer=pi"}
+
+	err = runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "missing required flag: --username") || strings.Contains(strings.ToLower(err.Error()), "eof") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTeamHumanCreateAgentDevNullHostedUnavailableDoesNotFallbackPromptBYOD(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:1")
+	t.Setenv("AWID_REGISTRY_URL", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Chdir(t.TempDir())
+	initIsTTY = isTTY
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	oldStdin := os.Stdin
+	os.Stdin = devNull
+	t.Cleanup(func() { os.Stdin = oldStdin })
+	teamHumanCreateUsername = "alice"
+	teamHumanCreateAgents = []string{"alice@aweb.team/developer=pi"}
+
+	err = runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "hosted onboarding is not available") || strings.Contains(strings.ToLower(err.Error()), "eof") || strings.Contains(err.Error(), "Domain:") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTeamHumanCreateHostedRegistryFailsNonInteractiveWithoutUsername(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("AWEB_API_KEY", "")
