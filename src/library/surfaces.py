@@ -4,6 +4,7 @@ import os
 import re
 from html import escape
 from pathlib import Path
+from typing import Any
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
@@ -32,6 +33,7 @@ _CONTAINER_SKILLS_DIR = Path("/app/skills")
 # landing body and llms.txt prose.
 _VERB = "library"
 _NAV_LINKS = (
+    NavLink("Blueprints", "/blueprints"),
     NavLink("Reference", "/reference"),
     NavLink("Skills", "/skills/"),
     NavLink("awid", "https://awid.ai"),
@@ -45,6 +47,7 @@ _FOOTER_COLUMNS = (
     FooterColumn(
         "Agents",
         (
+            NavLink("Blueprints", "/blueprints"),
             NavLink("llms.txt", "/llms.txt"),
             NavLink("API reference", "/reference"),
             NavLink("Skills", "/skills/"),
@@ -305,9 +308,49 @@ def _skills_dir() -> Path:
     return _SKILLS_DIR
 
 
-def render_landing_page(*, public_origin: str) -> str:
+def _catalog_teaser(blueprints: Any) -> str:
+    """A landing section that presents the live catalog — each blueprint's name,
+    one-line summary, and a link into its page — rendered from the same catalog
+    summary data the browse pages use, so new blueprints appear here automatically.
+    Renders nothing when the catalog is empty."""
+    cards = []
+    for bp in list(blueprints or ())[:6]:
+        ref = bp.get("blueprint_ref")
+        if not ref:
+            continue
+        name = bp.get("name") or ref
+        summary = bp.get("summary") or bp.get("description") or ""
+        cards.append(
+            f'          <a class="card" href="/blueprints/{escape(str(ref), quote=True)}"'
+            ' style="text-decoration:none;color:inherit;display:block">\n'
+            f"            <h3>{escape(str(name))}</h3>\n"
+            f"            <p>{escape(str(summary))}</p>\n"
+            '            <p style="margin-top:var(--s3);font:600 var(--step--1)/1 var(--font-mono);'
+            f'color:var(--accent)">{escape(str(ref))} &rarr;</p>\n'
+            "          </a>"
+        )
+    if not cards:
+        return ""
+    grid = "\n".join(cards)
+    return f"""    <section class="section section--tint" id="catalog">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">On the shelf</p>
+          <h2>Teams you can adopt today</h2>
+          <p>Every blueprint is a versioned team you can stand up in minutes, then evolve on your own shelf. Open one to see its roles, missions, and skills.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+{grid}
+        </div>
+        <p style="margin-top:var(--s4)"><a href="/blueprints" style="color:var(--accent);font-weight:550">Browse the full catalog &rarr;</a></p>
+      </div>
+    </section>"""
+
+
+def render_landing_page(*, public_origin: str, blueprints: Any = None) -> str:
     origin = escape(public_origin.rstrip("/"), quote=True)
     copy = naapp.COPY_BTN
+    catalog_teaser = _catalog_teaser(blueprints)
     site = _site(
         public_origin=public_origin,
         title="library — agent profiles for AWID teams",
@@ -328,6 +371,8 @@ def render_landing_page(*, public_origin: str) -> str:
         <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/library" style="color:var(--accent);font-weight:550">github.com/awebai/library</a></p>
       </div>
     </section>
+
+{catalog_teaser}
 
 {_WHY_SECTION}
 
@@ -358,7 +403,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <h2>Install aw, add agents, run one interactively</h2>
           <p>The minimal do-this-now onboarding. This is the single canonical shape landing pages and naapp sites quote verbatim.</p>
         </div>
-        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <code>aweb.team</code> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
+        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550"><code>aweb.team</code></a> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
         <div class="cmd-panel">
           <p class="cmd-label">Install the aw CLI, create your account + first team, then add starter agents from aweb.team</p>
           <div class="cmd-list"><div class="cmd"><pre># Install the aw CLI, create your account + first team
@@ -369,6 +414,7 @@ aw init
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code</pre>{copy}</div></div>
         </div>
+        <p class="prose-outro" style="font-size:var(--step--1);color:var(--muted)">See what these commands add before you run them: the <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a> profiles from <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a>.</p>
         <p class="prose-outro">Then run an agent. <strong>Two runtimes work — Claude Code or pi.</strong> Materialize the agent for the runtime you will run (<code>=claude-code</code> or <code>=pi</code>), then launch it directly in the agent home.</p>
         <p class="prose-outro"><strong>Claude Code</strong> — install the channel plugin once, inside Claude Code:</p>
         <div class="cmd-panel">
@@ -462,6 +508,21 @@ The model is structural: blueprints are the public, versioned catalog; a team's
 shelf holds its private working copies. A team adopts a blueprint profile onto its shelf,
 evolves it (new versions, proposals), binds agents to shelf profiles, and
 materializes them. "Public" is a publish, not a flag.
+
+
+## Browse the catalog
+
+Human-readable pages render the live catalog for a person choosing a role — the
+same data the /v1/blueprints endpoints serve as JSON:
+
+- Catalog index:  {origin}/blueprints
+- A blueprint:    {origin}/blueprints/BLUEPRINT_REF
+- A profile:      {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
+- A skill:        {origin}/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
+
+For example, the starter team: {origin}/blueprints/aweb.team,
+{origin}/blueprints/aweb.team/profiles/developer, and
+{origin}/blueprints/aweb.team/profiles/reviewer.
 
 
 ## Getting started

@@ -18,8 +18,10 @@ classifiers = [
 dependencies = [
   "aweb-naapp",
   "awid-service",
+  "bleach>=6.4.0",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
+  "markdown-it-py>=4.2.0",
   "pgdbm>=0.4.1",
   "pydantic>=2.11.7",
   "pydantic-settings>=2.10.1",

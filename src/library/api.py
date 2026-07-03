@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
 
+from library import browse, browse_views
 from library.auth import AWIDTeamCache, Principal, authenticate_request
 from library.aweb_manifest import read_manifest_bytes
 from library.config import Settings, get_settings
@@ -112,7 +113,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def landing_route() -> HTMLResponse:
-        return HTMLResponse(render_landing_page(public_origin=resolved.public_origin))
+        # The catalog teaser is rendered from the live catalog, but it is a
+        # best-effort enhancement: the landing is the front door and must render
+        # even when the database is unavailable, so a catalog read is soft.
+        blueprints: list[dict] = []
+        database = holder.get("db")
+        if isinstance(database, LibraryDatabase):
+            try:
+                blueprints = await list_blueprints(database.db, tags=None)
+            except Exception:
+                blueprints = []
+        return HTMLResponse(
+            render_landing_page(public_origin=resolved.public_origin, blueprints=blueprints)
+        )
 
     def _aweb_css_response(immutable: bool) -> Response:
         # The fingerprinted URL is content-addressed, so it can be cached forever;
@@ -164,6 +177,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/reference", response_class=HTMLResponse)
     async def reference_route() -> HTMLResponse:
         return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
+
+    @app.get("/blueprints", response_class=HTMLResponse)
+    async def browse_catalog_route(
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        blueprints = await browse_views.catalog_view(database)
+        return HTMLResponse(
+            browse.render_catalog_page(public_origin=resolved.public_origin, blueprints=blueprints)
+        )
+
+    @app.get("/blueprints/{blueprint_id}", response_class=HTMLResponse)
+    async def browse_blueprint_route(
+        blueprint_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        blueprint = await browse_views.blueprint_view(database, blueprint_ref=blueprint_id)
+        return HTMLResponse(
+            browse.render_blueprint_page(public_origin=resolved.public_origin, blueprint=blueprint)
+        )
+
+    @app.get("/blueprints/{blueprint_id}/profiles/{profile_id}", response_class=HTMLResponse)
+    async def browse_profile_route(
+        blueprint_id: str,
+        profile_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        profile = await browse_views.profile_view(
+            database, blueprint_ref=blueprint_id, profile_ref=profile_id
+        )
+        return HTMLResponse(
+            browse.render_profile_page(public_origin=resolved.public_origin, profile=profile)
+        )
+
+    @app.get(
+        "/blueprints/{blueprint_id}/profiles/{profile_id}/skills/{skill_name}",
+        response_class=HTMLResponse,
+    )
+    async def browse_skill_route(
+        blueprint_id: str,
+        profile_id: str,
+        skill_name: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        skill = await browse_views.skill_view(
+            database, blueprint_ref=blueprint_id, profile_ref=profile_id, skill_name=skill_name
+        )
+        return HTMLResponse(browse.render_skill_page(public_origin=resolved.public_origin, skill=skill))
 
     @app.get("/robots.txt", response_class=PlainTextResponse)
     async def robots_route() -> PlainTextResponse:

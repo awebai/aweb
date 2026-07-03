@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from library import browse_views
 from library.digest import (
     BLUEPRINT_PAYLOAD_SCHEMA,
     PROFILE_PAYLOAD_SCHEMA,
@@ -106,3 +107,50 @@ async def test_get_shelf_profile_include_files_round_trips(migrated_db) -> None:
     # files - it round-trips (no ad-hoc hash), so aw can record + verify it.
     assert content["digest"] == _COORDINATOR_DIGEST
     assert payload_digest(content["files"], PROFILE_PAYLOAD_SCHEMA) == content["digest"]
+
+
+async def test_browse_views_use_published_catalog_payloads(migrated_db) -> None:
+    db = migrated_db
+    await db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, team_did_key) VALUES ($1, $2)"
+        " ON CONFLICT (team_id) DO NOTHING",
+        _TEAM,
+        "did:key:zSmokeTest",
+    )
+    principal = SimpleNamespace(team_id=_TEAM)
+    await publish_blueprint(
+        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+    )
+
+    catalog = await browse_views.catalog_view(db)
+    engineering = next(bp for bp in catalog if bp["blueprint_ref"] == "aweb.engineering")
+    assert engineering["profile_count"] == 3
+
+    blueprint = await browse_views.blueprint_view(db, blueprint_ref="aweb.engineering")
+    reviewer = next(item for item in blueprint["roster"] if item["profile_ref"] == "reviewer")
+    assert reviewer["count_min"] == 0  # zero is a real range bound, not a missing value
+    assert reviewer["count_max"] == 2
+    assert reviewer["runtime_hints"] == ["claude-code"]
+
+    profile = await browse_views.profile_view(
+        db, blueprint_ref="aweb.engineering", profile_ref="developer"
+    )
+    assert profile["instructions_html"].startswith("<p>You are a developer.")
+    assert profile["skills"] == [
+        {
+            "name": "implement",
+            "description": "",
+            "href": "/blueprints/aweb.engineering/profiles/developer/skills/implement",
+        }
+    ]
+    assert profile["artifacts"] == [
+        {
+            "name": "handoff-template.md",
+            "href": "/v1/blueprints/aweb.engineering/profiles/developer",
+        }
+    ]
+
+    skill = await browse_views.skill_view(
+        db, blueprint_ref="aweb.engineering", profile_ref="developer", skill_name="implement"
+    )
+    assert "<h1>Implement</h1>" in skill["body_html"]

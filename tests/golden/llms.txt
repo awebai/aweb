@@ -19,6 +19,21 @@ evolves it (new versions, proposals), binds agents to shelf profiles, and
 materializes them. "Public" is a publish, not a flag.
 
 
+## Browse the catalog
+
+Human-readable pages render the live catalog for a person choosing a role — the
+same data the /v1/blueprints endpoints serve as JSON:
+
+- Catalog index:  https://library.aweb.ai/blueprints
+- A blueprint:    https://library.aweb.ai/blueprints/BLUEPRINT_REF
+- A profile:      https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
+- A skill:        https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
+
+For example, the starter team: https://library.aweb.ai/blueprints/aweb.team,
+https://library.aweb.ai/blueprints/aweb.team/profiles/developer, and
+https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer.
+
+
 ## Getting started
 
 The minimal do-this-now onboarding. This is the single canonical shape landing

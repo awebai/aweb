@@ -101,6 +101,116 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     assert 'href="https://aweb.ai" class="brand-word"' in html
 
 
+def test_landing_get_started_links_blueprint_and_quoted_profiles() -> None:
+    """Get-started hyperlinks what its commands quote — the aweb.team blueprint and
+    the developer/reviewer profiles named in the commands — so a reader can see what
+    they are adopting. The links live in prose, never inside the copy-paste <pre>."""
+    html = _client().get("/").text
+    assert 'href="/blueprints/aweb.team"' in html
+    assert 'href="/blueprints/aweb.team/profiles/developer"' in html
+    assert 'href="/blueprints/aweb.team/profiles/reviewer"' in html
+    # the command block itself stays copy-paste clean — no anchor tags inside <pre>.
+    pre_blocks = html.split("<pre>")[1:]
+    for block in pre_blocks:
+        assert "</a>" not in block.split("</pre>")[0]
+
+
+def test_llms_txt_lists_browse_page_urls_for_agent_discovery() -> None:
+    text = _client().get("/llms.txt").text
+    assert "/blueprints" in text
+    assert "/blueprints/aweb.team/profiles/developer" in text
+
+
+def test_landing_catalog_teaser_renders_from_blueprints() -> None:
+    """The landing presents the live catalog — each blueprint's name, summary, and a
+    link into its page — from the catalog summary data, so a visitor discovers what
+    is on the shelf. Rendered from data, not hardcoded, so new blueprints appear."""
+    from library.surfaces import render_landing_page
+
+    html = render_landing_page(
+        public_origin="https://library.aweb.ai",
+        blueprints=[
+            {
+                "blueprint_ref": "aweb.team",
+                "name": "aweb AI Team",
+                "summary": "A complete AI team — coordinator, developers, reviewer.",
+            }
+        ],
+    )
+    assert 'id="catalog"' in html
+    assert "aweb AI Team" in html
+    assert "A complete AI team" in html
+    assert 'href="/blueprints/aweb.team"' in html
+    # a link into the full catalog, and the ref shown in mono.
+    assert 'href="/blueprints"' in html
+
+
+def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
+    """With no catalog data (e.g. the DB is unavailable) the landing still renders,
+    simply without the teaser."""
+    from library.surfaces import render_landing_page
+
+    html = render_landing_page(public_origin="https://library.aweb.ai", blueprints=[])
+    assert 'id="catalog"' not in html
+    assert "Where teams choose, keep, and improve" in html  # the rest of the page renders
+
+
+class _FakeLibraryDatabase:
+    def __init__(self, _settings: Settings) -> None:
+        self.db = object()
+
+    async def connect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+
+def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> None:
+    """Route-level guard: with a DB present but the catalog read failing, the front
+    door stays up and omits only the best-effort catalog teaser."""
+
+    async def broken_list_blueprints(_db, *, tags):
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
+    monkeypatch.setattr(library_api, "list_blueprints", broken_list_blueprints)
+
+    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert 'id="catalog"' not in response.text
+    assert "Where teams choose, keep, and improve" in response.text
+
+
+def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
+    """Route-level success counterpart: catalog summaries from the live-read path
+    are passed into the teaser renderer."""
+
+    async def fake_list_blueprints(_db, *, tags):
+        return [
+            {
+                "blueprint_ref": "aweb.team",
+                "name": "aweb AI Team",
+                "summary": "A complete AI team — coordinator, developers, reviewer.",
+            }
+        ]
+
+    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
+    monkeypatch.setattr(library_api, "list_blueprints", fake_list_blueprints)
+
+    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="catalog"' in response.text
+    assert "aweb AI Team" in response.text
+    assert "A complete AI team" in response.text
+    assert 'href="/blueprints/aweb.team"' in response.text
+
+
 def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
     landing = _client().get("/").text
     reference = _client().get("/reference").text

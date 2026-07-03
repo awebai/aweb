@@ -37,6 +37,7 @@
     <div class="wrap">
       <a class="brand" href="/"><span class="dot"></span>library</a>
       <nav class="nav-links">
+        <a href="/blueprints">Blueprints</a>
         <a href="/reference">Reference</a>
         <a href="/skills/">Skills</a>
         <a href="https://awid.ai" class="brand-word">awid</a>
@@ -152,6 +153,24 @@
       </div>
     </section>
 
+    <section class="section section--tint" id="catalog">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="kicker">On the shelf</p>
+          <h2>Teams you can adopt today</h2>
+          <p>Every blueprint is a versioned team you can stand up in minutes, then evolve on your own shelf. Open one to see its roles, missions, and skills.</p>
+        </div>
+        <div class="card-grid card-grid--auto">
+          <a class="card" href="/blueprints/aweb.team" style="text-decoration:none;color:inherit;display:block">
+            <h3>aweb AI Team</h3>
+            <p>A complete AI team — coordinator, developers, reviewer, agent-resources, plus the opt-in roles.</p>
+            <p style="margin-top:var(--s3);font:600 var(--step--1)/1 var(--font-mono);color:var(--accent)">aweb.team &rarr;</p>
+          </a>
+        </div>
+        <p style="margin-top:var(--s4)"><a href="/blueprints" style="color:var(--accent);font-weight:550">Browse the full catalog &rarr;</a></p>
+      </div>
+    </section>
+
     <section class="section section--tint">
       <div class="wrap">
         <style>
@@ -248,7 +267,7 @@
           <h2>Install aw, add agents, run one interactively</h2>
           <p>The minimal do-this-now onboarding. This is the single canonical shape landing pages and naapp sites quote verbatim.</p>
         </div>
-        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <code>aweb.team</code> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
+        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550"><code>aweb.team</code></a> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
         <div class="cmd-panel">
           <p class="cmd-label">Install the aw CLI, create your account + first team, then add starter agents from aweb.team</p>
           <div class="cmd-list"><div class="cmd"><pre># Install the aw CLI, create your account + first team
@@ -259,6 +278,7 @@ aw init
 aw team add alice@aweb.team/developer=claude-code
 aw team add bob@aweb.team/reviewer=claude-code</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
         </div>
+        <p class="prose-outro" style="font-size:var(--step--1);color:var(--muted)">See what these commands add before you run them: the <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a> profiles from <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a>.</p>
         <p class="prose-outro">Then run an agent. <strong>Two runtimes work — Claude Code or pi.</strong> Materialize the agent for the runtime you will run (<code>=claude-code</code> or <code>=pi</code>), then launch it directly in the agent home.</p>
         <p class="prose-outro"><strong>Claude Code</strong> — install the channel plugin once, inside Claude Code:</p>
         <div class="cmd-panel">
@@ -355,6 +375,7 @@ pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg vi
         </div>
         <div class="footer-col">
           <h4>Agents</h4>
+          <a href="/blueprints">Blueprints</a>
           <a href="/llms.txt">llms.txt</a>
           <a href="/reference">API reference</a>
           <a href="/skills/">Skills</a>
