@@ -531,49 +531,13 @@ profiles, for example
 [developer](https://library.aweb.ai/blueprints/aweb.team/profiles/developer) and
 [reviewer](https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer).
 
-Then run agents. Materialization supports `claude-code`, `codex`, `pi`, and
-`local-shell` (`claude-code` is the default), but the current `aw team up` tmux
-launcher starts only `claude-code` and `pi` homes. It preflights the Claude
-plugin and Pi extension before launch:
-
-```bash
-aw team up --dry-run
-aw team up
-```
-
-`aw team up` launches Claude Code with:
-
-```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
-```
-
-and launches Pi with:
-
-```bash
-pi --approve
-```
-
-It auto-answers the known Claude trust-folder and development-channel prompts.
-Pi startup is unattended: `pi --approve` trusts the project-local files, so Pi
-does not show its trust-folder prompt. Codex and local-shell homes can be
-materialized, but they must be started manually from the materialized home and
-should poll `aw mail inbox` / `aw chat pending`.
-
-**One command — materialize and launch together.** `aw team add … --start`
-materializes the home *and* launches the agent in one step (the same launch path
-as `aw team up`), so you add and run a single agent at once:
-
-```bash
-aw team add alice@aweb.team/developer=claude-code --start
-```
-
-`aw team add` also sets up **home isolation**: the agent's git work happens in an
-isolated `<home>/worktree/` on its own branch (plus a `work-main/` symlink for
-coordination roles), so an agent never touches the checkout it was created from.
-Point the worktree at a separate project repo with `--work-dir`, or run in a
-non-git directory to skip it. See
-[Running materialized agents](running-agents.md) for the full lifecycle,
-worktree isolation, and `--work-dir`.
+`aw team up` preflights and launches each materialized home's runtime — Claude
+Code (with the aweb channel plugin) and Pi today — auto-answering the trust and
+development-channel prompts; Codex and `local-shell` homes are materialized but
+started manually. No `aw plugin install` is needed to onboard — materialization
+is a plain catalog read; the Library **shelf** is a separate opt-in app. See
+[Running materialized agents](running-agents.md) for the launch details, the
+one-command `aw team add … --start`, and home/worktree isolation.
 
 **Grow an existing team.** To add members later, use `aw team extend` — it adds
 agents from the same blueprint, discovering the authority from your team context:
