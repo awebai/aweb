@@ -17,11 +17,11 @@ document or in the command's output.
 
 ## The three-verb model
 
-| Verb | Purpose | Anchor | Fails when |
+| Verb | Purpose | Anchor | When cwd is already a team context |
 |---|---|---|---|
-| `aw team create <name>` | Make a NEW team, optionally populate it (`--agent`) | cwd (or `--home`) becomes the first member workspace | a team context already exists here → error suggesting `aw team extend` |
-| `aw team extend <agent-spec>...` | Add members to an EXISTING team, discovering the authority | discovered (see below) | no team + authority can be found → error suggesting `aw team create` |
-| `aw team add <agent-spec>...` | Single/multi-member primitive using the CURRENT workspace identity | cwd's `.aw` workspace | cwd has no active team workspace |
+| `aw team create <name>` | Make a NEW team, optionally populate it (`--agent`) | cwd (or `--home`) becomes the first member workspace | always creates; a non-blocking one-line notice points at `aw team extend` for adding to the EXISTING team |
+| `aw team extend <agent-spec>...` | Add members to an EXISTING team, discovering the authority | discovered (see below) | proceeds; hard error suggesting `aw team create` only when no team + authority can be found |
+| `aw team add <agent-spec>...` | Single/multi-member primitive using the CURRENT workspace identity | cwd's `.aw` workspace | proceeds; errors when cwd has no active team workspace |
 
 `extend` and `create --agent` are batch wrappers over the same
 roster-population path (`runTeamHumanCreateRosterAdd` →
@@ -31,15 +31,17 @@ invites). What makes `extend` distinct is that it may run from a directory
 with no workspace identity of its own and DISCOVERS the authority to add
 members.
 
-The `create` guard above is target behavior, not current: today
-`aw team create` in a dir with existing identity material follows the
-existing-identity path and either mints a new team (self-controlled
-namespace) or errors on hosted-managed namespaces. The guard becomes: an
-active team membership in cwd without explicit new-team intent (`--byot`)
-errors and names `aw team extend`. `--byot --namespace <domain>` remains the
-deliberate way to create additional teams under a namespace you control.
-That guard change is small and ships with `extend` so both halves of the
-cross-suggestion exist at once.
+`aw team create`'s contract is that it ALWAYS creates a new team. It must
+not refuse just because cwd already has an active team membership: an agent
+standing in its own home always has one, and agent-run `create` is a design
+goal (default-aaeq.23), so a hard block there would contradict it. Instead,
+when cwd has an active membership and there is no `--byot`, `create` emits a
+non-blocking one-line notice — you are already a member of team X;
+`aw team extend` adds members to THAT team — and proceeds to create the new
+team. The two halves stay symmetric but only `extend`'s side is a hard
+error, because `extend` genuinely cannot proceed without a team + authority
+whereas `create` always can. The notice ships together with `extend` so
+both halves of the cross-suggestion exist at once.
 
 ## Synopsis
 
@@ -71,21 +73,33 @@ concerns; a caller who needs them has a workspace and should use `add`).
 
 ## Authority discovery
 
-Precedence is deterministic and overridable. First match wins:
+Precedence is deterministic and overridable. The first tier that can
+select an anchor wins; lower tiers are not consulted after that:
 
 1. **Explicit team API key** — `--api-key`, else `AWEB_API_KEY`. Used
    directly via the API-key bootstrap path (`runAPIKeyBootstrapInit` per
    member, as `add` does in API-key mode). The key itself determines the
-   team; no scan happens. If `--team-id` is also given and does not match
-   the key's team, error.
+   team; no scan happens. `--team-id` alongside a key is an assertion, and
+   it must be side-effect-safe: the key's team is only learned from the
+   server response of the bootstrap call, so the contract is that the FIRST
+   member is bootstrapped, its response team id is compared to `--team-id`,
+   and on mismatch that just-created member is rolled back — server-side
+   membership revoked and the local home removed, via the same rollback
+   machinery the roster path already uses (`rollbackJustCreatedTeamMember`
+   + home rollback) — and `extend` errors naming both team ids before any
+   further member is attempted. A mismatch never leaves a partial roster in
+   the key's team. (If a key-introspection preflight endpoint becomes
+   available, it replaces the bootstrap-then-rollback check; the observable
+   contract stays the same.)
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace
    with an active team and can mint invites (below). This covers running
    `extend` from an agent home and from a team root whose first member was
    created in place by `aw team create`.
 3. **A discovered invite-capable agent** — scan the candidate homes under
-   the agents root (next section), in lexicographic order, and borrow the
-   first invite-capable one as the invite anchor. The new members join that
-   agent's active team.
+   the agents root (next section), gather the qualifying ones, apply the
+   ambiguity rule below, and borrow the lexicographically first qualifying
+   home as the invite anchor. The new members join that agent's active
+   team.
 4. **Error** — nothing found. The error names both missing inputs and the
    alternative verb:
 
@@ -122,10 +136,22 @@ the next candidate, which would make failures order-dependent and opaque.
 
 ### Team ambiguity
 
-If `--team-id` is given, tiers 2–3 only consider workspaces whose active
-team matches it. Without `--team-id`, if the qualifying candidates span more
-than one active team, `extend` errors and lists the teams found, asking for
-`--team-id`. It never guesses among teams.
+Ambiguity is judged WITHIN a tier, and only after every higher tier has
+failed to select an anchor. A lower tier never re-opens or overrides a
+higher one:
+
+- Tier 1: the key names the team; nothing on disk is consulted.
+- Tier 2: if the current workspace is invite-capable (and its active team
+  matches `--team-id` when given), it is selected even when sibling homes
+  under the agents root belong to other teams. Standing in a workspace is
+  explicit context; the scan never runs and cannot make it ambiguous.
+- Tier 3: `--team-id`, when given, filters the qualifying candidates to
+  those whose active team matches. Without `--team-id`, if the qualifying
+  candidates span more than one active team, `extend` errors and lists the
+  teams found, asking for `--team-id`. Within a single team, the
+  lexicographically first qualifying home wins.
+
+`extend` never guesses among teams.
 
 ## Where it can be called from
 
@@ -168,10 +194,11 @@ default-aaeq.23, stricter because `extend` has no wizard):
   shape with `"status": "extended"` and the resolved team id and authority
   tier included, so callers can assert which path was used.
 
-## Errors that cross-reference the verbs
+## Cross-references between the verbs
 
 - `aw team create` with an active team membership in cwd (and no `--byot`):
-  names the team and suggests `aw team extend`.
+  a non-blocking notice that names the team and suggests `aw team extend`,
+  then the create proceeds. Not an error.
 - `aw team extend` with no team + authority: suggests `aw team create`
   (tier-4 error above).
 - `aw team extend` in a workspace that has an active team but cannot mint
