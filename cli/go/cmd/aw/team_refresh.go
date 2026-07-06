@@ -149,36 +149,25 @@ func refreshPublicLibraryProfileInHome(homeDir string, old recordedProfileRef, r
 			FilesWritten:           nil,
 		}, nil
 	}
-	var materialized *blueprint.MaterializeResult
-	err = withWorkingDir(homeDir, func() error {
-		var mErr error
-		materialized, mErr = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-			TargetDir:        homeDir,
-			LibraryURL:       selector.LibraryURL,
-			BlueprintRef:     profile.BlueprintRef,
-			BlueprintVersion: profile.BlueprintVersion,
-			ProfileRef:       profile.ProfileRef,
-			ProfileVersion:   profile.Version,
-			ProfileDigest:    profile.Digest,
-			RuntimeKind:      runtimeKind,
-			Files:            profile.Files,
-			Force:            true,
-		})
-		if mErr != nil {
-			return fmt.Errorf("local profile materialize: %w", mErr)
-		}
-		return pruneRemovedManagedProfileFiles(homeDir, old.ManagedSet, materialized.FilesWritten)
+	return materializeAndPruneLibraryProfileInHome(homeDir, old, blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:        homeDir,
+		LibraryURL:       selector.LibraryURL,
+		BlueprintRef:     profile.BlueprintRef,
+		BlueprintVersion: profile.BlueprintVersion,
+		ProfileRef:       profile.ProfileRef,
+		ProfileVersion:   profile.Version,
+		ProfileDigest:    profile.Digest,
+		RuntimeKind:      runtimeKind,
+		Files:            profile.Files,
+		Force:            true,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return materialized, nil
 }
 
 func refreshShelfLibraryProfileInHome(homeDir string, old recordedProfileRef, runtimeKind string) (*blueprint.MaterializeResult, error) {
-	var materialized *blueprint.MaterializeResult
+	var shelf *libraryShelfProfileResponse
 	err := withWorkingDir(homeDir, func() error {
-		shelf, err := callLibraryGetShelfProfile(old.ProfileRef)
+		var err error
+		shelf, err = callLibraryGetShelfProfile(old.ProfileRef)
 		if err != nil {
 			return fmt.Errorf("library get-shelf-profile: %w", err)
 		}
@@ -189,19 +178,30 @@ func refreshShelfLibraryProfileInHome(homeDir string, old recordedProfileRef, ru
 		if shelf.ProfileRef != old.ProfileRef {
 			return fmt.Errorf("library returned profile_ref %q for a refresh of %q; refusing to rewrite the recorded profile with a different one", shelf.ProfileRef, old.ProfileRef)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return materializeAndPruneLibraryProfileInHome(homeDir, old, blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:        homeDir,
+		BlueprintRef:     firstNonEmptyLibraryValue(shelf.SourceBlueprintRef, old.SourceBlueprintRef),
+		BlueprintVersion: firstNonEmptyLibraryValue(shelf.SourceBlueprintVersion, old.SourceBlueprintVersion),
+		BlueprintDigest:  firstNonEmptyLibraryValue(shelf.SourceBlueprintDigest, old.SourceBlueprintDigest),
+		ProfileRef:       old.ProfileRef,
+		ProfileVersion:   shelf.Version,
+		ProfileDigest:    shelf.Digest,
+		RuntimeKind:      runtimeKind,
+		Files:            shelf.Files,
+		Force:            true,
+	})
+}
+
+func materializeAndPruneLibraryProfileInHome(homeDir string, old recordedProfileRef, opts blueprint.MaterializeLibraryProfilePayloadOptions) (*blueprint.MaterializeResult, error) {
+	var materialized *blueprint.MaterializeResult
+	err := withWorkingDir(homeDir, func() error {
 		var mErr error
-		materialized, mErr = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-			TargetDir:        homeDir,
-			BlueprintRef:     firstNonEmptyLibraryValue(shelf.SourceBlueprintRef, old.SourceBlueprintRef),
-			BlueprintVersion: firstNonEmptyLibraryValue(shelf.SourceBlueprintVersion, old.SourceBlueprintVersion),
-			BlueprintDigest:  firstNonEmptyLibraryValue(shelf.SourceBlueprintDigest, old.SourceBlueprintDigest),
-			ProfileRef:       old.ProfileRef,
-			ProfileVersion:   shelf.Version,
-			ProfileDigest:    shelf.Digest,
-			RuntimeKind:      runtimeKind,
-			Files:            shelf.Files,
-			Force:            true,
-		})
+		materialized, mErr = blueprint.MaterializeLibraryProfilePayload(opts)
 		if mErr != nil {
 			return fmt.Errorf("local profile materialize: %w", mErr)
 		}
