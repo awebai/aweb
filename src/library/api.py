@@ -113,14 +113,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def landing_route() -> HTMLResponse:
-        # The catalog teaser is rendered from the live catalog, but it is a
-        # best-effort enhancement: the landing is the front door and must render
-        # even when the database is unavailable, so a catalog read is soft.
+        # The landing presents the first-party blueprint(s) from the live catalog
+        # with their roles (catalog_view carries each blueprint's profiles). It is
+        # a best-effort enhancement: the front door must render even when the
+        # database is unavailable, so the read is soft.
         blueprints: list[dict] = []
         database = holder.get("db")
         if isinstance(database, LibraryDatabase):
             try:
-                blueprints = await list_blueprints(database.db, tags=None)
+                blueprints = await browse_views.catalog_view(database.db)
             except Exception:
                 blueprints = []
         return HTMLResponse(

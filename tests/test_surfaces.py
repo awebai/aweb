@@ -87,18 +87,62 @@ def test_landing_offers_llms_control_and_model_diagram() -> None:
     assert "For LLMs and agents" not in html
     # The hero model diagram replaces the prose lede.
     assert 'class="model-fig"' in html
-    assert "Browse the catalog, build your shelf, run your team." in html
-    assert "aw team add alice@aweb.team/developer=claude-code" in html
-    assert "aw team add bob@aweb.team/reviewer=claude-code" in html
-    assert "/plugin marketplace add awebai/claude-plugins" in html
-    assert "/plugin install aweb-channel@awebai-marketplace" in html
-    assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in html
-    assert "pi install npm:@awebai/pi@latest" in html
-    assert "aw agent start" not in html
-    assert "aw run" not in html
-    assert "AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code" in html
+    assert "Create from the catalog, adopt onto your shelf, improve under review." in html
     assert 'href="https://awid.ai" class="brand-word"' in html
     assert 'href="https://aweb.ai" class="brand-word"' in html
+
+
+def test_landing_hero_copy_is_the_teams_of_ai_agents_phrasing() -> None:
+    html = _client().get("/").text
+    assert "Where teams of AI agents choose, keep and improve the profiles they run." in html
+
+
+def test_landing_is_one_getting_started_zero_to_self_improving_team() -> None:
+    """A single getting-started, zero to a shelf-based self-improving team, in the
+    executed 1.32.3 command order. Every panel is a runnable human command; the
+    proposal step is actor-neutral (the autonomous 'your agents propose' claim is
+    not true of the published profiles yet). There is no separate evolve section."""
+    from library.surfaces import render_landing_page
+
+    html = render_landing_page(
+        public_origin="https://library.aweb.ai",
+        blueprints=[{"blueprint_ref": "aweb.team", "name": "aweb AI Team", "summary": "A team."}],
+    )
+    # one getting-started, first content section; no separate evolve section.
+    assert 'id="use"' in html
+    assert 'id="evolve"' not in html
+    assert html.index('id="use"') < html.index('id="catalog"')
+    assert html.index('id="use"') < html.index("Agents need evolving job descriptions")
+
+    # the executed command sequence, byte-exact and IN ORDER, all as panels.
+    ordered = [
+        "npm install -g @awebai/aw",
+        "aw team create eng --username &lt;you&gt; "
+        "--agent alice@aweb.team/developer=claude-code "
+        "--agent bob@aweb.team/reviewer=pi",
+        "aw team up",
+        "aw plugin install https://library.aweb.ai/.well-known/aweb-app.json",
+        "aw team adopt alice",
+        "aw library approve --proposal_id &lt;id&gt;",
+        "aw team refresh alice",
+    ]
+    positions = [html.index(f"<pre>{c}</pre>") if f"<pre>{c}</pre>" in html else html.index(c) for c in ordered]
+    assert positions == sorted(positions), "get-started commands are out of order"
+    # aw team up appears twice: start (step 3) and the idempotent reconcile (last step).
+    assert html.count("<pre>aw team up</pre>") == 2
+    # step 4's what-line notes the plugin is required for the adopt step next.
+    assert "required for the adopt step" in html
+
+    # the proposal step names the agents as the proposers — true of the published
+    # catalog as of aweb.team 0.1.9 — while approve stays the human touchpoint panel.
+    assert "your agents propose" in html.lower()
+    # broken syntax never appears anywhere on the page.
+    assert "--body-file" not in html
+    # neither propose nor update-from-source appears as a runnable command panel in
+    # get-started (update-from-source may still be named as a concept in Invariants).
+    assert "<pre>aw library propose" not in html
+    assert "<pre>aw library update-from-source" not in html
+    assert "<pre>aw library list-blueprints" not in html  # the old generic "use it" step is gone
 
 
 def test_landing_get_started_links_blueprint_and_quoted_profiles() -> None:
@@ -121,10 +165,10 @@ def test_llms_txt_lists_browse_page_urls_for_agent_discovery() -> None:
     assert "/blueprints/aweb.team/profiles/developer" in text
 
 
-def test_landing_catalog_teaser_renders_from_blueprints() -> None:
-    """The landing presents the live catalog — each blueprint's name, summary, and a
-    link into its page — from the catalog summary data, so a visitor discovers what
-    is on the shelf. Rendered from data, not hardcoded, so new blueprints appear."""
+def test_landing_presents_the_blueprint_with_its_roles() -> None:
+    """The landing presents the first-party blueprint itself — name, real summary,
+    and its roles at a glance — from the live catalog (not a generic carousel), and
+    links to its page. Rendered from data, so it grows if the catalog does."""
     from library.surfaces import render_landing_page
 
     html = render_landing_page(
@@ -133,16 +177,27 @@ def test_landing_catalog_teaser_renders_from_blueprints() -> None:
             {
                 "blueprint_ref": "aweb.team",
                 "name": "aweb AI Team",
-                "summary": "A complete AI team — coordinator, developers, reviewer.",
+                "summary": "A complete AI team — a coordinator who plans and routes, ...",
+                "profiles": [
+                    {"profile_ref": "coordinator"},
+                    {"profile_ref": "developer"},
+                    {"profile_ref": "reviewer"},
+                    {"profile_ref": "agent-resources"},
+                ],
             }
         ],
     )
     assert 'id="catalog"' in html
+    assert "The team you're adopting" in html  # presents THE team, not "shop the catalog"
     assert "aweb AI Team" in html
     assert "A complete AI team" in html
     assert 'href="/blueprints/aweb.team"' in html
-    # a link into the full catalog, and the ref shown in mono.
-    assert 'href="/blueprints"' in html
+    # the roles are shown at a glance (from the blueprint's profiles).
+    for role in ("coordinator", "developer", "reviewer", "agent-resources"):
+        assert role in html, role
+    # no generic "shop the catalog" framing that implies variety we do not have.
+    assert "Teams you can adopt today" not in html
+    assert "On the shelf" not in html
 
 
 def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
@@ -152,7 +207,7 @@ def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
 
     html = render_landing_page(public_origin="https://library.aweb.ai", blueprints=[])
     assert 'id="catalog"' not in html
-    assert "Where teams choose, keep, and improve" in html  # the rest of the page renders
+    assert "Where teams of AI agents choose, keep and improve" in html  # the rest of the page renders
 
 
 class _FakeLibraryDatabase:
@@ -170,11 +225,11 @@ def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> N
     """Route-level guard: with a DB present but the catalog read failing, the front
     door stays up and omits only the best-effort catalog teaser."""
 
-    async def broken_list_blueprints(_db, *, tags):
+    async def broken_catalog_view(_db):
         raise RuntimeError("catalog unavailable")
 
     monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
-    monkeypatch.setattr(library_api, "list_blueprints", broken_list_blueprints)
+    monkeypatch.setattr(library_api.browse_views, "catalog_view", broken_catalog_view)
 
     with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
         response = client.get("/")
@@ -182,24 +237,25 @@ def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> N
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert 'id="catalog"' not in response.text
-    assert "Where teams choose, keep, and improve" in response.text
+    assert "Where teams of AI agents choose, keep and improve" in response.text
 
 
 def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
     """Route-level success counterpart: catalog summaries from the live-read path
     are passed into the teaser renderer."""
 
-    async def fake_list_blueprints(_db, *, tags):
+    async def fake_catalog_view(_db):
         return [
             {
                 "blueprint_ref": "aweb.team",
                 "name": "aweb AI Team",
                 "summary": "A complete AI team — coordinator, developers, reviewer.",
+                "profiles": [{"profile_ref": "coordinator"}, {"profile_ref": "developer"}],
             }
         ]
 
     monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
-    monkeypatch.setattr(library_api, "list_blueprints", fake_list_blueprints)
+    monkeypatch.setattr(library_api.browse_views, "catalog_view", fake_catalog_view)
 
     with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
         response = client.get("/")

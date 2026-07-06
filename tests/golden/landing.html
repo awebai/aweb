@@ -71,10 +71,15 @@
     </div>
   </header>
   <main>
+    <style>
+      /* The chrome header is sticky (~68px); offset in-page anchor jumps like the
+         hero's Get started -> #use so a section's heading is not hidden under it. */
+      html { scroll-padding-top: 5.5rem; }
+    </style>
     <section class="hero-center">
       <div class="wrap">
         <p class="kicker">Native Agentic App · library.aweb.ai</p>
-        <h1>Where teams choose, keep, and improve the profiles their agents run.</h1>
+        <h1>Where teams of AI agents choose, keep and improve the profiles they run.</h1>
         <style>
   .model-fig { max-width: 760px; margin: 1.6rem auto 0; color: var(--ink); }
   .model-fig svg { width: 100%; height: auto; display: block; font-family: var(--font-sans); }
@@ -86,64 +91,54 @@
     .model-fig .mf-mobile { display: block; }
   }
 </style>
-<figure class="model-fig" role="img" aria-label="Flow: a public Catalog of blueprints is adopted onto a team's private Shelf; a Shelf profile is bound to create a running Agent; the Agent proposes changes, a human reviews and approves, and library mints a new version back onto the Shelf.">
-  <svg class="mf-desktop" viewBox="0 0 760 230" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<figure class="model-fig" role="img" aria-label="Flow: you create a team from the public Catalog — its agents run a catalog profile; you adopt each agent onto your team's private Shelf; then the agents propose improvements, you approve to mint a new version on the Shelf, and refresh applies it — an improvement loop under your review.">
+  <svg class="mf-desktop" viewBox="0 0 760 205" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
       <marker id="mfd" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
       <marker id="mfda" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
     </defs>
-    <rect x="8" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="274" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="540" y="18" width="212" height="68" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <text x="114" y="49" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Catalog</text>
-    <text x="114" y="69" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Public blueprints</text>
-    <text x="380" y="43" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Shelf</text>
-    <text x="380" y="61" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Team's private profiles</text>
-    <text x="380" y="79" text-anchor="middle" font-size="10.5" style="fill:var(--muted);opacity:.8">mission &#183; instructions &#183; tools &#183; sign-off</text>
-    <text x="646" y="49" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Agent</text>
-    <text x="646" y="69" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Bound &amp; running</text>
-    <path d="M222,52 H270" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
-    <path d="M488,52 H536" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
-    <text x="246" y="42" text-anchor="middle" font-size="12" style="fill:var(--muted)">adopt</text>
-    <text x="512" y="42" text-anchor="middle" font-size="12" style="fill:var(--muted)">bind</text>
-    <ellipse cx="513" cy="182" rx="72" ry="23" fill="none" style="stroke:var(--line)"/>
-    <circle cx="471" cy="178" r="3.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
-    <path d="M464,190 q7,-9 14,0" fill="none" stroke="currentColor" stroke-width="1.4"/>
-    <text x="487" y="186" font-size="12" style="fill:var(--muted)">human review</text>
-    <path d="M646,86 V182 H586" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
-    <text x="616" y="171" text-anchor="middle" font-size="12" style="fill:var(--muted)">propose</text>
-    <path d="M441,182 H330 V86" fill="none" stroke-width="1.5" style="stroke:var(--accent)" marker-end="url(#mfda)"/>
-    <text x="383" y="171" text-anchor="middle" font-size="12" font-weight="600" style="fill:var(--accent)">approve &amp; mint</text>
+    <rect x="8" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="274" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="540" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <text x="114" y="45" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Catalog</text>
+    <text x="114" y="65" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Public blueprints</text>
+    <text x="380" y="45" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Agent</text>
+    <text x="380" y="65" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Runs your team's profile</text>
+    <text x="646" y="45" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Shelf</text>
+    <text x="646" y="65" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Your team's private copies</text>
+    <path d="M222,49 H270" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
+    <path d="M488,49 H536" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfd)"/>
+    <text x="246" y="39" text-anchor="middle" font-size="12" style="fill:var(--muted)">create</text>
+    <text x="512" y="39" text-anchor="middle" font-size="12" style="fill:var(--muted)">adopt</text>
+    <path d="M646,82 V150 H380 V85" fill="none" style="stroke:var(--accent)" stroke-width="1.5" marker-end="url(#mfda)"/>
+    <text x="513" y="170" text-anchor="middle" font-size="12" font-weight="600" style="fill:var(--accent)">propose &#183; approve &#183; refresh</text>
   </svg>
-  <svg class="mf-mobile" viewBox="0 0 360 470" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <svg class="mf-mobile" viewBox="0 0 360 430" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
       <marker id="mfm" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
       <marker id="mfma" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
     </defs>
-    <rect x="140" y="12" width="210" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="140" y="150" width="210" height="76" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="140" y="330" width="210" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <text x="245" y="40" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Catalog</text>
-    <text x="245" y="59" text-anchor="middle" font-size="12" style="fill:var(--muted)">Public blueprints</text>
-    <text x="245" y="176" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Shelf</text>
-    <text x="245" y="194" text-anchor="middle" font-size="12" style="fill:var(--muted)">Team's private profiles</text>
-    <text x="245" y="212" text-anchor="middle" font-size="10" style="fill:var(--muted);opacity:.8">mission &#183; instructions &#183; tools &#183; sign-off</text>
-    <text x="245" y="358" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Agent</text>
-    <text x="245" y="377" text-anchor="middle" font-size="12" style="fill:var(--muted)">Bound &amp; running</text>
-    <path d="M245,72 V148" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
-    <path d="M245,226 V328" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
-    <text x="257" y="114" font-size="12" style="fill:var(--muted)">adopt</text>
-    <text x="257" y="282" font-size="12" style="fill:var(--muted)">bind</text>
-    <ellipse cx="66" cy="270" rx="58" ry="22" fill="none" style="stroke:var(--line)"/>
-    <circle cx="44" cy="266" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
-    <path d="M38,277 q6,-8 12,0" fill="none" stroke="currentColor" stroke-width="1.4"/>
-    <text x="57" y="274" font-size="11" style="fill:var(--muted)">human review</text>
-    <path d="M140,360 H66 V292" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
-    <text x="100" y="350" text-anchor="middle" font-size="12" style="fill:var(--muted)">propose</text>
-    <path d="M66,248 V200 H140" fill="none" stroke-width="1.5" style="stroke:var(--accent)" marker-end="url(#mfma)"/>
-    <text x="74" y="192" font-size="11" font-weight="600" style="fill:var(--accent)">approve &amp; mint</text>
+    <rect x="132" y="12" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="132" y="176" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="132" y="340" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <text x="240" y="38" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Catalog</text>
+    <text x="240" y="57" text-anchor="middle" font-size="12" style="fill:var(--muted)">Public blueprints</text>
+    <text x="240" y="202" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Agent</text>
+    <text x="240" y="221" text-anchor="middle" font-size="12" style="fill:var(--muted)">Runs your team's profile</text>
+    <text x="240" y="366" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Shelf</text>
+    <text x="240" y="385" text-anchor="middle" font-size="12" style="fill:var(--muted)">Your team's private copies</text>
+    <path d="M240,72 V174" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
+    <path d="M240,236 V338" stroke="currentColor" stroke-width="1.5" marker-end="url(#mfm)"/>
+    <text x="252" y="128" font-size="12" style="fill:var(--muted)">create</text>
+    <text x="252" y="292" font-size="12" style="fill:var(--muted)">adopt</text>
+    <path d="M132,370 H66 V206 H128" fill="none" style="stroke:var(--accent)" stroke-width="1.5" marker-end="url(#mfma)"/>
+    <circle cx="66" cy="292" r="3.4" fill="none" style="stroke:var(--accent)" stroke-width="1.4"/>
+    <path d="M59,303 q7,-9 14,0" fill="none" style="stroke:var(--accent)" stroke-width="1.4"/>
+    <text x="52" y="288" text-anchor="end" font-size="11" font-weight="600" style="fill:var(--accent)">propose ·</text>
+    <text x="52" y="304" text-anchor="end" font-size="11" font-weight="600" style="fill:var(--accent)">approve ·</text>
+    <text x="52" y="320" text-anchor="end" font-size="11" font-weight="600" style="fill:var(--accent)">refresh</text>
   </svg>
-  <figcaption>Browse the catalog, build your shelf, run your team.</figcaption>
+  <figcaption>Create from the catalog, adopt onto your shelf, improve under review.</figcaption>
 </figure>
         <div class="cta-row">
           <a class="btn primary btn--lg" href="#use">Get started</a>
@@ -153,21 +148,111 @@
       </div>
     </section>
 
+    <section class="section" id="use">
+      <div class="wrap">
+        <style>
+          .gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }
+          .gs-step { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }
+          .gs-step__n { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+            background: var(--accent-soft); color: var(--accent); font: 700 0.95rem/1 var(--font-mono); }
+          .gs-step__body { min-width: 0; }
+          .gs-step__title { font: 650 var(--step-1)/1.2 var(--font-sans); margin: 0.25rem 0 0; letter-spacing: -0.01em; }
+          .gs-step__what { color: var(--muted); margin: var(--s1) 0 var(--s2); max-width: 70ch; }
+          .gs-step__what a { color: var(--accent); font-weight: 550; }
+          .gs-step__what code { font: 500 0.88em/1.4 var(--font-mono); background: var(--surface-2);
+            border: 1px solid var(--line); border-radius: 5px; padding: 0.08em 0.34em; }
+          .gs-step .cmd { margin-top: var(--s2); }
+          @media (max-width: 520px) { .gs-step { grid-template-columns: 1fr; gap: var(--s2); } }
+        </style>
+        <div class="section-head">
+          <p class="kicker">Get started</p>
+          <h2>Stand up a self-improving team</h2>
+          <p>From nothing to a team of AI agents that improves its own profiles — on your private shelf, under your review. Each step is one command to copy and run.</p>
+        </div>
+        <ol class="gs-steps">
+        <li class="gs-step">
+          <div class="gs-step__n">1</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Install aw</h3>
+            <p class="gs-step__what">Installs the aw CLI globally — needs Node/npm, and tmux (aw uses it to run your agents).</p>
+            <div class="cmd"><pre>npm install -g @awebai/aw</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">2</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Create your team</h3>
+            <p class="gs-step__what">Creates your hosted team and materializes its starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a> blueprint. Add as many <code>--agent NAME@aweb.team/PROFILE=RUNTIME</code> as you want roles — the example adds <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a>.</p>
+            <div class="cmd"><pre>aw team create eng --username &lt;you&gt; --agent alice@aweb.team/developer=claude-code --agent bob@aweb.team/reviewer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">3</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Start the team</h3>
+            <p class="gs-step__what">Launches all your team's agents in tmux, ready to work.</p>
+            <div class="cmd"><pre>aw team up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">4</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Install library for your team</h3>
+            <p class="gs-step__what">Installs library.aweb.ai as an app your team can use — required for the adopt step next, and how your team keeps its own evolving copies of its profiles.</p>
+            <div class="cmd"><pre>aw plugin install https://library.aweb.ai/.well-known/aweb-app.json</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">5</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Adopt a profile onto your shelf</h3>
+            <p class="gs-step__what">Re-points alice onto your team's private shelf, so she follows your team's own version of her profile instead of the public catalog — this is what makes the profile yours to evolve. New in aw 1.32.3.</p>
+            <div class="cmd"><pre>aw team adopt alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">6</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Approve what your agents propose</h3>
+            <p class="gs-step__what">As they work, your agents propose improvements they have learned — a scoped changeset signed with your team's <a href="https://awid.ai" class="brand-word">awid</a>. You review and approve, and library mints an immutable, versioned copy on your shelf.</p>
+            <div class="cmd"><pre>aw library approve --proposal_id &lt;id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">7</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Apply the new version</h3>
+            <p class="gs-step__what"><code>aw team refresh</code> re-materializes the agent from your team's newly minted version.</p>
+            <div class="cmd"><pre>aw team refresh alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        <li class="gs-step">
+          <div class="gs-step__n">8</div>
+          <div class="gs-step__body">
+            <h3 class="gs-step__title">Reconcile your running agents</h3>
+            <p class="gs-step__what"><code>aw team up</code> again — it is idempotent — brings the running agents onto the refreshed home. Your team is now improving on its own shelf, under your review.</p>
+            <div class="cmd"><pre>aw team up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          </div>
+        </li>
+        </ol>
+      </div>
+    </section>
+
     <section class="section section--tint" id="catalog">
       <div class="wrap">
         <div class="section-head">
-          <p class="kicker">On the shelf</p>
-          <h2>Teams you can adopt today</h2>
-          <p>Every blueprint is a versioned team you can stand up in minutes, then evolve on your own shelf. Open one to see its roles, missions, and skills.</p>
+          <p class="kicker">The blueprint</p>
+          <h2>The team you're adopting</h2>
+          <p>The commands above build your team from a first-party blueprint — a versioned set of proven roles you own and evolve on your own shelf.</p>
         </div>
         <div class="card-grid card-grid--auto">
           <a class="card" href="/blueprints/aweb.team" style="text-decoration:none;color:inherit;display:block">
             <h3>aweb AI Team</h3>
-            <p>A complete AI team — coordinator, developers, reviewer, agent-resources, plus the opt-in roles.</p>
+            <p>A complete AI team — a coordinator who plans and routes, developers and a reviewer who build and gate the work, agent-resources for identity and provisioning, and opt-in roles for frontend, copy, releases, and reliability.</p>
+            <p style="margin-top:var(--s3);font:500 var(--step--1)/1.7 var(--font-mono);color:var(--muted)">agent-resources &middot; coordinator &middot; deployer &middot; developer &middot; frontend-author &middot; proofreader &middot; reliability &middot; reviewer</p>
             <p style="margin-top:var(--s3);font:600 var(--step--1)/1 var(--font-mono);color:var(--accent)">aweb.team &rarr;</p>
           </a>
         </div>
-        <p style="margin-top:var(--s4)"><a href="/blueprints" style="color:var(--accent);font-weight:550">Browse the full catalog &rarr;</a></p>
       </div>
     </section>
 
@@ -191,14 +276,14 @@
             <p class="kicker">Why this exists</p>
             <h2>Agents need evolving job descriptions to work as a team</h2>
             <p class="why-need">A coordinator routes the work, a developer writes the code, a reviewer checks it. Each role needs a clear, stable account of its job.</p>
-            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-word">awid</a> identity — so what you adopt and evolve is reproducible and trusted.</p>
+            <p class="why-answer">Every profile is versioned by digest and every change is signed with your team's <a href="https://awid.ai" class="brand-word">awid</a> identity — so what you start from and evolve is reproducible and trusted.</p>
           </div>
           <div>
             <p class="kicker" style="color:var(--faint)">What library gives you</p>
             <ul class="why-points">
-              <li><strong>Proven profiles to start from</strong><span>A first-party catalog of high-quality profiles — coordinator, developer, reviewer — ready to adopt.</span></li>
-              <li><strong>Build and share your own</strong><span>Author a profile and publish it; any team can adopt it and build on it.</span></li>
-              <li><strong>Start shared, evolve private</strong><span>Adopt a profile onto your team's private shelf and evolve it there, under review.</span></li>
+              <li><strong>Proven profiles to start from</strong><span>A first-party set of high-quality profiles — coordinator, developer, reviewer, and more — ready to build a team from.</span></li>
+              <li><strong>Build and share your own</strong><span>Author a profile and publish it into the catalog; any team can start from it and build on it.</span></li>
+              <li><strong>Start shared, evolve private</strong><span>Start from public profiles, then adopt your agents onto your team's private shelf and evolve there, under review.</span></li>
             </ul>
           </div>
         </div>
@@ -210,7 +295,7 @@
         <style>
           .whatis-h2 { font-size: var(--step-3); margin-top: var(--s3); }
           .whatis-lead { color: var(--muted); font-size: var(--step-1); margin-top: var(--s3); max-width: 60ch; }
-          .whatis-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+          .whatis-grid { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); }
           .whatis-grid li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); }
           .whatis-grid .kicker { color: var(--muted); }
           .whatis-grid p { margin-top: var(--s2); font-size: var(--step-0); }
@@ -224,10 +309,6 @@
           <li>
             <p class="kicker">CLI-native API</p>
             <p>A public manifest maps library's whole API to <code>aw</code> commands. No integration to write, no SDK to wire up — you just run <code>aw library</code>.</p>
-          </li>
-          <li>
-            <p class="kicker">Events that wake agents</p>
-            <p>library emits events that wake subscribed agents automatically — a workflow that reacts to new content needs no polling loop.</p>
           </li>
           <li>
             <p class="kicker">Ships agent docs</p>
@@ -247,72 +328,16 @@
         <div class="section-head">
           <p class="kicker">The model</p>
           <h2>A catalog, a shelf, and an approval loop</h2>
-          <p>Public blueprints are the versioned catalog anyone can adopt from; your shelf is your team's private working set. From there you bind profiles to agents, materialize them into runnable homes, and improve them under review.</p>
+          <p>The public catalog holds first-party blueprints — today, aweb.team — that any team can start from. Your shelf is your team's private working set: you adopt profiles onto it, materialize them into runnable agent homes, and improve them under review.</p>
         </div>
         <div class="card-grid card-grid--auto">
           <article class="card"><h3>Profiles</h3><p>An agent's job description as a file: mission, instructions, the tools it may use, the actions that need a human's sign-off, and its skills. Versioned by content digest.</p></article>
-          <article class="card"><h3>Public blueprints</h3><p>First-party, versioned collections of profiles any team can browse and adopt — proven roles like coordinator, developer, and reviewer.</p></article>
-          <article class="card"><h3>Private shelf</h3><p>Your team's own copies — adopted from a blueprint or authored fresh — the working set you edit and own.</p></article>
-          <article class="card"><h3>Bind &amp; materialize</h3><p>Assign a shelf profile to an agent identity, then materialize it: library produces the runnable home — a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
+          <article class="card"><h3>Public catalog</h3><p>The public, versioned catalog of first-party blueprints — today just <code>aweb.team</code>, a proven set of roles like coordinator, developer, and reviewer any team can start from. Any team can publish into it.</p></article>
+          <article class="card"><h3>Private shelf</h3><p>Your team's own copies — started from a blueprint or authored fresh — the working set you edit and own.</p></article>
+          <article class="card"><h3>Materialize</h3><p>Creating or refreshing an agent turns a profile into its runnable home: a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
           <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; a human approves, and library mints it — immutably versioned by digest, with the signer recorded.</p></article>
           <article class="card"><h3>Update from source</h3><p>Pull a newer blueprint version's improvements into the parts you have not edited — a per-part merge that never clobbers local work.</p></article>
         </div>
-      </div>
-    </section>
-
-    <section class="section" id="use">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="kicker">Get started</p>
-          <h2>Install aw, add agents, run one interactively</h2>
-          <p>The minimal do-this-now onboarding. This is the single canonical shape landing pages and naapp sites quote verbatim.</p>
-        </div>
-        <p class="prose-intro"><code>aw init</code> creates the account, workspace, and first team; <code>aw team add</code> materializes starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550"><code>aweb.team</code></a> blueprint over a public read (no Library plugin on aw 1.30+); then you run each agent <strong>interactively in its home</strong> with its runtime.</p>
-        <div class="cmd-panel">
-          <p class="cmd-label">Install the aw CLI, create your account + first team, then add starter agents from aweb.team</p>
-          <div class="cmd-list"><div class="cmd"><pre># Install the aw CLI, create your account + first team
-npm install -g @awebai/aw
-aw init
-
-# Add starter agents from the aweb.team blueprint
-aw team add alice@aweb.team/developer=claude-code
-aw team add bob@aweb.team/reviewer=claude-code</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro" style="font-size:var(--step--1);color:var(--muted)">See what these commands add before you run them: the <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a> profiles from <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a>.</p>
-        <p class="prose-outro">Then run an agent. <strong>Two runtimes work — Claude Code or pi.</strong> Materialize the agent for the runtime you will run (<code>=claude-code</code> or <code>=pi</code>), then launch it directly in the agent home.</p>
-        <p class="prose-outro"><strong>Claude Code</strong> — install the channel plugin once, inside Claude Code:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro">Then launch it in the agent home:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>cd agents/instances/alice
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro"><strong>pi</strong> — install the extension once, then launch it in the agent home:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>pi install npm:@awebai/pi@latest
-cd agents/instances/alice
-pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro"><strong>Add an agent to an existing hosted team</strong> with a team API key (no dashboard session; the key is the whole credential):</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>AWEB_API_KEY=&lt;key&gt; AWEB_URL=&lt;url&gt; aw team add alice@aweb.team/developer --runtime claude-code</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro">The blueprint is always <code>aweb.team</code>; override it with <code>--blueprint</code> (or <code>AWEB_BLUEPRINT</code>) and the catalog provider with <code>--library-url</code> (or <code>AWEB_LIBRARY_URL</code>).</p>
-        <p class="prose-outro"><strong>Optional evolution loop:</strong> install the library plugin only when you want the authenticated shelf surface — private copies, proposals, approvals, and updates from source:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw plugin install https://library.aweb.ai/.well-known/aweb-app.json</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro">Then copy a blueprint profile onto your team's shelf and evolve it before binding:</p>
-        <div class="cmd-panel">
-          <div class="cmd-list"><div class="cmd"><pre>aw library import-to-shelf \
-  --source_blueprint_ref aweb.team \
-  --source_blueprint_version 0.1.0 \
-  --profile_ref developer</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
-        </div>
-        <p class="prose-outro">The <code>aw library</code> verbs are the authenticated shelf surface, not the starting path. <code>aw library shelf</code> shows your working set and which profiles have upstream updates. Agents read the whole surface at <a href="/llms.txt">llms.txt</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
     </section>
 
