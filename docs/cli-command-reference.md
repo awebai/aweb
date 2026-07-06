@@ -866,6 +866,7 @@ controller operations remain under `aw id team`.
 
 Subcommands:
 - `add` Add agents to this team's agents/instances layout
+- `adopt` Adopt a public-pinned agent profile onto the team's private Library shelf
 - `create` Create a local empty-profile team workspace
 - `extend` Add agents to an existing team by discovering membership authority
 - `invite` Invite an agent or workspace to the active team
@@ -900,6 +901,20 @@ Flags:
 - `--session string tmux session name for --start (default: active team name or aw-team)`
 - `--start Launch the added agent in tmux after materializing it`
 - `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
+
+## `team adopt`
+
+### `team adopt`
+
+Adopt a public-pinned agents/instances/<name> profile onto the team's private Library shelf.
+This reads .aw/profile/ref.json, imports the pinned public blueprint/profile onto the
+team shelf through the installed Library plugin, binds the agent, and re-points the
+local pin to the shelf copy by removing library_url. After adopt, aw team refresh
+uses the shelf path and can pick up approved team-local profile mints.
+
+Flags:
+- `-h, --help help for adopt`
+- `--home string Agent home directory override (default: agents/instances/<name>)`
 
 ## `team create`
 
