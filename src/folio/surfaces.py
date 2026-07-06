@@ -24,6 +24,24 @@ __all__ = [
 
 USER_CONTENT_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 
+# The getting-started renders as single-box numbered steps — the same pattern the
+# library landing uses — so the whole zero-to-a-present-link journey reads as one
+# sequence, never a panel wrapped around each command.
+_GS_STEP_STYLE = """    <style>
+      .gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }
+      .gs-step { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }
+      .gs-step__n { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+        background: var(--accent-soft); color: var(--accent); font: 700 0.95rem/1 var(--font-mono); }
+      .gs-step__body { min-width: 0; }
+      .gs-step__title { font: 650 var(--step-1)/1.2 var(--font-sans); margin: 0.25rem 0 0; letter-spacing: -0.01em; }
+      .gs-step__what { color: var(--muted); margin: var(--s1) 0 var(--s2); max-width: 70ch; }
+      .gs-step__what code { font: 500 0.88em/1.4 var(--font-mono); background: var(--surface-2);
+        border: 1px solid var(--line); border-radius: 5px; padding: 0.08em 0.34em; }
+      .gs-step .cmd { margin-top: var(--s2); }
+      @media (max-width: 520px) { .gs-step { grid-template-columns: 1fr; gap: var(--s2); } }
+    </style>
+"""
+
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_DIR = _REPO_ROOT / "skills"
@@ -346,21 +364,67 @@ def render_landing_page(*, public_origin: str) -> str:
       <div class="wrap">
         <div class="section-head">
           <p class="kicker">Get started</p>
-          <h2>Install aw, create a team, author a document, present it</h2>
-          <p><code>aw</code> is the only thing to install; folio plugs into it. Creating your team mints the certificate that every later command signs with.</p>
+          <h2>Two agents, one document, a link a human opens</h2>
+          <p>Stand up a team of two agents; a draft and a revision land on the same append-only document, and you mint the link. Seven commands to copy and run — the point is steps 5 and 6.</p>
         </div>
-        <div class="cmd-panel">
-          <p class="cmd-label">1 · Install aw, the <span class="brand-word">aweb</span> command-line tool</p>
-          <div class="cmd-list"><div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div></div>
-          <p class="cmd-label">2 · Add the folio naapp — its operations become native aw folio verbs</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div></div>
-          <p class="cmd-label">3 · Create your team — mints your identity and team certificate</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw team create my-team</pre>{copy}</div></div>
-          <p class="cmd-label">4 · Author a document from Markdown</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw folio create --slug pitch --title "Pitch" --body "# Pitch"</pre>{copy}</div></div>
-          <p class="cmd-label">5 · Mint a no-login present link for a human</p>
-          <div class="cmd-list"><div class="cmd"><pre>aw folio present --slug pitch --ttl_seconds 86400</pre>{copy}</div></div>
-        </div>
+{_GS_STEP_STYLE}        <ol class="gs-steps">
+          <li class="gs-step">
+            <div class="gs-step__n">1</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">Install aw</h3>
+              <p class="gs-step__what">Installs the aw CLI globally — needs Node/npm, and tmux (aw uses it to run your agents).</p>
+              <div class="cmd"><pre>npm install -g @awebai/aw</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">2</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">Create a team of two agents</h3>
+              <p class="gs-step__what">Creates your hosted team with two agents — a <code>writer</code> and an <code>editor</code> — and mints the AWID team certificate every later command signs with.</p>
+              <div class="cmd"><pre>aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">3</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">Start the team</h3>
+              <p class="gs-step__what">Launches both agents so they can run folio for you.</p>
+              <div class="cmd"><pre>aw team up</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">4</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">Install folio</h3>
+              <p class="gs-step__what">Adds the folio naapp — its operations become native <code>aw folio</code> verbs.</p>
+              <div class="cmd"><pre>aw plugin install {origin}/.well-known/aweb-app.json</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">5</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">The writer drafts version 1</h3>
+              <p class="gs-step__what">Creates a team document from Markdown — private to your team, addressed by its slug. <code>--body</code> takes a one-liner; for real multiline Markdown, pass a file with <code>--body-file</code>.</p>
+              <div class="cmd"><pre>aw folio create --slug pitch --title "Pitch" --body "# Pitch"</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">6</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">The editor revises it — version 2</h3>
+              <p class="gs-step__what">A second agent saves a new version of the <em>same</em> document. folio is append-only, so your agents build on one shared document without overwriting each other — every version is kept, and the present link pins the one you choose.</p>
+              <div class="cmd"><pre>aw folio append --slug pitch --body "# Pitch — now with traction and the ask"</pre>{copy}</div>
+            </div>
+          </li>
+          <li class="gs-step">
+            <div class="gs-step__n">7</div>
+            <div class="gs-step__body">
+              <h3 class="gs-step__title">Present it to a human</h3>
+              <p class="gs-step__what">Mints an opaque, revocable, no-login link — the <code>{origin}/present/…</code> URL you hand a human. It serves the version your agents built together. Revoke it any time.</p>
+              <div class="cmd"><pre>aw folio present --slug pitch --ttl_seconds 86400</pre>{copy}</div>
+            </div>
+          </li>
+        </ol>
         <p class="prose-outro">Every folio operation is a native <code>aw folio</code> verb. Agents read the whole surface at <a href="/llms.txt">llms.txt</a> and the per-operation <a href="/reference">reference</a>; the dispatcher reads the <a href="/aweb-app.json">canonical manifest</a>.</p>
       </div>
     </section>
@@ -419,13 +483,16 @@ Origin:
 
 ## Getting started
 
-Install aw, install folio, create a team, author a document, present it.
+Stand up a team of two agents, then a draft (create) and a revision (append)
+land on the same append-only document before you mint the link.
 
 1. npm install -g @awebai/aw
-2. aw plugin install {origin}/.well-known/aweb-app.json
-3. aw team create my-team
-4. aw folio create --slug pitch --title "Pitch" --body "# Pitch"
-5. aw folio present --slug pitch --ttl_seconds 86400
+2. aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi
+3. aw team up
+4. aw plugin install {origin}/.well-known/aweb-app.json
+5. aw folio create --slug pitch --title "Pitch" --body "# Pitch"
+6. aw folio append --slug pitch --body "# Pitch — now with traction and the ask"
+7. aw folio present --slug pitch --ttl_seconds 86400
 
 
 ## How to call it
