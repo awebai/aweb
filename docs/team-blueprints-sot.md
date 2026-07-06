@@ -531,7 +531,10 @@ profiles, for example
 [developer](https://library.aweb.ai/blueprints/aweb.team/profiles/developer) and
 [reviewer](https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer).
 
-`aw team up` preflights and launches each materialized home's runtime — Claude
+`aw team up` uses **tmux** — install it for the automatic launch, and `aw team
+up` starts and wires every agent for you (channel plugin, trust/dev-channel
+prompts, `pi --approve`); without tmux it prints the exact per-agent commands to
+start each home manually. It launches each materialized home's runtime — Claude
 Code (with the aweb channel plugin) and Pi today — auto-answering the trust and
 development-channel prompts; Codex and `local-shell` homes are materialized but
 started manually. No `aw plugin install` is needed to onboard — materialization
