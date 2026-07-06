@@ -926,6 +926,8 @@ This wraps aw init for the aw-local path. No --agent/--profile means no Library 
 and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]
 (or NAME[:local|global] for an empty-profile agent). Omitted names use the
 server-authoritative next classic name; omitted scope comes from profile.yaml.
+All --agent/--profile specs populate agents/instances for aw team up; only
+--home with a single spec uses that spec for the root workspace profile.
 Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 
 Flags:

@@ -74,6 +74,8 @@ var teamHumanCreateCmd = &cobra.Command{
 		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
 		"(or NAME[:local|global] for an empty-profile agent). Omitted names use the\n" +
 		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
+		"All --agent/--profile specs populate agents/instances for aw team up; only\n" +
+		"--home with a single spec uses that spec for the root workspace profile.\n" +
 		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
@@ -403,18 +405,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	var firstSpec teamAgentSpec
-	var selector *libraryProfileSelector
-	if len(agentSpecs) > 0 {
-		firstSpec = agentSpecs[0]
-		if firstSpec.Profile != nil {
-			selector = firstSpec.Profile
-		}
-	}
-	rosterSpecs, err := teamHumanCreateRosterSpecs(agentSpecs)
-	if err != nil {
-		return err
-	}
 	wd, _ := os.Getwd()
 	printTeamCreateExtendNotice(wd)
 	createHomeOverride := ""
@@ -434,22 +424,39 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		createHomeOverride = homeDir
 	}
+	rootSpecIsAgentHome := createHomeOverride != ""
+	var firstSpec teamAgentSpec
+	var selector *libraryProfileSelector
+	if rootSpecIsAgentHome && len(agentSpecs) > 0 {
+		firstSpec = agentSpecs[0]
+		if firstSpec.Profile != nil {
+			selector = firstSpec.Profile
+		}
+	}
+	rosterSpecs, err := teamHumanCreateRosterSpecs(agentSpecs, rootSpecIsAgentHome)
+	if err != nil {
+		return err
+	}
 	firstAgentScope, err := resolveTeamHumanCreateFirstAgentScope()
 	if err != nil {
 		return err
 	}
-	if scope := strings.TrimSpace(firstSpec.Scope); scope != "" {
-		if (teamHumanCreateFirstLocal || teamHumanCreateFirstGlobal) && scope != firstAgentScope {
-			return usageError("first agent scope %q conflicts with --first-agent-%s", scope, firstAgentScope)
+	if rootSpecIsAgentHome {
+		if scope := strings.TrimSpace(firstSpec.Scope); scope != "" {
+			if (teamHumanCreateFirstLocal || teamHumanCreateFirstGlobal) && scope != firstAgentScope {
+				return usageError("first agent scope %q conflicts with --first-agent-%s", scope, firstAgentScope)
+			}
+			firstAgentScope = scope
 		}
-		firstAgentScope = scope
 	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
-	if name := strings.TrimSpace(firstSpec.Name); name != "" {
-		if alias != "" && !strings.EqualFold(alias, name) {
-			return usageError("the first listed --agent is the first team member; --first-agent-name cannot name a separate/additional agent - pass agents uniformly as --agent NAME@BLUEPRINT/PROFILE, or use --first-agent-name alone with no --agent")
+	if rootSpecIsAgentHome {
+		if name := strings.TrimSpace(firstSpec.Name); name != "" {
+			if alias != "" && !strings.EqualFold(alias, name) {
+				return usageError("the first listed --agent is the first team member when --home is used; --first-agent-name cannot name a separate/additional agent for a single-home create")
+			}
+			alias = name
 		}
-		alias = name
 	}
 	if alias == "" {
 		alias = strings.ToLower(teamName)
@@ -605,7 +612,7 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 	return runTeamHumanCreateRosterAdd(rosterSpecs)
 }
 
-func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]teamAgentSpec, error) {
+func teamHumanCreateRosterSpecs(agents []teamAgentSpec, rootSpecIsAgentHome bool) ([]teamAgentSpec, error) {
 	seenExplicit := map[string]bool{}
 	for _, agent := range agents {
 		name := strings.TrimSpace(agent.Name)
@@ -618,12 +625,18 @@ func teamHumanCreateRosterSpecs(agents []teamAgentSpec) ([]teamAgentSpec, error)
 		}
 		seenExplicit[key] = true
 	}
-	if len(agents) <= 1 {
+	if len(agents) == 0 {
 		return nil, nil
 	}
-	specs := make([]teamAgentSpec, 0, len(agents)-1)
-	specs = append(specs, agents[1:]...)
-	return specs, nil
+	if rootSpecIsAgentHome {
+		if len(agents) <= 1 {
+			return nil, nil
+		}
+		specs := make([]teamAgentSpec, 0, len(agents)-1)
+		specs = append(specs, agents[1:]...)
+		return specs, nil
+	}
+	return append([]teamAgentSpec(nil), agents...), nil
 }
 
 func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
