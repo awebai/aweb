@@ -200,17 +200,18 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("team create roster --profile: %v", err)
 	}
+	coordinatorHome := filepath.Join(root, "agents", "instances", "coordinator")
 	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {
-		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
-			t.Fatalf("first listed create agent home missing %s in cwd: %v", rel, err)
+		if _, err := os.Lstat(filepath.Join(coordinatorHome, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("first listed create agent home missing %s under agents/instances: %v", rel, err)
 		}
 	}
-	assertMaterializedHomeHasAwebCoordination(t, root)
-	if _, err := os.Readlink(filepath.Join(root, "CLAUDE.md")); err != nil {
+	assertMaterializedHomeHasAwebCoordination(t, coordinatorHome)
+	if _, err := os.Readlink(filepath.Join(coordinatorHome, "CLAUDE.md")); err != nil {
 		t.Fatalf("coordinator claude-code home missing CLAUDE.md symlink: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "coordinator")); !os.IsNotExist(err) {
-		t.Fatalf("team create --profile created extra profile-less/default coordinator home, stat err=%v", err)
+	if _, err := os.Lstat(filepath.Join(root, ".aw", "profile", "ref.json")); !os.IsNotExist(err) {
+		t.Fatalf("root operator workspace unexpectedly materialized a profile, stat err=%v", err)
 	}
 	reviewerHome := filepath.Join(root, "agents", "instances", "reviewer")
 	for _, rel := range []string{"AGENTS.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md", ".aw/profile/ref.json"} {

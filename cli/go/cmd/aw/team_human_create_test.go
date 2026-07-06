@@ -368,7 +368,7 @@ func TestFormatTeamHumanAddKeepsBareAgentEmptyProfileWording(t *testing.T) {
 	}
 }
 
-func TestTeamHumanCreateAgentSpecsUseListedAgentAsFirstMember(t *testing.T) {
+func TestTeamHumanCreateAgentSpecsPopulateRoster(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	teamHumanCreateAgents = []string{"developer@aweb.engineering/developer:local"}
 	specs, err := teamHumanCreateAgentSpecs()
@@ -378,40 +378,29 @@ func TestTeamHumanCreateAgentSpecsUseListedAgentAsFirstMember(t *testing.T) {
 	if len(specs) != 1 || specs[0].Raw != "developer@aweb.engineering/developer:local" {
 		t.Fatalf("specs=%+v", specs)
 	}
-	roster, err := teamHumanCreateRosterSpecs(specs)
+	roster, err := teamHumanCreateRosterSpecs(specs, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roster) != 0 {
-		t.Fatalf("single listed create agent should be the first member, roster=%v specs=%+v", roster, specs)
+	if len(roster) != 1 || roster[0].Raw != specs[0].Raw {
+		t.Fatalf("single listed create agent should be rostered, roster=%v specs=%+v", roster, specs)
 	}
 }
 
-func TestTeamHumanCreateFirstAgentNameConflictsWithListedAgent(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		agents   []string
-		profiles []string
-	}{
-		{name: "agent", agents: []string{"developer@aweb.engineering/developer"}},
-		{name: "profile compat synthesized name", profiles: []string{"aweb.engineering/developer"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resetTeamHumanCreateGlobals(t)
-			root := t.TempDir()
-			t.Chdir(root)
-			teamHumanCreateAlias = "owner"
-			teamHumanCreateAgents = tc.agents
-			teamHumanCreateProfiles = tc.profiles
-
-			err := runTeamHumanCreate(nil, []string{"eng"})
-			if err == nil || !strings.Contains(err.Error(), "the first listed --agent is the first team member") {
-				t.Fatalf("error=%v", err)
-			}
-			if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
-				t.Fatalf(".aw created despite prevalidation failure, stat err=%v", statErr)
-			}
-		})
+func TestTeamHumanCreateFirstAgentNameDoesNotConflictWithRosterAgent(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	teamHumanCreateAlias = "owner"
+	teamHumanCreateAgents = []string{"developer@aweb.engineering/developer"}
+	specs, err := teamHumanCreateAgentSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	roster, err := teamHumanCreateRosterSpecs(specs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roster) != 1 || roster[0].Name != "developer" {
+		t.Fatalf("roster=%v", roster)
 	}
 }
 
@@ -579,11 +568,11 @@ func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
 	specs, err := teamHumanCreateRosterSpecs([]teamAgentSpec{
 		{Raw: "aweb.engineering/coordinator=claude-code", Profile: &libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "coordinator", RuntimeKind: "claude-code"}},
 		{Raw: "aweb.engineering/reviewer=pi", Profile: &libraryProfileSelector{SourceBlueprintRef: "aweb.engineering", ProfileRef: "reviewer", RuntimeKind: "pi"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"aweb.engineering/reviewer=pi"}
+	want := []string{"aweb.engineering/coordinator=claude-code", "aweb.engineering/reviewer=pi"}
 	got := make([]string, 0, len(specs))
 	for _, spec := range specs {
 		got = append(got, spec.Raw)
@@ -596,10 +585,10 @@ func TestTeamHumanCreateRosterSpecsCarryPerProfileRuntime(t *testing.T) {
 func TestTeamHumanCreateRosterRejectsDuplicateDerivedAgentNames(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	_, err := teamHumanCreateRosterSpecs([]teamAgentSpec{
-		{Raw: "blueprint.one/alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.one", ProfileRef: "alice"}},
-		{Raw: "blueprint.two/Alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.two", ProfileRef: "Alice"}},
-	})
-	if err != nil {
+		{Raw: "blueprint.one/alice", Name: "alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.one", ProfileRef: "alice"}},
+		{Raw: "blueprint.two/Alice", Name: "Alice", Profile: &libraryProfileSelector{SourceBlueprintRef: "blueprint.two", ProfileRef: "Alice"}},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "duplicate roster agent name") {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -917,7 +906,7 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 	}
 }
 
-func TestTeamHumanCreateAgentUsesListedFirstAgentName(t *testing.T) {
+func TestTeamHumanCreateRootOperatorDefaultsToTeamName(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	const apiKey = "aw_sk_create_apikey"
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -960,14 +949,13 @@ func TestTeamHumanCreateAgentUsesListedFirstAgentName(t *testing.T) {
 	t.Setenv("AWEB_API_KEY", apiKey)
 	t.Setenv("AWEB_URL", server.URL)
 	t.Chdir(t.TempDir())
-	teamHumanCreateAgents = []string{"developer"}
 	jsonFlag = true
 
 	if err := runTeamHumanCreate(nil, []string{"eng"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
-	if gotInitAlias != "developer" {
-		t.Fatalf("workspace init alias=%q want listed first agent name developer", gotInitAlias)
+	if gotInitAlias != "eng" {
+		t.Fatalf("workspace init alias=%q want root operator alias eng", gotInitAlias)
 	}
 }
 
@@ -1501,7 +1489,7 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
-	if strings.Join(certAliases, ",") != "captain,crew" {
+	if strings.Join(certAliases, ",") != "ops,captain,crew" {
 		t.Fatalf("certificate aliases=%v", certAliases)
 	}
 	state, err := awconfig.LoadTeamState(root)
@@ -1511,13 +1499,15 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 	if state.ActiveTeam != "ops:acme.com" || state.Membership("ops:acme.com") == nil {
 		t.Fatalf("root team state active=%q memberships=%v", state.ActiveTeam, state.Memberships)
 	}
-	crewHome := filepath.Join(root, "agents", "instances", "crew")
-	crewState, err := awconfig.LoadTeamState(crewHome)
-	if err != nil {
-		t.Fatalf("crew team state missing: %v", err)
-	}
-	if crewState.ActiveTeam != "ops:acme.com" || crewState.Membership("ops:acme.com") == nil {
-		t.Fatalf("crew team state active=%q memberships=%v", crewState.ActiveTeam, crewState.Memberships)
+	for _, name := range []string{"captain", "crew"} {
+		agentHome := filepath.Join(root, "agents", "instances", name)
+		agentState, err := awconfig.LoadTeamState(agentHome)
+		if err != nil {
+			t.Fatalf("%s team state missing: %v", name, err)
+		}
+		if agentState.ActiveTeam != "ops:acme.com" || agentState.Membership("ops:acme.com") == nil {
+			t.Fatalf("%s team state active=%q memberships=%v", name, agentState.ActiveTeam, agentState.Memberships)
+		}
 	}
 }
 
@@ -2037,6 +2027,7 @@ func TestTeamHumanCreateLibraryProfileUsesPublicCatalogAfterIdentity(t *testing.
 	t.Setenv("AW_CONFIG_PATH", "")
 	root := t.TempDir()
 	t.Chdir(root)
+	teamHumanCreateHome = root
 	teamHumanCreateProfiles = []string{"aweb.engineering/developer"}
 	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
 		{Path: "profile.yaml", ContentUTF8: "id: developer\nname: Developer\nversion: 0.1.0\nmission: Build.\naccepted_work: [development]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
