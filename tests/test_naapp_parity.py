@@ -22,9 +22,23 @@ _LANDING_BLUEPRINTS = [
         "blueprint_ref": "aweb.team",
         "name": "aweb AI Team",
         "summary": (
-            "A complete AI team — coordinator, developers, reviewer, agent-resources, "
-            "plus the opt-in roles."
+            "A complete AI team — a coordinator who plans and routes, developers and a "
+            "reviewer who build and gate the work, agent-resources for identity and "
+            "provisioning, and opt-in roles for frontend, copy, releases, and reliability."
         ),
+        "profiles": [
+            {"profile_ref": r}
+            for r in (
+                "agent-resources",
+                "coordinator",
+                "deployer",
+                "developer",
+                "frontend-author",
+                "proofreader",
+                "reliability",
+                "reviewer",
+            )
+        ],
     }
 ]
 
