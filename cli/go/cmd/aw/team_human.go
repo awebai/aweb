@@ -145,6 +145,25 @@ var teamHumanRemoveAgentCmd = &cobra.Command{
 	RunE: runTeamHumanRemoveAgent,
 }
 
+func registerTeamMemberAddFlags(cmd *cobra.Command, includePlacementFlags bool) {
+	cmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
+	cmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
+	if includePlacementFlags {
+		cmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
+	}
+	cmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
+	cmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
+	cmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
+	cmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: active team name or aw-team)")
+	if includePlacementFlags {
+		cmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
+	}
+	cmd.Flags().StringVar(&teamHumanAddWorkDir, "work-dir", "", "Git repo to use for the agent's worktree (default: repo containing the home, if any)")
+	cmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
+	cmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
+	cmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
+}
+
 func init() {
 	teamHumanCmd.GroupID = groupIdentity
 
@@ -168,33 +187,13 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory")
 	teamHumanCmd.AddCommand(teamHumanCreateCmd)
 
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
 	teamHumanAddAttach = true
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
-	teamHumanAddCmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: active team name or aw-team)")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddWorkDir, "work-dir", "", "Git repo to use for the agent's worktree (default: repo containing the home, if any)")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
-	teamHumanAddCmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
+	registerTeamMemberAddFlags(teamHumanAddCmd, true)
 	teamHumanCmd.AddCommand(teamHumanAddCmd)
 
 	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendAPIKey, "api-key", "", "Team API key for extending a team (overrides AWEB_API_KEY)")
 	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team")
-	teamHumanExtendCmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
-	teamHumanExtendCmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
-	teamHumanExtendCmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
-	teamHumanExtendCmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
-	teamHumanExtendCmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: active team name or aw-team)")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanAddWorkDir, "work-dir", "", "Git repo to use for the agent's worktree (default: repo containing the home, if any)")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
+	registerTeamMemberAddFlags(teamHumanExtendCmd, false)
 	teamHumanCmd.AddCommand(teamHumanExtendCmd)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
