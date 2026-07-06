@@ -60,7 +60,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddBlueprint := teamHumanAddBlueprint
 	oldExtendAPIKey := teamHumanExtendAPIKey
 	oldExtendTeamID := teamHumanExtendTeamID
-	oldAddSpecOverride := teamHumanAddSpecOverride
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -101,7 +100,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddBlueprint = oldAddBlueprint
 		teamHumanExtendAPIKey = oldExtendAPIKey
 		teamHumanExtendTeamID = oldExtendTeamID
-		teamHumanAddSpecOverride = oldAddSpecOverride
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
@@ -140,7 +138,6 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddBlueprint = ""
 	teamHumanExtendAPIKey = ""
 	teamHumanExtendTeamID = ""
-	teamHumanAddSpecOverride = nil
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
@@ -990,7 +987,7 @@ func TestTeamHumanAddOmittedScopeComesFromPublicProfile(t *testing.T) {
 	defer server.Close()
 	t.Setenv(libraryURLEnvVar, server.URL)
 
-	specs, err := resolveTeamHumanAddAgentSpecs(t.TempDir(), []string{"dev@aweb.engineering/developer"})
+	specs, err := resolveTeamHumanAddAgentSpecs(t.TempDir(), []string{"dev@aweb.engineering/developer"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

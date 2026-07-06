@@ -37,7 +37,6 @@ var (
 	teamHumanCreateBlueprint   string
 	teamHumanCreateFirstLocal  bool
 	teamHumanCreateFirstGlobal bool
-	teamHumanAddSpecOverride   []teamAgentSpec
 	teamHumanInviteTeamID      string
 	teamHumanAddLocal          bool
 	teamHumanAddGlobal         bool
@@ -612,28 +611,11 @@ func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	if len(specs) == 0 {
 		return nil
 	}
-	oldAddLocal := teamHumanAddLocal
-	oldAddGlobal := teamHumanAddGlobal
-	oldAddLayoutOnly := teamHumanAddLayoutOnly
-	oldAddHome := teamHumanAddHome
-	oldAddSpecOverride := teamHumanAddSpecOverride
-	defer func() {
-		teamHumanAddLocal = oldAddLocal
-		teamHumanAddGlobal = oldAddGlobal
-		teamHumanAddLayoutOnly = oldAddLayoutOnly
-		teamHumanAddHome = oldAddHome
-		teamHumanAddSpecOverride = oldAddSpecOverride
-	}()
-	teamHumanAddLocal = false
-	teamHumanAddGlobal = false
-	teamHumanAddLayoutOnly = false
-	teamHumanAddHome = ""
-	teamHumanAddSpecOverride = append([]teamAgentSpec(nil), specs...)
 	args := make([]string, 0, len(specs))
 	for _, spec := range specs {
 		args = append(args, spec.Raw)
 	}
-	return runTeamHumanAdd(nil, args)
+	return runTeamHumanAddWithOptions(nil, args, teamHumanAddRunOptions{Specs: append([]teamAgentSpec(nil), specs...)})
 }
 
 func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) error {
@@ -924,10 +906,10 @@ type teamHumanAddedAgent struct {
 	Connected         bool                    `json:"-"`
 }
 
-func resolveTeamHumanAddAgentSpecs(wd string, args []string) ([]teamAgentSpec, error) {
+func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSpec) ([]teamAgentSpec, error) {
 	var client *aweb.Client
 	used := map[string]bool{}
-	inputSpecs := append([]teamAgentSpec(nil), teamHumanAddSpecOverride...)
+	inputSpecs := append([]teamAgentSpec(nil), specs...)
 	if inputSpecs == nil {
 		inputSpecs = make([]teamAgentSpec, 0, len(args))
 		for _, raw := range args {
@@ -1137,6 +1119,7 @@ type teamHumanAddRunOptions struct {
 	ExpectedTeamID      string
 	OutputStatus        string
 	OutputAuthorityTier string
+	Specs               []teamAgentSpec
 }
 
 func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
@@ -1184,7 +1167,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	} else {
 		repoRoot = filepath.Dir(filepath.Dir(agentsRoot))
 	}
-	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args)
+	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args, opts.Specs)
 	if err != nil {
 		return err
 	}
