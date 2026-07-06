@@ -10,12 +10,9 @@
 // manifest tool (Layer 2) against the ?include=files endpoint (Layer 1) and
 // re-materializes (Layer 3).
 //
-// The proposal is submitted via `aw id request POST /v1/proposals` rather than
-// `aw library propose`: the latter cannot pass the changeset OBJECT through the
-// CLI today (interpret.go convertBodyValue rejects a string for an object body
-// param) - a known demo-verb bug surfaced separately. The fallback validates the
-// CHAIN (approve mints the version, refresh picks it up); it does not paper over
-// the verb bug.
+// The proposal is submitted through the published Library plugin surface. The
+// changeset body uses aweb.library.profile-asset-changeset.v1 and is carried by
+// aw library propose --body-file, then approved before refresh.
 package e2e
 
 import (
@@ -44,6 +41,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		"HOME="+home,
 		"AWEB_URL="+awebURL(),
 		"AWID_REGISTRY_URL="+awidURL(),
+		"AWEB_LIBRARY_URL="+libraryURL(),
 		"AWID_SKIP_DNS_VERIFY=1",
 		"NO_COLOR=1",
 	)
@@ -54,38 +52,32 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	// `aw id request --raw` writes the body to stdout and the `HTTP <code>` status
-	// line to stderr, so the JSON parse must read stdout only.
-	awStdout := func(args ...string) (string, error) {
-		cmd := exec.Command(bin, args...)
-		cmd.Dir = repo
-		cmd.Env = env
-		out, err := cmd.Output()
-		return string(out), err
-	}
-
-	// select + materialize: adopt profiles and materialize roster homes.
+	// create + public materialize, then adopt the first agent's public pin onto
+	// the private shelf so proposed/approved shelf mints compose with refresh.
 	if out, err := awInRepo("team", "create", "eng",
-		"--profile", "aweb.engineering/coordinator=claude-code",
-		"--profile", "aweb.engineering/reviewer=pi"); err != nil {
-		t.Fatalf("aw team create --profile failed: %v\n%s", err, out)
+		"--agent", "coordinator@aweb.engineering/coordinator=claude-code",
+		"--agent", "reviewer@aweb.engineering/reviewer=pi"); err != nil {
+		t.Fatalf("aw team create --agent failed: %v\n%s", err, out)
+	}
+	if out, err := awInRepo("team", "adopt", "coordinator", "--home", repo); err != nil {
+		t.Fatalf("aw team adopt failed: %v\n%s", err, out)
 	}
 
-	before := profileRefShow(t, awInRepo, "coordinator")
+	before := profileRefShow(t, awInRepo, "coordinator", "--home", repo)
 	if before.SourceBlueprintRef != "aweb.engineering" || before.ProfileRef != "coordinator" || before.ProfileVersion == "" {
 		t.Fatalf("unexpected recorded ref before refresh: %+v", before)
 	}
 
 	// The team improves its profile: propose a new file asset, then approve it,
 	// minting a new private-shelf version.
-	marker := proposeApproveInstructionsChange(t, awInRepo, awStdout)
+	marker := proposeApproveInstructionsChange(t, awInRepo)
 
 	// refresh: re-materialize from the latest shelf version (the approved one).
-	if out, err := awInRepo("team", "refresh", "coordinator"); err != nil {
+	if out, err := awInRepo("team", "refresh", "coordinator", "--home", repo); err != nil {
 		t.Fatalf("aw team refresh failed: %v\n%s", err, out)
 	}
 
-	after := profileRefShow(t, awInRepo, "coordinator")
+	after := profileRefShow(t, awInRepo, "coordinator", "--home", repo)
 	if after.ProfileVersion == before.ProfileVersion {
 		t.Fatalf("refresh did not pick up the approved version (still %s)", after.ProfileVersion)
 	}
@@ -93,7 +85,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		t.Fatalf("refresh kept the old profile digest %s; the approved proposal changed the content", after.ProfileDigest)
 	}
 	// The approved change is visible in the re-materialized instructions.
-	instr, err := os.ReadFile(filepath.Join(repo, "agents", "instances", "coordinator", ".aw", "profile", "instructions.md"))
+	instr, err := os.ReadFile(filepath.Join(repo, ".aw", "profile", "instructions.md"))
 	if err != nil {
 		t.Fatalf("re-materialized instructions.md missing: %v", err)
 	}
@@ -111,9 +103,10 @@ type e2eRecordedRef struct {
 	SourceBlueprintVersion string `json:"source_blueprint_version"`
 }
 
-func profileRefShow(t *testing.T, awInRepo func(...string) (string, error), name string) e2eRecordedRef {
+func profileRefShow(t *testing.T, awInRepo func(...string) (string, error), name string, extraArgs ...string) e2eRecordedRef {
 	t.Helper()
-	out, err := awInRepo("--json", "agent", "profile", "show", name)
+	args := append([]string{"--json", "agent", "profile", "show", name}, extraArgs...)
+	out, err := awInRepo(args...)
 	if err != nil {
 		t.Fatalf("aw agent profile show %s failed: %v\n%s", name, err, out)
 	}
@@ -130,7 +123,7 @@ func profileRefShow(t *testing.T, awInRepo func(...string) (string, error), name
 // is just its sha256, which get-shelf-profile --include files returns - so the
 // changeset is self-contained without reimplementing the canonical asset hash.
 // Returns the marker text the approved instructions must contain.
-func proposeApproveInstructionsChange(t *testing.T, awInRepo, awStdout func(...string) (string, error)) string {
+func proposeApproveInstructionsChange(t *testing.T, awInRepo func(...string) (string, error)) string {
 	t.Helper()
 	out, err := awInRepo("library", "get-shelf-profile", "--profile_ref", "coordinator", "--include", "files")
 	if err != nil {
@@ -159,39 +152,29 @@ func proposeApproveInstructionsChange(t *testing.T, awInRepo, awStdout func(...s
 			{"path": "instructions.md", "content_utf8": content + "\n\n" + marker + "\n", "base_asset_digest": baseDigest},
 		},
 	}
-	pid := awPostJSON(t, awStdout, libraryURL()+"/v1/proposals", map[string]any{
-		"target":      "profile",
-		"profile_ref": "coordinator",
-		"content":     changeset,
-		"summary":     "sharpen coordinator instructions",
-	}, "proposal_id")
-	if pid == "" {
-		t.Fatal("propose returned no proposal_id")
-	}
-	awPostJSON(t, awStdout, libraryURL()+"/v1/proposals/"+pid+"/approve", map[string]any{}, "")
-	return marker
-}
-
-// awPostJSON does a signed team-auth POST and returns the named top-level string
-// field of the response (or "" when key is empty).
-func awPostJSON(t *testing.T, awStdout func(...string) (string, error), url string, body map[string]any, key string) string {
-	t.Helper()
-	bodyPath := filepath.Join(t.TempDir(), "body.json")
-	data, _ := json.Marshal(body)
+	bodyPath := filepath.Join(t.TempDir(), "proposal.json")
+	data, _ := json.Marshal(map[string]any{
+		"content":   changeset,
+		"summary":   "sharpen coordinator instructions",
+		"rationale": "exercise the documented profile evolution loop through the Library verb",
+	})
 	if err := os.WriteFile(bodyPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := awStdout("id", "request", "POST", url, "--team-auth", "--raw", "--body-file", bodyPath)
+	out, err = awInRepo("library", "propose", "--target", "profile", "--profile_ref", "coordinator", "--body-file", bodyPath)
 	if err != nil {
-		t.Fatalf("POST %s failed: %v\n%s", url, err, out)
-	}
-	if key == "" {
-		return ""
+		t.Fatalf("aw library propose failed: %v\n%s", err, out)
 	}
 	var resp map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
-		t.Fatalf("POST %s response not JSON: %v\n%s", url, err, out)
+		t.Fatalf("aw library propose response not JSON: %v\n%s", err, out)
 	}
-	s, _ := resp[key].(string)
-	return s
+	pid, _ := resp["proposal_id"].(string)
+	if pid == "" {
+		t.Fatal("propose returned no proposal_id")
+	}
+	if out, err := awInRepo("library", "approve", "--proposal_id", pid); err != nil {
+		t.Fatalf("aw library approve failed: %v\n%s", err, out)
+	}
+	return marker
 }

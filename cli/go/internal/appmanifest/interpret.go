@@ -455,7 +455,10 @@ func buildBody(tool *Tool, args map[string]any, properties map[string]map[string
 	}
 	switch mode {
 	case "json":
-		body := map[string]any{}
+		body, err := jsonModeRawBodyObject(rawBody)
+		if err != nil {
+			return nil, "", err
+		}
 		for _, p := range tool.Params {
 			if strings.TrimSpace(p.In) != "body" {
 				continue
@@ -498,6 +501,33 @@ func buildBody(tool *Tool, args map[string]any, properties map[string]map[string
 	default:
 		return nil, "", fmt.Errorf("unsupported body mode %q", mode)
 	}
+}
+
+func jsonModeRawBodyObject(rawBody []byte) (map[string]any, error) {
+	body := map[string]any{}
+	if rawBody == nil {
+		return body, nil
+	}
+	if len(strings.TrimSpace(string(rawBody))) == 0 {
+		return body, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(rawBody)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&body); err != nil {
+		return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object: %w", err)
+	}
+	if len(body) == 0 {
+		var raw any
+		decoder := json.NewDecoder(strings.NewReader(string(rawBody)))
+		decoder.UseNumber()
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object: %w", err)
+		}
+		if _, ok := raw.(map[string]any); !ok {
+			return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object")
+		}
+	}
+	return body, nil
 }
 
 func schemaProperties(schema map[string]any) map[string]map[string]any {
