@@ -168,6 +168,35 @@ func TestTeamUpPlanRecreateIgnoresActiveProcess(t *testing.T) {
 	}
 }
 
+func TestPreflightTeamUpCommandsWithoutTmuxPrintsManualFallback(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{
+		{Name: "developer", HomeDir: "/work/agents/instances/developer", RuntimeKind: "claude-code", Command: []string{"claude", "--dangerously-skip-permissions", "--dangerously-load-development-channels", claudeChannelSpec}, Action: teamUpActionStart},
+		{Name: "reviewer", HomeDir: "/work/agents/instances/reviewer", RuntimeKind: "pi", Command: []string{"pi", "--approve"}, Action: teamUpActionStart},
+	}}
+
+	err := preflightTeamUpCommands(plan)
+	if err == nil {
+		t.Fatal("expected tmux guidance error")
+	}
+	text := err.Error()
+	for _, want := range []string{
+		"Install tmux, then re-run `aw team up`",
+		"With tmux installed, `aw team up` automatically starts and wires every agent",
+		"channel plugin",
+		"trust/dev-channel prompts",
+		"pi --approve",
+		"developer (claude-code)",
+		"cd '/work/agents/instances/developer' && claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
+		"reviewer (pi)",
+		"cd '/work/agents/instances/reviewer' && pi --approve",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("tmux fallback guidance missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPreflightTeamUpCommandsEnsuresPiChannelExtensionForStartingPiAgent(t *testing.T) {
 	withFakeCommandOnPath(t, "tmux")
 	withFakePiOnPath(t)

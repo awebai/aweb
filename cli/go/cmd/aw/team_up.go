@@ -223,7 +223,7 @@ func teamUpCommandForRuntime(runtimeKind string) ([]string, error) {
 
 func preflightTeamUpCommands(plan teamUpPlan) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux is required for `aw team up`; install tmux and try again")
+		return fmt.Errorf("%s", formatTeamUpNoTmuxGuidance(plan))
 	}
 	needsClaude := false
 	needsPi := false
@@ -642,6 +642,49 @@ func printTeamUpPlan(out interface{ Write([]byte) (int, error) }, plan teamUpPla
 
 func teamUpShellCommand(agent teamUpAgentPlan) string {
 	return "cd " + teamUpShellQuote(agent.HomeDir) + " && exec " + teamUpShellJoin(agent.Command)
+}
+
+func formatTeamUpNoTmuxGuidance(plan teamUpPlan) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "tmux is recommended for `aw team up`. Install tmux, then re-run `aw team up`.\n")
+	fmt.Fprintf(&b, "With tmux installed, `aw team up` automatically starts and wires every agent for you (channel plugin, trust/dev-channel prompts, pi --approve).\n")
+	starts := teamUpAgentsToStart(plan)
+	if len(starts) == 0 {
+		fmt.Fprintf(&b, "No missing agents need a manual launch right now.\n")
+		return strings.TrimRight(b.String(), "\n")
+	}
+	fmt.Fprintf(&b, "\nManual fallback commands for this plan:\n")
+	for _, agent := range starts {
+		fmt.Fprintf(&b, "- %s (%s)\n", agent.Name, agent.RuntimeKind)
+		fmt.Fprintf(&b, "  home: %s\n", agent.HomeDir)
+		fmt.Fprintf(&b, "  command: %s\n", teamUpManualLaunchCommand(agent))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func teamUpManualLaunchCommand(agent teamUpAgentPlan) string {
+	return "cd " + teamUpShellQuote(agent.HomeDir) + " && " + teamUpManualShellJoin(agent.Command)
+}
+
+func teamUpManualShellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, teamUpShellQuoteIfNeeded(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func teamUpShellQuoteIfNeeded(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("_@%+=:,./-", r) {
+			continue
+		}
+		return teamUpShellQuote(s)
+	}
+	return s
 }
 
 func teamUpShellJoin(args []string) string {
