@@ -244,73 +244,6 @@ func validateLibraryRef(field, value string, allowSlash bool) error {
 	return nil
 }
 
-func applyLibraryProfileToHome(homeDir, agentID string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
-	if strings.TrimSpace(agentID) == "" {
-		return nil, nil, fmt.Errorf("agent id is required for Library binding")
-	}
-	if err := rejectUnsupportedVersionedLibrarySelector(selector); err != nil {
-		return nil, nil, err
-	}
-	var materialized *blueprint.MaterializeResult
-	var written []string
-	err := withWorkingDir(homeDir, func() error {
-		profile, err := callLibraryGetProfile(selector)
-		if err != nil {
-			return fmt.Errorf("library get-profile: %w", err)
-		}
-		runtimeKind, err := materializeRuntimeKindForSelector(selector)
-		if err != nil {
-			return err
-		}
-		imported, err := callLibraryImportToShelf(selector)
-		if err != nil {
-			return fmt.Errorf("library import-to-shelf: %w", err)
-		}
-		if err := validateFetchedProfileMatchesImport(selector, profile, imported); err != nil {
-			return err
-		}
-		bound, err := callLibraryBind(strings.TrimSpace(agentID), imported)
-		if err != nil {
-			return fmt.Errorf("library bind: %w", err)
-		}
-		if err := validateBindMatchesImport(bound, imported); err != nil {
-			return err
-		}
-		materialized, err = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-			TargetDir:        homeDir,
-			BlueprintRef:     imported.SourceBlueprintRef,
-			BlueprintVersion: firstNonEmptyLibraryValue(imported.SourceBlueprintVersion, profile.BlueprintVersion, selector.SourceBlueprintVersion),
-			BlueprintDigest:  imported.SourceBlueprintDigest,
-			ProfileRef:       imported.ProfileRef,
-			ProfileVersion:   firstNonEmptyLibraryValue(imported.Version, profile.Version),
-			ProfileDigest:    firstNonEmptyLibraryValue(imported.Digest, profile.Digest),
-			RuntimeKind:      runtimeKind,
-			Files:            profile.Files,
-			Force:            force,
-		})
-		if err != nil {
-			return fmt.Errorf("local profile materialize: %w", err)
-		}
-		written = materialized.FilesWritten
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return materialized, written, nil
-}
-
-func applyLibraryProfileToHomeAndConfigure(homeDir, agentID string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
-	materialized, written, err := applyLibraryProfileToHome(homeDir, agentID, selector, force)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := configureMaterializedAgentHome(homeDir); err != nil {
-		return nil, nil, err
-	}
-	return materialized, written, nil
-}
-
 func applyPublicLibraryProfileToHome(homeDir string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
 	if strings.TrimSpace(selector.LibraryURL) == "" {
 		return nil, nil, fmt.Errorf("library url is required for public profile materialization")
@@ -526,44 +459,6 @@ func validateLibraryProfileDetailResponse(out *libraryProfileDetailResponse) err
 	return nil
 }
 
-func validateFetchedProfileMatchesImport(selector libraryProfileSelector, profile *libraryProfileDetailResponse, imported *libraryImportToShelfResponse) error {
-	if profile == nil || imported == nil {
-		return fmt.Errorf("library profile source and import result are required")
-	}
-	checks := []struct {
-		field string
-		got   string
-		want  string
-	}{
-		{field: "blueprint_ref", got: profile.BlueprintRef, want: imported.SourceBlueprintRef},
-		{field: "profile_ref", got: profile.ProfileRef, want: imported.ProfileRef},
-		{field: "profile_version", got: profile.Version, want: imported.Version},
-		{field: "profile_digest", got: profile.Digest, want: imported.Digest},
-	}
-	if strings.TrimSpace(imported.SourceBlueprintVersion) != "" {
-		checks = append(checks, struct {
-			field string
-			got   string
-			want  string
-		}{field: "blueprint_version", got: profile.BlueprintVersion, want: imported.SourceBlueprintVersion})
-	}
-	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
-		checks = append(checks, struct {
-			field string
-			got   string
-			want  string
-		}{field: "selector_blueprint_version", got: profile.BlueprintVersion, want: selector.SourceBlueprintVersion})
-	}
-	for _, check := range checks {
-		got := strings.TrimSpace(check.got)
-		want := strings.TrimSpace(check.want)
-		if got == "" || want == "" || got != want {
-			return fmt.Errorf("library get-profile/import mismatch for %s: fetched %q, imported %q", check.field, got, want)
-		}
-	}
-	return nil
-}
-
 func validateBindMatchesImport(bound *libraryBindResponse, imported *libraryImportToShelfResponse) error {
 	if bound == nil || imported == nil {
 		return fmt.Errorf("library bind result and import result are required")
@@ -607,10 +502,6 @@ func normalizeMaterializeRuntimeKind(runtimeKind string) (string, error) {
 	default:
 		return "", usageError("runtime %q is not supported for materialization; supported runtimes: claude-code|codex|pi|local-shell", runtimeKind)
 	}
-}
-
-func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {
-	return callLibraryImportToShelfWithMissingErr(selector, missingLibraryPluginProfileError(selector))
 }
 
 func callLibraryImportToShelfWithMissingErr(selector libraryProfileSelector, missingErr error) (*libraryImportToShelfResponse, error) {
