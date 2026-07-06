@@ -181,6 +181,69 @@ func TestValidateRejectsUndeclaredSchemaPlacement(t *testing.T) {
 
 // Object and array body params arrive from the CLI as JSON strings (a flag value
 // is always a string); they must be decoded into the JSON body, not rejected.
+func TestInterpretJSONBodyFileMergesWithExplicitFlagsWinning(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "lib", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:   "propose",
+			Method: "POST",
+			Path:   "/v1/proposals",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"target":      map[string]any{"type": "string"},
+				"profile_ref": map[string]any{"type": "string"},
+				"content":     map[string]any{"type": "object"},
+				"summary":     map[string]any{"type": "string"},
+			}},
+			Params: []Param{{Name: "target", In: "body"}, {Name: "profile_ref", In: "body"}, {Name: "content", In: "body"}, {Name: "summary", In: "body"}},
+			Body:   Body{Mode: "json"},
+		}},
+	}
+	got, err := Interpret(InterpretRequest{
+		Manifest: manifest,
+		Verb:     "propose",
+		Args: map[string]any{
+			"target":      "profile",
+			"profile_ref": "developer",
+			"summary":     "explicit summary wins",
+		},
+		RawBody: []byte(`{"summary":"file summary","content":{"schema":"aweb.library.profile-asset-changeset.v1","assets":[{"path":"instructions.md"}]}}`),
+	})
+	if err != nil {
+		t.Fatalf("Interpret() error = %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(got.Body, &body); err != nil {
+		t.Fatalf("interpreted body not JSON: %v\n%s", err, got.BodyString)
+	}
+	if body["target"] != "profile" || body["profile_ref"] != "developer" || body["summary"] != "explicit summary wins" {
+		t.Fatalf("explicit flags did not win/merge: %#v", body)
+	}
+	content, ok := body["content"].(map[string]any)
+	if !ok || content["schema"] != "aweb.library.profile-asset-changeset.v1" {
+		t.Fatalf("body-file content not merged: %#v", body["content"])
+	}
+}
+
+func TestInterpretJSONBodyFileRequiresObject(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "lib", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:        "propose",
+			Method:      "POST",
+			Path:        "/v1/proposals",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"target": map[string]any{"type": "string"}}},
+			Params:      []Param{{Name: "target", In: "body"}},
+			Body:        Body{Mode: "json"},
+		}},
+	}
+	_, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "propose", RawBody: []byte(`["not","object"]`)})
+	if err == nil || !strings.Contains(err.Error(), "--body-file") || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("Interpret() error = %v, want --body-file JSON object error", err)
+	}
+}
+
 func TestInterpretObjectAndArrayBodyParamsAcceptJSONString(t *testing.T) {
 	manifest := Manifest{
 		ManifestVersion: 1,
