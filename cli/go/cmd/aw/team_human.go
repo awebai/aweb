@@ -1119,6 +1119,14 @@ func teamHumanAddRoleForPlan(plan teamHumanAddedAgent) string {
 	return strings.TrimSpace(plan.Profile.ProfileRef)
 }
 
+func resolveOrCreateTeamMemberIdentity(inviteAnchorDir string, plan teamHumanAddedAgent, apiKeyBootstrapMode bool, apiKey string) (*acceptedTeamInvite, error) {
+	if apiKeyBootstrapMode {
+		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, apiKey)
+	}
+	globalAgent := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
+	return createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plan.HomeDir, plan.Name, globalAgent)
+}
+
 type teamHumanAddRunOptions struct {
 	CWD                 string
 	InviteAnchorDir     string
@@ -1234,18 +1242,12 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		}
 		createdProfileIdentity := false
 		var acceptedProfileIdentity *acceptedTeamInvite
-		globalAgent := plans[i].Scope == awid.IdentityModeGlobal
 		if plans[i].Profile != nil {
 			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
 				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
 			} else {
-				var accepted *acceptedTeamInvite
-				if apiKeyBootstrapMode {
-					accepted, err = bootstrapTeamHumanAddAgentWithAPIKey(plans[i].HomeDir, plans[i], opts.APIKey)
-				} else {
-					accepted, err = createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plans[i].HomeDir, plans[i].Name, globalAgent)
-				}
+				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 				if err != nil {
 					if rollback != nil {
 						_ = rollback.Rollback()
@@ -1260,12 +1262,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 				plans[i].Connected = apiKeyBootstrapMode
 			}
 		} else {
-			var accepted *acceptedTeamInvite
-			if apiKeyBootstrapMode {
-				accepted, err = bootstrapTeamHumanAddAgentWithAPIKey(plans[i].HomeDir, plans[i], opts.APIKey)
-			} else {
-				accepted, err = createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plans[i].HomeDir, plans[i].Name, globalAgent)
-			}
+			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 			if err != nil {
 				if rollback != nil {
 					_ = rollback.Rollback()
