@@ -467,7 +467,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
-		if err := runTeamHumanCreateModelA(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector, firstSpec.LocalBlueprintDir); err != nil {
+		if err := foundTeamWithNamespaceControllerAuthority(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, selector, firstSpec.LocalBlueprintDir); err != nil {
 			return err
 		}
 		return runTeamHumanCreateRosterAdd(rosterSpecs)
@@ -743,10 +743,10 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope 
 	if selector != nil {
 		return usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
-	return runTeamHumanCreateModelA(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil, "")
+	return foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope, nil, "")
 }
 
-func runTeamHumanCreateModelA(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector, localBlueprintDir string) error {
+func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string, selector *libraryProfileSelector, localBlueprintDir string) error {
 	domain := awconfig.NormalizeDomain(explicitDomain)
 	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
 	if domain == "" {
