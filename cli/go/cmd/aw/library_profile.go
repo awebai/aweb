@@ -610,11 +610,15 @@ func normalizeMaterializeRuntimeKind(runtimeKind string) (string, error) {
 }
 
 func callLibraryImportToShelf(selector libraryProfileSelector) (*libraryImportToShelfResponse, error) {
+	return callLibraryImportToShelfWithMissingErr(selector, missingLibraryPluginProfileError(selector))
+}
+
+func callLibraryImportToShelfWithMissingErr(selector libraryProfileSelector, missingErr error) (*libraryImportToShelfResponse, error) {
 	args := []string{"import-to-shelf", "--source_blueprint_ref", selector.SourceBlueprintRef, "--profile_ref", selector.ProfileRef}
 	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
 		args = append(args, "--source_blueprint_version", selector.SourceBlueprintVersion)
 	}
-	body, err := executeLibraryToolBody(args, missingLibraryPluginProfileError(selector))
+	body, err := executeLibraryToolBody(args, missingErr)
 	if err != nil {
 		return nil, err
 	}
