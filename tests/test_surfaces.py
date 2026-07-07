@@ -114,6 +114,48 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "https://github.com/awebai/folio" not in response.text
 
 
+def test_landing_getting_started_is_the_verified_folio_spine() -> None:
+    html = _client().get("/").text
+    # One getting-started, rendered as single-box numbered steps (the shared aweb
+    # step pattern), never the elevated-panel-around-a-command double box.
+    assert 'class="gs-steps"' in html
+    assert "cmd-panel" not in html
+    # The verified spine shows folio's whole point — two agents on one document:
+    # a two-agent team, then a draft (create) and a revision (append) that both
+    # land on the same append-only document, then the present link.
+    spine = [
+        "npm install -g @awebai/aw",
+        "aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi",
+        "aw team up",
+        "aw plugin install https://folio.aweb.ai/.well-known/aweb-app.json",
+        'aw folio create --slug pitch --title "Pitch" --body "# Pitch"',
+        "aw folio append --slug pitch",
+        "aw folio present --slug pitch --ttl_seconds 86400",
+    ]
+    positions = [html.find(step) for step in spine]
+    assert all(pos != -1 for pos in positions), positions
+    assert positions == sorted(positions), "steps must render in executed order"
+
+
+def test_llms_txt_getting_started_teaches_the_verified_spine() -> None:
+    text = _client().get("/llms.txt").text
+    assert (
+        "aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi"
+        in text
+    )
+    order = [
+        "aw team create my-team",
+        "aw team up",
+        "aw plugin install",
+        "aw folio create",
+        "aw folio append",
+        "aw folio present",
+    ]
+    positions = [text.find(step) for step in order]
+    assert all(pos != -1 for pos in positions), positions
+    assert positions == sorted(positions), "llms.txt steps must render in executed order"
+
+
 def test_linked_manifest_paths_serve_committed_bytes() -> None:
     from folio.aweb_manifest import read_manifest_bytes
 
