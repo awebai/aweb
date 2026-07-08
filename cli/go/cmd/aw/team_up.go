@@ -58,6 +58,7 @@ const (
 	teamUpActionSkip    = "skip"
 	teamUpTmuxTmpdirEnv = "AWEB_TMUX_TMPDIR"
 	tmuxTmpdirEnv       = "TMUX_TMPDIR"
+	tmuxEnv             = "TMUX"
 )
 
 type teamUpRunningProcess struct {
@@ -461,7 +462,7 @@ func canonicalTeamUpPath(path string) string {
 }
 
 func attachTeamUpSession(cmd *cobra.Command, session string) error {
-	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+	if strings.TrimSpace(os.Getenv(tmuxEnv)) != "" && resolveTeamUpTmuxTmpdir() == "" {
 		return teamUpRunTmux(cmd, "switch-client", "-t", session)
 	}
 	return teamUpRunTmux(cmd, "attach-session", "-t", session)
@@ -491,7 +492,7 @@ func runTmuxOutput(args ...string) (string, error) {
 func teamUpTmuxCommand(args ...string) *exec.Cmd {
 	cmd := exec.Command("tmux", args...)
 	if tmpdir := resolveTeamUpTmuxTmpdir(); tmpdir != "" {
-		cmd.Env = envWithValue(os.Environ(), tmuxTmpdirEnv, tmpdir)
+		cmd.Env = envWithValueAndUnset(os.Environ(), tmuxTmpdirEnv, tmpdir, tmuxEnv)
 	}
 	return cmd
 }
@@ -527,8 +528,15 @@ func resolveWorkspaceTmuxTmpdir(workspacePath, value string) string {
 	return filepath.Clean(filepath.Join(root, value))
 }
 
-func envWithValue(env []string, key, value string) []string {
+func envWithValueAndUnset(env []string, key, value string, unsetKeys ...string) []string {
 	prefix := key + "="
+	drop := map[string]bool{}
+	for _, unsetKey := range unsetKeys {
+		unsetKey = strings.TrimSpace(unsetKey)
+		if unsetKey != "" && unsetKey != key {
+			drop[unsetKey+"="] = true
+		}
+	}
 	out := make([]string, 0, len(env)+1)
 	replaced := false
 	for _, item := range env {
@@ -537,6 +545,16 @@ func envWithValue(env []string, key, value string) []string {
 				out = append(out, prefix+value)
 				replaced = true
 			}
+			continue
+		}
+		dropped := false
+		for dropPrefix := range drop {
+			if strings.HasPrefix(item, dropPrefix) {
+				dropped = true
+				break
+			}
+		}
+		if dropped {
 			continue
 		}
 		out = append(out, item)

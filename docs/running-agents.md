@@ -141,7 +141,9 @@ when the target session does not contain running agent windows; if it does,
 Live-agent tmux can be isolated from the human/default tmux socket by setting
 `AWEB_TMUX_TMPDIR` before running `aw team up`, `aw team add --start`, or
 `aw team extend --start`. The CLI passes that value to tmux as `TMUX_TMPDIR`
-for every tmux call it makes; if `AWEB_TMUX_TMPDIR` is unset, existing tmux
+for every tmux call it makes and strips inherited `TMUX` from those child
+processes so tmux selects the dedicated socket even when `aw` was invoked from
+inside another tmux client. If `AWEB_TMUX_TMPDIR` is unset, existing tmux
 environment behavior is unchanged. You can also persist the same value in the
 workspace binding as `aweb_tmux_tmpdir` in `.aw/workspace.yaml` (the env var
 wins when both are set).

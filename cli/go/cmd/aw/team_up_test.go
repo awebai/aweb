@@ -263,7 +263,7 @@ func installFakeTmuxForEnvTest(t *testing.T) string {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "tmux-env.log")
 	script := "#!/bin/sh\n" +
-		"printf 'TMUX_TMPDIR=%s args=%s\\n' \"$TMUX_TMPDIR\" \"$*\" >> \"$AW_TMUX_LOG\"\n" +
+		"printf 'TMUX_TMPDIR=%s TMUX=%s args=%s\\n' \"$TMUX_TMPDIR\" \"$TMUX\" \"$*\" >> \"$AW_TMUX_LOG\"\n" +
 		"printf 'ok\\n'\n"
 	path := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -288,6 +288,7 @@ func TestTeamUpTmuxCommandsHonorAwebTmuxTmpdirEnv(t *testing.T) {
 	dedicated := filepath.Join(t.TempDir(), "agent-socket")
 	t.Setenv("AWEB_TMUX_TMPDIR", dedicated)
 	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "human-socket"))
+	t.Setenv("TMUX", filepath.Join(t.TempDir(), "human-tmux")+",123,0")
 
 	if !tmuxSessionExists("aw-team") {
 		t.Fatal("fake tmux should report session exists")
@@ -305,8 +306,8 @@ func TestTeamUpTmuxCommandsHonorAwebTmuxTmpdirEnv(t *testing.T) {
 		t.Fatalf("log lines=%q", log)
 	}
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "TMUX_TMPDIR="+dedicated+" ") {
-			t.Fatalf("tmux invocation did not use AWEB_TMUX_TMPDIR %q:\n%s", dedicated, log)
+		if !strings.HasPrefix(line, "TMUX_TMPDIR="+dedicated+" TMUX= ") {
+			t.Fatalf("tmux invocation did not use AWEB_TMUX_TMPDIR %q with inherited TMUX stripped:\n%s", dedicated, log)
 		}
 	}
 }
@@ -337,13 +338,14 @@ func TestTeamUpTmuxCommandsUseWorkspaceConfiguredTmpdir(t *testing.T) {
 	logPath := installFakeTmuxForEnvTest(t)
 	t.Setenv("AWEB_TMUX_TMPDIR", "")
 	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "human-socket"))
+	t.Setenv("TMUX", filepath.Join(t.TempDir(), "human-tmux")+",123,0")
 
 	if err := runTmux(nil, "new-session", "-d", "-s", "aw-team"); err != nil {
 		t.Fatalf("runTmux: %v", err)
 	}
 	log := readFakeTmuxEnvLog(t, logPath)
-	if !strings.HasPrefix(strings.TrimSpace(log), "TMUX_TMPDIR="+dedicated+" ") {
-		t.Fatalf("tmux invocation did not use workspace aweb_tmux_tmpdir %q:\n%s", dedicated, log)
+	if !strings.HasPrefix(strings.TrimSpace(log), "TMUX_TMPDIR="+dedicated+" TMUX= ") {
+		t.Fatalf("tmux invocation did not use workspace aweb_tmux_tmpdir %q with inherited TMUX stripped:\n%s", dedicated, log)
 	}
 }
 
@@ -352,13 +354,49 @@ func TestTeamUpTmuxCommandsWithoutAwebTmpdirPreserveInheritedEnvironment(t *test
 	inherited := filepath.Join(t.TempDir(), "existing-socket")
 	t.Setenv("AWEB_TMUX_TMPDIR", "")
 	t.Setenv("TMUX_TMPDIR", inherited)
+	inheritedTMUX := filepath.Join(t.TempDir(), "default-tmux") + ",123,0"
+	t.Setenv("TMUX", inheritedTMUX)
 
 	if err := runTmux(nil, "display-message", "hello"); err != nil {
 		t.Fatalf("runTmux: %v", err)
 	}
 	log := readFakeTmuxEnvLog(t, logPath)
-	if !strings.HasPrefix(strings.TrimSpace(log), "TMUX_TMPDIR="+inherited+" ") {
-		t.Fatalf("tmux invocation should preserve inherited TMUX_TMPDIR %q when AWEB_TMUX_TMPDIR/workspace config are unset:\n%s", inherited, log)
+	if !strings.HasPrefix(strings.TrimSpace(log), "TMUX_TMPDIR="+inherited+" TMUX="+inheritedTMUX+" ") {
+		t.Fatalf("tmux invocation should preserve inherited TMUX_TMPDIR/TMUX when AWEB_TMUX_TMPDIR/workspace config are unset:\n%s", log)
+	}
+}
+
+func TestAttachTeamUpSessionUsesAttachWhenAwebTmuxTmpdirIsSetInsideTmux(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	t.Setenv("AWEB_TMUX_TMPDIR", filepath.Join(t.TempDir(), "agent-socket"))
+	t.Setenv("TMUX", filepath.Join(t.TempDir(), "human-tmux")+",123,0")
+	var calls []string
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	if err := attachTeamUpSession(&cobra.Command{}, "aw-team"); err != nil {
+		t.Fatalf("attachTeamUpSession: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "attach-session -t aw-team" {
+		t.Fatalf("isolated attach should not switch the inherited tmux client across sockets: %v", calls)
+	}
+}
+
+func TestAttachTeamUpSessionPreservesSwitchClientWithoutAwebTmuxTmpdir(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	t.Setenv("AWEB_TMUX_TMPDIR", "")
+	t.Setenv("TMUX", filepath.Join(t.TempDir(), "human-tmux")+",123,0")
+	var calls []string
+	teamUpRunTmux = func(_ *cobra.Command, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	if err := attachTeamUpSession(&cobra.Command{}, "aw-team"); err != nil {
+		t.Fatalf("attachTeamUpSession: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "switch-client -t aw-team" {
+		t.Fatalf("default-socket attach should preserve switch-client behavior inside tmux: %v", calls)
 	}
 }
 
