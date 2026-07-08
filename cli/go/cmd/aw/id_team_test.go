@@ -270,6 +270,7 @@ func resetTeamRemoveMemberGlobals(t *testing.T) {
 	oldCertID := teamRemoveCertID
 	oldRegistry := teamRemoveRegistryURL
 	oldAwebURL := teamRemoveAwebURL
+	oldAPIKey := teamRemoveAPIKey
 	oldJSON := jsonFlag
 	t.Cleanup(func() {
 		teamRemoveTeam = oldTeam
@@ -278,6 +279,7 @@ func resetTeamRemoveMemberGlobals(t *testing.T) {
 		teamRemoveCertID = oldCertID
 		teamRemoveRegistryURL = oldRegistry
 		teamRemoveAwebURL = oldAwebURL
+		teamRemoveAPIKey = oldAPIKey
 		jsonFlag = oldJSON
 	})
 	teamRemoveTeam = ""
@@ -286,10 +288,11 @@ func resetTeamRemoveMemberGlobals(t *testing.T) {
 	teamRemoveCertID = ""
 	teamRemoveRegistryURL = ""
 	teamRemoveAwebURL = ""
+	teamRemoveAPIKey = ""
 	jsonFlag = false
 }
 
-func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddress(t *testing.T) {
+func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddressWithExplicitTeamKey(t *testing.T) {
 	resetTeamRemoveMemberGlobals(t)
 	root := t.TempDir()
 	t.Chdir(root)
@@ -325,7 +328,52 @@ func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddress(t *testing.T) 
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(root, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
 		AwebURL: server.URL + "/api",
-		APIKey:  "aw_sk_owner",
+		APIKey:  "aw_sk_workspace_bound_must_not_be_used",
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:   "default:alice.aweb.ai",
+			Alias:    "owner",
+			CertPath: "team-certs/default__alice.aweb.ai.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	teamRemoveTeam = "default"
+	teamRemoveNamespace = "alice.aweb.ai"
+	teamRemoveMember = "alice.aweb.ai/reviewer"
+	teamRemoveAPIKey = "aw_sk_team_owner"
+
+	if err := runTeamRemoveMember(&cobra.Command{}, nil); err != nil {
+		t.Fatalf("runTeamRemoveMember: %v", err)
+	}
+	if gotAuth != "Bearer aw_sk_team_owner" {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
+	if gotBody["member_address"] != "alice.aweb.ai/reviewer" || gotBody["certificate_id"] != nil {
+		t.Fatalf("body=%#v", gotBody)
+	}
+}
+
+func TestRunTeamRemoveMemberHostedDoesNotUseWorkspaceBoundAPIKey(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("workspace-bound API key should not be sent to hosted remove-member: %s %s", r.Method, r.URL.String())
+	}))
+	defer server.Close()
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "default:alice.aweb.ai",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "default:alice.aweb.ai",
+			Alias:    "owner",
+			CertPath: "team-certs/default__alice.aweb.ai.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(root, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		AwebURL: server.URL,
+		APIKey:  "aw_sk_workspace_bound",
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:   "default:alice.aweb.ai",
 			Alias:    "owner",
@@ -338,14 +386,9 @@ func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddress(t *testing.T) 
 	teamRemoveNamespace = "alice.aweb.ai"
 	teamRemoveMember = "alice.aweb.ai/reviewer"
 
-	if err := runTeamRemoveMember(&cobra.Command{}, nil); err != nil {
-		t.Fatalf("runTeamRemoveMember: %v", err)
-	}
-	if gotAuth != "Bearer aw_sk_owner" {
-		t.Fatalf("Authorization=%q", gotAuth)
-	}
-	if gotBody["member_address"] != "alice.aweb.ai/reviewer" || gotBody["certificate_id"] != nil {
-		t.Fatalf("body=%#v", gotBody)
+	err := runTeamRemoveMember(&cobra.Command{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "workspace-bound API keys cannot remove hosted team members") {
+		t.Fatalf("error=%v", err)
 	}
 }
 
@@ -469,7 +512,7 @@ func TestRunTeamRemoveMemberLocalCanRevokeByCertificateID(t *testing.T) {
 	}
 }
 
-func TestRunTeamRemoveMemberHostedRequiresAPIKey(t *testing.T) {
+func TestRunTeamRemoveMemberHostedRequiresTeamAPIKey(t *testing.T) {
 	resetTeamRemoveMemberGlobals(t)
 	root := t.TempDir()
 	t.Chdir(root)
@@ -479,8 +522,13 @@ func TestRunTeamRemoveMemberHostedRequiresAPIKey(t *testing.T) {
 	teamRemoveAwebURL = "https://app.aweb.ai/api"
 
 	err := runTeamRemoveMember(&cobra.Command{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "requires a workspace api_key") {
-		t.Fatalf("error=%v", err)
+	if err == nil {
+		t.Fatal("expected missing team API key error")
+	}
+	for _, want := range []string{"requires --api-key or AWEB_API_KEY", "team-scoped owner/admin API key", "workspace-bound API keys cannot remove hosted team members"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
 	}
 }
 
