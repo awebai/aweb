@@ -55,6 +55,7 @@ var (
 	teamHumanRemoveTeamID      string
 	teamHumanRemoveRegistryURL string
 	teamHumanRemoveAwebURL     string
+	teamHumanRemoveAPIKey      string
 )
 
 var teamHumanCmd = &cobra.Command{
@@ -222,6 +223,7 @@ func init() {
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAPIKey, "api-key", "", "Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)")
 	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
 	rootCmd.AddCommand(teamHumanCmd)
 }
@@ -1601,16 +1603,9 @@ func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accep
 	ctx, cancel := context.WithTimeout(context.Background(), awid.APITimeout())
 	defer cancel()
 	if isAwebHostedNamespace(target.Domain) || strings.TrimSpace(explicitAPIKey) != "" {
-		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL)
-		if strings.TrimSpace(explicitAPIKey) != "" {
-			apiKey = strings.TrimSpace(explicitAPIKey)
-		}
+		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL, explicitAPIKey)
 		if authErr != nil {
-			if strings.TrimSpace(explicitAPIKey) != "" && strings.TrimSpace(target.AwebURL) != "" {
-				awebURL = strings.TrimSpace(target.AwebURL)
-			} else {
-				return authErr
-			}
+			return authErr
 		}
 		_, err = postHostedTeamRemoveMember(ctx, awebURL, apiKey, target.TeamID, hostedTeamRemoveMemberRequest{CertificateID: target.CertificateID})
 		if err != nil {
@@ -1986,6 +1981,7 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	teamRemoveCertID = ""
 	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
 	teamRemoveAwebURL = teamHumanRemoveAwebURL
+	teamRemoveAPIKey = teamHumanRemoveAPIKey
 	return runTeamRemoveMember(cmd, nil)
 }
 

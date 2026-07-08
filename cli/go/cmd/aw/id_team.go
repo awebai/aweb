@@ -297,6 +297,7 @@ var (
 	teamRemoveCertID      string
 	teamRemoveRegistryURL string
 	teamRemoveAwebURL     string
+	teamRemoveAPIKey      string
 
 	teamMembersTeam           string
 	teamMembersNamespace      string
@@ -556,6 +557,7 @@ func init() {
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveCertID, "cert-id", "", "Certificate id to revoke (hosted remove accepts --member or --cert-id)")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
+	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveAPIKey, "api-key", "", "Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)")
 	teamCmd.AddCommand(teamRemoveMemberCmd)
 
 	teamMembersCmd.Flags().StringVar(&teamMembersTeamID, "team-id", "", "Canonical team id (<team>:<namespace>); defaults to active team")
@@ -2101,22 +2103,16 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 }
 
 func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey string, err error) {
-	return resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, teamRemoveAwebURL)
+	return resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, teamRemoveAwebURL, teamRemoveAPIKey)
 }
 
-func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL string) (awebURL, apiKey string, err error) {
+func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL, explicitAPIKey string) (awebURL, apiKey string, err error) {
 	awebURL = strings.TrimSpace(explicitAwebURL)
-	apiKey = strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
+	apiKey = firstNonEmptyLibraryValue(explicitAPIKey, os.Getenv(initAPIKeyEnvVar))
 	workspace, teamState, _, loadErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if loadErr == nil && workspace != nil {
 		if awebURL == "" {
 			awebURL = strings.TrimSpace(workspace.AwebURL)
-		}
-		if apiKey == "" {
-			// Existing CLI workspaces persist the team-scoped admin API key in
-			// workspace.yaml. Prefer AWEB_API_KEY when present, but keep this fallback
-			// for non-interactive hosted member-removal from initialized workspaces.
-			apiKey = strings.TrimSpace(workspace.APIKey)
 		}
 		if teamState != nil {
 			if membership := teamState.Membership(teamID); membership != nil {
@@ -2133,9 +2129,9 @@ func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL 
 		return "", "", usageError("hosted remove for %s requires --aweb-url or a workspace with aweb_url", teamID)
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return "", "", usageError("hosted remove for %s requires a workspace api_key or %s", teamID, initAPIKeyEnvVar)
+		return "", "", usageError("hosted remove for %s requires --api-key or %s with a team-scoped owner/admin API key; workspace-bound API keys cannot remove hosted team members", teamID, initAPIKeyEnvVar)
 	}
-	return awebURL, apiKey, nil
+	return awebURL, strings.TrimSpace(apiKey), nil
 }
 
 func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID string, payload hostedTeamRemoveMemberRequest) (*hostedTeamRemoveMemberResponse, error) {

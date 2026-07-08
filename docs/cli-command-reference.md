@@ -807,6 +807,7 @@ Flags:
 Protocol/admin: remove a member by revoking a team certificate
 
 Flags:
+- `--api-key string Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)`
 - `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
 - `--cert-id string Certificate id to revoke (hosted remove accepts --member or --cert-id)`
 - `-h, --help help for remove-member`
@@ -1051,6 +1052,7 @@ Customer-controlled teams revoke with the local team controller key; hosted
 aweb.ai teams call the cloud-mediated controller revoke endpoint.
 
 Flags:
+- `--api-key string Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)`
 - `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
 - `-h, --help help for remove-agent`
 - `--registry string Registry origin override`

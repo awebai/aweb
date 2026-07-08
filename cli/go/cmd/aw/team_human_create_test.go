@@ -60,6 +60,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldAddBlueprint := teamHumanAddBlueprint
 	oldExtendAPIKey := teamHumanExtendAPIKey
 	oldExtendTeamID := teamHumanExtendTeamID
+	oldRemoveAPIKey := teamHumanRemoveAPIKey
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -100,6 +101,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanAddBlueprint = oldAddBlueprint
 		teamHumanExtendAPIKey = oldExtendAPIKey
 		teamHumanExtendTeamID = oldExtendTeamID
+		teamHumanRemoveAPIKey = oldRemoveAPIKey
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
@@ -138,6 +140,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanAddBlueprint = ""
 	teamHumanExtendAPIKey = ""
 	teamHumanExtendTeamID = ""
+	teamHumanRemoveAPIKey = ""
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {
@@ -1828,7 +1831,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	}
 }
 
-func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *testing.T) {
+func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRollback(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -1915,14 +1918,16 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRollsBackJustCreatedCert(t *
 	if justCreatedCertID == "" {
 		t.Fatal("hosted accept did not create a cert")
 	}
-	if removeCalls != 1 {
-		t.Fatalf("remove-member calls=%d want 1", removeCalls)
+	if removeCalls != 0 {
+		t.Fatalf("remove-member calls=%d want 0 because workspace-bound API keys are not valid hosted removal authority", removeCalls)
 	}
-	if removeCertID != justCreatedCertID {
-		t.Fatalf("remove certificate_id=%q want just-created %q", removeCertID, justCreatedCertID)
+	if removeCertID != "" || removeAuth != "" {
+		t.Fatalf("unexpected hosted remove attempt cert=%q auth=%q", removeCertID, removeAuth)
 	}
-	if removeAuth != "Bearer aw_sk_owner" {
-		t.Fatalf("remove auth=%q want owner workspace bearer key", removeAuth)
+	for _, want := range []string{"server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%s", want, err)
+		}
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
 	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
@@ -1997,7 +2002,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 		t.Fatal("expected materialize + rollback failure")
 	}
 	text := err.Error()
-	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "hosted remove-member returned 503", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
+	for _, want := range []string{"GET " + server.URL + "/v1/blueprints/aweb.engineering/profiles/developer returned 503", "server-side member rollback failed", "requires --api-key or AWEB_API_KEY", "workspace-bound API keys cannot remove hosted team members", justCreatedCertID, "aw id team remove-member --team default --namespace rollback-fail.aweb.ai --cert-id"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q:\n%s", want, text)
 		}
