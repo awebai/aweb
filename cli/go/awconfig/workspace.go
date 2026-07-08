@@ -28,6 +28,7 @@ type WorktreeWorkspace struct {
 	AgentType       string               `yaml:"agent_type,omitempty"`
 	RepoID          string               `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string               `yaml:"canonical_origin,omitempty"`
+	AwebTmuxTmpdir  string               `yaml:"aweb_tmux_tmpdir,omitempty"`
 	Hostname        string               `yaml:"hostname,omitempty"`
 	WorkspacePath   string               `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string               `yaml:"updated_at,omitempty"`
@@ -51,6 +52,7 @@ type worktreeWorkspaceYAML struct {
 	AgentType       string                   `yaml:"agent_type,omitempty"`
 	RepoID          string                   `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string                   `yaml:"canonical_origin,omitempty"`
+	AwebTmuxTmpdir  string                   `yaml:"aweb_tmux_tmpdir,omitempty"`
 	Hostname        string                   `yaml:"hostname,omitempty"`
 	WorkspacePath   string                   `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string                   `yaml:"updated_at,omitempty"`
@@ -86,6 +88,7 @@ var canonicalWorkspaceYAMLKeys = map[string]struct{}{
 	"agent_type":       {},
 	"repo_id":          {},
 	"canonical_origin": {},
+	"aweb_tmux_tmpdir": {},
 	"hostname":         {},
 	"workspace_path":   {},
 	"updated_at":       {},
@@ -145,6 +148,7 @@ func (w *WorktreeWorkspace) normalize() {
 	w.AgentType = strings.TrimSpace(w.AgentType)
 	w.RepoID = strings.TrimSpace(w.RepoID)
 	w.CanonicalOrigin = strings.TrimSpace(w.CanonicalOrigin)
+	w.AwebTmuxTmpdir = strings.TrimSpace(w.AwebTmuxTmpdir)
 	w.Hostname = strings.TrimSpace(w.Hostname)
 	w.WorkspacePath = strings.TrimSpace(w.WorkspacePath)
 	w.UpdatedAt = strings.TrimSpace(w.UpdatedAt)
@@ -349,6 +353,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		AgentType:       raw.AgentType,
 		RepoID:          raw.RepoID,
 		CanonicalOrigin: raw.CanonicalOrigin,
+		AwebTmuxTmpdir:  raw.AwebTmuxTmpdir,
 		Hostname:        raw.Hostname,
 		WorkspacePath:   raw.WorkspacePath,
 		UpdatedAt:       raw.UpdatedAt,
@@ -381,6 +386,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 		AgentType:       w.AgentType,
 		RepoID:          w.RepoID,
 		CanonicalOrigin: w.CanonicalOrigin,
+		AwebTmuxTmpdir:  w.AwebTmuxTmpdir,
 		Hostname:        w.Hostname,
 		WorkspacePath:   w.WorkspacePath,
 		UpdatedAt:       w.UpdatedAt,

@@ -138,9 +138,18 @@ current working directory of a running process. Use `--force` to ignore that
 running-process check. `--recreate` kills and recreates the tmux session only
 when the target session does not contain running agent windows; if it does,
 `aw team up` refuses unless you pass the explicit `--force-kill` override.
-Dogfood/test launches should use a throwaway `--session` name, and direct tmux
-experiments should use an isolated socket such as `tmux -L awdogfood ...` so
-they cannot touch the live agent tmux server.
+Live-agent tmux can be isolated from the human/default tmux socket by setting
+`AWEB_TMUX_TMPDIR` before running `aw team up`, `aw team add --start`, or
+`aw team extend --start`. The CLI passes that value to tmux as `TMUX_TMPDIR`
+for every tmux call it makes; if `AWEB_TMUX_TMPDIR` is unset, existing tmux
+environment behavior is unchanged. You can also persist the same value in the
+workspace binding as `aweb_tmux_tmpdir` in `.aw/workspace.yaml` (the env var
+wins when both are set).
+
+Dogfood/test launches should use a throwaway `--session` name plus an isolated
+`AWEB_TMUX_TMPDIR`/`TMUX_TMPDIR`, and direct tmux experiments should use an
+isolated socket such as `tmux -L awdogfood ...` so they cannot touch the live
+agent tmux server.
 
 ## 4. One command: `aw team add --start`
 

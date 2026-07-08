@@ -54,8 +54,10 @@ type teamUpAgentPlan struct {
 }
 
 const (
-	teamUpActionStart = "start"
-	teamUpActionSkip  = "skip"
+	teamUpActionStart   = "start"
+	teamUpActionSkip    = "skip"
+	teamUpTmuxTmpdirEnv = "AWEB_TMUX_TMPDIR"
+	tmuxTmpdirEnv       = "TMUX_TMPDIR"
 )
 
 type teamUpRunningProcess struct {
@@ -112,7 +114,7 @@ func runTeamHumanUp(cmd *cobra.Command, args []string) error {
 	if err := confirmStartedClaudeChannelPrompts(plan.Session, started); err != nil {
 		return err
 	}
-	if attach && tmuxSessionExists(plan.Session) {
+	if attach && teamUpSessionExists(plan.Session) {
 		return attachTeamUpSession(cmd, plan.Session)
 	}
 	return nil
@@ -365,7 +367,7 @@ func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan
 }
 
 func tmuxSessionExists(session string) bool {
-	return exec.Command("tmux", "has-session", "-t", session).Run() == nil
+	return teamUpTmuxCommand("has-session", "-t", session).Run() == nil
 }
 
 func detectTeamUpActiveHomes(agentsDir string) (map[string]teamUpRunningProcess, error) {
@@ -466,7 +468,7 @@ func attachTeamUpSession(cmd *cobra.Command, session string) error {
 }
 
 func runTmux(cmd *cobra.Command, args ...string) error {
-	c := exec.Command("tmux", args...)
+	c := teamUpTmuxCommand(args...)
 	if cmd != nil {
 		c.Stdin = cmd.InOrStdin()
 		c.Stdout = cmd.OutOrStdout()
@@ -479,11 +481,70 @@ func runTmux(cmd *cobra.Command, args ...string) error {
 }
 
 func runTmuxOutput(args ...string) (string, error) {
-	data, err := exec.Command("tmux", args...).CombinedOutput()
+	data, err := teamUpTmuxCommand(args...).CombinedOutput()
 	if err != nil {
 		return string(data), fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return string(data), nil
+}
+
+func teamUpTmuxCommand(args ...string) *exec.Cmd {
+	cmd := exec.Command("tmux", args...)
+	if tmpdir := resolveTeamUpTmuxTmpdir(); tmpdir != "" {
+		cmd.Env = envWithValue(os.Environ(), tmuxTmpdirEnv, tmpdir)
+	}
+	return cmd
+}
+
+func resolveTeamUpTmuxTmpdir() string {
+	if tmpdir := strings.TrimSpace(os.Getenv(teamUpTmuxTmpdirEnv)); tmpdir != "" {
+		return tmpdir
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	root := resolveRepoRoot(wd)
+	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(root)
+	if err != nil || workspace == nil {
+		return ""
+	}
+	return resolveWorkspaceTmuxTmpdir(workspacePath, workspace.AwebTmuxTmpdir)
+}
+
+func resolveWorkspaceTmuxTmpdir(workspacePath, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if filepath.IsAbs(value) {
+		return filepath.Clean(value)
+	}
+	root := awconfig.WorktreeRootFromWorkspacePath(workspacePath)
+	if strings.TrimSpace(root) == "" {
+		return filepath.Clean(value)
+	}
+	return filepath.Clean(filepath.Join(root, value))
+}
+
+func envWithValue(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			if !replaced {
+				out = append(out, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, item)
+	}
+	if !replaced {
+		out = append(out, prefix+value)
+	}
+	return out
 }
 
 func confirmStartedClaudeChannelPrompts(session string, started []teamUpAgentPlan) error {

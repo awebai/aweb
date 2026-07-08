@@ -1386,7 +1386,7 @@ func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session s
 	if err := confirmStartedClaudeChannelPrompts(launchPlan.Session, started); err != nil {
 		return err
 	}
-	if attach && tmuxSessionExists(launchPlan.Session) {
+	if attach && teamUpSessionExists(launchPlan.Session) {
 		return attachTeamUpSession(cmd, launchPlan.Session)
 	}
 	return nil
