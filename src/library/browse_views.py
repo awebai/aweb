@@ -249,8 +249,11 @@ def build_profile_view(profile: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and isinstance(item.get("path"), str):
             artifact_paths.append(item["path"])
     excluded = {"profile.yaml", instructions_path, *skill_paths}
+    skill_dirs = {"/".join(path.split("/")[:2]) for path in skill_paths}
     for path in files:
-        if path not in excluded and not _skill_name_from_path(path) and path not in artifact_paths:
+        if any(path.startswith(f"{skill_dir}/") for skill_dir in skill_dirs):
+            continue
+        if path not in excluded and path not in artifact_paths:
             artifact_paths.append(path)
 
     artifact_href = _profile_api_href(blueprint_ref, profile_ref)

@@ -39,11 +39,12 @@ A bound (non-empty) profile materializes to:
 <home>/
   AGENTS.md                      # composed body (canonical)
   CLAUDE.md -> AGENTS.md         # harness symlink
-  skills/<skill-name>/SKILL.md   # installed, canonical skill files
+  skills/<skill-name>/SKILL.md   # installed, canonical skill entrypoint
+  skills/<skill-name>/**         # installed sibling skill assets, if any
   artifacts/<files>              # installed artifact files
-  .claude/skills/<skill-name>/SKILL.md -> ../../../skills/<skill-name>/SKILL.md
+  .claude/skills/<skill-name> -> ../../skills/<skill-name>
   .aw/profile/                   # the full, evolvable profile
-    ref.json                     # the pin (profile + source-blueprint digest/version)
+    ref.json                     # pin + runtime_kind + managed_set
     profile.yaml                 # the complete profile spec
     instructions.md              # editable source prose
     skills/<source skill files>
@@ -67,9 +68,10 @@ target}`).
 | `expected_apps` | `AGENTS.md` § Apps you use |
 | `approval_required` | `AGENTS.md` § Actions requiring human approval |
 | `memory_policy` | `AGENTS.md` § Memory and learning |
-| `skills` | installed under `skills/` (+ per-harness symlinks); listed in § Skills |
+| `skills` | each declared `skills/<name>/SKILL.md` projects the full `skills/<name>/**` directory under `skills/` (+ per-harness symlinks); listed in § Skills |
 | `artifacts` | installed under `artifacts/` |
-| `runtime_assumptions` | selects the harness body file + symlink; not rendered into the body |
+| `runtime_kind` request value | echoed verbatim into `.aw/profile/ref.json`; controls harness projections such as `.claude/skills/<name>` |
+| `runtime_assumptions` | profile-authored harness notes; not rendered into the body |
 | `event_subscriptions` | registered with core for the wake loop; not rendered into the body |
 | `id` / `version` + blueprint digests | `.aw/profile/ref.json` pin |
 | full profile + source | `.aw/profile/` |
@@ -144,12 +146,14 @@ body is never duplicated, so evolution touches one file.
 
 ## Skills
 
-Skill content is installed once, canonically, under `skills/<skill-name>/`. For
-each harness's standard skill location, materialize creates that location and
-populates it with symlinks back to `skills/` (e.g. `.claude/skills/<name>/SKILL.md
--> ../../../skills/<name>/SKILL.md`). Content lives exactly once; every harness
-discovers it without duplication. The body's § Skills lists installed skills by
-name.
+Skill content is installed once, canonically, under `skills/<skill-name>/`. A
+profile declaration for `skills/<name>/SKILL.md` projects every payload file under
+`skills/<name>/**` into the home root, so skill-local assets travel with the
+entrypoint. For each harness's standard skill location, materialize creates that
+location as a symlink back to the canonical directory (for Claude Code:
+`.claude/skills/<name> -> ../../skills/<name>`). Content lives exactly once;
+every harness discovers it without duplication. The body's § Skills lists
+installed skills by name.
 
 ## The evolvable profile (`.aw/profile/`)
 
@@ -165,3 +169,15 @@ was adopted from) for a blueprint copy, and omits it for a profile created fresh
 shelf (the provenance line then reads `· created`). Provenance is what
 `update-from-source` uses to pull a newer blueprint version's improvements into only the
 parts the team has not evolved (per-part merge), without clobbering local learning.
+
+`ref.json` also records the client-resolved `runtime_kind` verbatim and a
+`managed_set` array. `managed_set` lists every path the materializer writes,
+files and symlinks, home-root-relative, including `.aw/profile/ref.json` itself.
+Ordering is normative: fixed entries first (`AGENTS.md`, `CLAUDE.md`,
+`.aw/profile/profile.yaml`, `.aw/profile/instructions.md`); then skills in
+`profile.yaml` declaration order, with each skill's payload paths sorted by UTF-8
+byte order and emitted as adjacent root/mirror pairs, followed by that skill's
+runtime directory link; then artifacts in declaration order as root/mirror pairs;
+then `.aw/profile/ref.json` last. For Claude Code skill projection the managed
+path is the directory symlink `.claude/skills/<name>`, not per-file links below
+it.

@@ -1227,10 +1227,14 @@ def test_contract_fixture_contains_materialized_profile_refs() -> None:
         )
         assert ref["profile_ref"] == profile_ref
         assert ref["source_blueprint_ref"] == blueprint_ref
+        assert ref["runtime_kind"] == "claude-code"
+        assert ref["managed_set"][-1] == ".aw/profile/ref.json"
     created_ref = _load_json(
         _EXPECTED / "materialized-home-created" / "developer" / ".aw" / "profile" / "ref.json"
     )
-    assert set(created_ref) == {"profile_digest", "profile_ref", "profile_version"}
+    assert not any(key.startswith("source_blueprint_") for key in created_ref)
+    assert created_ref["runtime_kind"] == "claude-code"
+    assert created_ref["managed_set"][-1] == ".aw/profile/ref.json"
 
 
 def test_delete_blueprint_removes_from_catalog_and_requires_auth(

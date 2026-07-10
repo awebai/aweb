@@ -435,16 +435,21 @@ def materialize_home(
     source_blueprint_ref: str | None,
     source_blueprint_version: str | None,
     source_blueprint_digest: str | None,
+    runtime_kind: str = "claude-code",
 ) -> list[dict[str, str]]:
     """The composed agent home a runtime materialization writes, as ``file`` and
     ``symlink`` entries:
 
     - ``AGENTS.md`` — the composed profile rendering; ``CLAUDE.md`` symlinks to it.
-    - ``skills/<name>/`` and ``artifacts/`` — the profile's resource files, plus
-      ``.claude/skills/<name>/`` symlinks back to the canonical ``skills/`` tree.
+    - ``skills/<name>/`` and ``artifacts/`` — the profile's resource files. A
+      declared ``skills/<name>/SKILL.md`` projects every payload file under that
+      skill directory. Claude-code materializations also add
+      ``.claude/skills/<name>`` directory symlinks back to the canonical
+      ``skills/`` tree.
     - ``.aw/profile/`` — the full profile payload, plus a ``ref.json`` recording
       provenance (the source-blueprint triple for a blueprint copy; omitted for a profile
-      created fresh on the shelf, leaving just the profile triple).
+      created fresh on the shelf, leaving just the profile triple), the client-resolved
+      runtime kind, and the managed set of every path written.
     """
     by_path = {f["path"]: f for f in files}
     doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
@@ -456,10 +461,27 @@ def materialize_home(
         else "created"
     )
 
-    ref: dict[str, str] = {
+    managed_set: list[str] = []
+    managed_seen: set[str] = set()
+
+    def remember(path: str) -> None:
+        if path not in managed_seen:
+            managed_set.append(path)
+            managed_seen.add(path)
+
+    remember("AGENTS.md")
+    remember("CLAUDE.md")
+    if "profile.yaml" in by_path:
+        remember(".aw/profile/profile.yaml")
+    if instructions_path in by_path:
+        remember(f".aw/profile/{instructions_path}")
+
+    ref: dict[str, str | list[str]] = {
+        "managed_set": managed_set,
         "profile_digest": profile_digest,
         "profile_ref": profile_ref,
         "profile_version": profile_version,
+        "runtime_kind": runtime_kind,
     }
     if source_blueprint_ref:
         ref["source_blueprint_digest"] = source_blueprint_digest or ""
@@ -478,19 +500,47 @@ def materialize_home(
     ]
 
     # Canonical resource files at the home root, plus per-harness skill symlinks.
-    resource_paths = [str(skill["path"]) for skill in doc.get("skills") or []]
-    resource_paths += [str(artifact["path"]) for artifact in doc.get("artifacts") or []]
-    for path in resource_paths:
-        entries.append({"path": path, "kind": "file", "content_utf8": by_path[path]["content_utf8"]})
+    resource_paths: set[str] = set()
+    skill_dirs: list[tuple[str, str]] = []
     for skill in doc.get("skills") or []:
         skill_rel = str(skill["path"])
-        link_path = f".claude/{skill_rel}"
-        target = "../" * link_path.count("/") + skill_rel
-        entries.append({"path": link_path, "kind": "symlink", "target": target})
+        skill_dir = "/".join(skill_rel.split("/")[:2])
+        skill_dirs.append((skill_dir, _skill_name(skill_rel)))
+        skill_paths = sorted(
+            (f["path"] for f in files if f["path"].startswith(f"{skill_dir}/")),
+            key=lambda path: path.encode("utf-8"),
+        )
+        resource_paths.update(skill_paths)
+        for path in skill_paths:
+            remember(path)
+            remember(f".aw/profile/{path}")
+        if runtime_kind == "claude-code":
+            remember(f".claude/skills/{_skill_name(skill_rel)}")
+    artifact_paths = [str(artifact["path"]) for artifact in doc.get("artifacts") or []]
+    resource_paths.update(path for path in artifact_paths if path in by_path)
+    for path in sorted(resource_paths):
+        entries.append({"path": path, "kind": "file", "content_utf8": by_path[path]["content_utf8"]})
+    if runtime_kind == "claude-code":
+        for _, skill_name in skill_dirs:
+            link_path = f".claude/skills/{skill_name}"
+            entries.append(
+                {
+                    "path": link_path,
+                    "kind": "symlink",
+                    "target": f"../../skills/{skill_name}",
+                }
+            )
+    for path in artifact_paths:
+        if path in by_path:
+            remember(path)
+            remember(f".aw/profile/{path}")
 
     # The full profile payload under .aw/profile/, plus the provenance ref.json.
     for f in files:
-        entries.append({"path": f".aw/profile/{f['path']}", "kind": "file", "content_utf8": f["content_utf8"]})
+        mirror_path = f".aw/profile/{f['path']}"
+        remember(mirror_path)
+        entries.append({"path": mirror_path, "kind": "file", "content_utf8": f["content_utf8"]})
+    remember(".aw/profile/ref.json")
     entries.append(
         {
             "path": ".aw/profile/ref.json",

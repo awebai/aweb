@@ -1,7 +1,7 @@
-Blueprint: Engineering AI Team (aweb.engineering)
+Blueprint: Engineering AI Team Starter Blueprint (aweb.engineering)
 Version: 0.1.0
 Source: local_dir FIXTURE/source
-Digest: sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134 (local_import_payload)
+Digest: sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5 (local_import_payload)
 Summary: Coordinator, developer, and reviewer profiles for repo work.
 Description: First-party starter blueprint for local engineering agent teams.
 Expected apps (setup hints, not grants): audit, github, library, secrets, tasks
@@ -41,11 +41,11 @@ Optional Library import preview (separate future step; inspect uploads nothing):
   requires Library subscription: true
   endpoint: POST /v1/blueprints/import
   would upload on import: true
-  payload digest: sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134
+  payload digest: sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5
   payload files:
     - README.md
-    - missions.yaml
     - blueprint.yaml
+    - missions.yaml
     - profiles/coordinator/artifacts/status-template.md
     - profiles/coordinator/instructions.md
     - profiles/coordinator/profile.yaml
@@ -54,6 +54,7 @@ Optional Library import preview (separate future step; inspect uploads nothing):
     - profiles/developer/instructions.md
     - profiles/developer/profile.yaml
     - profiles/developer/skills/implement/SKILL.md
+    - profiles/developer/skills/implement/assets/checklist.md
     - profiles/reviewer/artifacts/review-template.md
     - profiles/reviewer/instructions.md
     - profiles/reviewer/profile.yaml
