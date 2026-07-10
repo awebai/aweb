@@ -133,9 +133,17 @@ def test_landing_is_one_getting_started_zero_to_self_improving_team() -> None:
     # step 4's what-line notes the plugin is required for the adopt step next.
     assert "required for the adopt step" in html
 
-    # the proposal step names the agents as the proposers — true of the published
-    # catalog as of aweb.team 0.1.9 — while approve stays the human touchpoint panel.
+    # the proposal step names the agents as the proposers, and approval is the
+    # team's review gate — approved by its reviewing authority (typically the
+    # coordinator, or you, per your policy), not the human by default. The
+    # aw library approve panel is unchanged: the command is identical whoever runs it.
     assert "your agents propose" in html.lower()
+    assert "your team reviews and approves" in html.lower()
+    assert "your coordinator, or you" in html.lower()
+    # the old human-as-default-approver claims are gone.
+    assert "a human approves" not in html
+    assert "you review and approve" not in html.lower()
+    assert "under your review" not in html.lower()
     # broken syntax never appears anywhere on the page.
     assert "--body-file" not in html
     # neither propose nor update-from-source appears as a runnable command panel in

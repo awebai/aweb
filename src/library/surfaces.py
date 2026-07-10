@@ -100,7 +100,7 @@ _MODEL_DIAGRAM = """<style>
     .model-fig .mf-mobile { display: block; }
   }
 </style>
-<figure class="model-fig" role="img" aria-label="Flow: you create a team from the public Catalog — its agents run a catalog profile; you adopt each agent onto your team's private Shelf; then the agents propose improvements, you approve to mint a new version on the Shelf, and refresh applies it — an improvement loop under your review.">
+<figure class="model-fig" role="img" aria-label="Flow: you create a team from the public Catalog — its agents run a catalog profile; you adopt each agent onto your team's private Shelf; then the agents propose improvements, your team reviews and approves to mint a new version on the Shelf, and refresh applies it — an improvement loop your team governs.">
   <svg class="mf-desktop" viewBox="0 0 760 205" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
       <marker id="mfd" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
@@ -395,8 +395,9 @@ _GET_STARTED_STEPS = (
     (
         "Approve what your agents propose",
         "As they work, your agents propose improvements they have learned — a scoped changeset signed "
-        'with your team\'s <a href="https://awid.ai" class="brand-word">awid</a>. You review and '
-        "approve, and library mints an immutable, versioned copy on your shelf.",
+        'with your team\'s <a href="https://awid.ai" class="brand-word">awid</a>. Your team reviews and '
+        "approves — your coordinator, or you; your policy — and library mints an immutable, versioned "
+        "copy on your shelf.",
         "aw library approve --proposal_id <id>",
     ),
     (
@@ -407,7 +408,8 @@ _GET_STARTED_STEPS = (
     (
         "Reconcile your running agents",
         "<code>aw team up</code> again — it is idempotent — brings the running agents onto the "
-        "refreshed home. Your team is now improving on its own shelf, under your review.",
+        "refreshed home. Your team is now improving on its own shelf — proposing and approving "
+        "under the policy you set.",
         "aw team up",
     ),
 )
@@ -453,7 +455,7 @@ def _get_started_section(copy: str) -> str:
         <div class="section-head">
           <p class="kicker">Get started</p>
           <h2>Stand up a self-improving team</h2>
-          <p>From nothing to a team of AI agents that improves its own profiles — on your private shelf, under your review. Each step is one command to copy and run.</p>
+          <p>From nothing to a team of AI agents that improves its own profiles — on your private shelf, under your team's review. Each step is one command to copy and run.</p>
         </div>
         <ol class="gs-steps">
 {steps}
@@ -512,7 +514,7 @@ def render_landing_page(*, public_origin: str, blueprints: Any = None) -> str:
           <article class="card"><h3>Public catalog</h3><p>The public, versioned catalog of first-party blueprints — today just <code>aweb.team</code>, a proven set of roles like coordinator, developer, and reviewer any team can start from. Any team can publish into it.</p></article>
           <article class="card"><h3>Private shelf</h3><p>Your team's own copies — started from a blueprint or authored fresh — the working set you edit and own.</p></article>
           <article class="card"><h3>Materialize</h3><p>Creating or refreshing an agent turns a profile into its runnable home: a composed AGENTS.md, installed skills, and the full profile under <code>.aw/profile/</code>.</p></article>
-          <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; a human approves, and library mints it — immutably versioned by digest, with the signer recorded.</p></article>
+          <article class="card"><h3>Proposals &amp; minting</h3><p>An agent proposes a new version from what it learned; your team reviews and approves, and library mints it — immutably versioned by digest, with the signer recorded.</p></article>
           <article class="card"><h3>Update from source</h3><p>Pull a newer blueprint version's improvements into the parts you have not edited — a per-part merge that never clobbers local work.</p></article>
         </div>
       </div>
