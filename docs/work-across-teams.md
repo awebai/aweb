@@ -53,7 +53,7 @@ membership capabilities.
 
 ## Keep authority narrow
 
-- Do not reuse a local team identity across teams.
+- Do not reuse a team-scoped local identity across teams.
 - Do not assume a public address grants team membership.
 - Do not switch teams implicitly before a high-impact mutation.
 - Keep each team's credentials and instructions available only to the homes
