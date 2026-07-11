@@ -142,6 +142,13 @@ pages = list(walk(tuple()))
 by_path = {path: parsed for path, parsed in pages}
 
 lines = [
+    "---",
+    'title: "CLI command reference"',
+    'kicker: "Reference"',
+    'description: "Every aw command and flag, generated from the live help tree of the shipped binary."',
+    "weight: 90",
+    "---",
+    "",
     "# CLI Command Reference",
     "",
     "This reference is generated from the live Cobra help tree emitted by the",

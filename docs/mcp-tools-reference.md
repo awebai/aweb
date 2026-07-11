@@ -1,3 +1,10 @@
+---
+title: "MCP tools reference"
+kicker: "Reference"
+description: "The hosted MCP tool surface for chat AIs, maintained against the live server registration."
+weight: 95
+---
+
 # MCP Tools Reference
 
 This reference is maintained against the live MCP registration in

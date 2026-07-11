@@ -99,7 +99,7 @@ separate, opt-in loop using the team's private Library shelf:
    policy;
 4. refresh the materialized home from the approved shelf version.
 
-See [Improve a profile as the team works](improve-profile.md) when the team is
+See [Improve a profile as the team works](/docs/improve-profile/) when the team is
 ready to retain what it learns.
 
 ## Planned discovery commands

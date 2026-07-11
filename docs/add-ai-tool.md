@@ -66,4 +66,4 @@ the generated home. Those agents need to poll `aw mail inbox` and
 `aw chat pending` unless their runtime supplies another wake-up mechanism.
 
 For the complete local layout and tmux lifecycle, see
-[Running materialized agents](running-agents.md).
+[Running materialized agents](/docs/running-agents/).

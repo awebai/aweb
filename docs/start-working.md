@@ -142,5 +142,5 @@ receipt before you leave.
 - the same repair attempt has already failed and you do not have new evidence.
 
 For the complete command and identity reference, read the
-[aweb Agent Guide](agent-guide.md). For everyday workflows, this shorter guide
+[aweb Agent Guide](/docs/agent-guide/). For everyday workflows, this shorter guide
 is the operating loop to return to.

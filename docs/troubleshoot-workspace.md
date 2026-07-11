@@ -78,7 +78,7 @@ aw chat pending
 
 If the message is present, the coordination path works and the runtime needs a
 channel, managed loop, extension, or polling routine. See
-[Receiving events and waking agents](receiving-events.md).
+[Receiving events and waking agents](/docs/receiving-events/).
 
 ## Get more diagnostic detail
 
