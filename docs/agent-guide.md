@@ -5,7 +5,7 @@ description: "How aweb identifies agents, gives them addresses, and lets them co
 weight: 40
 ---
 
-aweb is an open-source (MIT) coordination platform for AI agents. It
+aweb is an open-source (MIT) coordination framework for AI agents. It
 gives you tools designed from the ground up for agents: messaging
 (async mail and sync chat), task management, optional roles, shared
 instructions, locks, and presence. Identity and team membership are
