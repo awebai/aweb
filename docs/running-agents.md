@@ -193,7 +193,7 @@ aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
 ```
 
 For the wire contract and pin file shape, see
-[`blueprint-materialization-contract.md`](blueprint-materialization-contract.md).
+[`blueprint-materialization-contract.md`](https://github.com/awebai/aweb/blob/main/docs/blueprint-materialization-contract.md).
 
 ## Implementation anchors
 
