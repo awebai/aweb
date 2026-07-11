@@ -8,8 +8,9 @@ weight: 10
 # Add an AI tool to a team
 
 Use this path when the current directory is already connected to the team and
-you want to add one member. `aw team add` uses the current workspace as the
-membership authority.
+you want to add one member. `aw team add` uses the current workspace's `.aw`
+state as the membership authority. If the current directory is not an active
+team workspace, the command stops instead of guessing which team to use.
 
 ## Materialize and start one agent
 
@@ -17,27 +18,93 @@ membership authority.
 aw team add charlie@aweb.team/developer=pi --start
 ```
 
-The specification selects Charlie's team name, the `developer` profile from
-the public `aweb.team` blueprint, and Pi as the runtime. `--start` materializes
-the home and launches it through the same path as `aw team up`.
+The specification selects Charlie's member name, the `developer` profile from
+the public `aweb.team` blueprint, and Pi as the runtime.
 
-`--start` accepts exactly one agent. To add several members, omit `--start`,
-then run `aw team up` after all homes have been materialized.
+## Exactly where Charlie is created
 
-## Put the work in another repository
+Let `D` be the directory where you run the command. Let `R` be the Git
+repository top-level when `D` is inside a Git worktree; outside Git, `R` is
+`D`. Without `--home`, Charlie's home is:
 
-An agent's home contains its identity and operating resources. Its worktree is
-where it edits and builds the project. Point that worktree at another git
-repository with `--work-dir`:
+```text
+R/agents/instances/charlie/
+```
+
+This means that running `aw team add` from `repo/src/` still creates the home at
+`repo/agents/instances/charlie/`. The command prints the absolute home path when
+it finishes.
+
+The home is a complete, distinct team member:
+
+```text
+charlie/
+  .aw/
+    signing.key       # Charlie's key, not the caller's key
+    teams.yaml        # Charlie's installed team membership
+    team-certs/       # Charlie's membership certificate
+    workspace.yaml    # Charlie's aweb service connection
+    profile/
+      profile.yaml
+      instructions.md
+      ref.json        # pinned blueprint/profile/runtime provenance
+  AGENTS.md
+  worktree/           # isolated Git worktree when a work repo is available
+```
+
+The command creates the membership, materializes the profile, connects the
+member to the team's aweb service, injects the current team guidance, and then
+sets up its Git worktree. It does not reuse the caller's `.aw` directory.
+
+Without `--start`, this is where the command stops: Charlie exists as a
+materialized team member, but no Pi process is running. With `--start`, exactly
+one agent is allowed and the command immediately launches that home through the
+same path as `aw team up`.
+
+## Where the runtime starts
+
+The launched AI process starts in Charlie's **home**:
+
+```text
+cd R/agents/instances/charlie && exec pi --approve
+```
+
+It does not start in `worktree/`. The home is the identity and instruction
+boundary, so Charlie runs `aw` there. Charlie changes into `worktree/` for Git,
+tests, and builds.
+
+`--start` attaches your terminal to the tmux session by default. Use
+`--no-attach` to leave it running in the background. Without `--start`, run
+`aw team up` from anywhere inside the same Git worktree—or from `D` outside
+Git—to start all materialized homes. `aw team up --dry-run` prints each home and
+runtime command first.
+
+## Choose another home or work repository
+
+`--home` replaces the default home path for one agent. A relative path is
+resolved from the directory where you invoke the command:
 
 ```bash
 aw team add charlie@aweb.team/developer=pi \
+  --home ~/aweb-agents/charlie
+```
+
+`--home` accepts exactly one agent. If that home is outside Git and you do not
+provide `--work-dir`, no worktree is created and the agent works directly in its
+home.
+
+Point the agent's worktree at another Git repository with `--work-dir`:
+
+```bash
+aw team add charlie@aweb.team/developer=pi \
+  --home ~/aweb-agents/charlie \
   --work-dir ~/prj/customer-app \
   --start
 ```
 
-The checkout at `~/prj/customer-app` remains untouched. aweb creates Charlie's
-isolated branch and worktree beneath the materialized home.
+The checkout at `~/prj/customer-app` remains untouched. aweb creates a Git
+worktree at `~/aweb-agents/charlie/worktree/` on branch `charlie`. The home and
+the repository it works on do not have to live in the same directory tree.
 
 ## Choose identity scope deliberately
 

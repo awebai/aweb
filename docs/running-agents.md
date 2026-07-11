@@ -7,19 +7,48 @@ weight: 27
 
 # Running materialized agents
 
-Use this guide after a workspace is already connected to a team with `aw init`
-or `aw team join`.
+Use this guide after a workspace is already connected to a team. If you want
+the shortest human path, start with [Create and run your first team](/docs/create-and-run-team/)
+or [Add an AI tool to a team](/docs/add-ai-tool/).
 
-## 1. Materialize local agent homes
+## 1. Materialize a member, not just a directory
 
-`aw team add [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]` creates or
-connects a team member, materializes a profile into a local home, and records
-profile provenance under `.aw/profile/`. By default homes are written under
-`agents/instances/<name>`.
+Run `aw team add` from a directory whose own `.aw` state is connected to the
+team you want to extend:
 
 ```bash
 aw team add developer@aweb.team/developer=claude-code
 aw team add reviewer@aweb.team/reviewer=pi
+```
+
+The command uses that active workspace as the membership authority. It creates
+or connects a distinct team member, gives that member its own `.aw` identity and
+membership state, materializes the selected profile, and records pinned
+provenance under `.aw/profile/`. It does not copy or share the caller's `.aw`
+directory.
+
+Let `D` be the directory where you run the command. Let `R` be the Git
+top-level when `D` is inside a Git worktree; outside Git, `R` is `D`. Default
+homes are created at:
+
+```text
+R/agents/instances/<name>/
+```
+
+So running the command from `repo/src/` creates
+`repo/agents/instances/<name>/`, not `repo/src/agents/instances/<name>/`. The
+command prints the absolute home path when it finishes.
+
+Each home contains the member's identity, profile, runtime adapters, and work
+boundary:
+
+```text
+<name>/
+  .aw/             # this member's identity, certificate, team, and connection
+  .aw/profile/     # materialized profile and pinned source provenance
+  AGENTS.md
+  CLAUDE.md        # when the selected runtime needs this adapter
+  worktree/        # isolated Git worktree when a work repository is available
 ```
 
 Current materialization runtimes are `claude-code`, `codex`, `pi`, and
@@ -27,50 +56,123 @@ Current materialization runtimes are `claude-code`, `codex`, `pi`, and
 `claude-code`. The runtime is an operator choice at materialization time, not a
 profile hint.
 
-Identity scope is also explicit. Use `:local` for the default team-scoped local
-identity, or `:global` for a global AWID identity/address-backed agent:
+When scope is omitted, the profile supplies the default. Every currently
+published `aweb.team` profile defaults to local. Pass `:local` or `:global`
+explicitly to override it:
 
 ```bash
 aw team add local-dev@aweb.team/developer:local=claude-code
 aw team add public-reviewer@aweb.team/reviewer:global=pi
 ```
 
+- `:local` selects a team-scoped identity.
+- `:global` creates or reuses a durable AWID identity that can hold public
+  addresses and memberships in more than one team.
+
 ### Home isolation: `worktree/` and `work-main/`
 
-`aw team add` separates the agent's **home** (identity + body, where `aw`
-resolves its identity) from its **work** (where the agent runs `git` and
-builds), so an agent's git work never touches the checkout it was created from.
-When the home is inside a git repo, `aw team add`:
+`aw team add` separates the agent's **home** (identity + instructions, where
+`aw` resolves its identity) from its **work** (where the agent runs `git` and
+builds). When a work repository is available, it:
 
-- creates **`<home>/worktree/`** — a git worktree on a branch named after the
-  agent — as the agent's isolated place for `git`/build, and
-- adds the home to that repo's `.gitignore`.
+- creates **`<home>/worktree/`** — a Git worktree on a branch named after the
+  agent — as the isolated place for Git and build work; and
+- adds the generated home to the source repository's `.gitignore`.
 
 Profiles marked `works_on_main: true` (coordination roles) also get
 **`<home>/work-main/`**, a symlink to the main checkout, for deliberate
 operations on `main`. Code roles (`works_on_main: false`) get `worktree/` only.
-The rule each profile instructs its agent to follow: **run `aw` from the home,
-run all `git` and builds from `worktree/`, and touch `main` only through the
-named `work-main/`.**
+The operating rule is: **run `aw` from the home, run Git and builds from
+`worktree/`, and touch main only through the named `work-main/`.**
 
-Point the worktree at a **separate** project repo with `--work-dir`:
+Point the worktree at a separate project repository with `--work-dir`:
 
 ```bash
 aw team add alice@aweb.team/developer=pi --work-dir ~/prj/my-project
 ```
 
-The worktree is then a worktree of `~/prj/my-project` (whose own checkout is
-left untouched), while the home can live anywhere. If the home is **not** in a
-git repo and no `--work-dir` is given, worktree setup is skipped and the agent
-works in its home directly — so non-git setups still work, just without an
-isolated worktree.
+The checkout at `~/prj/my-project` remains untouched. Its Git worktree is
+created at `<home>/worktree/`; the home can live elsewhere. If the home is not
+in a Git repository and no `--work-dir` is given, worktree setup is skipped and
+the agent works directly in its home.
 
-## 2. Public blueprint source
+## 2. Materialization does not necessarily start a process
+
+Plain `aw team add ...` stops after creating the membership, home, profile, and
+worktree. No Claude Code, Pi, Codex, or shell process is running yet.
+
+Use `--start` to materialize and launch exactly one supported agent:
+
+```bash
+aw team add alice@aweb.team/developer=pi --start
+```
+
+`--start` requires exactly one agent and is rejected with `--layout-only`. It
+takes the same `--session`, `--attach`, and `--no-attach` options as
+`aw team up`, and skips launching if the home is already a running process's
+current working directory.
+
+## 3. Start and access materialized agents
+
+`aw team up` is a local tmux convenience. Run it from any directory in the Git
+worktree that owns `R/agents/instances/`; outside Git, run it from the directory
+that contains `agents/instances/`.
+
+```bash
+aw team up --dry-run
+aw team up
+```
+
+The command resolves the same `R`, scans `R/agents/instances/`, and launches
+homes that contain a materialized `.aw/profile/profile.yaml`. A profileless
+founding workspace is not launched.
+
+Every runtime process starts with the **agent home** as its current working
+directory:
+
+```text
+cd <agent-home> && exec <runtime-command>
+```
+
+It does not start in `worktree/`. This is how the runtime loads the home's
+instructions and resolves the correct aweb identity. The agent changes into
+`worktree/` for Git, tests, and builds.
+
+By default, `aw team up` attaches your terminal to a tmux session with one
+window per launched agent, named after the agent. Use normal tmux window
+navigation to move between agents. `--no-attach` leaves the session running in
+the background; the command output names the session to attach to later.
+
+If tmux is unavailable, the command prints the exact `cd <home> && <command>`
+line for each agent. Run those commands in separate terminals. The output of
+`aw workspace status` from an agent home also shows that member's path and host.
+
+Current launch support is narrower than materialization support:
+
+- `claude-code` starts with the aweb channel plugin;
+- `pi` starts with the aweb extension and `--approve`;
+- `codex` and `local-shell` can be materialized, but `aw team up` currently
+  rejects them. Start those runtimes manually from the materialized home and
+  have the agent poll `aw mail inbox` and `aw chat pending`.
+
+Before starting windows, `aw team up` installs or verifies the supported
+runtime channel and handles the known trust and development-channel prompts.
+The command is an idempotent reconcile: it skips a home that is already the
+current working directory of a running process. Use `--force` to ignore that
+running-process check. `--recreate` kills and recreates the tmux session only
+when the target session has no running agent windows; otherwise it refuses
+unless you pass `--force-kill`.
+
+Dogfood and test launches should use a throwaway `--session` name and an
+isolated `TMUX_TMPDIR`; direct tmux experiments should use an isolated socket
+such as `tmux -L awdogfood ...` so they cannot touch the live agent tmux server.
+
+## 4. Public blueprint source
 
 `aw team add` and `aw team create --agent ...` read public profile payloads from
-the Library catalog API and materialize locally. The public materialization path
-does not import to the private shelf, does not bind through the Library plugin,
-and does not call the server-side `/v1/materialize` endpoint.
+the Library catalog API and materialize them locally. The public path does not
+import to the private shelf, bind through the Library plugin, or call the
+server-side `/v1/materialize` endpoint.
 
 Defaults:
 
@@ -93,80 +195,19 @@ aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
 For the wire contract and pin file shape, see
 [`blueprint-materialization-contract.md`](blueprint-materialization-contract.md).
 
-## 3. Start local agents with `aw team up`
-
-`aw team up` is a local tmux convenience. It reads materialized
-`agents/instances/<name>` homes, starts one tmux window per supported interactive
-runtime, and leaves team definitions and profile provenance in aweb state and
-`.aw/profile/ref.json`.
-
-```bash
-aw team up --dry-run
-aw team up
-```
-
-Current `aw team up` launch support is narrower than materialization support:
-
-- `claude-code` starts:
-
-  ```bash
-  claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
-  ```
-
-- `pi` starts:
-
-  ```bash
-  pi --approve
-  ```
-
-- `codex` and `local-shell` can be materialized, but `aw team up` currently
-  rejects them; start those runtimes manually from the materialized home and
-  have the agent poll `aw mail inbox` and `aw chat pending`.
-
-Before starting windows, `aw team up` preflights the runtime channel:
-
-- for Claude Code, it installs/verifies the `aweb-channel` plugin via the
-  Claude plugin marketplace;
-- for Pi, it installs/verifies `npm:@awebai/pi@latest`.
-
-`aw team up` then auto-answers the known Claude Code trust-folder and
-development-channel prompts in tmux. Pi startup is unattended: `pi --approve`
-trusts the project-local files, so Pi does not show its trust-folder prompt.
-
-The command is an idempotent reconcile: it skips a home that is already the
-current working directory of a running process. Use `--force` to ignore that
-running-process check. `--recreate` kills and recreates the tmux session only
-when the target session does not contain running agent windows; if it does,
-`aw team up` refuses unless you pass the explicit `--force-kill` override.
-Dogfood/test launches should use a throwaway `--session` name plus an isolated
-`TMUX_TMPDIR`, and direct tmux experiments should use an isolated socket such
-as `tmux -L awdogfood ...` so they cannot touch the live agent tmux server.
-
-## 4. One command: `aw team add --start`
-
-`aw team add … --start` materializes the home, sets up the worktree isolation
-above, and launches the agent in tmux in a single step — the same launch path
-as `aw team up` (channel preflight, trust/dev-channel prompt auto-answering,
-`pi --approve`). Use it to instantiate and run one agent at once:
-
-```bash
-aw team add alice@aweb.team/developer=pi --start
-```
-
-`--start` requires exactly one agent and is rejected with `--layout-only`. It
-takes the same `--session` / `--attach` / `--no-attach` options as `aw team up`,
-and skips launching if the home is already a running process's cwd.
-
 ## Implementation anchors
 
-These claims were checked against the current CLI implementation:
+These claims were checked against the current CLI implementation and the
+released CLI's path behavior:
 
-- Public materialization defaults and selectors: `cli/go/cmd/aw/library_profile.go:21`, `cli/go/cmd/aw/library_profile.go:23`, `cli/go/cmd/aw/library_profile.go:24`, `cli/go/cmd/aw/library_profile.go:25`, `cli/go/cmd/aw/library_profile.go:424`, `cli/go/cmd/aw/library_profile.go:434`.
-- Public catalog GET endpoint: `cli/go/cmd/aw/library_profile.go:466`, `cli/go/cmd/aw/library_profile.go:471`.
-- Shelf/plugin path remains separate from public materialization: `cli/go/cmd/aw/library_profile.go:265`, `cli/go/cmd/aw/library_profile.go:612` versus `cli/go/cmd/aw/team_human.go:1204`; regression coverage asserts public team materialization does not import to shelf or call `/v1/materialize` at `cli/go/cmd/aw/local_surface_e2e_test.go:422` and `cli/go/cmd/aw/local_surface_e2e_test.go:426`.
-- Supported materialization runtimes: `cli/go/cmd/aw/library_profile.go:597`.
-- `aw team add` specs, local/global flags, runtime/library/blueprint flags, and `agents/instances` root: `cli/go/cmd/aw/team_human.go:74`, `cli/go/cmd/aw/team_human.go:161`, `cli/go/cmd/aw/team_human.go:162`, `cli/go/cmd/aw/team_human.go:165`, `cli/go/cmd/aw/team_human.go:166`, `cli/go/cmd/aw/team_human.go:167`, `cli/go/cmd/aw/team_human.go:1089`.
-- `aw team up` tmux scope, active-home reconcile, runtime commands, preflight, and prompt auto-answering: `cli/go/cmd/aw/team_up.go:30`, `cli/go/cmd/aw/team_up.go:165`, `cli/go/cmd/aw/team_up.go:175`, `cli/go/cmd/aw/team_up.go:209`, `cli/go/cmd/aw/team_up.go:222`, `cli/go/cmd/aw/team_up.go:420`, `cli/go/cmd/aw/team_up.go:463`.
-- Home worktree isolation, `--work-dir` resolution, `.gitignore` update, and `work-main`: `cli/go/cmd/aw/team_human.go:1317`, `cli/go/cmd/aw/team_human.go:1375`, `cli/go/cmd/aw/team_human.go:1447`, and the `--work-dir` flag at `cli/go/cmd/aw/team_human.go:177`.
-- `aw team add --start` (materialize + isolate + launch via the team-up path): `cli/go/cmd/aw/team_human.go:172`, `cli/go/cmd/aw/team_human.go:1269`.
-- Channel installers: `cli/go/cmd/aw/channel_setup.go:14`, `cli/go/cmd/aw/channel_setup.go:17`, `cli/go/cmd/aw/channel_setup.go:41`, `cli/go/cmd/aw/channel_setup.go:63`.
+- Team creation, the exact invocation-directory root workspace, and roster
+  materialization: `cli/go/cmd/aw/team_human.go`.
+- Git-top-level fallback outside/inside Git: `cli/go/cmd/aw/inject_docs.go`.
+- Member home creation, identity setup, `--home`, `--work-dir`, worktree
+  isolation, `.gitignore`, `work-main`, and `--start`:
+  `cli/go/cmd/aw/team_human.go`.
+- Team-up root resolution, profile-home scan, runtime commands, home cwd,
+  preflight, prompt handling, and tmux lifecycle: `cli/go/cmd/aw/team_up.go`.
+- Public materialization selectors, source, and runtime validation:
+  `cli/go/cmd/aw/library_profile.go`.
+- Runtime channel installers: `cli/go/cmd/aw/channel_setup.go`.
