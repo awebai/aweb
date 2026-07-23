@@ -70,7 +70,7 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
 	}
-	if result.ProfileVersion == old.ProfileVersion && result.ProfileDigest == old.ProfileDigest {
+	if result.ProfileVersion == old.ProfileVersion && result.ProfileDigest == old.ProfileDigest && len(result.FilesWritten) == 0 {
 		fmt.Fprintf(out, "%s is already at the latest shelf version: %s@%s\n", name, result.ProfileRef, result.ProfileVersion)
 		return nil
 	}
@@ -138,17 +138,24 @@ func refreshPublicLibraryProfileInHome(homeDir string, old recordedProfileRef, r
 		return nil, fmt.Errorf("library public profile integrity: %w", err)
 	}
 	// Only trust the recomputed digest. The provider-claimed digest was checked
-	// above, but the unchanged no-op decision is anchored on local bytes.
+	// above, but the unchanged no-op decision is anchored on local bytes and a
+	// complete managed set on disk. A copied pin alone must rebuild the body.
 	if computedDigest == strings.TrimSpace(old.ProfileDigest) {
-		return &blueprint.MaterializeResult{
-			ProfileRef:             strings.TrimSpace(old.ProfileRef),
-			ProfileVersion:         strings.TrimSpace(old.ProfileVersion),
-			ProfileDigest:          strings.TrimSpace(old.ProfileDigest),
-			SourceBlueprintRef:     strings.TrimSpace(old.SourceBlueprintRef),
-			SourceBlueprintVersion: strings.TrimSpace(old.SourceBlueprintVersion),
-			TargetDir:              homeDir,
-			FilesWritten:           nil,
-		}, nil
+		complete, err := managedProfilePathsExist(homeDir, old.ManagedSet)
+		if err != nil {
+			return nil, err
+		}
+		if complete {
+			return &blueprint.MaterializeResult{
+				ProfileRef:             strings.TrimSpace(old.ProfileRef),
+				ProfileVersion:         strings.TrimSpace(old.ProfileVersion),
+				ProfileDigest:          strings.TrimSpace(old.ProfileDigest),
+				SourceBlueprintRef:     strings.TrimSpace(old.SourceBlueprintRef),
+				SourceBlueprintVersion: strings.TrimSpace(old.SourceBlueprintVersion),
+				TargetDir:              homeDir,
+				FilesWritten:           nil,
+			}, nil
+		}
 	}
 	return materializeAndPruneLibraryProfileInHome(homeDir, old, blueprint.MaterializeLibraryProfilePayloadOptions{
 		TargetDir:        homeDir,
@@ -162,6 +169,26 @@ func refreshPublicLibraryProfileInHome(homeDir string, old recordedProfileRef, r
 		Files:            profile.Files,
 		Force:            true,
 	})
+}
+
+func managedProfilePathsExist(homeDir string, managed []string) (bool, error) {
+	if len(managed) == 0 {
+		return false, nil
+	}
+	for _, raw := range managed {
+		rel := filepath.ToSlash(strings.TrimSpace(raw))
+		if err := validateManagedSetPath(rel); err != nil {
+			return false, fmt.Errorf("recorded %w", err)
+		}
+		_, err := os.Lstat(filepath.Join(homeDir, filepath.FromSlash(rel)))
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("stat managed path %s: %w", rel, err)
+		}
+	}
+	return true, nil
 }
 
 func refreshShelfLibraryProfileInHome(homeDir string, old recordedProfileRef, runtimeKind string) (*blueprint.MaterializeResult, error) {
