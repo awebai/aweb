@@ -1,1 +1,0 @@
-../../../skills/coordinate/SKILL.md

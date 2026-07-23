@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from library.blueprint import parse_profile_payload, part_baselines
+from library.blueprint import materialize_home, parse_profile_payload, part_baselines
 from library.digest import collect_files
 from library.models import MaterializeRequest, NewBlueprintTarget, ProfilePublishRequest
 from library.repository import (
@@ -32,6 +32,65 @@ async def test_materialize_requires_agent_or_profile_ref() -> None:
             request=MaterializeRequest(runtime_kind="claude-code", target="local"),
         )
     assert excinfo.value.status_code == 422
+
+
+class _MaterializeDB:
+    def __init__(self, profile) -> None:
+        self.profile = profile
+
+    async def fetch_one(self, sql: str, *params):
+        if "FROM {{tables.shelf_profiles}}" in sql:
+            return {
+                "profile_ref": self.profile.profile_ref,
+                "version": self.profile.version,
+                "digest": self.profile.digest,
+                "runtime_assumptions": self.profile.runtime_assumptions,
+                "memory_policy": json.dumps(self.profile.memory_policy)
+                if self.profile.memory_policy is not None
+                else None,
+                "files": json.dumps(self.profile.files),
+                "source_blueprint_ref": None,
+                "source_blueprint_version": None,
+                "source_blueprint_digest": None,
+            }
+        raise AssertionError(f"unexpected query: {sql}")
+
+
+async def test_server_materialize_path_emits_same_ref_json_as_materializer() -> None:
+    files = collect_files(_FIXTURE / "source" / "profiles" / "developer")
+    profile = parse_profile_payload(files)
+    result = await materialize(
+        _MaterializeDB(profile),
+        principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
+        request=MaterializeRequest(
+            profile_ref="developer",
+            profile_version=profile.version,
+            runtime_kind="claude-code",
+            target="local",
+        ),
+    )
+    direct_ref = next(
+        entry
+        for entry in materialize_home(
+            files,
+            profile_ref="developer",
+            profile_version=profile.version,
+            profile_digest=profile.digest,
+            source_blueprint_ref=None,
+            source_blueprint_version=None,
+            source_blueprint_digest=None,
+            runtime_kind="claude-code",
+        )
+        if entry["path"] == ".aw/profile/ref.json"
+    )
+    route_ref = next(
+        entry for entry in result["home_files"] if entry["path"] == ".aw/profile/ref.json"
+    )
+    assert route_ref == direct_ref
+    ref = json.loads(route_ref["content_utf8"])
+    assert ref["runtime_kind"] == "claude-code"
+    assert "skills/implement/assets/checklist.md" in ref["managed_set"]
+    assert ".claude/skills/implement" in ref["managed_set"]
 
 
 def test_normalize_tags_lowercases_trims_dedups_and_sorts() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -90,9 +91,12 @@ def test_materialize_home_created_provenance_matches_fixture_byte_exact() -> Non
         source_blueprint_digest=None,
     )
     _assert_home_matches(entries, _MATERIALIZED_CREATED / "developer")
-    # The created form drops all source-blueprint provenance, leaving just the profile.
+    # The created form drops all source-blueprint provenance, but still records
+    # runtime and the complete managed path set.
     ref = json.loads(next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"])
-    assert set(ref) == {"profile_digest", "profile_ref", "profile_version"}
+    assert not any(key.startswith("source_blueprint_") for key in ref)
+    assert ref["runtime_kind"] == "claude-code"
+    assert ref["managed_set"][-1] == ".aw/profile/ref.json"
 
 
 def test_parse_profile_payload_reproduces_a_profile() -> None:
@@ -205,6 +209,162 @@ def test_materialize_home_omits_empty_sections() -> None:
         assert absent not in agents, absent
     # No skills/artifacts means no canonical resources and no .claude symlinks.
     assert not any(e["path"].startswith(".claude/") for e in entries)
+
+
+def _profile_file(path: str, content_utf8: str) -> dict[str, str]:
+    return {
+        "content_utf8": content_utf8,
+        "path": path,
+        "sha256": "sha256:" + hashlib.sha256(content_utf8.encode("utf-8")).hexdigest(),
+    }
+
+
+def test_materialize_home_projects_entire_skill_directory_and_directory_harness_link() -> None:
+    profile_yaml = """id: video-maker
+name: Video Maker
+version: 0.1.0
+skills:
+  - path: skills/agent-demo-video/SKILL.md
+    kind: skill
+"""
+    files = [
+        _profile_file("profile.yaml", profile_yaml),
+        _profile_file("skills/agent-demo-video/SKILL.md", "# Agent demo video\n"),
+        _profile_file("skills/agent-demo-video/assets/capture.ts", "console.log('capture')\n"),
+        _profile_file("skills/agent-demo-video/assets/edit.py", "print('edit')\n"),
+        _profile_file("skills/agent-demo-video/assets/render.sh", "#!/bin/sh\n"),
+        _profile_file("skills/agent-demo-video/assets/README.md", "# Assets\n"),
+    ]
+
+    entries = materialize_home(
+        files,
+        profile_ref="video-maker",
+        profile_version="0.1.0",
+        profile_digest="sha256:d",
+        source_blueprint_ref=None,
+        source_blueprint_version=None,
+        source_blueprint_digest=None,
+    )
+    produced = {entry["path"]: entry for entry in entries}
+
+    for rel in (
+        "skills/agent-demo-video/SKILL.md",
+        "skills/agent-demo-video/assets/capture.ts",
+        "skills/agent-demo-video/assets/edit.py",
+        "skills/agent-demo-video/assets/render.sh",
+        "skills/agent-demo-video/assets/README.md",
+    ):
+        assert produced[rel]["kind"] == "file"
+        assert produced[f".aw/profile/{rel}"]["kind"] == "file"
+    assert produced[".claude/skills/agent-demo-video"] == {
+        "path": ".claude/skills/agent-demo-video",
+        "kind": "symlink",
+        "target": "../../skills/agent-demo-video",
+    }
+    assert ".claude/skills/agent-demo-video/SKILL.md" not in produced
+
+
+def test_materialize_home_managed_set_uses_declaration_order_and_byte_sorted_skill_paths() -> None:
+    profile_yaml = """id: developer
+name: Developer
+version: 0.1.0
+instructions: instructions.md
+skills:
+  - path: skills/zeta/SKILL.md
+    kind: skill
+  - path: skills/alpha/SKILL.md
+    kind: skill
+artifacts:
+  - path: artifacts/z-last.md
+    kind: note
+  - path: artifacts/a-first.md
+    kind: note
+"""
+    files = [
+        _profile_file("skills/alpha/assets/b.md", "alpha b\n"),
+        _profile_file("artifacts/a-first.md", "artifact a\n"),
+        _profile_file("skills/zeta/assets/b.md", "zeta b\n"),
+        _profile_file("profile.yaml", profile_yaml),
+        _profile_file("skills/alpha/SKILL.md", "# Alpha\n"),
+        _profile_file("skills/zeta/assets/a.md", "zeta a\n"),
+        _profile_file("instructions.md", "Work in declared order.\n"),
+        _profile_file("skills/zeta/SKILL.md", "# Zeta\n"),
+        _profile_file("artifacts/z-last.md", "artifact z\n"),
+    ]
+
+    entries = materialize_home(
+        files,
+        profile_ref="developer",
+        profile_version="0.1.0",
+        profile_digest="sha256:d",
+        source_blueprint_ref=None,
+        source_blueprint_version=None,
+        source_blueprint_digest=None,
+        runtime_kind="claude-code",
+    )
+    ref = json.loads(next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"])
+
+    assert ref["managed_set"] == [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".aw/profile/profile.yaml",
+        ".aw/profile/instructions.md",
+        "skills/zeta/SKILL.md",
+        ".aw/profile/skills/zeta/SKILL.md",
+        "skills/zeta/assets/a.md",
+        ".aw/profile/skills/zeta/assets/a.md",
+        "skills/zeta/assets/b.md",
+        ".aw/profile/skills/zeta/assets/b.md",
+        ".claude/skills/zeta",
+        "skills/alpha/SKILL.md",
+        ".aw/profile/skills/alpha/SKILL.md",
+        "skills/alpha/assets/b.md",
+        ".aw/profile/skills/alpha/assets/b.md",
+        ".claude/skills/alpha",
+        "artifacts/z-last.md",
+        ".aw/profile/artifacts/z-last.md",
+        "artifacts/a-first.md",
+        ".aw/profile/artifacts/a-first.md",
+        ".aw/profile/ref.json",
+    ]
+
+
+def test_materialize_home_sibling_free_skill_keeps_files_and_uses_directory_harness_link() -> None:
+    profile_yaml = """id: developer
+name: Developer
+version: 0.1.0
+skills:
+  - path: skills/implement/SKILL.md
+    kind: skill
+"""
+    files = [
+        _profile_file("profile.yaml", profile_yaml),
+        _profile_file("skills/implement/SKILL.md", "# Implement\n"),
+    ]
+
+    entries = materialize_home(
+        files,
+        profile_ref="developer",
+        profile_version="0.1.0",
+        profile_digest="sha256:d",
+        source_blueprint_ref=None,
+        source_blueprint_version=None,
+        source_blueprint_digest=None,
+    )
+    produced = {entry["path"]: entry for entry in entries}
+
+    assert produced["skills/implement/SKILL.md"] == {
+        "path": "skills/implement/SKILL.md",
+        "kind": "file",
+        "content_utf8": "# Implement\n",
+    }
+    assert produced[".aw/profile/skills/implement/SKILL.md"]["kind"] == "file"
+    assert produced[".claude/skills/implement"] == {
+        "path": ".claude/skills/implement",
+        "kind": "symlink",
+        "target": "../../skills/implement",
+    }
+    assert ".claude/skills/implement/SKILL.md" not in produced
 
 
 def test_materialize_home_interpolates_proposal_target() -> None:

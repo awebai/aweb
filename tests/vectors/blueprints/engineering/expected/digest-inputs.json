@@ -1,11 +1,11 @@
 {
-  "blueprint_digest": "sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134",
+  "blueprint_digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
   "blueprint_payload_fields": {
     "files": [
       {
-        "content_utf8": "<file bytes decoded as UTF-8>",
-        "path": "<blueprint-relative POSIX path>",
-        "sha256": "sha256:<hex of original file bytes>"
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cblueprint-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
       }
     ],
     "path_base": "blueprint-relative",
@@ -51,9 +51,9 @@
   "payload_fields": {
     "files": [
       {
-        "content_utf8": "<file bytes decoded as UTF-8>",
-        "path": "<blueprint-relative POSIX path>",
-        "sha256": "sha256:<hex of original file bytes>"
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cblueprint-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
       }
     ],
     "schema": "aweb.blueprint.import-payload.v1"
@@ -65,7 +65,7 @@
       "version": "0.1.0"
     },
     {
-      "digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+      "digest": "sha256:02bc3dc1a0669a1b29048822555f68bfda1ebe0c1ade5d34ff262f617cf7b838",
       "profile_ref": "developer",
       "version": "0.1.0"
     },
@@ -78,16 +78,16 @@
   "profile_payload_fields": {
     "files": [
       {
-        "content_utf8": "<file bytes decoded as UTF-8>",
-        "path": "<profile-relative POSIX path>",
-        "sha256": "sha256:<hex of original file bytes>"
+        "content_utf8": "\u003cfile bytes decoded as UTF-8\u003e",
+        "path": "\u003cprofile-relative POSIX path\u003e",
+        "sha256": "sha256:\u003chex of original file bytes\u003e"
       }
     ],
     "path_base": "profile-relative",
     "schema": "aweb.blueprint.profile-payload.v1"
   },
   "profile_payload_path_base": "profile-relative",
-  "profile_payload_path_base_description": "paths are POSIX paths relative to profiles/<profile_ref>/, not relative to the blueprint root",
+  "profile_payload_path_base_description": "paths are POSIX paths relative to profiles/\u003cprofile_ref\u003e/, not relative to the blueprint root",
   "profile_payload_schema": "aweb.blueprint.profile-payload.v1",
   "schema": "aweb.blueprint.digest-inputs.v1"
 }

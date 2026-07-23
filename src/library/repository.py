@@ -1076,6 +1076,7 @@ async def materialize(
         source_blueprint_ref=row["source_blueprint_ref"],
         source_blueprint_version=row["source_blueprint_version"],
         source_blueprint_digest=row["source_blueprint_digest"],
+        runtime_kind=request.runtime_kind,
     )
     return {
         "profile_ref": row["profile_ref"],

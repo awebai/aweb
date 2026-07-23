@@ -1,8 +1,21 @@
 {
+  "managed_set": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/coordinate/SKILL.md",
+    ".aw/profile/skills/coordinate/SKILL.md",
+    ".claude/skills/coordinate",
+    "artifacts/status-template.md",
+    ".aw/profile/artifacts/status-template.md",
+    ".aw/profile/ref.json"
+  ],
   "profile_digest": "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0",
   "profile_ref": "coordinator",
   "profile_version": "0.1.0",
-  "source_blueprint_digest": "sha256:2bcea6a06d2807c00f4ccf68ed9323a5063cc270e25171ce9cd8dbc0d3f0a134",
+  "runtime_kind": "claude-code",
+  "source_blueprint_digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
   "source_blueprint_ref": "aweb.engineering",
   "source_blueprint_version": "0.1.0"
 }
