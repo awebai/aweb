@@ -1543,16 +1543,21 @@ var APIClient = class {
   async get(path) {
     return this.request("GET", path);
   }
+  async getFresh(path) {
+    return this.request("GET", path, void 0, true);
+  }
   async post(path, body) {
     return this.request("POST", path, body);
   }
-  async request(method, path, body) {
+  async request(method, path, body, noCache = false) {
     const url = this.baseURL + path;
     const bodyText = body === void 0 ? "" : JSON.stringify(body);
     const headers = {
       Accept: "application/json",
       ...this.authHeaders(path, bodyText)
     };
+    if (noCache)
+      headers["Cache-Control"] = "no-cache";
     const init = { method, headers };
     if (body !== void 0) {
       headers["Content-Type"] = "application/json";
@@ -1629,7 +1634,10 @@ var APIError = class extends Error {
 };
 
 // ../channel-core/dist/api/events.js
-async function* streamAgentEvents(client, signal) {
+async function* streamAgentEvents(client, signal, onState = () => {
+}) {
+  let connectedOnce = false;
+  let disconnected = false;
   while (!signal.aborted) {
     const deadline = new Date(Date.now() + 5 * 60 * 1e3).toISOString();
     let resp;
@@ -1638,19 +1646,41 @@ async function* streamAgentEvents(client, signal) {
     } catch (err2) {
       if (signal.aborted)
         return;
-      console.error(`[aw-channel] events stream connect failed: ${err2}`);
+      if (!disconnected) {
+        disconnected = true;
+        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: 5e3 });
+      }
       await sleep(5e3, signal);
       continue;
     }
+    if (disconnected) {
+      disconnected = false;
+      connectedOnce = true;
+      onState({ state: "reconnected" });
+    } else if (!connectedOnce) {
+      connectedOnce = true;
+      onState({ state: "connected" });
+    }
     try {
+      const openedAt = Date.now();
       yield* parseSSEResponse(resp, signal);
+      if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1e3) {
+        if (!disconnected) {
+          disconnected = true;
+          onState({ state: "disconnected", cause: "connection closed", retryInMs: 1e3 });
+        }
+        await sleep(1e3, signal);
+      }
     } catch (err2) {
       if (signal.aborted)
         return;
       if (!isExpectedStreamTermination(err2)) {
-        console.error(`[aw-channel] events stream parse failed: ${err2}`);
+        if (!disconnected) {
+          disconnected = true;
+          onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: 1e3 });
+        }
+        await sleep(1e3, signal);
       }
-      await sleep(1e3, signal);
     } finally {
       resp.body?.cancel().catch(() => {
       });
@@ -1736,12 +1766,39 @@ function parseAgentEvent(eventName, data) {
     return { type: eventName };
   }
 }
+function formatEventStreamState(state) {
+  if (state.state === "connected")
+    return "aweb: event stream connected";
+  if (state.state === "reconnected") {
+    return "aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed";
+  }
+  const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1e3));
+  return `aweb: event stream disconnected (${state.cause || "connection failed"}) \u2014 retrying in ${seconds}s`;
+}
+function streamErrorCause(err2) {
+  const error = err2 instanceof Error ? err2 : void 0;
+  const nested = error?.cause;
+  const code = typeof nested?.code === "string" ? nested.code.toUpperCase() : "";
+  const detail = [error?.message, typeof nested?.message === "string" ? nested.message : ""].filter(Boolean).join(": ").toLowerCase();
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || detail.includes("getaddrinfo"))
+    return "DNS lookup failed";
+  if (code === "ECONNREFUSED" || detail.includes("connection refused"))
+    return "connection refused";
+  if (code === "ETIMEDOUT" || detail.includes("timed out") || detail.includes("timeout"))
+    return "connection timed out";
+  if (code.startsWith("CERT_") || detail.includes("certificate") || detail.includes("tls"))
+    return "TLS connection failed";
+  if (detail.includes("network") || detail.includes("fetch failed"))
+    return "network unavailable";
+  if (detail.includes("terminated") || detail.includes("closed"))
+    return "connection closed";
+  return "connection failed";
+}
 function isExpectedStreamTermination(err2) {
   if (!(err2 instanceof Error))
     return false;
   const name = err2.name.toLowerCase();
-  const message = err2.message.toLowerCase();
-  return name === "aborterror" || message === "terminated";
+  return name === "aborterror";
 }
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -5615,6 +5672,7 @@ var SenderTrustManager = class {
   }
   async normalizeTrust(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, verificationAddress) {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const recipientBindingMismatch = verificationStatus === "verified" && status === "identity_mismatch";
     if (!status || !rawAddress.trim()) {
       return { status, stored: false };
     }
@@ -5622,7 +5680,11 @@ var SenderTrustManager = class {
     const meta = await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(status, (verificationAddress || rawAddress).trim(), fromDID, fromStableID);
     status = registryCheck.status;
-    return this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+    const pinResult = this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+    if (pinResult.status === "identity_mismatch" && !recipientBindingMismatch && fromDID && isLocalAliasReference(rawAddress.trim()) && !fromStableID?.startsWith("did:aw:")) {
+      return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
+    }
+    return pinResult;
   }
   checkRecipientBinding(status, toDID, toStableID) {
     if (status !== "verified") {
@@ -5820,18 +5882,42 @@ var SenderTrustManager = class {
     }
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
-  async resolveAgentMeta(address) {
+  async reconcileLocalMismatch(store, rawAddress, trustAddress, fromDID) {
+    const fresh = await this.resolveAgentMeta(rawAddress, true);
+    if (!fresh.resolved) {
+      return {
+        status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+        stored: false
+      };
+    }
+    if (fresh.identityScope !== "local") {
+      return { status: "identity_mismatch", stored: false };
+    }
+    if (!fresh.did) {
+      return { status: "verification_stale", stored: false };
+    }
+    if (fresh.did !== fromDID) {
+      return { status: "identity_mismatch", stored: false };
+    }
+    let removed = store.removeAddress(trustAddress);
+    if (rawAddress && rawAddress !== trustAddress) {
+      removed = store.removeAddress(rawAddress) || removed;
+    }
+    return { status: "verification_stale", stored: removed };
+  }
+  async resolveAgentMeta(address, forceRefresh = false) {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (cached)
+    if (!forceRefresh && cached)
       return cached;
     try {
-      const identity = await this.resolveIdentity(rawAddress);
+      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta = {
+        did: identity.did,
         identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,
@@ -5839,11 +5925,17 @@ var SenderTrustManager = class {
       };
       this.metaCache.set(trustAddress, meta);
       return meta;
-    } catch {
-      return { identityScope: "global", custody: "self", resolved: false };
+    } catch (error) {
+      const statusCode = error?.statusCode;
+      return {
+        identityScope: "global",
+        custody: "self",
+        resolved: false,
+        resolutionError: statusCode === 404 ? "not_found" : "unavailable"
+      };
     }
   }
-  async resolveIdentity(address) {
+  async resolveIdentity(address, forceRefresh = false) {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -5854,7 +5946,8 @@ var SenderTrustManager = class {
     if (trimmed.includes("~") || !this.teamID) {
       throw new Error(`unsupported local address ${trimmed}`);
     }
-    const response = await this.client.get(`/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`);
+    const path = `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`;
+    const response = forceRefresh ? await this.client.getFresh(path) : await this.client.get(path);
     return {
       did: response.did_key || "",
       stableID: response.did_aw,
@@ -5864,6 +5957,9 @@ var SenderTrustManager = class {
     };
   }
 };
+function isLocalAliasReference(value) {
+  return value !== "" && !value.includes("/") && !value.includes("~") && !value.startsWith("did:");
+}
 function isTimestampFresh(value) {
   const time = Date.parse(value);
   if (Number.isNaN(time))
@@ -6069,7 +6165,7 @@ async function startChannelLoop(options) {
   const dispatched = /* @__PURE__ */ new Set();
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
   const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : void 0);
-  await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal), options.log || (() => {
+  await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal, options.onStreamState), options.log || (() => {
   }));
 }
 async function consumeAgentEvents(options, dispatched, events, log = () => {
@@ -6082,8 +6178,8 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
     const job = (previous || Promise.resolve()).then(async () => {
       await dispatchAgentEvent(options, dispatched, event);
       pruneDispatched(dispatched);
-    }).catch((err2) => {
-      log(`[aw-channel] dispatch error: ${err2}`);
+    }).catch(() => {
+      log("aweb: could not process an incoming event; it remains pending");
     });
     pending.add(job);
     if (lane)
@@ -6208,8 +6304,9 @@ async function dispatchMailEvent(options, dispatched, event) {
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
-      if (!msg.read_at)
+      if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
         await ackMessage(options.client, msg.message_id);
+      }
       continue;
     }
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
@@ -6251,7 +6348,9 @@ async function dispatchMailEvent(options, dispatched, event) {
       options.deliveryStore.mark(key);
       await options.deliveryStore.save();
     }
-    await ackMessage(options.client, msg.message_id);
+    if (options.mailAcknowledgment !== "manual") {
+      await ackMessage(options.client, msg.message_id);
+    }
   }
   if (pinsDirty)
     await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
@@ -6479,9 +6578,12 @@ function senderDisplayAddress(alias, address) {
 }
 function senderTrustAddress(alias, address) {
   const qualified = (address || "").trim();
+  const localAlias = (alias || "").trim();
+  if (qualified.startsWith("did:key:") && localAlias)
+    return localAlias;
   if (qualified)
     return qualified;
-  return (alias || "").trim();
+  return localAlias;
 }
 function isSelfSender(alias, address, stableID, did, self) {
   const msgAddress = (address || "").trim();
@@ -6537,7 +6639,9 @@ function awakeningFields(awakening) {
   };
 }
 function createWakeLogger(prefix = "aweb-pi-extension") {
+  const enabled = /^(1|true|yes)$/i.test((process.env.AWEB_CHANNEL_DEBUG || "").trim());
   return (event, fields = {}) => {
+    if (!enabled) return;
     const line = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
       component: prefix,
@@ -6575,6 +6679,7 @@ function createWakeDispatcher(pi, log) {
   let draining = false;
   let turnActive = false;
   let closed;
+  let inFlight;
   const nextDeliverableIndex = () => queue.findIndex(({ awakening }) => !turnActive || awakening.deliveryIntent !== "wake");
   const drain = () => {
     if (draining || nextDeliverableIndex() < 0) return;
@@ -6584,6 +6689,7 @@ function createWakeDispatcher(pi, log) {
         let index;
         while ((index = nextDeliverableIndex()) >= 0) {
           const [pending] = queue.splice(index, 1);
+          inFlight = pending;
           const next = pending.awakening;
           const options = deliveryOptionsForAwakening(next, turnActive);
           const fields = { ...awakeningFields(next), options };
@@ -6599,11 +6705,17 @@ function createWakeDispatcher(pi, log) {
               options
             );
             if (isThenable(result)) await result;
-            log("wake_delivered", fields);
-            pending.resolve();
+            if (closed) {
+              pending.reject(closed);
+            } else {
+              log("wake_delivered", fields);
+              pending.resolve();
+            }
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
             pending.reject(error);
+          } finally {
+            if (inFlight === pending) inFlight = void 0;
           }
         }
       } finally {
@@ -6628,6 +6740,7 @@ function createWakeDispatcher(pi, log) {
     },
     close(reason = new Error("Pi wake dispatcher closed")) {
       closed = reason;
+      inFlight?.reject(reason);
       for (const pending of queue.splice(0)) pending.reject(reason);
     }
   };
@@ -6846,7 +6959,7 @@ ${message}`),
     );
     if (ctx.hasUI) {
       const theme = ctx.ui.theme;
-      ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "\u2713")} ${theme.fg("dim", "aweb connected")}`);
+      ctx.ui.setStatus("aweb-channel", `${theme.fg("warning", "\u2026")} ${theme.fg("dim", "aweb connecting")}`);
     }
     void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
       if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
@@ -6869,6 +6982,24 @@ ${message}`),
         const dispatcher = wakeDispatcher;
         if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
         return dispatcher.enqueue(awakening);
+      },
+      onStreamState: (state) => {
+        if (ctx.hasUI) {
+          const theme = ctx.ui.theme;
+          if (state.state === "disconnected") {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "\u2715")} ${theme.fg("dim", "aweb events down; retrying")}`);
+          } else {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "\u2713")} ${theme.fg("dim", "aweb connected")}`);
+          }
+        }
+        if (state.state === "connected") return;
+        const content = formatEventStreamState(state);
+        pi.sendMessage({
+          customType: "aweb-channel-status",
+          content,
+          display: true,
+          details: { stream_state: state.state }
+        }, { deliverAs: "steer", triggerTurn: true });
       },
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

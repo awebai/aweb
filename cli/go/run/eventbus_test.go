@@ -535,15 +535,21 @@ func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	if got := bus.Queue().Len(); got != 1 {
-		t.Fatalf("expected exactly 1 app_event after replay, got %d", got)
+	queued := bus.Queue().Drain()
+	appEvents, recoveries := 0, 0
+	for _, evt := range queued {
+		switch evt.Event.Type {
+		case awid.AgentEventAppEvent:
+			appEvents++
+			if evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
+				t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+			}
+		case awid.AgentEventChannelReconnected:
+			recoveries++
+		}
 	}
-	evt, ok := bus.Queue().Pop()
-	if !ok {
-		t.Fatal("expected queued app_event")
-	}
-	if evt.Event.Type != awid.AgentEventAppEvent || evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
-		t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+	if appEvents != 1 || recoveries != 1 {
+		t.Fatalf("queued app_events=%d recoveries=%d; all=%v", appEvents, recoveries, queued)
 	}
 
 	cancel()
@@ -630,8 +636,18 @@ func TestEventBusDedupesReplayByMessageIDAcrossReconnects(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
-	if got := bus.Queue().Len(); got != 1 {
-		t.Fatalf("expected exactly 1 queued event after replay, got %d", got)
+	queued := bus.Queue().Drain()
+	chats, recoveries := 0, 0
+	for _, evt := range queued {
+		switch evt.Event.Type {
+		case awid.AgentEventActionableChat:
+			chats++
+		case awid.AgentEventChannelReconnected:
+			recoveries++
+		}
+	}
+	if chats != 1 || recoveries != 1 {
+		t.Fatalf("queued chats=%d recoveries=%d; all=%v", chats, recoveries, queued)
 	}
 
 	cancel()

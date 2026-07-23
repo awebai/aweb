@@ -36,6 +36,7 @@ export declare class SenderTrustManager {
     private verifyRotationAnnouncement;
     private verifyReplacementAnnouncement;
     private canonicalTrustAddress;
+    private reconcileLocalMismatch;
     private resolveAgentMeta;
     private resolveIdentity;
 }

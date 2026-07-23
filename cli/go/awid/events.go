@@ -28,6 +28,9 @@ const (
 	AgentEventControlInterrupt AgentEventType = "control_interrupt"
 	AgentEventAppEvent         AgentEventType = "app_event"
 	AgentEventError            AgentEventType = "error"
+	// AgentEventChannelReconnected is synthesized by the local run loop after
+	// recovering its SSE connection; it is never accepted from the server wire.
+	AgentEventChannelReconnected AgentEventType = "channel_reconnected"
 )
 
 // AgentEvent is a typed event emitted by GET /v1/events/stream.

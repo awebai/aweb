@@ -48,6 +48,20 @@ func deliveredIDsTestPath(t *testing.T) string {
 	return tmp
 }
 
+func TestRunDispatcherPromptsDurableCatchUpAfterStreamRecovery(t *testing.T) {
+	dispatcher := runDispatcher{}
+	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{Type: awid.AgentEventChannelReconnected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Skip || !strings.Contains(decision.CycleContext, "aw mail inbox") || !strings.Contains(decision.CycleContext, "aw chat pending") {
+		t.Fatalf("recovery decision=%+v", decision)
+	}
+	if len(decision.DisplayLines) != 1 || decision.DisplayLines[0].Text != "aweb: event stream reconnected; catching up" {
+		t.Fatalf("recovery display=%v", decision.DisplayLines)
+	}
+}
+
 func TestRunDispatcherRendersAppEventWakeSummary(t *testing.T) {
 	dispatcher := runDispatcher{}
 	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{

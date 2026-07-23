@@ -4,15 +4,15 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { computeDIDKey } from "../src/identity/did.js";
-import { PinStore } from "../src/identity/pinstore.js";
 import {
+  computeDIDKey,
+  PinStore,
   SenderTrustManager,
   canonicalReplacementJSON,
   canonicalRotationJSON,
   type ReplacementAnnouncement,
   type RotationAnnouncement,
-} from "../src/identity/trust.js";
+} from "@awebai/channel-core";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -86,6 +86,83 @@ describe("SenderTrustManager", () => {
     expect(result.status).toBe("verified");
     expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
     expect(store.pins.size).toBe(0);
+  });
+
+  test("relabels stale local metadata after authoritative no-cache row refresh", async () => {
+    const oldIdentity = await didFromSeed(32);
+    const currentIdentity = await didFromSeed(33);
+    const store = new PinStore();
+    const getFresh = vi.fn(async () => ({ did_key: currentIdentity.did, identity_scope: "local", custody: "self" }));
+    const trust = new SenderTrustManager(
+      {
+        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
+        getFresh,
+      } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verification_stale");
+    expect(getFresh).toHaveBeenCalledTimes(1);
+    expect(store.pins.size).toBe(0);
+    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+  });
+
+  test("preserves local mismatch when the authoritative roster row has a different key", async () => {
+    const oldIdentity = await didFromSeed(34);
+    const rosterIdentity = await didFromSeed(35);
+    const attacker = await didFromSeed(36);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      {
+        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
+        getFresh: async () => ({ did_key: rosterIdentity.did, identity_scope: "local", custody: "self" }),
+      } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", "alice", attacker.did, undefined, undefined)).status).toBe("identity_mismatch");
+  });
+
+  test("preserves local mismatch when the sender is absent from the roster", async () => {
+    const oldIdentity = await didFromSeed(37);
+    const attacker = await didFromSeed(38);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      {
+        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
+        getFresh: async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); },
+      } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", "alice", attacker.did, undefined, undefined)).status).toBe("identity_mismatch");
+  });
+
+  test("reports local verification stale when authoritative refresh is unavailable", async () => {
+    const oldIdentity = await didFromSeed(39);
+    const changedIdentity = await didFromSeed(40);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      {
+        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
+        getFresh: async () => { throw new TypeError("fetch failed"); },
+      } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", "alice", changedIdentity.did, undefined, undefined)).status).toBe("verification_stale");
   });
 
   test("normalizes legacy ephemeral lifetime metadata as local scope", async () => {

@@ -174,6 +174,56 @@ test("dispatcher rejects a pending active-turn wake when the session shuts down"
   await assert.rejects(delivered, /session shutdown/);
 });
 
+test("in-flight shutdown rejection prevents source acknowledgment after late send settlement", async () => {
+  let settleSend: (() => void) | undefined;
+  let markStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const dispatcher = createWakeDispatcher(fakePi(() => {
+    markStarted?.();
+    return new Promise<void>((resolve) => { settleSend = resolve; });
+  }), () => {});
+  const posts: string[] = [];
+  const client = {
+    get: async () => ({
+      messages: [{
+        message_id: "mail-in-flight-shutdown",
+        from_agent_id: "agent-alice",
+        from_alias: "alice",
+        from_address: "acme.com/alice",
+        to_alias: "eve",
+        subject: "hello",
+        body: "do not ack after shutdown",
+        priority: "normal",
+        created_at: "2026-07-23T00:00:00Z",
+      }],
+    }),
+    post: async (path: string) => { posts.push(path); },
+  };
+  const trust = {
+    normalizeTrust: async () => ({ status: "verified", stored: false }),
+  } as unknown as SenderTrustManager;
+  const dispatch = dispatchAgentEvent(
+    {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self: { alias: "eve", address: "acme.com/eve", did: "did:key:eve", stableID: "" },
+      onAwakening: (event) => dispatcher.enqueue(event),
+    },
+    new Set(),
+    { type: "mail_message", message_id: "mail-in-flight-shutdown" } satisfies AgentEvent,
+  );
+  await started;
+
+  dispatcher.close(new Error("session shutdown"));
+  await assert.rejects(dispatch, /session shutdown/);
+  assert.deepEqual(posts, []);
+
+  settleSend?.();
+  await waitForDrain();
+  assert.deepEqual(posts, []);
+});
+
 test("dispatcher serializes delivery and rejects on sendMessage failures", async () => {
   const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
   const logs: Array<{ event: WakeLogEvent; fields?: Record<string, unknown> }> = [];

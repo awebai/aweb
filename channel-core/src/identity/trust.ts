@@ -35,11 +35,21 @@ interface ResolvedIdentity {
   identityScope: IdentityScope;
 }
 
+interface LocalAgentResolution {
+  did_key?: string;
+  did_aw?: string;
+  address?: string;
+  identity_scope?: string;
+  lifetime?: string;
+}
+
 interface AgentMeta {
+  did?: string;
   identityScope: IdentityScope;
   custody: string;
   controllerDid?: string;
   resolved: boolean;
+  resolutionError?: "not_found" | "unavailable";
 }
 
 export interface TrustResult {
@@ -86,6 +96,7 @@ export class SenderTrustManager {
     verificationAddress?: string,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const recipientBindingMismatch = verificationStatus === "verified" && status === "identity_mismatch";
     if (!status || !rawAddress.trim()) {
       return { status, stored: false };
     }
@@ -99,7 +110,7 @@ export class SenderTrustManager {
       fromStableID,
     );
     status = registryCheck.status;
-    return this.checkTOFUPinWithMeta(
+    const pinResult = this.checkTOFUPinWithMeta(
       store,
       status,
       rawAddress.trim(),
@@ -111,6 +122,16 @@ export class SenderTrustManager {
       meta,
       registryCheck.confirmedCurrentKey,
     );
+    if (
+      pinResult.status === "identity_mismatch"
+      && !recipientBindingMismatch
+      && fromDID
+      && isLocalAliasReference(rawAddress.trim())
+      && !fromStableID?.startsWith("did:aw:")
+    ) {
+      return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
+    }
+    return pinResult;
   }
 
   private checkRecipientBinding(
@@ -412,18 +433,48 @@ export class SenderTrustManager {
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
 
-  private async resolveAgentMeta(address: string): Promise<AgentMeta> {
+  private async reconcileLocalMismatch(
+    store: PinStore,
+    rawAddress: string,
+    trustAddress: string,
+    fromDID: string,
+  ): Promise<TrustResult> {
+    const fresh = await this.resolveAgentMeta(rawAddress, true);
+    if (!fresh.resolved) {
+      return {
+        status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+        stored: false,
+      };
+    }
+    if (fresh.identityScope !== "local") {
+      return { status: "identity_mismatch", stored: false };
+    }
+    if (!fresh.did) {
+      return { status: "verification_stale", stored: false };
+    }
+    if (fresh.did !== fromDID) {
+      return { status: "identity_mismatch", stored: false };
+    }
+    let removed = store.removeAddress(trustAddress);
+    if (rawAddress && rawAddress !== trustAddress) {
+      removed = store.removeAddress(rawAddress) || removed;
+    }
+    return { status: "verification_stale", stored: removed };
+  }
+
+  private async resolveAgentMeta(address: string, forceRefresh: boolean = false): Promise<AgentMeta> {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (cached) return cached;
+    if (!forceRefresh && cached) return cached;
 
     try {
-      const identity = await this.resolveIdentity(rawAddress);
+      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta: AgentMeta = {
+        did: identity.did,
         identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,
@@ -431,12 +482,18 @@ export class SenderTrustManager {
       };
       this.metaCache.set(trustAddress, meta);
       return meta;
-    } catch {
-      return { identityScope: "global", custody: "self", resolved: false };
+    } catch (error) {
+      const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode;
+      return {
+        identityScope: "global",
+        custody: "self",
+        resolved: false,
+        resolutionError: statusCode === 404 ? "not_found" : "unavailable",
+      };
     }
   }
 
-  private async resolveIdentity(address: string): Promise<ResolvedIdentity> {
+  private async resolveIdentity(address: string, forceRefresh: boolean = false): Promise<ResolvedIdentity> {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -448,15 +505,10 @@ export class SenderTrustManager {
       throw new Error(`unsupported local address ${trimmed}`);
     }
 
-    const response = await this.client.get<{
-      did_key?: string;
-      did_aw?: string;
-      address?: string;
-      identity_scope?: string;
-      lifetime?: string;
-    }>(
-      `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`,
-    );
+    const path = `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`;
+    const response = forceRefresh
+      ? await this.client.getFresh<LocalAgentResolution>(path)
+      : await this.client.get<LocalAgentResolution>(path);
     return {
       did: response.did_key || "",
       stableID: response.did_aw,
@@ -465,6 +517,10 @@ export class SenderTrustManager {
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
   }
+}
+
+function isLocalAliasReference(value: string): boolean {
+  return value !== "" && !value.includes("/") && !value.includes("~") && !value.startsWith("did:");
 }
 
 function isTimestampFresh(value: string): boolean {

@@ -758,7 +758,7 @@ func TestFormatRunStatusOmitsRunLabel(t *testing.T) {
 func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 	st := &state{Autofeed: true, ConnState: ConnReconnecting}
 	got := formatWaitStatus("waiting for prompt", st)
-	want := "waiting for prompt · autofeed · reconnecting..."
+	want := "waiting for prompt · autofeed · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -781,7 +781,7 @@ func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 		ConnState:         ConnStreaming,
 	}
 	got := formatRunStatus(st)
-	want := "$0.05 · autofeed · streaming"
+	want := "$0.05 · autofeed · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -794,7 +794,7 @@ func TestFormatRunStatusShowsClaimedTaskRef(t *testing.T) {
 		ConnState:      ConnStreaming,
 	}
 	got := formatRunStatus(st)
-	want := "task aweb-aaag · streaming"
+	want := "task aweb-aaag · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -807,7 +807,7 @@ func TestFormatRunStatusShowsReconnecting(t *testing.T) {
 		ConnState:         ConnReconnecting,
 	}
 	got := formatRunStatus(st)
-	want := "$0.05 · reconnecting..."
+	want := "$0.05 · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

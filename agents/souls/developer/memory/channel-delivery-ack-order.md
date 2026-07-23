@@ -1,11 +1,17 @@
 # Channel delivery acknowledgement ordering
 
-A channel adapter's `onAwakening` completion is a delivery receipt, not a queue
-receipt. Source mail/chat must remain unread until that promise resolves after
-the host accepts model/session injection. In a turn-aware adapter, hold normal
-wake delivery while the turn is active, flush it on `turn_end`, and resolve the
-promise only after the host send succeeds. Reject pending promises on session
-shutdown so the source remains visible.
+Treat an adapter's `onAwakening` completion as a delivery receipt only when the
+host API defines a real model/session-queue acceptance boundary. In a turn-aware
+adapter with such a boundary, hold normal wake delivery while the turn is
+active, flush it on `turn_end`, and resolve only after the host accepts the
+injection. Reject queued and in-flight promises on session shutdown so late
+settlement cannot acknowledge source mail.
+
+A fire-and-forget transport send is not a delivery receipt. Claude channel MCP
+notifications provide no host/model acknowledgement, so local delivered-ID
+state suppresses reconnect replay while server mail stays unread until the
+agent replies or explicitly acknowledges it. Honest visible-unread mail is
+preferable to acked-but-unseen mail.
 
 Do not fix this by blocking the whole SSE consumer: schedule independent event
 lanes (mail serially, chat per session) so a pending mid-turn mail cannot block

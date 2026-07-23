@@ -72,6 +72,11 @@ func (d runDispatcher) Next(ctx context.Context, autofeed bool, wakeEvent *awid.
 			DisplayLines: formatWorkWakeDisplay(*wakeEvent),
 			WaitSeconds:  awrun.DefaultWaitSeconds,
 		}, nil
+	case awid.AgentEventChannelReconnected:
+		return awrun.DispatchDecision{
+			CycleContext: "The aweb event stream reconnected after an outage. Check `aw mail inbox` and `aw chat pending` now for messages that may have arrived while this agent was deaf.",
+			DisplayLines: []awrun.DisplayLine{{Text: "aweb: event stream reconnected; catching up"}},
+		}, nil
 	case awid.AgentEventAppEvent:
 		summary := formatAppEventWakeSummary(*wakeEvent)
 		if strings.TrimSpace(summary) == "" {

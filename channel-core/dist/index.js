@@ -1,11 +1,11 @@
 export { APIClient, APIError } from "./api/client.js";
-export { streamAgentEvents, parseAgentEvent } from "./api/events.js";
+export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause } from "./api/events.js";
 export { ackMessage, fetchInbox } from "./api/mail.js";
 export { fetchHistory, markRead } from "./api/chat.js";
 export { resolveConfig } from "./config.js";
 export { PinStore } from "./identity/pinstore.js";
 export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL } from "./identity/registry.js";
-export { SenderTrustManager, normalizeIdentityScope } from "./identity/trust.js";
+export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, normalizeIdentityScope } from "./identity/trust.js";
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
 export { loadSigningKey } from "./identity/keys.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader } from "./identity/certificate.js";

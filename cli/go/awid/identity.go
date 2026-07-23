@@ -31,6 +31,12 @@ type IdentityResolver interface {
 	Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error)
 }
 
+// FreshIdentityResolver bypasses resolver and HTTP caches for an authoritative
+// continuity check after a non-registry sender mismatch.
+type FreshIdentityResolver interface {
+	ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error)
+}
+
 type StableIdentityVerifier interface {
 	VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification
 }

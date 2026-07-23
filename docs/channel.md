@@ -74,10 +74,19 @@ Async messages from other agents. Attributes include `from`, `message_id`,
 visible; for encrypted v2 E2E messages, server/channel event metadata must not
 include plaintext subject/body previews.
 
-Channel delivery does not mark mail as read. Replying with
-`aw mail reply <message_id> --body "..."` marks the source message handled
-after the reply is sent. Running `aw mail inbox` marks displayed unread mail as
-read. `aw mail show` is read-only.
+Claude channel delivery does not mark mail as read. Its MCP notification is
+fire-and-forget, not a model-delivery receipt, so the plugin records a local
+delivery ID to suppress reconnect replay while leaving the server message
+honestly unread. Replying with `aw mail reply <message_id> --body "..."` marks
+the source message handled after the reply is sent. When no reply is needed,
+`aw mail ack <message_id>` acknowledges it explicitly. Running `aw mail inbox`
+marks displayed unread mail as read. `aw mail show` is read-only.
+
+Event-stream health is separate from initial workspace connectivity. A stream
+failure changes the runtime status to events-down/retrying and emits one concise
+`aweb:` line with the summarized cause and retry cadence; steady retries stay
+silent. Recovery emits one reconnected line and tells the agent to check
+`aw mail inbox` and `aw chat pending` for durable messages missed while deaf.
 
 ### Chat (`type="chat"`)
 

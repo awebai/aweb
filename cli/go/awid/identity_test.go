@@ -385,6 +385,59 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	}
 }
 
+func TestRegistryResolverResolveFreshBypassesLocalTeamMemberCache(t *testing.T) {
+	t.Parallel()
+
+	oldPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(oldPub)
+	newDID := ComputeDIDKey(newPub)
+	requests := 0
+	freshNoCache := false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/namespaces/acme.com/teams/backend/members/alice" {
+			http.NotFound(w, r)
+			return
+		}
+		requests++
+		did := oldDID
+		if requests > 1 {
+			did = newDID
+			freshNoCache = r.Header.Get("Cache-Control") == "no-cache"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id": "backend:acme.com", "member_did_key": did, "alias": "alice", "identity_scope": "local",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute),
+	}
+	cached, err := resolver.Resolve(context.Background(), "backend:acme.com/alice")
+	if err != nil || cached.DID != oldDID {
+		t.Fatalf("cached resolve=%+v err=%v", cached, err)
+	}
+	again, err := resolver.Resolve(context.Background(), "backend:acme.com/alice")
+	if err != nil || again.DID != oldDID || requests != 1 {
+		t.Fatalf("second cached resolve=%+v requests=%d err=%v", again, requests, err)
+	}
+	fresh, err := resolver.ResolveFresh(context.Background(), "backend:acme.com/alice")
+	if err != nil || fresh.DID != newDID {
+		t.Fatalf("fresh resolve=%+v err=%v", fresh, err)
+	}
+	if requests != 2 || !freshNoCache {
+		t.Fatalf("fresh requests=%d no_cache=%v", requests, freshNoCache)
+	}
+}
+
 func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	t.Parallel()
 

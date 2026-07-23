@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createChannelClient,
   createRegistryResolver,
+  formatEventStreamState,
   loadPinStore,
   resolveConfig,
   SenderTrustManager,
@@ -232,7 +233,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
 
     if (ctx.hasUI) {
       const theme = ctx.ui.theme;
-      ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "✓")} ${theme.fg("dim", "aweb connected")}`);
+      ctx.ui.setStatus("aweb-channel", `${theme.fg("warning", "…")} ${theme.fg("dim", "aweb connecting")}`);
     }
 
     void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
@@ -257,6 +258,24 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         const dispatcher = wakeDispatcher;
         if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
         return dispatcher.enqueue(awakening);
+      },
+      onStreamState: (state) => {
+        if (ctx.hasUI) {
+          const theme = ctx.ui.theme;
+          if (state.state === "disconnected") {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "✕")} ${theme.fg("dim", "aweb events down; retrying")}`);
+          } else {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "✓")} ${theme.fg("dim", "aweb connected")}`);
+          }
+        }
+        if (state.state === "connected") return;
+        const content = formatEventStreamState(state);
+        pi.sendMessage({
+          customType: "aweb-channel-status",
+          content,
+          display: true,
+          details: { stream_state: state.state },
+        }, { deliverAs: "steer", triggerTurn: true });
       },
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

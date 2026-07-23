@@ -10,6 +10,7 @@ export declare class APIClient {
     private auth;
     constructor(baseURL: string, auth: APIClientAuth);
     get<T>(path: string): Promise<T>;
+    getFresh<T>(path: string): Promise<T>;
     post<T>(path: string, body?: unknown): Promise<T>;
     private request;
     /** Open an SSE stream. Returns the raw Response for streaming. */

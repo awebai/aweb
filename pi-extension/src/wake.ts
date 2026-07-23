@@ -44,7 +44,9 @@ function awakeningFields(awakening: ChannelAwakening): Record<string, unknown> {
 }
 
 export function createWakeLogger(prefix = "aweb-pi-extension"): WakeLogger {
+  const enabled = /^(1|true|yes)$/i.test((process.env.AWEB_CHANNEL_DEBUG || "").trim());
   return (event, fields = {}) => {
+    if (!enabled) return;
     const line = {
       ts: new Date().toISOString(),
       component: prefix,
@@ -112,6 +114,7 @@ export function createWakeDispatcher(
   let draining = false;
   let turnActive = false;
   let closed: Error | undefined;
+  let inFlight: PendingWake | undefined;
 
   const nextDeliverableIndex = (): number => queue.findIndex(({ awakening }) => (
     !turnActive || awakening.deliveryIntent !== "wake"
@@ -125,6 +128,7 @@ export function createWakeDispatcher(
         let index: number;
         while ((index = nextDeliverableIndex()) >= 0) {
           const [pending] = queue.splice(index, 1);
+          inFlight = pending;
           const next = pending.awakening;
           const options = deliveryOptionsForAwakening(next, turnActive);
           const fields = { ...awakeningFields(next), options };
@@ -147,11 +151,17 @@ export function createWakeDispatcher(
               options,
             );
             if (isThenable(result)) await result;
-            log("wake_delivered", fields);
-            pending.resolve();
+            if (closed) {
+              pending.reject(closed);
+            } else {
+              log("wake_delivered", fields);
+              pending.resolve();
+            }
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
             pending.reject(error);
+          } finally {
+            if (inFlight === pending) inFlight = undefined;
           }
         }
       } finally {
@@ -177,6 +187,7 @@ export function createWakeDispatcher(
     },
     close(reason = new Error("Pi wake dispatcher closed")) {
       closed = reason;
+      inFlight?.reject(reason);
       for (const pending of queue.splice(0)) pending.reject(reason);
     },
   };

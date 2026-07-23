@@ -1,5 +1,5 @@
 import { APIClient } from "./api/client.js";
-import { type AgentEvent } from "./api/events.js";
+import { type AgentEvent, type EventStreamState } from "./api/events.js";
 import { PinStore } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
@@ -29,11 +29,13 @@ export interface ChannelLoopOptions {
     self: SelfIdentity;
     signal: AbortSignal;
     onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
+    mailAcknowledgment?: "delivery" | "manual";
     deliveryStore?: DeliveryStore;
     localDecrypt?: LocalDecryptProvider;
     workdir?: string;
     awCommand?: string;
     log?: (message: string) => void;
+    onStreamState?: (state: EventStreamState) => void;
 }
 export declare function loadPinStore(path?: string): Promise<PinStore>;
 export declare class DeliveryStore {

@@ -10,6 +10,7 @@ import {
   createChannelClient,
   createRegistryResolver,
   dispatchAgentEvent,
+  formatEventStreamState,
   loadPinStore,
   type PinStore,
   resolveConfig,
@@ -44,7 +45,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Read them and act if needed. Confirmed channel delivery marks the source message handled so reconnects do not replay stale mail. Reply with: aw mail reply <message_id> --body "<reply>".
+Mail events (type="mail") are async. Claude channel notifications have no model-delivery receipt, so mail stays unread after notification. Replying acknowledges it automatically: aw mail reply <message_id> --body "<reply>". If no reply is needed, acknowledge it only after processing: aw mail ack <message_id>.
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.
@@ -76,6 +77,19 @@ Control events (type="control") are operational signals. On "pause", stop curren
       method: "notifications/claude/channel",
       params: { content: awakening.content, meta: awakening.meta },
     }),
+    // Claude's channel protocol is a fire-and-forget MCP notification. Transport
+    // send is not proof that the model received it, so only an agent-side reply
+    // or explicit `aw mail ack` may mark mail read on this surface.
+    mailAcknowledgment: "manual",
+    onStreamState: (state) => {
+      if (state.state === "connected") return;
+      const content = formatEventStreamState(state);
+      console.error(content);
+      void mcp.notification({
+        method: "notifications/claude/channel",
+        params: { content, meta: { type: "channel_status", stream_state: state.state } },
+      }).catch(() => {});
+    },
     log: (message) => console.error(message),
   });
 }
@@ -99,6 +113,7 @@ export async function dispatchEvent(
         method: "notifications/claude/channel",
         params: { content: awakening.content, meta: awakening.meta },
       }),
+      mailAcknowledgment: "manual",
     },
     dispatched,
     event,

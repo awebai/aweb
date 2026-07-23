@@ -168,6 +168,14 @@ describe.sequential("channel integration", () => {
     expect(mailNotification.meta.conversation_id).toBe(mail.conversation_id);
     expect(mailNotification.meta.verified).toBe("true");
 
+    const unreadAfterNotification = await runAwJSON<{ messages: Array<{ message_id: string }> }>(
+      homeDir,
+      bobDir,
+      server.awidURL,
+      ["--json", "mail", "inbox"],
+    );
+    expect(unreadAfterNotification.messages.some((item) => item.message_id === mail.message_id)).toBe(true);
+
     const chatBody = `channel verified chat ${Date.now()}`;
     await sendChatViaAW(homeDir, aliceDir, server.awidURL, "bob", chatBody);
     const chatNotification = await notifications.waitFor(

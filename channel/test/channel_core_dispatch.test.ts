@@ -455,6 +455,44 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenNthCalledWith(2, "/v1/messages/mail-retry/ack");
   });
 
+  test("manual mail acknowledgment keeps unread reconnect replay deduplicated", async () => {
+    const onAwakening = vi.fn();
+    const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-manual",
+          conversation_id: "conv-manual",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "stay visible",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const options = {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      deliveryStore,
+      mailAcknowledgment: "manual" as const,
+      onAwakening,
+    };
+    const event = { type: "mail_message", message_id: "mail-manual" } satisfies AgentEvent;
+
+    await dispatchAgentEvent(options, new Set(), event);
+    await dispatchAgentEvent(options, new Set(), event);
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   test("retries chat read receipt without re-delivering when previous read failed after delivery", async () => {
     const onAwakening = vi.fn();
     const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
