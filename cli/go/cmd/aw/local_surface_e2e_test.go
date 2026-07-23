@@ -53,6 +53,8 @@ func TestLocalSurfaceE2EEmptyProfileCreateAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "eng", "agent_id": "agent-eng", "workspace_id": "workspace-eng", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
@@ -162,6 +164,8 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-coordinator", "eng:local", "coordinator")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/"):
 			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -407,6 +411,8 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-rev", "gracehosted.aweb.ai", "rev")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/"):
 			profileRef := strings.TrimPrefix(r.URL.Path, "/v1/blueprints/aweb.engineering/profiles/")
 			_ = json.NewEncoder(w).Encode(map[string]any{
