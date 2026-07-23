@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,146 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestTeamAddAPIKeyBootstrapRequiresActuallyMissingTeamState(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_clean_bootstrap")
+
+	if _, _, _, _, err := resolveTeamInviteTarget(root); !errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
+		t.Fatalf("clean directory error=%v, want explicit no-active-team classification", err)
+	}
+	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
+	if err != nil {
+		t.Fatalf("shouldUseAPIKeyBootstrapForTeamAdd: %v", err)
+	}
+	if !bootstrap {
+		t.Fatal("clean directory with API key should use bootstrap")
+	}
+}
+
+func TestTeamAddAPIKeyBootstrapDoesNotSwallowInvalidTeamState(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_must_not_hide_error")
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".aw", "teams.yaml"), []byte("active_team: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, _, _, err := resolveTeamInviteTarget(root); err == nil || errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
+		t.Fatalf("invalid team state error=%v, must not classify as no active team", err)
+	}
+	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
+	if err == nil {
+		t.Fatal("invalid team state was silently treated as no active team")
+	}
+	if bootstrap {
+		t.Fatal("invalid team state must not enable API-key bootstrap")
+	}
+}
+
+func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_forgotten_export")
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "active:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:  "active:acme.com",
+			Alias:   "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrap {
+		t.Fatal("ambient API key overrode aw team add active-team authority")
+	}
+}
+
+func TestTeamExtendAmbientAPIKeyRefusesActiveTeam(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_forgotten_export")
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "active:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "active:acme.com",
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := resolveTeamExtendAuthority(root)
+	if err == nil {
+		t.Fatal("ambient API key silently overrode active team")
+	}
+	for _, want := range []string{"active:acme.com", initAPIKeyEnvVar, "unset", "--api-key", "--team-id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestTeamExtendAmbientAPIKeyWithExplicitTeamIDIsIntentional(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_intentional_env")
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "active:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "active:acme.com",
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanExtendTeamID = "target:other.example"
+
+	authority, err := resolveTeamExtendAuthority(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.Tier != "api-key" || authority.APIKey != "aw_sk_intentional_env" || authority.TeamID != teamHumanExtendTeamID {
+		t.Fatalf("authority=%+v", authority)
+	}
+}
+
+func TestTeamExtendExplicitAPIKeyOverridesActiveTeamIntentionally(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_ambient")
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "active:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "active:acme.com",
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanExtendAPIKey = "aw_sk_explicit"
+
+	authority, err := resolveTeamExtendAuthority(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.Tier != "api-key" || authority.APIKey != teamHumanExtendAPIKey {
+		t.Fatalf("authority=%+v", authority)
+	}
+}
 
 func TestTeamExtendCleanDirWithoutAuthorityErrorsClearly(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
@@ -92,6 +233,16 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Chdir(root)
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: "active:workspace.aweb.ai",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   "active:workspace.aweb.ai",
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {

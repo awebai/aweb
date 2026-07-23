@@ -1186,11 +1186,9 @@ func shouldUseAPIKeyBootstrapForTeamAdd(wd string) (bool, error) {
 	}
 	if _, _, _, _, err := resolveTeamInviteTarget(wd); err == nil {
 		return false, nil
+	} else if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
+		return true, nil
 	} else {
-		var usageErr *cliError
-		if errors.As(err, &usageErr) {
-			return true, nil
-		}
 		return false, err
 	}
 }
@@ -1981,8 +1979,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
 		// mentions --team/--namespace. Those are not flags on `aw team add`: this
 		// command mints against this workspace's active team.
-		var usageErr *cliError
-		if errors.As(err, &usageErr) {
+		if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
 			return nil, usageError("aw team add mints against this workspace's active team, but none was found here; run `aw team create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team add`")
 		}
 		return nil, err

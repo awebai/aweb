@@ -16,7 +16,7 @@ import (
 var teamHumanExtendCmd = &cobra.Command{
 	Use:   "extend <agent-spec>...",
 	Short: "Add agents to an existing team by discovering membership authority",
-	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key/AWEB_API_KEY wins; otherwise the current workspace or an invite-capable agents/instances home is used.",
+	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY bootstraps only when this workspace has no active team; otherwise the current workspace or an invite-capable agents/instances home is used.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanExtend,
 }
@@ -76,12 +76,22 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 	if err != nil {
 		return teamExtendAuthority{}, err
 	}
-	apiKey := strings.TrimSpace(teamHumanExtendAPIKey)
+	explicitAPIKey := strings.TrimSpace(teamHumanExtendAPIKey)
+	apiKey := explicitAPIKey
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
 	}
 	teamID := strings.TrimSpace(teamHumanExtendTeamID)
 	if apiKey != "" {
+		if explicitAPIKey == "" && teamID == "" {
+			activeTeamID, found, err := activeTeamIDForExtend(wd)
+			if err != nil {
+				return teamExtendAuthority{}, err
+			}
+			if found {
+				return teamExtendAuthority{}, usageError("active team %s is selected, but %s is set in the environment and would silently use the API key's team; unset %s to extend active team %s, or pass --api-key or --team-id explicitly to intentionally use API-key team authority", activeTeamID, initAPIKeyEnvVar, initAPIKeyEnvVar, activeTeamID)
+			}
+		}
 		return teamExtendAuthority{Tier: "api-key", AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey, TeamID: teamID}, nil
 	}
 	if candidate, ok, err := resolveTeamExtendCandidate(wd, teamID); err != nil {
@@ -113,6 +123,25 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 	}
 	winner := candidates[0]
 	return teamExtendAuthority{Tier: "discovered-agent", AnchorDir: winner.HomeDir, AgentsRoot: agentsRoot, TeamID: winner.TeamID, Checked: checked}, nil
+}
+
+func activeTeamIDForExtend(wd string) (string, bool, error) {
+	teamState, _, err := loadTeamStateForInvite(wd)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	activeTeamID := strings.TrimSpace(teamState.ActiveTeam)
+	if activeTeamID == "" {
+		return "", false, usageError("workspace team state exists but has no active team; run `aw team switch <team_id>` or remove the invalid team state before using %s", initAPIKeyEnvVar)
+	}
+	domain, team, err := awid.ParseTeamID(activeTeamID)
+	if err != nil {
+		return "", false, fmt.Errorf("invalid active team %q: %w", activeTeamID, err)
+	}
+	return awid.BuildTeamID(domain, team), true, nil
 }
 
 func resolveTeamExtendAgentsRoot(wd string) (string, error) {
@@ -184,11 +213,7 @@ func scanTeamExtendCandidates(agentsRoot, teamID string) ([]teamExtendCandidate,
 func resolveTeamExtendCandidate(homeDir, filterTeamID string) (teamExtendCandidate, bool, error) {
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTargetWithoutFlagOverrides(homeDir)
 	if err != nil {
-		var usageErr *cliError
-		if errors.As(err, &usageErr) {
-			return teamExtendCandidate{}, false, nil
-		}
-		if os.IsNotExist(err) {
+		if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) || os.IsNotExist(err) {
 			return teamExtendCandidate{}, false, nil
 		}
 		return teamExtendCandidate{}, false, err

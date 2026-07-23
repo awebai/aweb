@@ -549,12 +549,17 @@ agents from the same blueprint, discovering the authority from your team context
 aw team extend charlie@aweb.team/developer=pi
 ```
 
-From any directory (no team context), an explicit team API key is the whole
+From any directory with no active team context, a team API key is the whole
 credential — no dashboard session:
 
 ```bash
 AWEB_URL=<url> AWEB_API_KEY=<key> aw team extend alice@aweb.team/developer=claude-code
 ```
+
+When the current workspace already has an active team, an ambient
+`AWEB_API_KEY` does not silently override it. Unset the variable to extend the
+active team, or state API-key intent with `--api-key` or `--team-id` (the latter
+also checks that the key enrolled the agent into the expected team).
 
 **Self-hosted (BYOT).** To create and populate a team you control end to end,
 add `--byot` and your namespace:
