@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -81,6 +83,8 @@ type RegistryClient struct {
 	HTTPClient         *http.Client
 	RequestID          string
 }
+
+const registryTransientMaxRetries = 3
 
 var registryNow = func() time.Time { return time.Now().UTC() }
 
@@ -371,14 +375,42 @@ func (c *RegistryClient) RotateDIDKey(
 }
 
 func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, path string, headers map[string]string, body any, out any) error {
-	req, err := c.newRequest(ctx, method, registryURL, path, headers, body)
-	if err != nil {
+	for attempt := 0; ; attempt++ {
+		req, err := c.newRequest(ctx, method, registryURL, path, headers, body)
+		if err != nil {
+			return err
+		}
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
+				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
+					return waitErr
+				}
+				continue
+			}
+			return err
+		}
+		if shouldRetryRegistryResponse(ctx, method, path, attempt, resp) {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
+
+		err = decodeRegistryResponse(resp, out)
+		if err != nil && shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
+			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
 		return err
 	}
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
+}
+
+func decodeRegistryResponse(resp *http.Response, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return parseRegistryError(resp)
@@ -387,7 +419,123 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, out)
+}
+
+func shouldRetryRegistryTransportError(ctx context.Context, method, path string, attempt int, err error) bool {
+	if attempt >= registryTransientMaxRetries || err == nil || ctx.Err() != nil || !isReplaySafeRegistryRequest(method, path) {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func shouldRetryRegistryResponse(ctx context.Context, method, path string, attempt int, resp *http.Response) bool {
+	return resp != nil &&
+		resp.StatusCode == http.StatusServiceUnavailable &&
+		attempt < registryTransientMaxRetries &&
+		ctx.Err() == nil &&
+		isReplaySafeRegistryRequest(method, path)
+}
+
+func waitForRegistryRetry(ctx context.Context, attempt int) error {
+	delay := registryTransientBackoffDelay(attempt)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func registryTransientBackoffDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := 100 * time.Millisecond
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+	}
+	return delay
+}
+
+func isReplaySafeRegistryRequest(method, path string) bool {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+		return true
+	}
+
+	// Keep writes explicit: every current route below is either an idempotent
+	// state set/upsert or is guarded by a deterministic identity, certificate,
+	// address, team, delegation, or publication conflict check in AWID. Unknown
+	// future writes must be audited before they inherit transport-level retries.
+	segments := registryPathSegments(path)
+	switch method {
+	case http.MethodPut:
+		return len(segments) == 3 && segments[0] == "v1" && segments[1] == "did"
+	case http.MethodPatch:
+		return len(segments) == 3 && segments[0] == "v1" && segments[1] == "namespaces"
+	case http.MethodDelete:
+		return isReplaySafeRegistryDeletePath(segments)
+	case http.MethodPost:
+		return isReplaySafeRegistryPostPath(segments)
+	default:
+		return false
+	}
+}
+
+func registryPathSegments(path string) []string {
+	path, _, _ = strings.Cut(strings.TrimSpace(path), "?")
+	return strings.Split(strings.Trim(path, "/"), "/")
+}
+
+func isReplaySafeRegistryDeletePath(segments []string) bool {
+	if len(segments) == 3 {
+		return segments[0] == "v1" && segments[1] == "namespaces"
+	}
+	return len(segments) == 5 &&
+		segments[0] == "v1" &&
+		segments[1] == "namespaces" &&
+		(segments[3] == "addresses" || segments[3] == "teams")
+}
+
+func isReplaySafeRegistryPostPath(segments []string) bool {
+	if len(segments) == 2 {
+		return segments[0] == "v1" && (segments[1] == "did" || segments[1] == "namespaces")
+	}
+	if len(segments) == 3 {
+		return segments[0] == "v1" && segments[1] == "a2a" &&
+			(segments[2] == "delegations" || segments[2] == "publications")
+	}
+	if len(segments) == 4 {
+		return segments[0] == "v1" &&
+			((segments[1] == "did" && segments[3] == "encryption-key") ||
+				(segments[1] == "namespaces" &&
+					(segments[3] == "reverify" || segments[3] == "addresses" || segments[3] == "teams")))
+	}
+	if len(segments) == 5 {
+		return segments[0] == "v1" && segments[1] == "namespaces" &&
+			segments[3] == "addresses" && segments[4] == "claims"
+	}
+	if len(segments) == 6 {
+		return segments[0] == "v1" && segments[1] == "namespaces" && segments[3] == "teams" &&
+			(segments[5] == "visibility" || segments[5] == "certificates")
+	}
+	return len(segments) == 7 &&
+		segments[0] == "v1" && segments[1] == "namespaces" && segments[3] == "teams" &&
+		segments[5] == "certificates" && segments[6] == "revoke"
 }
 
 func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, body any) (*http.Request, error) {
