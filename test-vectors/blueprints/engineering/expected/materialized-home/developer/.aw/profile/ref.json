@@ -6,16 +6,18 @@
     ".aw/profile/instructions.md",
     "skills/implement/SKILL.md",
     ".aw/profile/skills/implement/SKILL.md",
-    ".claude/skills/implement/SKILL.md",
+    "skills/implement/assets/checklist.md",
+    ".aw/profile/skills/implement/assets/checklist.md",
+    ".claude/skills/implement",
     "artifacts/handoff-template.md",
     ".aw/profile/artifacts/handoff-template.md",
     ".aw/profile/ref.json"
   ],
-  "profile_digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+  "profile_digest": "sha256:02bc3dc1a0669a1b29048822555f68bfda1ebe0c1ade5d34ff262f617cf7b838",
   "profile_ref": "developer",
   "profile_version": "0.1.0",
   "runtime_kind": "claude-code",
-  "source_blueprint_digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+  "source_blueprint_digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
   "source_blueprint_ref": "aweb.engineering",
   "source_blueprint_version": "0.1.0"
 }
