@@ -7,11 +7,61 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
+
+func TestLibraryManifestLocalMaterializeRejectsUnsignedReadOnlyToolBeforeRequest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_HOME", "")
+	managed := []string{"AGENTS.md", ".aw/profile/ref.json"}
+	pin := recordedProfileRef{ProfileRef: "developer", ProfileVersion: "0.1.0", ProfileDigest: "sha256:profile", RuntimeKind: "claude-code", ManagedSet: managed}
+	refData, err := json.Marshal(pin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"profile_ref":     "developer",
+			"profile_version": "0.1.0",
+			"profile_digest":  "sha256:profile",
+			"home_files": []blueprint.LibraryHomeFile{
+				{Path: "AGENTS.md", Kind: "file", ContentUTF8: "unsigned\n"},
+				{Path: ".aw/profile/ref.json", Kind: "file", ContentUTF8: string(refData)},
+			},
+		})
+	}))
+	defer server.Close()
+	pluginDir := filepath.Join(home, ".aw", "plugins", "library")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"manifest_version":1,"app":{"id":"library","version":"test","origin":"` + server.URL + `"},"tools":[` +
+		`{"name":"materialize","method":"GET","path":"/v1/materialize","auth":"none","input_schema":{"type":"object","properties":{"runtime_kind":{"type":"string"},"target":{"type":"string"}}},"params":[{"name":"runtime_kind","in":"query"},{"name":"target","in":"query"}],"mutation":false}]}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = withWorkingDir(home, func() error {
+		_, _, err := executeInstalledManifestTool("library", []string{"materialize", "--runtime_kind", "claude-code", "--target", "local"})
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "signed mutation") {
+		t.Fatalf("unsigned local materialize error=%v", err)
+	}
+	if called {
+		t.Fatal("unsigned read-only materialize reached the remote endpoint")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("unsigned response mutated AGENTS.md: %v", err)
+	}
+}
 
 func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *testing.T) {
 	home := t.TempDir()

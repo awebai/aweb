@@ -558,12 +558,16 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 	return &out, nil
 }
 
-func applyLibraryManifestLocalMaterialize(name, verb string, args map[string]any, body []byte) error {
+func isLibraryManifestLocalMaterialize(name, verb string, args map[string]any) bool {
 	if name != libraryPluginName || verb != "materialize" {
-		return nil
+		return false
 	}
 	target, ok := args["target"].(string)
-	if !ok || strings.TrimSpace(target) != "local" {
+	return ok && strings.TrimSpace(target) == "local"
+}
+
+func applyLibraryManifestLocalMaterialize(name, verb string, args map[string]any, body []byte) error {
+	if !isLibraryManifestLocalMaterialize(name, verb, args) {
 		return nil
 	}
 	runtimeKind, ok := args["runtime_kind"].(string)
