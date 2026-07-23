@@ -1101,7 +1101,7 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
 
 
 @pytest.mark.asyncio
-async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conversation_id(aweb_cloud_db):
+async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_unreachable(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
     local_did_key = "did:key:z6MkLocalOnly"
     await _insert_team(aweb_cloud_db.aweb_db, "backend:remote.example")
@@ -1112,6 +1112,16 @@ async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conv
         did_key=bob_did_key,
         did_aw="did:aw:bob",
         address="remote.example/bob",
+    )
+    retired_routed_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_id, did_key, alias, identity_scope, role, status, deleted_at)
+        VALUES
+            ('backend:remote.example', $1, 'retired-routed', 'local', 'developer', 'deleted', NOW())
+        RETURNING agent_id
+        """,
+        local_did_key,
     )
     conversation_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
@@ -1126,10 +1136,11 @@ async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conv
         INSERT INTO {{tables.conversation_participants}}
             (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
         VALUES
-            ($1, 'did:key:z6MkLocalOnly', NULL, 'local', 'did:key:z6MkLocalOnly', 'https://local.example', 'federation:https://local.example', 'initiator'),
-            ($1, 'did:aw:bob', $2, 'bob', 'remote.example/bob', NULL, 'local', 'participant')
+            ($1, 'did:key:z6MkLocalOnly', $2, 'retired-routed', 'did:key:z6MkLocalOnly', 'https://local.example', 'federation:https://local.example', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'remote.example/bob', NULL, 'local', 'participant')
         """,
         conversation_id,
+        retired_routed_agent_id,
         bob_agent_id,
     )
     registry = AsyncMock()
@@ -1204,6 +1215,15 @@ async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conv
     assert envelope["target_current_did_key"] == local_did_key
     assert envelope["target_delivery_origin"] == "https://local.example"
 
+    retired_local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_id, did_key, alias, identity_scope, role, status, deleted_at)
+        VALUES
+            ('backend:remote.example', 'did:key:z6MkNoRoute', 'retired-local', 'local', 'developer', 'deleted', NOW())
+        RETURNING agent_id
+        """
+    )
     blocked_conversation_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1217,10 +1237,11 @@ async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conv
         INSERT INTO {{tables.conversation_participants}}
             (conversation_id, did, agent_id, alias, address, transport_hint, role)
         VALUES
-            ($1, 'did:key:z6MkNoRoute', NULL, 'local', 'did:key:z6MkNoRoute', 'local-metadata-only', 'initiator'),
-            ($1, 'did:aw:bob', $2, 'bob', 'remote.example/bob', 'local', 'participant')
+            ($1, 'did:key:z6MkNoRoute', $2, 'retired-local', 'did:key:z6MkNoRoute', 'local-metadata-only', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'remote.example/bob', 'local', 'participant')
         """,
         blocked_conversation_id,
+        retired_local_agent_id,
         bob_agent_id,
     )
     blocked_message_id = str(uuid4())
@@ -1258,7 +1279,13 @@ async def test_mail_reply_to_local_didkey_requires_learned_return_route_not_conv
         )
 
     assert blocked.status_code == 422, blocked.text
-    assert "Local did:key recipient requires local resolution or learned return route" in blocked.text
+    detail = blocked.json()["detail"]
+    assert "retired-local" in detail
+    assert "retired" in detail
+    assert "unreachable" in detail
+    assert "Start a new conversation with an active recipient" in detail
+    assert "local resolution" not in detail
+    assert "learned return route" not in detail
     assert len(remote_requests) == 1
 
 

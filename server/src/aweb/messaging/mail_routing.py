@@ -67,15 +67,21 @@ def with_requested_address(row: dict, address: str) -> dict:
 
 async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     address = str(participant.get("address") or "").strip()
+    did = str(participant.get("did") or "").strip()
     if participant.get("agent_id") is not None:
         local_recipient = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
         if local_recipient is not None:
             return with_requested_address(local_recipient, address) if address else local_recipient
+        if did.startswith("did:key:") and not participant_delivery_origin(participant):
+            alias = str(participant.get("alias") or did).strip()
+            raise ValidationError(
+                f'Conversation recipient "{alias}" has been retired and is unreachable. '
+                "Start a new conversation with an active recipient."
+            )
 
     local_recipient = await _local_recipient_from_address(db, address=address)
     if local_recipient is not None:
         return with_requested_address(local_recipient, address)
-    did = str(participant.get("did") or "").strip()
     if did.startswith("did:key:") and not participant_delivery_origin(participant):
         raise ValidationError("Local did:key recipient requires local resolution or learned return route")
     return participant_recipient(participant)
