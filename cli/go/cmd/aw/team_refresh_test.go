@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
+	"github.com/spf13/cobra"
 )
 
 // writeLibraryShelfManifestPluginForTest installs a library plugin whose manifest
@@ -47,6 +49,12 @@ func TestRefreshPublicLibraryProfileNoOpsWhenDigestUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 	old := recordedProfileRef{LibraryURL: server.URL, ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", ManagedSet: []string{"AGENTS.md", ".aw/profile/ref.json"}}
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "ref.json"), []byte("recorded pin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("local existing\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +69,49 @@ func TestRefreshPublicLibraryProfileNoOpsWhenDigestUnchanged(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
 	if err != nil || string(data) != "local existing\n" {
 		t.Fatalf("no-op refresh wrote AGENTS.md: %q err=%v", data, err)
+	}
+}
+
+func TestRefreshPublicLibraryProfileMaterializesMissingManagedPathDespiteUnchangedDigest(t *testing.T) {
+	home := t.TempDir()
+	files := testLibraryProfilePayloadFiles()
+	digest := testLibraryProfilePayloadDigest(t, files)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer server.Close()
+	old := recordedProfileRef{LibraryURL: server.URL, ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", ManagedSet: []string{"AGENTS.md", ".aw/profile/ref.json"}}
+	refPath := filepath.Join(home, ".aw", "profile", "ref.json")
+	if err := os.MkdirAll(filepath.Dir(refPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refData, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(refPath, refData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh: %v", err)
+	}
+	if !strings.Contains(out.String(), "re-materialized") {
+		t.Fatalf("repair did not report written files: %q", out.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(home, "AGENTS.md")); err != nil || !strings.Contains(string(data), "Coordinate.") {
+		t.Fatalf("missing body was not materialized: %q err=%v", data, err)
 	}
 }
 
