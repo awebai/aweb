@@ -807,6 +807,131 @@ type installedManifestToolResult struct {
 	Body   []byte
 }
 
+type manifestToolParamInfo struct {
+	Name        string
+	Location    string
+	Type        string
+	Description string
+	Required    bool
+}
+
+func installedManifestTool(manifest appmanifest.Manifest, verb string) (*appmanifest.Tool, error) {
+	for i := range manifest.Tools {
+		if strings.TrimSpace(manifest.Tools[i].Name) == strings.TrimSpace(verb) {
+			return &manifest.Tools[i], nil
+		}
+	}
+	return nil, fmt.Errorf("tool %q not found", verb)
+}
+
+func manifestToolParamInfos(tool *appmanifest.Tool) []manifestToolParamInfo {
+	if tool == nil {
+		return nil
+	}
+	required := map[string]bool{}
+	switch values := tool.InputSchema["required"].(type) {
+	case []any:
+		for _, value := range values {
+			required[fmt.Sprint(value)] = true
+		}
+	case []string:
+		for _, value := range values {
+			required[value] = true
+		}
+	}
+	properties, _ := tool.InputSchema["properties"].(map[string]any)
+	infos := make([]manifestToolParamInfo, 0, len(tool.Params))
+	for _, param := range tool.Params {
+		name := strings.TrimSpace(param.Name)
+		info := manifestToolParamInfo{Name: name, Location: strings.TrimSpace(param.In), Type: "string", Required: required[name]}
+		if property, ok := properties[name].(map[string]any); ok {
+			if value := strings.TrimSpace(fmt.Sprint(property["type"])); value != "" && value != "<nil>" {
+				info.Type = value
+			}
+			info.Description = strings.TrimSpace(fmt.Sprint(property["description"]))
+			if info.Description == "<nil>" {
+				info.Description = ""
+			}
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+func renderInstalledManifestAppHelp(name string, manifest appmanifest.Manifest) []byte {
+	var out strings.Builder
+	fmt.Fprintf(&out, "Usage:\n  aw %s <verb> [flags]\n  aw %s help [verb]\n\nAvailable verbs:\n", name, name)
+	for _, tool := range manifest.Tools {
+		fmt.Fprintf(&out, "  %-20s %s\n", strings.TrimSpace(tool.Name), strings.TrimSpace(tool.Description))
+	}
+	return []byte(out.String())
+}
+
+func renderInstalledManifestVerbHelp(name string, tool *appmanifest.Tool) []byte {
+	var out strings.Builder
+	fmt.Fprintf(&out, "Usage:\n  aw %s %s [flags]\n", name, strings.TrimSpace(tool.Name))
+	if description := strings.TrimSpace(tool.Description); description != "" {
+		fmt.Fprintf(&out, "\n%s\n", description)
+	}
+	infos := manifestToolParamInfos(tool)
+	if len(infos) > 0 {
+		out.WriteString("\nFlags:\n")
+		for _, info := range infos {
+			qualifiers := []string{info.Location}
+			if info.Required {
+				qualifiers = append(qualifiers, "required")
+			}
+			fmt.Fprintf(&out, "  --%s <%s>  %s", info.Name, info.Type, strings.Join(qualifiers, ", "))
+			if info.Description != "" {
+				fmt.Fprintf(&out, ". %s", info.Description)
+			}
+			out.WriteByte('\n')
+		}
+	}
+	mode := strings.TrimSpace(tool.Body.Mode)
+	if mode == "" {
+		mode = "json"
+	}
+	out.WriteString("\nBody:\n")
+	if mode == "raw" {
+		fmt.Fprintf(&out, "  --body-file <path> supplies the raw body (%s); raw parameter: --%s.\n", strings.TrimSpace(tool.Body.ContentType), strings.TrimSpace(tool.Body.RawParam))
+	} else {
+		out.WriteString("  --body-file <path> supplies a JSON object; explicit body flags merge over matching file values.\n")
+	}
+	return []byte(out.String())
+}
+
+func validateManifestDispatchArgs(name string, tool *appmanifest.Tool, args map[string]any) error {
+	known := map[string]bool{}
+	valid := make([]string, 0, len(tool.Params)+1)
+	for _, info := range manifestToolParamInfos(tool) {
+		known[info.Name] = true
+		valid = append(valid, "--"+info.Name)
+	}
+	valid = append(valid, "--body-file")
+	sort.Strings(valid)
+	var unknown []string
+	for arg := range args {
+		if !known[arg] {
+			unknown = append(unknown, "--"+arg)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return usageError("unknown flag %s for %s %s; valid flags: %s", strings.Join(unknown, ", "), name, strings.TrimSpace(tool.Name), strings.Join(valid, ", "))
+}
+
+func isManifestHelpToken(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "--help", "-h", "help":
+		return true
+	default:
+		return false
+	}
+}
+
 func dispatchInstalledManifestPlugin(name string, args []string) (int, bool) {
 	result, exists, err := executeInstalledManifestTool(name, args)
 	if !exists {
@@ -846,12 +971,38 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	if err := decoder.Decode(&manifest); err != nil {
 		return nil, true, fmt.Errorf("decode manifest %s: %w", manifestPath, err)
 	}
+	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
+		return nil, true, err
+	}
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
-		return nil, true, fmt.Errorf("missing verb for app %q", name)
+		return nil, true, fmt.Errorf("missing verb for app %q; run `aw %s --help`", name, name)
+	}
+	if isManifestHelpToken(args[0]) {
+		if strings.TrimSpace(args[0]) == "help" && len(args) == 2 {
+			tool, err := installedManifestTool(manifest, args[1])
+			if err != nil {
+				return nil, true, err
+			}
+			return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestVerbHelp(name, tool)}, true, nil
+		}
+		if len(args) != 1 {
+			return nil, true, usageError("help accepts at most one verb")
+		}
+		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestAppHelp(name, manifest)}, true, nil
 	}
 	verb := strings.TrimSpace(args[0])
+	tool, err := installedManifestTool(manifest, verb)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(args) == 2 && isManifestHelpToken(args[1]) {
+		return &installedManifestToolResult{Status: http.StatusOK, Body: renderInstalledManifestVerbHelp(name, tool)}, true, nil
+	}
 	parsedArgs, rawBody, err := parseManifestDispatchArgs(args[1:])
 	if err != nil {
+		return nil, true, err
+	}
+	if err := validateManifestDispatchArgs(name, tool, parsedArgs); err != nil {
 		return nil, true, err
 	}
 	spec, err := appmanifest.Interpret(appmanifest.InterpretRequest{
