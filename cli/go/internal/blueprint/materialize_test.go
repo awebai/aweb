@@ -43,6 +43,17 @@ func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
 	if ref.RuntimeKind != "pi" {
 		t.Fatalf("runtime_kind=%q", ref.RuntimeKind)
 	}
+	for _, rel := range []string{
+		"skills/implement/assets/checklist.md",
+		".aw/profile/skills/implement/assets/checklist.md",
+	} {
+		if _, err := os.Stat(filepath.Join(target, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("runtime-independent skill asset %s: %v", rel, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(target, ".claude", "skills", "implement")); !os.IsNotExist(err) {
+		t.Fatalf("pi runtime should not have a Claude skill link: %v", err)
+	}
 }
 
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
@@ -62,6 +73,53 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 	}
 	if _, err := os.Lstat(filepath.Join(target, "AGENTS.md")); err != nil {
 		t.Fatalf("profile was not materialized: %v", err)
+	}
+}
+
+func TestMaterializeLocalProfileForceMigratesLegacyClaudeSkillFileLink(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	legacyDir := filepath.Join(target, ".claude", "skills", "implement")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(legacyDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, RuntimeKind: "claude-code", Force: true}); err != nil {
+		t.Fatalf("migrate legacy Claude skill link: %v", err)
+	}
+	link := filepath.Join(target, ".claude", "skills", "implement")
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("directory skill link: %v", err)
+	}
+	if got != "../../skills/implement" {
+		t.Fatalf("directory skill link target=%q", got)
+	}
+}
+
+func TestMaterializeLocalProfileForceDoesNotReplaceUnmanagedClaudeSkillDirectory(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	userFile := filepath.Join(target, ".claude", "skills", "implement", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(userFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userFile, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, RuntimeKind: "claude-code", Force: true})
+	if err == nil || !strings.Contains(err.Error(), "already exists and is not a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if got, readErr := os.ReadFile(userFile); readErr != nil || string(got) != "keep me\n" {
+		t.Fatalf("unmanaged skill directory was changed: content=%q err=%v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("preflight should prevent partial writes, stat err=%v", statErr)
 	}
 }
 

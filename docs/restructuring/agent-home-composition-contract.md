@@ -50,6 +50,8 @@ A bound (non-empty) profile materializes to:
   CLAUDE.md -> AGENTS.md         # harness symlink (§5)
   skills/                        # installed, discoverable by every harness (§6)
     <skill-name>/SKILL.md
+    <skill-name>/**               # sibling skill assets
+  .claude/skills/<skill-name> -> ../../skills/<skill-name>
   artifacts/                     # installed
     <artifact files>
   .claude/settings.json          # aw notify PostToolUse hook (§7)
@@ -157,8 +159,10 @@ Rendering rules (for byte-exactness; fixtures in §10 are the arbiter):
 file is a **symlink** to it, selected by the **operator's explicit runtime
 choice** at materialize time (`aw team add/create --runtime <rt>` /
 `…/PROFILE=<rt>`), **never inferred** from the profile's `runtime_assumptions`
-or `runtime_hints`. When `--runtime` is omitted, materialize uses a CLI-policy
-default (`claude-code`) — a default defined by the CLI, not read from the
+or `runtime_hints`. Runtime kind is required at the materialization API
+boundary. When an operator omits `--runtime`, the client resolves that omission
+to its CLI-policy default (`claude-code`) before requesting or performing
+materialization — the default is defined by the client, not read from the
 profile. Runtime launch is a separate operator action from the materialized
 home. A profile is untrusted online data; it must not decide which harness is
 composed or which process executes.
@@ -174,16 +178,18 @@ Never duplicate the body; always symlink so evolution touches one file.
 ## 6. Skills — installed where harnesses expect them
 
 Skill content is installed once, canonically, under `<home>/skills/<skill-name>/`
-— this directory holds the real files. Harnesses expect skills in specific
-standard locations; for each such standard location, materialize **creates that
-location and populates it with symlinks to the files under `skills/`**. So the
-content lives exactly once (in `skills/`) and is discoverable by every harness
-without duplication. (E.g. a harness that discovers skills under its own
-directory gets that directory created with symlinks into `skills/`.) The set of
-standard locations is pinned per harness (claude-code first); the invariant is
-that an installed skill is discoverable by whatever harness runs the home, with
-`skills/` as the single source of the files. The body's §Skills lists the
-installed skills by name so the agent knows they exist.
+— this directory holds the real files. Declaring `skills/<name>/SKILL.md`
+projects every profile payload file under `skills/<name>/**` into both that
+canonical home directory and the `.aw/profile/skills/<name>/` source mirror, so
+relative asset references remain intact.
+
+Harnesses expect skills in specific standard locations. For `claude-code`,
+materialize creates one directory symlink per skill:
+`.claude/skills/<name> -> ../../skills/<name>`. It does not create per-file
+`SKILL.md` links. Thus content lives exactly once, under `skills/`, and every
+skill-local asset is discoverable through the harness path. Other standard
+locations are pinned as harnesses are added. The body's §Skills lists installed
+skills by name so the agent knows they exist.
 
 ## 7. Team coordination block + wake-loop wiring
 
