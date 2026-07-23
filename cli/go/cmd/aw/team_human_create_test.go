@@ -654,6 +654,68 @@ func TestTeamHumanCreateRosterInvalidNameFailsBeforeInit(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateRosterNameMatchingRootAliasFailsBeforeFounding(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	root := t.TempDir()
+	t.Chdir(root)
+	teamHumanCreateAgents = []string{"developer:local", "Eng:local"}
+	initCalled := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		initCalled = true
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "roster agent name \"Eng\"") || !strings.Contains(err.Error(), "root operator alias \"eng\"") {
+		t.Fatalf("error=%v", err)
+	}
+	if initCalled {
+		t.Fatal("founding ran despite roster/root alias conflict")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf("founding state created despite preflight failure, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances", "developer")); !os.IsNotExist(statErr) {
+		t.Fatalf("earlier roster home created despite preflight failure, stat err=%v", statErr)
+	}
+}
+
+func TestTeamHumanCreateLaterRosterHomeConflictFailsBeforeFounding(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "http://127.0.0.1:8080")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:8081")
+	root := t.TempDir()
+	t.Chdir(root)
+	conflictingHome := filepath.Join(root, "agents", "instances", "reviewer", ".aw")
+	if err := os.MkdirAll(conflictingHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanCreateAgents = []string{"developer:local", "reviewer:local"}
+	initCalled := false
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		initCalled = true
+		return connectOutput{}, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil || !strings.Contains(err.Error(), "already has identity state") {
+		t.Fatalf("error=%v", err)
+	}
+	if initCalled {
+		t.Fatal("founding ran despite later roster home conflict")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf("founding state created despite preflight failure, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances", "developer")); !os.IsNotExist(statErr) {
+		t.Fatalf("earlier roster home created despite preflight failure, stat err=%v", statErr)
+	}
+}
+
 func TestTeamHumanAddRejectsExistingHomeThroughSymlinkedParent(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
@@ -962,6 +1024,52 @@ func TestTeamHumanCreateRootOperatorDefaultsToTeamName(t *testing.T) {
 	}
 }
 
+func TestTeamHumanCreateGlobalRosterScopeFailsBeforeHostedFounding(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nscope: global\nmission: Coordinate.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "coordinator", files)
+	library := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.team/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.team", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer library.Close()
+
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv(libraryURLEnvVar, library.URL)
+	t.Setenv("AWEB_API_KEY", "")
+	t.Setenv("AWEB_URL", "https://app.aweb.ai")
+	t.Setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+	teamHumanCreateUsername = "alice"
+	teamHumanCreateAgents = []string{"max@aweb.team/coordinator=claude-code"}
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		t.Fatalf("hosted founding ran despite unenrollable roster: %+v", req)
+		return nil, nil
+	}
+
+	err := runTeamHumanCreate(nil, []string{"eng"})
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	for _, want := range []string{
+		"agent max resolves to global identity scope (from profile aweb.team/coordinator)",
+		"global agents cannot be enrolled through non-interactive hosted create",
+		"pass max@aweb.team/coordinator:local=claude-code",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {
+		t.Fatalf("local state created despite preflight failure, stat err=%v", statErr)
+	}
+}
+
 func TestTeamHumanAddOmittedScopeComesFromPublicProfile(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
@@ -984,6 +1092,54 @@ func TestTeamHumanAddOmittedScopeComesFromPublicProfile(t *testing.T) {
 	}
 	if len(specs) != 1 || specs[0].Scope != awid.IdentityModeGlobal {
 		t.Fatalf("specs=%+v", specs)
+	}
+}
+
+func TestTeamHumanAddRosterCollisionAdvisoryNamesExistingAlias(t *testing.T) {
+	err := teamHumanAddRosterCollisionError([]awid.AgentView{{Alias: "Max"}}, []teamAgentSpec{{Name: "max"}})
+	if err == nil {
+		t.Fatal("expected roster collision")
+	}
+	for _, want := range []string{"agent name \"max\"", "already appears in the current team roster", "choose a different name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestTeamHumanAddRosterCollisionFailsBeforeHomeOrMembershipWrite(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	memberPub, memberPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	writeCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{Alias: "developer"}}})
+		default:
+			writeCalled = true
+			t.Fatalf("unexpected request after roster collision: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLocalTeamSignedRequestWorkspaceForTest(t, root, server.URL, "eng:local", "owner", memberDID, memberPriv)
+
+	err = runTeamHumanAdd(nil, []string{"developer:local"})
+	if err == nil || !strings.Contains(err.Error(), "already appears in the current team roster") {
+		t.Fatalf("error=%v", err)
+	}
+	if writeCalled {
+		t.Fatal("membership write attempted despite roster collision")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "instances", "developer")); !os.IsNotExist(statErr) {
+		t.Fatalf("home created despite roster collision, stat err=%v", statErr)
 	}
 }
 
@@ -1478,6 +1634,10 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 			alias, _ := body["alias"].(string)
 			certAliases = append(certAliases, strings.TrimSpace(alias))
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1799,6 +1959,10 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": revokedCertID})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
 			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		default:
@@ -1883,6 +2047,8 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
 			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback.aweb.ai/agents/remove-member":
@@ -1979,6 +2145,8 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-developer", teamID, "developer")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/blueprints/aweb.engineering/profiles/developer":
 			http.Error(w, `{"detail":"catalog unavailable"}`, http.StatusServiceUnavailable)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/default:rollback-fail.aweb.ai/agents/remove-member":

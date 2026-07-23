@@ -719,6 +719,15 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 			return nil, fmt.Errorf("workspace init rejected the API key (401)")
 		case http.StatusNotFound:
 			return nil, fmt.Errorf("workspace init target was not found or the team was deleted (404)")
+		case http.StatusConflict:
+			if mismatch, ok := parseWorkspaceInitIdentityKeyMismatch(respBody); ok {
+				guidance := fmt.Sprintf("workspace init cannot use agent name %q: it is bound to a different identity key. Choose a different agent name and retry, or ask a team operator to resolve the existing identity binding.", mismatch.Alias)
+				if mismatch.StrandedNamespace != "" {
+					guidance += fmt.Sprintf(" The server reported stranded namespace %q.", mismatch.StrandedNamespace)
+				}
+				return nil, errors.New(guidance)
+			}
+			fallthrough
 		default:
 			return nil, fmt.Errorf("POST /api/v1/workspaces/init returned %d: %s", resp.StatusCode, detail)
 		}
@@ -729,4 +738,27 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 		return nil, fmt.Errorf("decode workspace init response: %w", err)
 	}
 	return &result, nil
+}
+
+type workspaceInitIdentityKeyMismatch struct {
+	Alias             string
+	StrandedNamespace string
+}
+
+func parseWorkspaceInitIdentityKeyMismatch(body []byte) (workspaceInitIdentityKeyMismatch, bool) {
+	var envelope struct {
+		Detail json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Detail) == 0 {
+		return workspaceInitIdentityKeyMismatch{}, false
+	}
+	var detail struct {
+		Code              string `json:"code"`
+		Alias             string `json:"alias"`
+		StrandedNamespace string `json:"stranded_namespace"`
+	}
+	if err := json.Unmarshal(envelope.Detail, &detail); err != nil || strings.TrimSpace(detail.Code) != "identity_key_mismatch" || strings.TrimSpace(detail.Alias) == "" {
+		return workspaceInitIdentityKeyMismatch{}, false
+	}
+	return workspaceInitIdentityKeyMismatch{Alias: strings.TrimSpace(detail.Alias), StrandedNamespace: strings.TrimSpace(detail.StrandedNamespace)}, true
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,44 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestPostAPIKeyWorkspaceInitExplainsIdentityKeyMismatch(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail":{"code":"identity_key_mismatch","alias":"max","stranded_namespace":"legacy.aweb.ai"}}`))
+	}))
+	defer server.Close()
+
+	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{})
+	if err == nil {
+		t.Fatal("expected identity mismatch")
+	}
+	for _, want := range []string{"agent name \"max\"", "different identity key", "Choose a different agent name", "ask a team operator", "stranded namespace \"legacy.aweb.ai\""} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+	for _, forbidden := range []string{"local scope", "global scope", "dashboard", "remove"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("error %q contains unsupported guidance %q", err, forbidden)
+		}
+	}
+}
+
+func TestPostAPIKeyWorkspaceInitMalformedConflictKeepsGenericError(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail":{"code":"identity_key_mismatch","alias":7}}`))
+	}))
+	defer server.Close()
+
+	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{})
+	if err == nil || !strings.Contains(err.Error(), "POST /api/v1/workspaces/init returned 409") {
+		t.Fatalf("error=%v", err)
+	}
+}
 
 func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	t.Parallel()

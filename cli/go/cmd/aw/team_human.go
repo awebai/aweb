@@ -439,6 +439,16 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	rosterSpecs, err = resolveTeamHumanCreateRosterScopes(rosterSpecs)
+	if err != nil {
+		return err
+	}
+	if err := preflightTeamHumanCreateRosterHomes(wd, rosterSpecs); err != nil {
+		return err
+	}
+	if err := preflightTeamHumanCreateRosterAuthority(wd, rosterSpecs); err != nil {
+		return err
+	}
 	firstAgentScope, err := resolveTeamHumanCreateFirstAgentScope()
 	if err != nil {
 		return err
@@ -462,6 +472,9 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if alias == "" {
 		alias = strings.ToLower(teamName)
+	}
+	if err := preflightTeamHumanCreateRootAlias(alias, rosterSpecs); err != nil {
+		return err
 	}
 	if teamHumanCreateBYOT {
 		name := strings.TrimSpace(teamHumanCreateName)
@@ -639,6 +652,106 @@ func teamHumanCreateRosterSpecs(agents []teamAgentSpec, rootSpecIsAgentHome bool
 		return specs, nil
 	}
 	return append([]teamAgentSpec(nil), agents...), nil
+}
+
+func preflightTeamHumanCreateRootAlias(rootAlias string, specs []teamAgentSpec) error {
+	rootAlias = strings.TrimSpace(rootAlias)
+	for _, spec := range specs {
+		name := strings.TrimSpace(spec.Name)
+		if name != "" && strings.EqualFold(name, rootAlias) {
+			return usageError("roster agent name %q conflicts with root operator alias %q; choose a different --agent name or set --first-agent-name to a distinct root alias", name, rootAlias)
+		}
+	}
+	return nil
+}
+
+func resolveTeamHumanCreateRosterScopes(specs []teamAgentSpec) ([]teamAgentSpec, error) {
+	resolved := append([]teamAgentSpec(nil), specs...)
+	for i := range resolved {
+		scope := strings.TrimSpace(resolved[i].Scope)
+		if scope == "" && resolved[i].Profile != nil {
+			if strings.TrimSpace(resolved[i].LocalBlueprintDir) != "" {
+				scope = awid.IdentityModeLocal
+			} else {
+				profile, profileScope, err := resolveLibraryProfileScopeAndCache(*resolved[i].Profile)
+				if err != nil {
+					return nil, fmt.Errorf("resolve agent %s identity scope: %w", teamHumanCreateRosterSpecName(resolved[i]), err)
+				}
+				resolved[i].Profile = &profile
+				scope = profileScope
+			}
+		}
+		if scope == "" {
+			scope = awid.IdentityModeLocal
+		}
+		resolved[i].Scope = scope
+	}
+	return resolved, nil
+}
+
+func preflightTeamHumanCreateRosterHomes(wd string, specs []teamAgentSpec) error {
+	agentsRoot := filepath.Join(resolveRepoRoot(wd), "agents", "instances")
+	for _, spec := range specs {
+		name := strings.TrimSpace(spec.Name)
+		if name == "" {
+			continue
+		}
+		homeDir := filepath.Join(agentsRoot, name)
+		if spec.Profile != nil {
+			if err := preflightProfileAgentHome(homeDir); err != nil {
+				return err
+			}
+		} else if err := preflightEmptyAgentHome(homeDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func preflightTeamHumanCreateRosterAuthority(wd string, specs []teamAgentSpec) error {
+	if initIsTTY() || teamHumanCreateBYOT || strings.TrimSpace(resolveInitAPIKey()) != "" {
+		return nil
+	}
+	identityExists, err := teamCreateHasIdentityMaterial(wd)
+	if err != nil {
+		return err
+	}
+	if identityExists {
+		return nil
+	}
+	registryURL, err := resolveInitAWIDRegistryURL()
+	if err != nil {
+		return err
+	}
+	if initShouldUseImplicitLocalFlow(registryURL) {
+		return nil
+	}
+	for _, spec := range specs {
+		if strings.TrimSpace(spec.Scope) != awid.IdentityModeGlobal {
+			continue
+		}
+		name := teamHumanCreateRosterSpecName(spec)
+		if spec.Profile == nil {
+			return usageError("agent %s resolves to global identity scope; global agents cannot be enrolled through non-interactive hosted create; pass %s:local (or use an API key/controller-authority flow that supports global identity enrollment)", name, name)
+		}
+		profileRef := strings.TrimSpace(spec.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(spec.Profile.ProfileRef)
+		override := name + "@" + profileRef + ":local"
+		if runtimeKind := strings.TrimSpace(spec.RuntimeKind); runtimeKind != "" {
+			override += "=" + runtimeKind
+		}
+		return usageError("agent %s resolves to global identity scope (from profile %s); global agents cannot be enrolled through non-interactive hosted create; pass %s (or use an API key/controller-authority flow that supports global identity enrollment)", name, profileRef, override)
+	}
+	return nil
+}
+
+func teamHumanCreateRosterSpecName(spec teamAgentSpec) string {
+	if name := strings.TrimSpace(spec.Name); name != "" {
+		return name
+	}
+	if spec.Profile != nil {
+		return strings.TrimSpace(spec.Profile.ProfileRef)
+	}
+	return strings.TrimSpace(spec.Raw)
 }
 
 func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
@@ -1025,6 +1138,48 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 	return "", fmt.Errorf("server returned no available names for %s agent", scope)
 }
 
+func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgentSpec) error {
+	client, selection, err := resolveClientSelectionForDir(wd)
+	if err != nil || client == nil || client.Client == nil || selection == nil {
+		if err != nil {
+			debugLog("resolve team roster for agent-name preflight: %v", err)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	roster, err := client.Client.ListAgents(ctx)
+	cancel()
+	if err != nil {
+		debugLog("list team roster for agent-name preflight: %v", err)
+		return nil
+	}
+	freshSpecs := make([]teamAgentSpec, 0, len(specs))
+	for _, spec := range specs {
+		homeSelection, homeErr := resolveSelectionForDir(filepath.Join(agentsRoot, strings.TrimSpace(spec.Name)))
+		if homeErr == nil && strings.EqualFold(strings.TrimSpace(homeSelection.TeamID), strings.TrimSpace(selection.TeamID)) && strings.EqualFold(strings.TrimSpace(homeSelection.Alias), strings.TrimSpace(spec.Name)) {
+			continue
+		}
+		freshSpecs = append(freshSpecs, spec)
+	}
+	return teamHumanAddRosterCollisionError(roster.Agents, freshSpecs)
+}
+
+func teamHumanAddRosterCollisionError(agents []awid.AgentView, specs []teamAgentSpec) error {
+	existing := make(map[string]struct{}, len(agents))
+	for _, agent := range agents {
+		if alias := strings.TrimSpace(agent.Alias); alias != "" {
+			existing[strings.ToLower(alias)] = struct{}{}
+		}
+	}
+	for _, spec := range specs {
+		name := strings.TrimSpace(spec.Name)
+		if _, found := existing[strings.ToLower(name)]; found {
+			return usageError("agent name %q already appears in the current team roster; choose a different name and retry", name)
+		}
+	}
+	return nil
+}
+
 func shouldUseAPIKeyBootstrapForTeamAdd(wd string) (bool, error) {
 	if strings.TrimSpace(resolveInitAPIKey()) == "" {
 		return false, nil
@@ -1174,6 +1329,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	}
 	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args, opts.Specs)
 	if err != nil {
+		return err
+	}
+	if err := preflightTeamHumanAddRosterAliases(wd, agentsRoot, resolvedSpecs); err != nil {
 		return err
 	}
 	apiKeyBootstrapMode := opts.ForceAPIKey
