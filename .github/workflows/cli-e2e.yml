@@ -1,15 +1,16 @@
 name: CLI e2e (profile/team/Library)
 
 # Real-stack profile/team/Library e2e net (default-aabq.4, part 2). Brings up the
-# awid + aweb + Library docker-compose stack from source, seeds the engineering
-# pack, and runs the AW_E2E suite driving the REAL aw binary against the live
-# services. This is the blocking gate that catches the materialize/team/Library
-# regressions hermetic unit tests miss (the class of P0s that shipped on
+# awid + aweb + Library docker-compose stack from source, seeds the current
+# aweb.team catalog blueprint, and runs the AW_E2E suite driving the REAL aw
+# binary against the live services. This is the blocking gate that catches the
+# materialize/team/Library regressions hermetic unit tests miss (the class of
+# P0s that shipped on
 # green-plus-reviewer-ACK).
 #
 # It needs the two sibling checkouts the stack builds from / seeds:
 #   awebai/library      (public) -> Library service build context
-#   awebai/blueprints   (public) -> the aweb.engineering pack the seed publishes
+#   awebai/blueprints   (public) -> the aweb.team blueprint the seed publishes
 # Both are public, so the default GITHUB_TOKEN can clone them.
 
 on:
@@ -114,7 +115,7 @@ jobs:
           # The stack auto-resolves siblings, but in CI the repos are checked out
           # under explicit paths, so point at them directly.
           LIBRARY_E2E_LIBRARY_CONTEXT: ${{ github.workspace }}/library
-          LIBRARY_E2E_BLUEPRINT_SRC: ${{ github.workspace }}/blueprints/engineering
+          LIBRARY_E2E_BLUEPRINT_SRC: ${{ github.workspace }}/blueprints/team
           # Route `compose up --build` through buildx bake so the overlay's
           # type=gha cache_from/cache_to are honored, and apply that CI-only
           # overlay so awid/aweb/library builds use the GHA layer cache.

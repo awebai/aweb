@@ -39,6 +39,8 @@ func awebURL() string    { return envOr("AWEB_URL", "http://127.0.0.1:18000") }
 func awidURL() string    { return envOr("AWID_REGISTRY_URL", "http://127.0.0.1:18010") }
 func libraryURL() string { return envOr("LIBRARY_E2E_LIBRARY_URL", "http://127.0.0.1:18765") }
 
+const seededBlueprintRef = "aweb.team"
+
 // awBinary resolves the built aw binary: AW_BIN if set, else cli/go/aw (one
 // directory up from this package).
 func awBinary(t *testing.T) string {
@@ -214,7 +216,8 @@ func TestRealStackTeamAuthReachesLibrary(t *testing.T) {
 }
 
 // TestRealStackSeededBlueprintVisible proves the stack is seeded: the public
-// catalog, fetched through the real binary, contains the aweb.engineering pack.
+// catalog, fetched through the real binary, contains the seeded aweb.team
+// blueprint.
 func TestRealStackSeededBlueprintVisible(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
@@ -229,16 +232,16 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 	}
 	found := false
 	for _, bp := range catalog {
-		if ref, _ := bp["blueprint_ref"].(string); ref == "aweb.engineering" {
+		if ref, _ := bp["blueprint_ref"].(string); ref == seededBlueprintRef {
 			found = true
-			// Assert it is versioned, not a specific version: the pack evolves
-			// (it has bumped 0.2.3 -> 0.2.4), so pinning a version is brittle.
+			// Assert it is versioned, not a specific version: the catalog source
+			// evolves independently, so pinning a version here is brittle.
 			if v, _ := bp["version"].(string); strings.TrimSpace(v) == "" {
-				t.Errorf("aweb.engineering has empty version")
+				t.Errorf("%s has empty version", seededBlueprintRef)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("aweb.engineering not found in catalog; got %d blueprints", len(catalog))
+		t.Fatalf("%s not found in catalog; got %d blueprints", seededBlueprintRef, len(catalog))
 	}
 }

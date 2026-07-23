@@ -55,16 +55,17 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	// create + public materialize, then adopt the first agent's public pin onto
 	// the private shelf so proposed/approved shelf mints compose with refresh.
 	if out, err := awInRepo("team", "create", "eng",
-		"--agent", "coordinator@aweb.engineering/coordinator=claude-code",
-		"--agent", "reviewer@aweb.engineering/reviewer=pi"); err != nil {
+		"--agent", "coordinator@"+seededBlueprintRef+"/coordinator=claude-code",
+		"--agent", "reviewer@"+seededBlueprintRef+"/reviewer=pi"); err != nil {
 		t.Fatalf("aw team create --agent failed: %v\n%s", err, out)
 	}
-	if out, err := awInRepo("team", "adopt", "coordinator", "--home", repo); err != nil {
+	coordinatorHome := filepath.Join(repo, "agents", "instances", "coordinator")
+	if out, err := awInRepo("team", "adopt", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team adopt failed: %v\n%s", err, out)
 	}
 
-	before := profileRefShow(t, awInRepo, "coordinator", "--home", repo)
-	if before.SourceBlueprintRef != "aweb.engineering" || before.ProfileRef != "coordinator" || before.ProfileVersion == "" {
+	before := profileRefShow(t, awInRepo, "coordinator", "--home", coordinatorHome)
+	if before.SourceBlueprintRef != seededBlueprintRef || before.ProfileRef != "coordinator" || before.ProfileVersion == "" {
 		t.Fatalf("unexpected recorded ref before refresh: %+v", before)
 	}
 
@@ -73,11 +74,11 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	marker := proposeApproveInstructionsChange(t, awInRepo)
 
 	// refresh: re-materialize from the latest shelf version (the approved one).
-	if out, err := awInRepo("team", "refresh", "coordinator", "--home", repo); err != nil {
+	if out, err := awInRepo("team", "refresh", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team refresh failed: %v\n%s", err, out)
 	}
 
-	after := profileRefShow(t, awInRepo, "coordinator", "--home", repo)
+	after := profileRefShow(t, awInRepo, "coordinator", "--home", coordinatorHome)
 	if after.ProfileVersion == before.ProfileVersion {
 		t.Fatalf("refresh did not pick up the approved version (still %s)", after.ProfileVersion)
 	}
@@ -85,7 +86,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		t.Fatalf("refresh kept the old profile digest %s; the approved proposal changed the content", after.ProfileDigest)
 	}
 	// The approved change is visible in the re-materialized instructions.
-	instr, err := os.ReadFile(filepath.Join(repo, ".aw", "profile", "instructions.md"))
+	instr, err := os.ReadFile(filepath.Join(coordinatorHome, ".aw", "profile", "instructions.md"))
 	if err != nil {
 		t.Fatalf("re-materialized instructions.md missing: %v", err)
 	}

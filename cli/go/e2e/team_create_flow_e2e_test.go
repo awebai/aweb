@@ -12,9 +12,9 @@
 // the public catalog URL directly. The Library plugin is deliberately not
 // installed: default team materialization must not depend on shelf/plugin state.
 //
-// NOTE: `aw team create` uses the shared awid namespace "local", so this test
-// needs a freshly-seeded stack (which `make -C cli e2e` provides). Re-running it
-// against a stack that already has a "local" team conflicts by design.
+// This test bootstraps a unique BYOT namespace, so it does not contend with the
+// refresh-flow test that exercises first-team creation in the shared "local"
+// namespace.
 package e2e
 
 import (
@@ -52,9 +52,24 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		"AWID_SKIP_DNS_VERIFY=1",
 		"NO_COLOR=1",
 	)
-	cmd := exec.Command(bin, "team", "create", "eng",
-		"--profile", "aweb.engineering/coordinator=claude-code",
-		"--profile", "aweb.engineering/reviewer=pi")
+	// Give this create flow its own BYOT namespace. Another e2e test exercises
+	// local first-team creation in the same real stack; a unique namespace keeps
+	// the tests independent instead of racing for the singleton `local` domain.
+	namespace := "team-create-" + randSuffix(t) + ".test"
+	bootstrap := filepath.Join(root, "bootstrap")
+	if err := os.MkdirAll(bootstrap, 0o755); err != nil {
+		t.Fatalf("mkdir bootstrap: %v", err)
+	}
+	idCreate := exec.Command(bin, "id", "create", "--domain", namespace, "--name", "owner", "--registry", awidURL(), "--skip-dns-verify")
+	idCreate.Dir = bootstrap
+	idCreate.Env = env
+	if out, err := idCreate.CombinedOutput(); err != nil {
+		t.Fatalf("bootstrap BYOT namespace controller failed: %v\noutput:\n%s", err, out)
+	}
+
+	cmd := exec.Command(bin, "team", "create", "eng", "--byot", "--namespace", namespace, "--registry", awidURL(),
+		"--profile", seededBlueprintRef+"/coordinator=claude-code",
+		"--profile", seededBlueprintRef+"/reviewer=pi")
 	cmd.Dir = repo
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -64,7 +79,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 
 	// Profile-only team add uses --blueprint + --library-url directly (no plugin)
 	// and proves provider selection is a client-side URL, not shelf state.
-	addCmd := exec.Command(bin, "team", "add", "developer@developer", "--blueprint", "aweb.engineering", "--library-url", libraryURL(), "--runtime", "local-shell")
+	addCmd := exec.Command(bin, "team", "add", "developer@developer", "--blueprint", seededBlueprintRef, "--library-url", libraryURL(), "--runtime", "local-shell")
 	addCmd.Dir = repo
 	addCmd.Env = env
 	if out, err := addCmd.CombinedOutput(); err != nil {

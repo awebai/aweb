@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end Library stack: bring up awid + aweb + Library on one network,
-# seed the aweb.engineering pack into Library, and verify it is live.
+# seed the aweb.team catalog blueprint into Library, and verify it is live.
 #
 # This is the self-hosted tier of the aweb e2e harness (default-aabq.1):
 # postgres + redis + awid + OSS aweb + Library, all built from source, anchored
@@ -11,12 +11,12 @@
 #   ./scripts/e2e-library-stack.sh [all|up|seed|down]
 #     all  (default)  up + wait healthy + seed + verify + teardown
 #     up              build + start the stack, wait until healthy, leave running
-#     seed            seed the engineering pack into an already-running stack
+#     seed            seed the aweb.team blueprint into an already-running stack
 #     down            tear the stack down and remove all state (-v)
 #
 # Cross-repo dependencies (see docs/e2e-library-stack.md):
 #   ../library              Library service source (build context)
-#   ../blueprints/engineering   the engineering pack seeded into Library
+#   ../blueprints/team      the aweb.team blueprint seeded into Library
 # Override either with LIBRARY_E2E_LIBRARY_CONTEXT / LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Environment overrides:
@@ -83,7 +83,7 @@ resolve_sibling() {
 # Cross-repo build inputs. Exported so the compose file's build context and the
 # seed script pick them up.
 export LIBRARY_E2E_LIBRARY_CONTEXT="$(resolve_sibling library "${LIBRARY_E2E_LIBRARY_CONTEXT:-}")"
-export LIBRARY_E2E_BLUEPRINT_SRC="$(resolve_sibling blueprints/engineering "${LIBRARY_E2E_BLUEPRINT_SRC:-}")"
+export LIBRARY_E2E_BLUEPRINT_SRC="$(resolve_sibling blueprints/team "${LIBRARY_E2E_BLUEPRINT_SRC:-}")"
 # Keep the team-auth audience the seed signs in lockstep with the port mapping.
 export LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN="${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-$LIBRARY_URL}"
 # Pin the published ports compose binds so they match the health-check URLs.
@@ -129,12 +129,12 @@ stack_up() {
 }
 
 stack_seed() {
-  echo "=== Seeding the engineering pack ==="
+  echo "=== Seeding the aweb.team catalog blueprint ==="
   AW_BIN="${AW_BIN:-aw}" \
   LIBRARY_E2E_AWID_URL="$AWID_URL" \
   LIBRARY_E2E_LIBRARY_URL="$LIBRARY_URL" \
   LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
-  python3 "$REPO_ROOT/scripts/e2e/seed_engineering_pack.py"
+  python3 "$REPO_ROOT/scripts/e2e/seed_catalog_blueprint.py"
 }
 
 stack_down() {
@@ -157,7 +157,7 @@ case "$ACTION" in
     stack_up
     stack_seed
     echo ""
-    echo "ALL PASSED: awid + aweb + Library up healthy and seeded with aweb.engineering"
+    echo "ALL PASSED: awid + aweb + Library up healthy and seeded with aweb.team"
     ;;
   *)
     echo "unknown action: $ACTION (use: all|up|seed|down)" >&2
