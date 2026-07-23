@@ -843,6 +843,7 @@ transient `did:key`.
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
 | `PATCH /v1/agents/me` | Update workspace info |
+| `POST /v1/agents/{alias}/replace-key` | Compare-and-swap a local identity key and append the audit record; auth is a request signature by the team's controller `did:key`, not member team-cert auth |
 | `POST /v1/agents/{alias}/control` | Control signals |
 | `GET /v1/conversations` | List conversations visible to the authenticated identity across mail and chat. Auth: MessagingAuth (identity-scoped, not team-scoped). |
 | `GET /v1/contacts` | List contacts |
@@ -853,6 +854,16 @@ transient `did:key`.
 auth for coordination routes. The request body is empty (`{}`). On
 success it returns `{ team_id, name_prefix }`. If no classic alias
 is available, it returns HTTP 409 with detail `alias_exhausted`.
+
+`POST /v1/agents/{alias}/replace-key` is deliberately controller-authorized.
+Its signed payload binds team, alias, expected old and proposed new `did:key`,
+old/new certificate ids, operation, and timestamp. The server updates only a
+`local` agent row with an exact-old-key compare-and-swap and writes
+`local_identity_key_replaced` to `audit_log` in the same database transaction.
+An exact controller-authorized replay (all DID and certificate fields match)
+returns the original audit result, so a lost committed response can be safely
+reconciled; a different request for the already-installed new key conflicts.
+A member key — including the old key — cannot authorize this route.
 
 ### Coordination
 

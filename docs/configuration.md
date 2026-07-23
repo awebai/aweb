@@ -180,7 +180,12 @@ Back up `.aw/encryption-keys/` with the workspace. Losing an archived
 encryption private key makes messages encrypted to that key unrecoverable; the
 server cannot repair or decrypt them.
 
-This key is worktree-local.
+This key is worktree-local. For a local team-scoped identity it is also the
+identity itself. Move or back up the complete `.aw/` tree when carrying that
+identity to another machine. Regenerating `signing.key` instead creates a new
+identity unless a local-controller team operator authorizes `aw team
+replace-key`; correspondents will flag an unrecorded change as an identity
+mismatch.
 
 ## Team Certificates: `.aw/team-certs/`
 

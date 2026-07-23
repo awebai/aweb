@@ -207,6 +207,7 @@ the later wire/schema cleanup removes the legacy names. The model term is
 | Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
+| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | `aw team replace-key NAME --old-did-key OLD --new-did-key NEW --home AGENT_HOME` | Local-controller/BYOT teams in phase 1; requires the locally held team controller key. Hosted owner/admin integration is pending. |
 | Remove member | Revoke a team certificate | `aw team remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
 
 ## Key material and local files
@@ -220,8 +221,35 @@ did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
 ```
 
 Self-custodial workspaces store the private key locally in `.aw/signing.key`.
-Global identity metadata is stored in `.aw/identity.yaml`. Team certificates are
-stored under `.aw/team-certs/`, and membership selection state is stored in
+For a local team-scoped identity, that key **is the identity**: generating a new
+key without a team-authorized replacement creates a different identity, and
+existing correspondents will correctly flag the unexpected key as an identity
+mismatch. Copying the complete `.aw/` directory is how the same identity and
+membership survive a move to another machine; a fresh checkout plus a freshly
+generated key is not continuity.
+
+When forced replacement is necessary (lost `.aw`, re-provisioning, ephemeral
+respawn, or compromise), a local-controller/BYOT team operator uses `aw team
+replace-key` with the exact old and new `did:key` values. The controller-signed
+operation updates the roster, records the transition in the service audit log,
+revokes the old membership certificate, and issues the new one. Pass `--home`
+to verify the home already holds the new signing identity and install the new
+certificate there; without `--home`, pass `--old-cert-id` and the command emits
+the certificate plus explicit placement instructions. Old-key-signed
+self-service handover is intentionally unsupported: a stolen member key must
+not be able to bless its own replacement. Phase 1 requires a locally held team
+controller key; hosted owner/admin replacement awaits the AC integration and
+currently goes through operator support.
+
+Because the roster/audit database and AWID certificate registry are separate
+systems, the CLI reconciles an ambiguous roster response by replaying the exact
+controller-authorized transition. The server returns the original audit result
+only when every DID and certificate field matches. Any post-roster failure
+reports the precise partial state and emits the exact audited replacement
+certificate material needed for operator recovery.
+
+Global identity metadata is stored in `.aw/identity.yaml`. Team certificates
+are stored under `.aw/team-certs/`, and membership selection state is stored in
 `.aw/teams.yaml` and `.aw/workspace.yaml`.
 
 E2E message decryption uses a separate local X25519 keyring, not the Ed25519

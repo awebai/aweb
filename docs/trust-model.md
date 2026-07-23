@@ -109,8 +109,8 @@ DID operations.
 | **Public key location** | awid `did_aw_mappings.current_did_key` (for global identities).  Also embedded in the team certificate as `member_did_key` |
 | **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
 | **Created by** | Self-custodial: `aw init` for a local workspace or `aw init --global --name <name>` for a global identity.  Custodial: the operator's dashboard |
-| **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side |
-| **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
+| **Rotation** | Global self-custodial: `aw id rotate-key` requires the old key to sign. Local team-scoped: `aw team replace-key` requires the team controller and an exact old→new compare-and-swap. Custodial: operator re-generates server-side. |
+| **Recovery if lost** | Local-controller/BYOT local identity: team-authorized `aw team replace-key`. Self-custodial global identity remains a gap (see [Identity Key Loss](#identity-key-loss)). Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address. |
 
 #### Custody modes
 
@@ -190,7 +190,8 @@ Each key type is recoverable by the authority one level above it:
 | Namespace controller      | DNS ownership                   | `aw id namespace rotate-controller` — DNS reverify         | **Implemented** |
 | Team controller           | Namespace controller            | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
 | Identity (custodial)      | Operator (namespace controller) | Replace — new keypair, re-register DID, reassign address   | **Implemented** |
-| Identity (self-custodial) | ???                             | No mechanism exists                                        | **Gap**         |
+| Local identity (self-custodial, local-controller team) | Team controller | `aw team replace-key` — roster CAS + certificate replacement + audit | **Implemented** |
+| Global identity (self-custodial) | Namespace + team controllers | Stable-identity/address recovery flow | **Gap** |
 
 ---
 
@@ -242,9 +243,30 @@ expected one.
 
 ### Local identity
 
-Local identities have no recovery story by design.  If the signing key
-is lost, delete the workspace and create a new one.  The alias is released
-for reuse.
+A local identity has no stable identifier above its Ed25519 `did:key`: the key
+**is the identity**. Preserve the complete `.aw/` directory when moving the
+workspace between machines. Regenerating `.aw/signing.key` without an
+authorized replacement creates a new identity; correspondents with the old key
+pinned will honestly report an identity mismatch.
+
+For a local-controller/BYOT team, a human operator holding the team controller
+can authorize the explicit transition:
+
+```bash
+aw team replace-key alice \
+  --old-did-key did:key:OLD \
+  --new-did-key did:key:NEW \
+  --home agents/instances/alice
+```
+
+The operation compare-and-swaps the service roster, records the controller DID
+and old→new transition in `audit_log`, revokes the old team certificate, mints
+and registers the replacement, and installs it in `--home`. It never accepts an
+old-member-key self-service handover. Without `--home`, the operator must pass
+`--old-cert-id`; the command outputs the new public certificate with placement
+instructions. Phase 1 supports locally held team-controller keys only. Hosted
+owner/admin replacement is a separate AC integration; until then it requires
+operator support.
 
 ---
 

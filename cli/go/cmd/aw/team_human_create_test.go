@@ -61,6 +61,20 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldExtendAPIKey := teamHumanExtendAPIKey
 	oldExtendTeamID := teamHumanExtendTeamID
 	oldRemoveAPIKey := teamHumanRemoveAPIKey
+	oldReplaceTeamID := teamHumanReplaceKeyTeamID
+	oldReplaceOldDID := teamHumanReplaceKeyOldDID
+	oldReplaceNewDID := teamHumanReplaceKeyNewDID
+	oldReplaceOldCertID := teamHumanReplaceKeyOldCertID
+	oldReplaceHome := teamHumanReplaceKeyHome
+	oldReplaceAwebURL := teamHumanReplaceKeyAwebURL
+	oldReplaceRegistryURL := teamHumanReplaceKeyRegistryURL
+	teamHumanReplaceKeyTeamID = ""
+	teamHumanReplaceKeyOldDID = ""
+	teamHumanReplaceKeyNewDID = ""
+	teamHumanReplaceKeyOldCertID = ""
+	teamHumanReplaceKeyHome = ""
+	teamHumanReplaceKeyAwebURL = ""
+	teamHumanReplaceKeyRegistryURL = ""
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldRunImplicit
 		guidedOnboardingWizard = oldWizard
@@ -102,6 +116,13 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanExtendAPIKey = oldExtendAPIKey
 		teamHumanExtendTeamID = oldExtendTeamID
 		teamHumanRemoveAPIKey = oldRemoveAPIKey
+		teamHumanReplaceKeyTeamID = oldReplaceTeamID
+		teamHumanReplaceKeyOldDID = oldReplaceOldDID
+		teamHumanReplaceKeyNewDID = oldReplaceNewDID
+		teamHumanReplaceKeyOldCertID = oldReplaceOldCertID
+		teamHumanReplaceKeyHome = oldReplaceHome
+		teamHumanReplaceKeyAwebURL = oldReplaceAwebURL
+		teamHumanReplaceKeyRegistryURL = oldReplaceRegistryURL
 	})
 	initIsTTY = func() bool { return false }
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
