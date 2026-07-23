@@ -516,6 +516,10 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 // signature verification. It suppresses contact tags for ephemeral senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
+	// Mail applies recipient binding before sender continuity normalization.
+	// Never let local-sender cache reconciliation weaken that authoritative
+	// recipient mismatch to verification_stale.
+	recipientBindingMismatch := status == IdentityMismatch
 	if strings.TrimSpace(rawAddress) == "" {
 		return status, isContact
 	}
@@ -528,7 +532,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	status, registryConfirmedCurrentKey = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
 	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryConfirmedCurrentKey)
 	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
-	if status == IdentityMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
+	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
 		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
 	}
 	return status, isContact

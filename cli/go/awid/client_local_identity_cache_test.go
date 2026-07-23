@@ -66,6 +66,30 @@ func TestNormalizeSenderTrustRelabelsAuthoritativelyRefreshedLocalCache(t *testi
 	}
 }
 
+func TestNormalizeSenderTrustDoesNotReconcileRecipientBindingMismatch(t *testing.T) {
+	c, _ := New("http://example")
+	pins := NewPinStore()
+	c.SetPinStore(pins, "")
+	resolver := &localFreshResolver{
+		cached: &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
+		fresh:  &ResolvedIdentity{DID: "did:key:current", Lifetime: LifetimeEphemeral, Custody: CustodySelf},
+	}
+	c.SetResolver(resolver)
+	address := "default:acme.com/alice"
+	_, _ = c.NormalizeSenderTrust(context.Background(), Verified, address, "did:key:old", "", nil, nil, nil)
+
+	status, _ := c.NormalizeSenderTrust(context.Background(), IdentityMismatch, address, "did:key:current", "", nil, nil, nil)
+	if status != IdentityMismatch {
+		t.Fatalf("recipient-binding status=%q, want %q", status, IdentityMismatch)
+	}
+	if resolver.freshes != 0 {
+		t.Fatalf("recipient mismatch triggered local sender reconciliation: fresh resolves=%d", resolver.freshes)
+	}
+	if len(pins.Pins) == 0 || len(pins.Addresses) == 0 {
+		t.Fatalf("recipient mismatch purged sender pins: %+v", pins)
+	}
+}
+
 func TestNormalizeSenderTrustPreservesMismatchForLocalRosterKeyDifference(t *testing.T) {
 	c, _ := New("http://example")
 	c.SetPinStore(NewPinStore(), "")
