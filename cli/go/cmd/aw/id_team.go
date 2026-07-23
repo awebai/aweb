@@ -697,6 +697,20 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var errTeamInviteTargetHasNoActiveTeam = errors.New("team invite target has no active team")
+
+type noActiveTeamInviteTargetError struct {
+	message string
+	cause   error
+}
+
+func (e *noActiveTeamInviteTargetError) Error() string { return e.message }
+func (e *noActiveTeamInviteTargetError) ExitCode() int { return 2 }
+func (e *noActiveTeamInviteTargetError) Unwrap() error { return e.cause }
+func (e *noActiveTeamInviteTargetError) Is(target error) bool {
+	return target == errTeamInviteTargetHasNoActiveTeam
+}
+
 func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, awebURL string, err error) {
 	team = strings.ToLower(strings.TrimSpace(teamInviteTeam))
 	domain = awconfig.NormalizeDomain(teamInviteNamespace)
@@ -711,7 +725,11 @@ func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, aweb
 			} else if domain != "" {
 				missing = "--team"
 			}
-			return "", "", "", "", usageError("%s required when no active team can be inferred from this workspace: %v", missing, loadErr)
+			message := fmt.Sprintf("%s required when no active team can be inferred from this workspace: %v", missing, loadErr)
+			if os.IsNotExist(loadErr) {
+				return "", "", "", "", &noActiveTeamInviteTargetError{message: message, cause: loadErr}
+			}
+			return "", "", "", "", usageError("%s", message)
 		}
 		rootDir = loadedRoot
 		activeDomain, activeTeam, parseErr := awid.ParseTeamID(strings.TrimSpace(teamState.ActiveTeam))
@@ -737,15 +755,18 @@ func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, aweb
 }
 
 func loadTeamStateForInvite(workingDir string) (*awconfig.TeamState, string, error) {
-	_, teamState, rootDir, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
-	if err == nil {
+	_, teamState, rootDir, workspaceErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	if workspaceErr == nil {
 		return teamState, rootDir, nil
 	}
 	teamState, stateErr := awconfig.LoadTeamState(workingDir)
 	if stateErr == nil {
 		return teamState, workingDir, nil
 	}
-	return nil, "", err
+	if !os.IsNotExist(workspaceErr) {
+		return nil, "", workspaceErr
+	}
+	return nil, "", stateErr
 }
 
 func registryURLForTeamInvite(workingDir, domain, awebURL string) string {

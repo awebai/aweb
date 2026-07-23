@@ -961,7 +961,7 @@ Flags:
 
 ### `team extend`
 
-Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key/AWEB_API_KEY wins; otherwise the current workspace or an invite-capable agents/instances home is used.
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY bootstraps only when this workspace has no active team; otherwise the current workspace or an invite-capable agents/instances home is used.
 
 Flags:
 - `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
