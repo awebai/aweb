@@ -35,6 +35,10 @@ type StableIdentityVerifier interface {
 	VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification
 }
 
+type CurrentStableIdentityVerifier interface {
+	VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification
+}
+
 // HandleFromAddress extracts the handle/name portion from a public address.
 func HandleFromAddress(address string) string {
 	address = strings.TrimSpace(address)
@@ -178,8 +182,12 @@ func registryMissAllowsPinFallback(err error) bool {
 }
 
 func (r *ChainResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {
+	return r.VerifyStableIdentityCurrent(ctx, address, stableID, "")
+}
+
+func (r *ChainResolver) VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification {
 	if r.Registry == nil || !strings.Contains(strings.TrimSpace(address), "/") {
 		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
 	}
-	return r.Registry.VerifyStableIdentity(ctx, address, stableID)
+	return r.Registry.VerifyStableIdentityCurrent(ctx, address, stableID, expectedCurrentDIDKey)
 }

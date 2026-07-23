@@ -229,6 +229,11 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 			}
 			return err
 		}
+		if decision.AfterDelivery != nil {
+			if err := decision.AfterDelivery(ctx); err != nil {
+				l.printf("info: post-delivery acknowledgement failed; source remains pending: %v\n", err)
+			}
+		}
 		if state.ExitConfirmPending {
 			if err := l.waitForExitConfirmation(ctx, state); err != nil {
 				if state.StopRequested && errors.Is(err, context.Canceled) {

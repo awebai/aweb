@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ChannelAwakening } from "@awebai/channel-core";
+import {
+  dispatchAgentEvent,
+  PinStore,
+  type AgentEvent,
+  type ChannelAwakening,
+  type SenderTrustManager,
+} from "@awebai/channel-core";
 import {
   createWakeDispatcher,
   deliveryOptionsForAwakening,
@@ -83,7 +89,92 @@ test("ambient events are next-turn only", () => {
   });
 });
 
-test("dispatcher serializes delivery and logs sendMessage failures", async () => {
+test("active-turn wake stays pending until turn end, then resolves after Pi accepts it", async () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const dispatcher = createWakeDispatcher(fakePi((message, options) => {
+    calls.push([message, options]);
+  }), () => {});
+
+  dispatcher.setTurnActive(true);
+  let settled = false;
+  const delivered = dispatcher.enqueue(awakening()).then(() => { settled = true; });
+  await waitForDrain();
+
+  assert.equal(calls.length, 0);
+  assert.equal(settled, false);
+
+  dispatcher.setTurnActive(false);
+  await delivered;
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0].customType, "aweb-channel");
+  assert.deepEqual(calls[0][1], { triggerTurn: true });
+  assert.equal(settled, true);
+});
+
+test("mid-turn mail stays unread until turn-end injection succeeds", async () => {
+  const sends: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const dispatcher = createWakeDispatcher(fakePi((message, options) => {
+    sends.push([message, options]);
+  }), () => {});
+  dispatcher.setTurnActive(true);
+  const posts: string[] = [];
+  const client = {
+    get: async () => ({
+      messages: [{
+        message_id: "mail-mid-turn",
+        from_agent_id: "agent-alice",
+        from_alias: "alice",
+        from_address: "acme.com/alice",
+        to_alias: "eve",
+        subject: "hello",
+        body: "deliver at turn end",
+        priority: "normal",
+        created_at: "2026-07-23T00:00:00Z",
+      }],
+    }),
+    post: async (path: string) => { posts.push(path); },
+  };
+  const trust = {
+    normalizeTrust: async () => ({ status: "verified", stored: false }),
+  } as unknown as SenderTrustManager;
+
+  const dispatch = dispatchAgentEvent(
+    {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self: { alias: "eve", address: "acme.com/eve", did: "did:key:eve", stableID: "" },
+      onAwakening: (event) => dispatcher.enqueue(event),
+    },
+    new Set(),
+    { type: "mail_message", message_id: "mail-mid-turn" } satisfies AgentEvent,
+  );
+  await waitForDrain();
+
+  assert.equal(sends.length, 0);
+  assert.deepEqual(posts, []);
+
+  dispatcher.setTurnActive(false);
+  await dispatch;
+
+  assert.equal(sends.length, 1);
+  assert.deepEqual(posts, ["/v1/messages/mail-mid-turn/ack"]);
+});
+
+test("dispatcher rejects a pending active-turn wake when the session shuts down", async () => {
+  const dispatcher = createWakeDispatcher(fakePi(() => {
+    assert.fail("pending wake must not inject after shutdown");
+  }), () => {});
+  dispatcher.setTurnActive(true);
+  const delivered = dispatcher.enqueue(awakening());
+
+  dispatcher.close(new Error("session shutdown"));
+
+  await assert.rejects(delivered, /session shutdown/);
+});
+
+test("dispatcher serializes delivery and rejects on sendMessage failures", async () => {
   const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
   const logs: Array<{ event: WakeLogEvent; fields?: Record<string, unknown> }> = [];
   const dispatcher = createWakeDispatcher(fakePi((message, options) => {
@@ -91,13 +182,12 @@ test("dispatcher serializes delivery and logs sendMessage failures", async () =>
     throw new Error("pi rejected custom message");
   }), (event, fields) => logs.push({ event, fields }));
 
-  dispatcher.setTurnActive(true);
-  dispatcher.enqueue(awakening());
-  await waitForDrain();
+  const delivered = dispatcher.enqueue(awakening());
+  await assert.rejects(delivered, /pi rejected custom message/);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].customType, "aweb-channel");
-  assert.deepEqual(calls[0][1], { deliverAs: "followUp" });
+  assert.deepEqual(calls[0][1], { triggerTurn: true });
   assert.equal(logs.some((entry) => entry.event === "wake_delivery_failed"), true);
   assert.equal(logs.some((entry) => entry.fields?.message === "pi rejected custom message"), true);
 });
@@ -108,8 +198,7 @@ test("dispatcher awaits async sendMessage rejection without relying on global un
     throw new Error("async pi rejection");
   }) as ExtensionAPI["sendMessage"]), (event, fields) => logs.push({ event, fields }));
 
-  dispatcher.enqueue(awakening());
-  await waitForDrain();
+  await assert.rejects(dispatcher.enqueue(awakening()), /async pi rejection/);
 
   assert.equal(logs.some((entry) => entry.event === "wake_delivery_failed"), true);
   assert.equal(logs.some((entry) => entry.fields?.message === "async pi rejection"), true);

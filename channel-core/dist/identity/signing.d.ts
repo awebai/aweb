@@ -14,7 +14,7 @@ export interface MessageEnvelope {
     signature?: string;
     signing_key_id?: string;
 }
-export type VerificationStatus = "verified" | "verified_legacy" | "verified_custodial" | "unverified" | "failed" | "identity_mismatch";
+export type VerificationStatus = "verified" | "verified_legacy" | "verified_custodial" | "unverified" | "failed" | "verification_stale" | "identity_mismatch";
 /**
  * Build the canonical JSON payload for message signing.
  * Fields are sorted lexicographically, no whitespace, minimal escaping.

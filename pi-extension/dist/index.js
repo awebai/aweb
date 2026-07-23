@@ -5110,7 +5110,7 @@ var RegistryResolver = class {
     this.now = now;
     this.fallbackRegistryURL = options?.fallbackRegistryURL ? canonicalServerOrigin(options.fallbackRegistryURL) : "";
   }
-  async verifyStableIdentity(address, stableID) {
+  async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "") {
     const split2 = splitRegistryAddress(address);
     if (!split2 || !stableID.trim()) {
       return { outcome: "OK_DEGRADED" };
@@ -5122,13 +5122,32 @@ var RegistryResolver = class {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      try {
+        resolvedAddress = await this.resolveAddress(split2.domain, split2.name, true);
+      } catch (error) {
+        return { outcome: "STALE_CACHE", error: String(error) };
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
     let resolution;
     try {
       resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID);
     } catch (error) {
       return { outcome: "OK_DEGRADED", error: String(error) };
+    }
+    const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey) {
+      try {
+        resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID, true);
+      } catch (error) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: String(error)
+        };
+      }
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
@@ -5195,34 +5214,37 @@ var RegistryResolver = class {
     });
     return resolvedAuthority;
   }
-  async resolveAddress(domain, name) {
+  async resolveAddress(domain, name, forceRefresh = false) {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
-    const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`);
+    const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`, forceRefresh);
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
     return value;
   }
-  async resolveDidKey(registryURL, stableID) {
+  async resolveDidKey(registryURL, stableID, forceRefresh = false) {
     const cached = this.keyCache.get(stableID);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
-    const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`);
+    const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`, forceRefresh);
     this.keyCache.set(stableID, {
       value: response,
       expiresAt: this.now() + REGISTRY_KEY_TTL_MS
     });
     return response;
   }
-  async getJSON(baseURL, path) {
+  async getJSON(baseURL, path, bypassCache = false) {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...bypassCache ? { "Cache-Control": "no-cache" } : {}
+      },
       signal: AbortSignal.timeout(1e4)
     });
     if (!response.ok) {
@@ -5630,7 +5652,10 @@ var SenderTrustManager = class {
     if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
       return { status, confirmedCurrentKey: false };
     }
-    const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID);
+    const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
+    if (registryResult.outcome === "STALE_CACHE") {
+      return { status: "verification_stale", confirmedCurrentKey: false };
+    }
     if (registryResult.outcome === "HARD_ERROR") {
       return { status: "identity_mismatch", confirmedCurrentKey: false };
     }
@@ -6044,15 +6069,41 @@ async function startChannelLoop(options) {
   const dispatched = /* @__PURE__ */ new Set();
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
   const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : void 0);
-  const log = options.log || (() => {
-  });
-  for await (const event of streamAgentEvents(options.client, options.signal)) {
-    try {
-      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
+  await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal), options.log || (() => {
+  }));
+}
+async function consumeAgentEvents(options, dispatched, events, log = () => {
+}) {
+  const lanes = /* @__PURE__ */ new Map();
+  const pending = /* @__PURE__ */ new Set();
+  for await (const event of events) {
+    const lane = eventDispatchLane(event);
+    const previous = lane ? lanes.get(lane) : void 0;
+    const job = (previous || Promise.resolve()).then(async () => {
+      await dispatchAgentEvent(options, dispatched, event);
       pruneDispatched(dispatched);
-    } catch (err2) {
+    }).catch((err2) => {
       log(`[aw-channel] dispatch error: ${err2}`);
-    }
+    });
+    pending.add(job);
+    if (lane)
+      lanes.set(lane, job);
+    void job.finally(() => {
+      pending.delete(job);
+      if (lane && lanes.get(lane) === job)
+        lanes.delete(lane);
+    });
+  }
+  await Promise.all([...pending]);
+}
+function eventDispatchLane(event) {
+  switch (event.type) {
+    case "mail_message":
+      return "mail";
+    case "chat_message":
+      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+    default:
+      return "";
   }
 }
 async function dispatchAgentEvent(options, dispatched, event) {
@@ -6328,6 +6379,9 @@ function isTrustedVerificationStatus(status) {
 function trustWarningLine(status) {
   if (isTrustedVerificationStatus(status))
     return "";
+  if (status === "verification_stale") {
+    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+  }
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 function formatAwakeningForAgent(awakening) {
@@ -6520,13 +6574,17 @@ function createWakeDispatcher(pi, log) {
   const queue = [];
   let draining = false;
   let turnActive = false;
+  let closed;
+  const nextDeliverableIndex = () => queue.findIndex(({ awakening }) => !turnActive || awakening.deliveryIntent !== "wake");
   const drain = () => {
-    if (draining) return;
+    if (draining || nextDeliverableIndex() < 0) return;
     draining = true;
     setImmediate(async () => {
       try {
-        let next;
-        while (next = queue.shift()) {
+        let index;
+        while ((index = nextDeliverableIndex()) >= 0) {
+          const [pending] = queue.splice(index, 1);
+          const next = pending.awakening;
           const options = deliveryOptionsForAwakening(next, turnActive);
           const fields = { ...awakeningFields(next), options };
           log("wake_delivering", fields);
@@ -6542,24 +6600,35 @@ function createWakeDispatcher(pi, log) {
             );
             if (isThenable(result)) await result;
             log("wake_delivered", fields);
+            pending.resolve();
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
+            pending.reject(error);
           }
         }
       } finally {
         draining = false;
-        if (queue.length > 0) drain();
+        if (nextDeliverableIndex() >= 0) drain();
       }
     });
   };
   return {
     enqueue(awakening) {
-      queue.push(awakening);
+      if (closed) return Promise.reject(closed);
+      const delivered = new Promise((resolve, reject) => {
+        queue.push({ awakening, resolve, reject });
+      });
       log("wake_enqueued", { ...awakeningFields(awakening), queue_length: queue.length });
       drain();
+      return delivered;
     },
     setTurnActive(active) {
       turnActive = active;
+      if (!active) drain();
+    },
+    close(reason = new Error("Pi wake dispatcher closed")) {
+      closed = reason;
+      for (const pending of queue.splice(0)) pending.reject(reason);
     }
   };
 }
@@ -6720,6 +6789,7 @@ function awebPiExtension(pi) {
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = void 0;
+    wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
     wakeDispatcher = void 0;
   });
   pi.on("session_start", async (_event, ctx) => {
@@ -6795,7 +6865,11 @@ ${message}`),
       },
       signal,
       workdir: ctx.cwd,
-      onAwakening: (awakening) => wakeDispatcher?.enqueue(awakening),
+      onAwakening: (awakening) => {
+        const dispatcher = wakeDispatcher;
+        if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
+        return dispatcher.enqueue(awakening);
+      },
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       }

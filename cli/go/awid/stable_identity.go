@@ -13,9 +13,10 @@ import (
 type StableIdentityOutcome string
 
 const (
-	StableIdentityVerified  StableIdentityOutcome = "OK_VERIFIED"
-	StableIdentityDegraded  StableIdentityOutcome = "OK_DEGRADED"
-	StableIdentityHardError StableIdentityOutcome = "HARD_ERROR"
+	StableIdentityVerified   StableIdentityOutcome = "OK_VERIFIED"
+	StableIdentityDegraded   StableIdentityOutcome = "OK_DEGRADED"
+	StableIdentityStaleCache StableIdentityOutcome = "STALE_CACHE"
+	StableIdentityHardError  StableIdentityOutcome = "HARD_ERROR"
 )
 
 type DidKeyEvidence struct {

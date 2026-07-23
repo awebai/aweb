@@ -71,7 +71,10 @@ export class SenderTrustManager {
         if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
             return { status, confirmedCurrentKey: false };
         }
-        const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID);
+        const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
+        if (registryResult.outcome === "STALE_CACHE") {
+            return { status: "verification_stale", confirmedCurrentKey: false };
+        }
         if (registryResult.outcome === "HARD_ERROR") {
             return { status: "identity_mismatch", confirmedCurrentKey: false };
         }

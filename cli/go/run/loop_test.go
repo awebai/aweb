@@ -330,6 +330,59 @@ func TestLoopDoesNotExposeProviderInputWithoutPTY(t *testing.T) {
 	}
 }
 
+func TestLoopAcknowledgesWakeOnlyAfterSuccessfulProviderDelivery(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	acknowledged := false
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		if acknowledged {
+			t.Fatal("wake acknowledged before provider delivery completed")
+		}
+		onLine("ignored")
+		return nil
+	}
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{
+			Mission: "incoming mail",
+			AfterDelivery: func(context.Context) error {
+				acknowledged = true
+				return nil
+			},
+		}},
+	}
+
+	if err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !acknowledged {
+		t.Fatal("wake was not acknowledged after successful provider delivery")
+	}
+}
+
+func TestLoopLeavesWakePendingWhenProviderDeliveryFails(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	acknowledged := false
+	loop.Runner = func(context.Context, string, []string, func(string), any) error {
+		return errors.New("provider failed before consuming prompt")
+	}
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{
+			Mission: "incoming mail",
+			AfterDelivery: func(context.Context) error {
+				acknowledged = true
+				return nil
+			},
+		}},
+	}
+
+	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
+	if err == nil || !strings.Contains(err.Error(), "provider failed before consuming prompt") {
+		t.Fatalf("Run error=%v", err)
+	}
+	if acknowledged {
+		t.Fatal("failed provider delivery must leave wake source pending")
+	}
+}
+
 func TestLoopExposesProviderInputWithPTY(t *testing.T) {
 	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
 	var sawStdinReady bool

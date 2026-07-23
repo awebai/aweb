@@ -524,11 +524,18 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 	if !ok {
 		return status, false
 	}
-	result := verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
+	var result *StableIdentityVerification
+	if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
+		result = currentVerifier.VerifyStableIdentityCurrent(ctx, trustAddress, fromStableID, fromDID)
+	} else {
+		result = verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
+	}
 	if result == nil {
 		return status, false
 	}
 	switch result.Outcome {
+	case StableIdentityStaleCache:
+		return VerificationStale, false
 	case StableIdentityVerified:
 		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
 		if currentDIDKey != "" && currentDIDKey != fromDID {

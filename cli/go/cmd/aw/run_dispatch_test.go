@@ -122,9 +122,9 @@ func TestRunDispatcherSanitizesAppEventWakeSummaryToSingleLine(t *testing.T) {
 	}
 }
 
-// TestResolveMailWakeMarksRead verifies that resolveMailWake acks the message
-// after fetching it from the inbox.
-func TestResolveMailWakeMarksRead(t *testing.T) {
+// TestResolveMailWakeMarksReadAfterDelivery verifies that resolving a wake
+// leaves mail unread until the caller confirms the prompt reached the model.
+func TestResolveMailWakeMarksReadAfterDelivery(t *testing.T) {
 	t.Parallel()
 
 	var ackedMessageID string
@@ -160,8 +160,17 @@ func TestResolveMailWakeMarksRead(t *testing.T) {
 	if result.Skip {
 		t.Fatal("should not skip")
 	}
+	if ackedMessageID != "" {
+		t.Fatalf("message was acked before model delivery: %q", ackedMessageID)
+	}
+	if result.AfterDelivery == nil {
+		t.Fatal("expected post-delivery acknowledgement")
+	}
+	if err := result.AfterDelivery(context.Background()); err != nil {
+		t.Fatalf("post-delivery ack: %v", err)
+	}
 	if ackedMessageID != "msg-1" {
-		t.Fatalf("expected ack for msg-1, got %q", ackedMessageID)
+		t.Fatalf("expected ack for msg-1 after delivery, got %q", ackedMessageID)
 	}
 }
 

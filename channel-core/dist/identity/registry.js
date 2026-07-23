@@ -29,7 +29,7 @@ export class RegistryResolver {
             ? canonicalServerOrigin(options.fallbackRegistryURL)
             : "";
     }
-    async verifyStableIdentity(address, stableID) {
+    async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "") {
         const split = splitRegistryAddress(address);
         if (!split || !stableID.trim()) {
             return { outcome: "OK_DEGRADED" };
@@ -42,7 +42,15 @@ export class RegistryResolver {
             return { outcome: "OK_DEGRADED", error: String(error) };
         }
         if (resolvedAddress.response.did_aw !== stableID) {
-            return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+            try {
+                resolvedAddress = await this.resolveAddress(split.domain, split.name, true);
+            }
+            catch (error) {
+                return { outcome: "STALE_CACHE", error: String(error) };
+            }
+            if (resolvedAddress.response.did_aw !== stableID) {
+                return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+            }
         }
         let resolution;
         try {
@@ -50,6 +58,19 @@ export class RegistryResolver {
         }
         catch (error) {
             return { outcome: "OK_DEGRADED", error: String(error) };
+        }
+        const expectedKey = expectedCurrentDidKey.trim();
+        if (expectedKey && resolution.current_did_key !== expectedKey) {
+            try {
+                resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID, true);
+            }
+            catch (error) {
+                return {
+                    outcome: "STALE_CACHE",
+                    currentDidKey: resolution.current_did_key,
+                    error: String(error),
+                };
+            }
         }
         if (resolution.did_aw !== stableID) {
             return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
@@ -119,34 +140,37 @@ export class RegistryResolver {
         });
         return resolvedAuthority;
     }
-    async resolveAddress(domain, name) {
+    async resolveAddress(domain, name, forceRefresh = false) {
         const key = `${domain}/${name}`;
         const cached = this.addressCache.get(key);
-        if (cached && this.now() <= cached.expiresAt) {
+        if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
             return cached.value;
         }
         const registryURL = await this.discoverRegistry(domain);
-        const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`);
+        const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`, forceRefresh);
         const value = { registryURL, response };
         this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
         return value;
     }
-    async resolveDidKey(registryURL, stableID) {
+    async resolveDidKey(registryURL, stableID, forceRefresh = false) {
         const cached = this.keyCache.get(stableID);
-        if (cached && this.now() <= cached.expiresAt) {
+        if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
             return cached.value;
         }
-        const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`);
+        const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`, forceRefresh);
         this.keyCache.set(stableID, {
             value: response,
             expiresAt: this.now() + REGISTRY_KEY_TTL_MS,
         });
         return response;
     }
-    async getJSON(baseURL, path) {
+    async getJSON(baseURL, path, bypassCache = false) {
         const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
             method: "GET",
-            headers: { Accept: "application/json" },
+            headers: {
+                Accept: "application/json",
+                ...(bypassCache ? { "Cache-Control": "no-cache" } : {}),
+            },
             signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) {

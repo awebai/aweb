@@ -108,15 +108,41 @@ export async function startChannelLoop(options) {
     const dispatched = new Set();
     const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
     const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined);
-    const log = options.log || (() => { });
-    for await (const event of streamAgentEvents(options.client, options.signal)) {
-        try {
-            await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
+    await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal), options.log || (() => { }));
+}
+export async function consumeAgentEvents(options, dispatched, events, log = () => { }) {
+    const lanes = new Map();
+    const pending = new Set();
+    for await (const event of events) {
+        const lane = eventDispatchLane(event);
+        const previous = lane ? lanes.get(lane) : undefined;
+        const job = (previous || Promise.resolve())
+            .then(async () => {
+            await dispatchAgentEvent(options, dispatched, event);
             pruneDispatched(dispatched);
-        }
-        catch (err) {
+        })
+            .catch((err) => {
             log(`[aw-channel] dispatch error: ${err}`);
-        }
+        });
+        pending.add(job);
+        if (lane)
+            lanes.set(lane, job);
+        void job.finally(() => {
+            pending.delete(job);
+            if (lane && lanes.get(lane) === job)
+                lanes.delete(lane);
+        });
+    }
+    await Promise.all([...pending]);
+}
+function eventDispatchLane(event) {
+    switch (event.type) {
+        case "mail_message":
+            return "mail";
+        case "chat_message":
+            return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+        default:
+            return "";
     }
 }
 export async function dispatchAgentEvent(options, dispatched, event) {
@@ -394,6 +420,9 @@ export function isTrustedVerificationStatus(status) {
 export function trustWarningLine(status) {
     if (isTrustedVerificationStatus(status))
         return "";
+    if (status === "verification_stale") {
+        return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+    }
     return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 export function formatAwakeningForAgent(awakening) {

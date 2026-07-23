@@ -15,6 +15,7 @@ export {
   DEFAULT_DELIVERY_STORE_PATH,
   DEFAULT_PIN_STORE_PATH,
   createChannelClient,
+  consumeAgentEvents,
   DeliveryStore,
   createRegistryResolver,
   dispatchAgentEvent,

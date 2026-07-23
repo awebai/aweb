@@ -42,6 +42,7 @@ export interface DidKeyResolution {
 export type StableIdentityOutcome =
   | "OK_VERIFIED"
   | "OK_DEGRADED"
+  | "STALE_CACHE"
   | "HARD_ERROR";
 
 export interface StableIdentityVerification {
@@ -112,6 +113,7 @@ export class RegistryResolver {
   async verifyStableIdentity(
     address: string,
     stableID: string,
+    expectedCurrentDidKey: string = "",
   ): Promise<StableIdentityVerification> {
     const split = splitRegistryAddress(address);
     if (!split || !stableID.trim()) {
@@ -126,7 +128,14 @@ export class RegistryResolver {
     }
 
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      try {
+        resolvedAddress = await this.resolveAddress(split.domain, split.name, true);
+      } catch (error) {
+        return { outcome: "STALE_CACHE", error: String(error) };
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
 
     let resolution: DidKeyResolution;
@@ -134,6 +143,18 @@ export class RegistryResolver {
       resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID);
     } catch (error) {
       return { outcome: "OK_DEGRADED", error: String(error) };
+    }
+    const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey) {
+      try {
+        resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID, true);
+      } catch (error) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: String(error),
+        };
+      }
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
@@ -215,30 +236,32 @@ export class RegistryResolver {
     return resolvedAuthority;
   }
 
-  private async resolveAddress(domain: string, name: string): Promise<{ registryURL: string; response: AddressResponse }> {
+  private async resolveAddress(domain: string, name: string, forceRefresh = false): Promise<{ registryURL: string; response: AddressResponse }> {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON<AddressResponse>(
       registryURL,
       `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
+      forceRefresh,
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
     return value;
   }
 
-  private async resolveDidKey(registryURL: string, stableID: string): Promise<DidKeyResolution> {
+  private async resolveDidKey(registryURL: string, stableID: string, forceRefresh = false): Promise<DidKeyResolution> {
     const cached = this.keyCache.get(stableID);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const response = await this.getJSON<DidKeyResolution>(
       registryURL,
       `/v1/did/${pathSafeSegment(stableID)}/key`,
+      forceRefresh,
     );
     this.keyCache.set(stableID, {
       value: response,
@@ -247,10 +270,13 @@ export class RegistryResolver {
     return response;
   }
 
-  private async getJSON<T>(baseURL: string, path: string): Promise<T> {
+  private async getJSON<T>(baseURL: string, path: string, bypassCache = false): Promise<T> {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...(bypassCache ? { "Cache-Control": "no-cache" } : {}),
+      },
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {

@@ -358,6 +358,39 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("acme.com/amy")).toBe(oldStableID);
   });
 
+  test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {
+    const { did } = await didFromSeed(17);
+    const stableID = "did:aw:freshAlice";
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: vi.fn(async () => ({ outcome: "STALE_CACHE" })),
+        resolveIdentity: vi.fn(async () => ({
+          did,
+          stableID,
+          address: "acme.com/alice",
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          identityScope: "global",
+        })),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "acme.com/alice",
+      did,
+      stableID,
+      undefined,
+    );
+
+    expect(result.status).toBe("verification_stale");
+    expect(result.stored).toBe(false);
+  });
+
   test("does not create a TOFU pin when public-address resolution fails", async () => {
     const { did } = await didFromSeed(10);
     const stableID = "did:aw:test";

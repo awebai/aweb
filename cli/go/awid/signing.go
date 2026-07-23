@@ -41,6 +41,7 @@ const (
 	VerifiedCustodial VerificationStatus = "verified_custodial"
 	Unverified        VerificationStatus = "unverified"
 	Failed            VerificationStatus = "failed"
+	VerificationStale VerificationStatus = "verification_stale"
 	IdentityMismatch  VerificationStatus = "identity_mismatch"
 )
 

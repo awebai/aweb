@@ -22,7 +22,7 @@ export interface DidKeyResolution {
     current_did_key: string;
     log_head?: DidKeyEvidence | null;
 }
-export type StableIdentityOutcome = "OK_VERIFIED" | "OK_DEGRADED" | "HARD_ERROR";
+export type StableIdentityOutcome = "OK_VERIFIED" | "OK_DEGRADED" | "STALE_CACHE" | "HARD_ERROR";
 export interface StableIdentityVerification {
     outcome: StableIdentityOutcome;
     currentDidKey?: string;
@@ -57,7 +57,7 @@ export declare class RegistryResolver {
     private headCache;
     private readonly fallbackRegistryURL;
     constructor(fetchImpl?: typeof fetch, resolveTxtImpl?: ResolveTxt, now?: () => number, options?: RegistryResolverOptions);
-    verifyStableIdentity(address: string, stableID: string): Promise<StableIdentityVerification>;
+    verifyStableIdentity(address: string, stableID: string, expectedCurrentDidKey?: string): Promise<StableIdentityVerification>;
     resolveAddressIdentity(address: string): Promise<{
         did: string;
         stableID: string;

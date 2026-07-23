@@ -405,7 +405,8 @@ async function acceptInvite(
     "team",
     "accept-invite",
     token,
-    "--alias", alias,
+    "--global",
+    "--name", alias,
   ]);
 }
 

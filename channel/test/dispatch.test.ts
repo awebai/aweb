@@ -375,6 +375,37 @@ describe("dispatchEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
+  test("does not ack mail until Claude channel notification delivery resolves", async () => {
+    let finishNotification: (() => void) | undefined;
+    const notification = vi.fn(() => new Promise<void>((resolve) => {
+      finishNotification = resolve;
+    }));
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-claude-pending")] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    const dispatch = dispatchEvent(
+      mcp as never,
+      client as never,
+      new PinStore(),
+      trust,
+      self,
+      new Set(),
+      { type: "mail_message", message_id: "msg-claude-pending" } satisfies AgentEvent,
+    );
+    await vi.waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
+
+    expect(client.post).not.toHaveBeenCalled();
+    finishNotification?.();
+    await dispatch;
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-claude-pending/ack");
+  });
+
   test("retries mail ack without duplicate notification when prior ack failed", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };

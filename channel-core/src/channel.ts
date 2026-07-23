@@ -160,15 +160,53 @@ export async function startChannelLoop(options: ChannelLoopOptions): Promise<voi
   const localDecrypt = options.localDecrypt || (
     options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
   );
-  const log = options.log || (() => {});
+  await consumeAgentEvents(
+    { ...options, deliveryStore, localDecrypt },
+    dispatched,
+    streamAgentEvents(options.client, options.signal),
+    options.log || (() => {}),
+  );
+}
 
-  for await (const event of streamAgentEvents(options.client, options.signal)) {
-    try {
-      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
-      pruneDispatched(dispatched);
-    } catch (err) {
-      log(`[aw-channel] dispatch error: ${err}`);
-    }
+export async function consumeAgentEvents(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  events: AsyncIterable<AgentEvent>,
+  log: (message: string) => void = () => {},
+): Promise<void> {
+  const lanes = new Map<string, Promise<void>>();
+  const pending = new Set<Promise<void>>();
+
+  for await (const event of events) {
+    const lane = eventDispatchLane(event);
+    const previous = lane ? lanes.get(lane) : undefined;
+    const job = (previous || Promise.resolve())
+      .then(async () => {
+        await dispatchAgentEvent(options, dispatched, event);
+        pruneDispatched(dispatched);
+      })
+      .catch((err) => {
+        log(`[aw-channel] dispatch error: ${err}`);
+      });
+    pending.add(job);
+    if (lane) lanes.set(lane, job);
+    void job.finally(() => {
+      pending.delete(job);
+      if (lane && lanes.get(lane) === job) lanes.delete(lane);
+    });
+  }
+
+  await Promise.all([...pending]);
+}
+
+function eventDispatchLane(event: AgentEvent): string {
+  switch (event.type) {
+    case "mail_message":
+      return "mail";
+    case "chat_message":
+      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+    default:
+      return "";
   }
 }
 
@@ -486,6 +524,9 @@ export function isTrustedVerificationStatus(status: VerificationStatus | undefin
 
 export function trustWarningLine(status: VerificationStatus | undefined): string {
   if (isTrustedVerificationStatus(status)) return "";
+  if (status === "verification_stale") {
+    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+  }
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 

@@ -179,13 +179,14 @@ type ServiceSupervisor interface {
 }
 
 type DispatchDecision struct {
-	Mission      string
-	CycleContext string
-	DisplayLines []DisplayLine
-	UserPrompt   string
-	ImagePaths   []string
-	WaitSeconds  int
-	Skip         bool
+	Mission       string
+	CycleContext  string
+	DisplayLines  []DisplayLine
+	UserPrompt    string
+	ImagePaths    []string
+	WaitSeconds   int
+	Skip          bool
+	AfterDelivery func(context.Context) error
 }
 
 type Dispatcher interface {

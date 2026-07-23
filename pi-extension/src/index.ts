@@ -173,6 +173,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = undefined;
+    wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
     wakeDispatcher = undefined;
   });
 
@@ -252,7 +253,11 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       },
       signal,
       workdir: ctx.cwd,
-      onAwakening: (awakening) => wakeDispatcher?.enqueue(awakening),
+      onAwakening: (awakening) => {
+        const dispatcher = wakeDispatcher;
+        if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
+        return dispatcher.enqueue(awakening);
+      },
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       },

@@ -57,6 +57,7 @@ export declare function createChannelClient(config: {
     teamCertificateHeader: string;
 }): APIClient;
 export declare function startChannelLoop(options: ChannelLoopOptions): Promise<void>;
+export declare function consumeAgentEvents(options: Omit<ChannelLoopOptions, "signal" | "log">, dispatched: Set<string>, events: AsyncIterable<AgentEvent>, log?: (message: string) => void): Promise<void>;
 export declare function dispatchAgentEvent(options: Omit<ChannelLoopOptions, "signal" | "log">, dispatched: Set<string>, event: AgentEvent): Promise<void>;
 export declare function isTrustedVerificationStatus(status: VerificationStatus | undefined): boolean;
 export declare function trustWarningLine(status: VerificationStatus | undefined): string;
