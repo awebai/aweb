@@ -89,6 +89,16 @@ type libraryBindResponse struct {
 	ProfileDigest  string `json:"profile_digest"`
 }
 
+type libraryMaterializeResponse struct {
+	ProfileRef             string                      `json:"profile_ref"`
+	ProfileVersion         string                      `json:"profile_version"`
+	ProfileDigest          string                      `json:"profile_digest"`
+	SourceBlueprintRef     string                      `json:"source_blueprint_ref"`
+	SourceBlueprintVersion string                      `json:"source_blueprint_version"`
+	SourceBlueprintDigest  string                      `json:"source_blueprint_digest"`
+	HomeFiles              []blueprint.LibraryHomeFile `json:"home_files"`
+}
+
 func parseLibraryProfileSelector(raw string) (libraryProfileSelector, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -546,6 +556,133 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 		return nil, fmt.Errorf("decode library bind response: %w", err)
 	}
 	return &out, nil
+}
+
+func effectiveLibraryManifestMaterializeArgs(name, verb string, parsedArgs map[string]any, body []byte) (map[string]any, error) {
+	if name != libraryPluginName || verb != "materialize" || len(body) == 0 {
+		return parsedArgs, nil
+	}
+	effective := make(map[string]any, len(parsedArgs))
+	for key, value := range parsedArgs {
+		effective[key] = value
+	}
+	var bodyArgs map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&bodyArgs); err != nil {
+		return nil, fmt.Errorf("decode interpreted library materialize body: %w", err)
+	}
+	for key, value := range bodyArgs {
+		effective[key] = value
+	}
+	return effective, nil
+}
+
+func isLibraryManifestLocalMaterialize(name, verb string, args map[string]any) bool {
+	if name != libraryPluginName || verb != "materialize" {
+		return false
+	}
+	target, ok := args["target"].(string)
+	return ok && strings.TrimSpace(target) == "local"
+}
+
+func applyLibraryManifestLocalMaterialize(name, verb string, args map[string]any, body []byte) error {
+	if !isLibraryManifestLocalMaterialize(name, verb, args) {
+		return nil
+	}
+	runtimeKind, ok := args["runtime_kind"].(string)
+	if !ok || strings.TrimSpace(runtimeKind) == "" {
+		return fmt.Errorf("library materialize --target local requires --runtime_kind")
+	}
+	var response libraryMaterializeResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("decode library materialize response: %w", err)
+	}
+	if err := validateLibraryMaterializeResponse(&response, runtimeKind); err != nil {
+		return err
+	}
+	homeDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	old, err := readOptionalRecordedProfileRef(homeDir)
+	if err != nil {
+		return err
+	}
+	// A recorded managed set is an existing materialized home and follows refresh
+	// overwrite semantics. A first materialization still rejects local collisions.
+	force := len(old.ManagedSet) > 0
+	written, err := blueprint.WriteLibraryHomeFiles(homeDir, response.HomeFiles, force)
+	if err != nil {
+		return fmt.Errorf("local Library home materialize: %w", err)
+	}
+	if err := pruneRemovedManagedProfileFiles(homeDir, old.ManagedSet, written); err != nil {
+		return fmt.Errorf("prune removed Library home files: %w", err)
+	}
+	return nil
+}
+
+func validateLibraryMaterializeResponse(response *libraryMaterializeResponse, runtimeKind string) error {
+	if response == nil || strings.TrimSpace(response.ProfileRef) == "" || strings.TrimSpace(response.ProfileVersion) == "" || strings.TrimSpace(response.ProfileDigest) == "" {
+		return fmt.Errorf("library materialize response missing profile_ref/profile_version/profile_digest")
+	}
+	var refFile *blueprint.LibraryHomeFile
+	for i := range response.HomeFiles {
+		if filepath.ToSlash(strings.TrimSpace(response.HomeFiles[i].Path)) == ".aw/profile/ref.json" {
+			if refFile != nil {
+				return fmt.Errorf("library materialize response contains duplicate .aw/profile/ref.json")
+			}
+			refFile = &response.HomeFiles[i]
+		}
+	}
+	if refFile == nil || strings.TrimSpace(refFile.Kind) != "file" {
+		return fmt.Errorf("library materialize response missing file .aw/profile/ref.json")
+	}
+	var pin recordedProfileRef
+	if err := json.Unmarshal([]byte(refFile.ContentUTF8), &pin); err != nil {
+		return fmt.Errorf("decode materialized .aw/profile/ref.json: %w", err)
+	}
+	checks := []struct {
+		field string
+		got   string
+		want  string
+	}{
+		{field: "profile_ref", got: pin.ProfileRef, want: response.ProfileRef},
+		{field: "profile_version", got: pin.ProfileVersion, want: response.ProfileVersion},
+		{field: "profile_digest", got: pin.ProfileDigest, want: response.ProfileDigest},
+		{field: "runtime_kind", got: pin.RuntimeKind, want: runtimeKind},
+	}
+	for _, check := range checks {
+		if strings.TrimSpace(check.got) == "" || strings.TrimSpace(check.got) != strings.TrimSpace(check.want) {
+			return fmt.Errorf("library materialize response %s %q does not match ref.json %q", check.field, strings.TrimSpace(check.want), strings.TrimSpace(check.got))
+		}
+	}
+	if len(pin.ManagedSet) != len(response.HomeFiles) {
+		return fmt.Errorf("materialized ref.json managed_set has %d paths for %d home_files", len(pin.ManagedSet), len(response.HomeFiles))
+	}
+	for i, file := range response.HomeFiles {
+		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if pin.ManagedSet[i] != rel {
+			return fmt.Errorf("materialized ref.json managed_set path %d is %q, want %q", i, pin.ManagedSet[i], rel)
+		}
+	}
+	return nil
+}
+
+func readOptionalRecordedProfileRef(homeDir string) (recordedProfileRef, error) {
+	var ref recordedProfileRef
+	refPath := filepath.Join(homeDir, ".aw", "profile", "ref.json")
+	data, err := os.ReadFile(refPath)
+	if os.IsNotExist(err) {
+		return ref, nil
+	}
+	if err != nil {
+		return ref, fmt.Errorf("read %s: %w", refPath, err)
+	}
+	if err := json.Unmarshal(data, &ref); err != nil {
+		return ref, fmt.Errorf("parse %s: %w", refPath, err)
+	}
+	return ref, nil
 }
 
 func executeLibraryToolBody(args []string, missingErr error) ([]byte, error) {
