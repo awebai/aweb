@@ -175,10 +175,32 @@ Given a resolved `library-url`, `blueprint`, and `profile`:
    `content_utf8` against its per-file `sha256`. Any mismatch fails closed;
    nothing is written. (This replaces the old get-profile-vs-shelf cross-check —
    integrity comes from the digest, not from a shelf round-trip.)
-4. Materialize the profile files into the agent home for the requested runtime,
-   staging in a temp dir and verifying paths stay within the home.
-5. Write the pin (§6), recording the exact set of files written as the
+4. Materialize the profile files into the agent home for the requested
+   `runtime_kind`, staging in a temp dir and verifying paths stay within the
+   home. `runtime_kind` is required at the materialization API boundary. If an
+   operator omits a runtime choice, the client resolves that omission to its
+   policy default before materialization; a profile or provider never chooses
+   it.
+   - A declared `skills/<name>/SKILL.md` projects **every** payload file under
+     `skills/<name>/**` into both the canonical home-root
+     `skills/<name>/**` tree and the `.aw/profile/skills/<name>/**` mirror.
+   - For `runtime_kind: claude-code`, add one directory symlink
+     `.claude/skills/<name> -> ../../skills/<name>` after that skill's files;
+     do not add a per-file `SKILL.md` symlink. Other runtimes do not receive
+     this Claude-specific link. Artifact projection is unchanged.
+5. Write the pin (§6), recording the exact ordered set of paths written as the
    **managed set**.
+
+**Materialization and managed-set ordering is normative.** Emit the fixed
+profile entries first (`AGENTS.md`, then the runtime body-file link when one is
+required, then `.aw/profile/profile.yaml` and
+`.aw/profile/instructions.md`). Process skills in `profile.yaml` declaration
+order; within each declared skill, sort its payload paths in ascending byte
+order and emit each path as the home-root file immediately followed by its
+`.aw/profile/` mirror, then emit that runtime's skill-directory link. Process
+artifacts in declaration order, root file then mirror. Emit
+`.aw/profile/ref.json` last. The managed set lists paths in exactly this emit
+order, including the runtime symlinks and `ref.json` itself.
 
 Network-before-disk ordering means an auth/fetch/integrity failure writes
 nothing.
@@ -195,10 +217,15 @@ Materialization records, in `<home>/.aw/profile/ref.json`:
   another host.
 - `source_blueprint_ref`, `source_blueprint_version` (provenance);
 - `profile_ref`, `profile_version`, `profile_digest` (integrity + identity);
-- the **managed set** — the exact list of files materialization wrote (NEW),
-  so refresh can prune safely (§7).
+- `runtime_kind` — the client-resolved runtime used for this materialization;
+  it is never omitted from a materialized pin;
+- `managed_set` — the exact ordered list from §5 of every materialized file and
+  symlink, including all projected skill siblings, their `.aw/profile` mirrors,
+  each runtime-specific directory symlink, and `.aw/profile/ref.json` itself.
+  Refresh uses it for safe pruning (§7).
 
-The pin is provenance + the integrity anchor + the managed set. Homes update
+The pin is provenance + the integrity anchor + the resolved runtime + the
+managed set. Homes update
 **only** on explicit refresh — never automatically.
 
 ## 7. Refresh, and the shelf relationship
@@ -230,8 +257,10 @@ non-normalized path (absolute, `..`, `.`, `//`, trailing slash, backslash,
 control char) rejected; path-escape rejected; a symlink at a visited entry
 rejected (including a symlink whose name matches an excluded-directory name);
 a symlink nested inside an excluded directory accepted (digest computed, symlink
-ignored); non-UTF-8 file content rejected; U+2028/U+2029 content rejected; the pin is written with the client-resolved URL
-+ managed set + all provenance/integrity fields; refresh no-ops at the same
+ignored); non-UTF-8 file content rejected; U+2028/U+2029 content rejected; a skill entry projects its complete directory
+and a Claude runtime produces one directory symlink; the pin is written with
+the client-resolved URL + `runtime_kind` + the declaration-ordered managed set
++ all provenance/integrity fields; refresh no-ops at the same
 digest, updates on change, and prunes an upstream-removed file while preserving
 local/runtime state. A deliberate divergence on either side must red the vector
 gate.
