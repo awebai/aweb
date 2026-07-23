@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Seed the aweb.engineering pack into a running Library on the e2e stack.
+"""Seed the current aweb.team catalog blueprint into the Library e2e stack.
 
 Provisions a real AWID team against the stack's awid, then publishes the
-engineering blueprint into Library over real team-certificate auth - the same
+catalog blueprint into Library over real team-certificate auth - the same
 flow Library's own e2e suite exercises (_provision_team + _publish_blueprint),
-so the materializer runs against the real folded-block-scalar pack content.
+so the materializer runs against the real folded-block-scalar blueprint content.
 
 Talks to the stack only over its published host ports and the `aw` binary; it
 imports nothing from the library package. Run against a freshly-upped stack.
@@ -16,7 +16,7 @@ Environment:
                                MUST equal Library's LIBRARY_PUBLIC_ORIGIN: it is
                                the team-auth audience the seed signs.
   LIBRARY_E2E_BLUEPRINT_SRC    blueprint source dir
-                               (default: ../blueprints/engineering)
+                               (default: ../blueprints/team)
 """
 
 from __future__ import annotations
@@ -36,10 +36,9 @@ AW_BIN = os.environ.get("AW_BIN", "aw")
 AWID_URL = os.environ.get("LIBRARY_E2E_AWID_URL", "http://127.0.0.1:18010")
 LIBRARY_URL = os.environ.get("LIBRARY_E2E_LIBRARY_URL", "http://127.0.0.1:18765")
 BLUEPRINT_SRC = Path(
-    os.environ.get("LIBRARY_E2E_BLUEPRINT_SRC", "../blueprints/engineering")
+    os.environ.get("LIBRARY_E2E_BLUEPRINT_SRC", "../blueprints/team")
 ).resolve()
 
-BLUEPRINT_ID = "aweb.engineering"
 BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
 # Mirror library.digest.EXCLUDED_DIRS: VCS/build/cache dirs never enter the payload.
 EXCLUDED_DIRS = frozenset(
@@ -163,12 +162,17 @@ def _publish(workspace: Path, env: dict[str, str], payload_file: Path) -> int:
     return result.returncode
 
 
-def _source_version() -> str:
-    """The pack's top-level version, used to detect a stale catalog entry."""
-    for line in (BLUEPRINT_SRC / "blueprint.yaml").read_text(encoding="utf-8").splitlines():
-        if line.startswith("version:"):
-            return line.split(":", 1)[1].strip().strip("\"'")
-    raise SystemExit(f"no top-level version in {BLUEPRINT_SRC / 'blueprint.yaml'}")
+def _source_metadata() -> tuple[str, str]:
+    """Top-level id/version, used to verify the selected catalog source exactly."""
+    fields: dict[str, str] = {}
+    blueprint_file = BLUEPRINT_SRC / "blueprint.yaml"
+    for line in blueprint_file.read_text(encoding="utf-8").splitlines():
+        for field in ("id", "version"):
+            if line.startswith(f"{field}:"):
+                fields[field] = line.split(":", 1)[1].strip().strip("\"'")
+    if not fields.get("id") or not fields.get("version"):
+        raise SystemExit(f"no top-level id/version in {blueprint_file}")
+    return fields["id"], fields["version"]
 
 
 def main() -> int:
@@ -176,11 +180,11 @@ def main() -> int:
         raise SystemExit(
             f"blueprint source not found: {BLUEPRINT_SRC}\n"
             "Expected the ../blueprints checkout as a sibling of this repo, or set "
-            "LIBRARY_E2E_BLUEPRINT_SRC to the engineering pack directory."
+            "LIBRARY_E2E_BLUEPRINT_SRC to the catalog blueprint directory."
         )
 
-    source_version = _source_version()
-    print(f"Seeding {BLUEPRINT_ID} v{source_version} from {BLUEPRINT_SRC}")
+    blueprint_id, source_version = _source_metadata()
+    print(f"Seeding {blueprint_id} v{source_version} from {BLUEPRINT_SRC}")
     print(f"  awid={AWID_URL}  library={LIBRARY_URL}")
 
     files = _collect_files(BLUEPRINT_SRC)
@@ -216,31 +220,31 @@ def main() -> int:
             # present (or none) is a real failure - the new pack did not land - and
             # must not be swallowed as an idempotent no-op.
             existing = next(
-                (bp for bp in _get_blueprints() if bp.get("blueprint_ref") == BLUEPRINT_ID),
+                (bp for bp in _get_blueprints() if bp.get("blueprint_ref") == blueprint_id),
                 None,
             )
             if existing is not None and existing.get("version") == source_version:
-                print(f"  {BLUEPRINT_ID} v{source_version} already present in catalog; treating as seeded")
+                print(f"  {blueprint_id} v{source_version} already present in catalog; treating as seeded")
             else:
                 raise SystemExit(
-                    f"publish failed and the catalog does not hold {BLUEPRINT_ID} "
+                    f"publish failed and the catalog does not hold {blueprint_id} "
                     f"v{source_version} (found: {existing.get('version') if existing else 'none'})"
                 )
 
     catalog = _get_blueprints()
-    match = next((bp for bp in catalog if bp.get("blueprint_ref") == BLUEPRINT_ID), None)
+    match = next((bp for bp in catalog if bp.get("blueprint_ref") == blueprint_id), None)
     if match is None:
         raise SystemExit(
-            f"{BLUEPRINT_ID} not found in public catalog after seeding; "
+            f"{blueprint_id} not found in public catalog after seeding; "
             f"catalog refs: {[bp.get('blueprint_ref') for bp in catalog]}"
         )
     version = match.get("version", "?")
     if version != source_version:
         raise SystemExit(
-            f"{BLUEPRINT_ID} in catalog is v{version}, expected source v{source_version} "
+            f"{blueprint_id} in catalog is v{version}, expected source v{source_version} "
             "(a stale or failed publish was silently tolerated)"
         )
-    print(f"OK: {BLUEPRINT_ID} v{version} is live in Library's public catalog")
+    print(f"OK: {blueprint_id} v{version} is live in Library's public catalog")
     return 0
 
 

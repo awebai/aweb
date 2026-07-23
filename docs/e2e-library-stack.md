@@ -11,9 +11,10 @@ brings up, from source, on one Docker network:
 | aweb     | `server/Dockerfile` | 18000             | 8000         |
 | library  | `../library/Dockerfile` | 18765         | 8765         |
 
-It then **seeds** the `aweb.engineering` pack into Library over real AWID
-team-certificate auth, so the materializer is exercised against the real
-folded-block-scalar pack content (the same flow Library's own e2e suite runs).
+It then **seeds** the current `aweb.team` catalog blueprint into Library over
+real AWID team-certificate auth, so the materializer is exercised against the
+real folded-block-scalar blueprint content (the same flow Library's own e2e
+suite runs).
 
 This is the *self-hosted* tier (`default-aabq.1`): postgres + redis + awid + OSS
 aweb + Library. The *hosted* tier (awid + aweb-cloud + Library, exercising the
@@ -26,7 +27,7 @@ This harness depends on two checkouts sitting beside the aweb repo:
 
 - **`../library`** — the Library service. It is the build context for the
   `library` service. Override with `LIBRARY_E2E_LIBRARY_CONTEXT`.
-- **`../blueprints/engineering`** — the `aweb.engineering` pack (whatever version
+- **`../blueprints/team`** — the `aweb.team` blueprint (whatever version
   the checkout holds) that the
   seed publishes into Library. Override with `LIBRARY_E2E_BLUEPRINT_SRC`.
 
@@ -37,7 +38,7 @@ prj/awebai/
 ├── aweb/        <- this repo
 ├── library/
 └── blueprints/
-    └── engineering/
+    └── team/
 ```
 
 awid and aweb build from this repo (`context: .`), so they need no override.
@@ -61,7 +62,7 @@ Step by step (leaves the stack running between steps):
 
 ```bash
 make e2e-library-stack-up     # build + start, wait until all three are healthy
-make e2e-library-stack-seed   # publish the engineering pack into Library
+make e2e-library-stack-seed   # publish the aweb.team blueprint into Library
 make e2e-library-stack-down   # remove containers AND all state (-v)
 ```
 
@@ -91,8 +92,8 @@ container and all state. The next `up` is a clean slate, which is why the
 
 ## How the seed authenticates
 
-`scripts/e2e/seed_engineering_pack.py` provisions a throwaway AWID identity and
-team against the stack's awid, then `POST`s the engineering blueprint to
+`scripts/e2e/seed_catalog_blueprint.py` provisions a throwaway AWID identity and
+team against the stack's awid, then `POST`s the selected catalog blueprint to
 `/v1/blueprints/import` with `aw id request --team-auth`. The signed audience
 (`aud`) is the `scheme://host` of the target URL, and Library rejects any
 request whose audience does not match its `LIBRARY_PUBLIC_ORIGIN`. The harness
@@ -128,17 +129,19 @@ temp dirs are cleaned up by `t.TempDir`.
 The suite covers:
 
 - **`real_stack_e2e_test.go`** — team-certificate auth reaches Library, and the
-  seeded `aweb.engineering` blueprint is visible in the public catalog.
+  seeded `aweb.team` blueprint is visible in the public catalog.
 - **`materialize_flow_e2e_test.go`** — the tight regression net for the three
   Library materialize bugs (shelf-adopt idempotency, folded-block-scalar mission
   round-trip + materialize, and materialize-failure atomicity), driven through
   the real binary against the real seeded Library.
+- **`refresh_flow_e2e_test.go`** — the public-pin adoption and approved shelf
+  refresh flow. It exercises first-team creation in the shared `local` AWID
+  namespace, so it needs a fresh stack (`make -C cli e2e` resets the stack).
 - **`team_create_flow_e2e_test.go`** — the full self-hosted
   `aw team create --profile` flow: adopting two profiles materializes both homes
   and connects each member to the aweb service so the coordination-docs step
-  succeeds (the self-hostability fix). Because it creates the shared `local`
-  awid namespace, it needs a freshly-seeded stack (which `make -C cli e2e`
-  guarantees — `up` resets any prior stack first).
+  succeeds (the self-hostability fix). It bootstraps its own unique BYOT
+  namespace and therefore does not contend for `local`.
 
 **Manifest fixture caveat.** Reaching Library through `aw` needs the library
 plugin pointed at the stack. The committed Library manifest hardcodes
@@ -170,7 +173,7 @@ make -C cli e2e-down                      # remove all state
 | `LIBRARY_E2E_LIBRARY_PORT` | 18765 | library host port |
 | `LIBRARY_E2E_POSTGRES_PORT` | 55432 | postgres host port |
 | `LIBRARY_E2E_LIBRARY_CONTEXT` | `../library` | Library build context |
-| `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/engineering` | seed pack source |
+| `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
 | `AW_BIN` | `aw` | aw binary used to drive the seed / Go suite |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |

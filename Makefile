@@ -34,7 +34,7 @@ help:
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
-	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed the engineering pack, verify, tear down (requires Docker + ../library + ../blueprints)"
+	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
 	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
 	@echo "  awid-prod-verify    Print awid prod table row counts"

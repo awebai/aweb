@@ -82,8 +82,8 @@ func (tm *e2eTeam) library(t *testing.T, args ...string) string {
 	return tm.run(t, append([]string{"--json", "library"}, args...)...)
 }
 
-// resolvePackDir resolves the engineering blueprint source (../blueprints/
-// engineering), preferring LIBRARY_E2E_BLUEPRINT_SRC, then the sibling of the
+// resolvePackDir resolves the seeded catalog blueprint source (../blueprints/
+// team), preferring LIBRARY_E2E_BLUEPRINT_SRC, then the sibling of the
 // repo (resolving the main repo from a worktree via git --git-common-dir).
 func resolvePackDir(t *testing.T) string {
 	t.Helper()
@@ -95,7 +95,7 @@ func resolvePackDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	if dir := filepath.Join(repoRoot, "..", "blueprints", "engineering"); isDir(dir) {
+	if dir := filepath.Join(repoRoot, "..", "blueprints", "team"); isDir(dir) {
 		return dir
 	}
 	if common, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir").Output(); err == nil {
@@ -103,7 +103,7 @@ func resolvePackDir(t *testing.T) string {
 		if !filepath.IsAbs(mainRepo) {
 			mainRepo = filepath.Join(repoRoot, mainRepo)
 		}
-		if dir := filepath.Join(mainRepo, "..", "blueprints", "engineering"); isDir(dir) {
+		if dir := filepath.Join(mainRepo, "..", "blueprints", "team"); isDir(dir) {
 			return dir
 		}
 	}
@@ -136,14 +136,14 @@ func TestRealStackShelfAdoptIsIdempotent(t *testing.T) {
 	installLibraryPlugin(t, teamHome(t, tm))
 
 	first := tm.library(t, "import-to-shelf",
-		"--source_blueprint_ref", "aweb.engineering", "--profile_ref", "reviewer")
+		"--source_blueprint_ref", seededBlueprintRef, "--profile_ref", "reviewer")
 	firstShelf := decodeShelf(t, first)
 	if !firstShelf.Created {
 		t.Fatalf("first import-to-shelf created=false, want true: %s", first)
 	}
 
 	second := tm.library(t, "import-to-shelf",
-		"--source_blueprint_ref", "aweb.engineering", "--profile_ref", "reviewer")
+		"--source_blueprint_ref", seededBlueprintRef, "--profile_ref", "reviewer")
 	secondShelf := decodeShelf(t, second)
 	if secondShelf.Created {
 		t.Fatalf("re-import created=true, want false (idempotent no-op): %s", second)
@@ -185,7 +185,7 @@ func TestRealStackFoldedScalarMissionMaterializes(t *testing.T) {
 
 	// Library round-trip: the served profile carries the folded mission intact.
 	profile := tm.library(t, "get-profile",
-		"--blueprint_ref", "aweb.engineering", "--profile_ref", "reviewer")
+		"--blueprint_ref", seededBlueprintRef, "--profile_ref", "reviewer")
 	if !strings.Contains(profile, reviewerMissionText) {
 		t.Fatalf("library get-profile reviewer missing folded mission text %q; got:\n%s",
 			reviewerMissionText, profile)
