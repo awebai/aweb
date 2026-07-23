@@ -222,7 +222,9 @@ Materialization records, in `<home>/.aw/profile/ref.json`:
 - `managed_set` — the exact ordered list from §5 of every materialized file and
   symlink, including all projected skill siblings, their `.aw/profile` mirrors,
   each runtime-specific directory symlink, and `.aw/profile/ref.json` itself.
-  Refresh uses it for safe pruning (§7).
+  Every entry is a normalized POSIX path relative to the agent-home root (never
+  absolute and never relative to `.aw/profile`). Refresh uses it for safe
+  pruning (§7).
 
 The pin is provenance + the integrity anchor + the resolved runtime + the
 managed set. Homes update
@@ -236,7 +238,12 @@ managed set. Homes update
   when `profile_digest` is unchanged and updates on change.
 - **Refresh prunes only the managed set.** A file present in the old managed set
   (§6) but absent from the new payload is deleted; local/runtime state outside
-  the managed set (the rest of `.aw/`, local edits) is preserved. Overwrite is
+  the managed set (the rest of `.aw/`, local edits) is preserved. When a newly
+  managed path replaces an old managed descendant — specifically the legacy
+  `.claude/skills/<name>/SKILL.md` file link becoming the newly managed
+  `.claude/skills/<name>` directory link — pruning treats the descendant as
+  superseded and MUST NOT traverse the new symlink. Repeating refresh on the
+  new layout is idempotent. Overwrite is
   not sync — without this, a skill removed upstream is orphaned in the home
   (this is the fix for the tracked bug `default-aaem`).
 - **Shelf** reads (`get-shelf-profile?include=files`, cert-gated) return the

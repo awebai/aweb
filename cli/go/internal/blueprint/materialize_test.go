@@ -56,6 +56,51 @@ func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
 	}
 }
 
+func TestMaterializeManagedSetUsesDeclarationAndPerSkillPathOrder(t *testing.T) {
+	target := t.TempDir()
+	files := withPayloadFileSHA([]LibraryProfilePayloadFile{
+		{Path: "skills/zeta/assets/z.txt", ContentUTF8: "z\n"},
+		{Path: "artifacts/a.txt", ContentUTF8: "a\n"},
+		{Path: "skills/alpha/SKILL.md", ContentUTF8: "# Alpha\n"},
+		{Path: "instructions.md", ContentUTF8: "Build.\n"},
+		{Path: "skills/zeta/SKILL.md", ContentUTF8: "# Zeta\n"},
+		{Path: "artifacts/z.txt", ContentUTF8: "z\n"},
+		{Path: "skills/zeta/assets/a.txt", ContentUTF8: "a\n"},
+		{Path: "profile.yaml", ContentUTF8: "id: builder\nname: Builder\nversion: 0.1.0\nmission: Build.\naccepted_work: [implementation]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\nskills:\n  - path: skills/zeta/SKILL.md\n  - path: skills/alpha/SKILL.md\nartifacts:\n  - path: artifacts/z.txt\n  - path: artifacts/a.txt\n"},
+	})
+
+	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir: target, ProfileRef: "builder", ProfileVersion: "0.1.0",
+		RuntimeKind: "claude-code", Files: files,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, ".aw", "profile", "ref.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ref materializedProfileRef
+	if err := json.Unmarshal(data, &ref); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"AGENTS.md", "CLAUDE.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md",
+		"skills/zeta/SKILL.md", ".aw/profile/skills/zeta/SKILL.md",
+		"skills/zeta/assets/a.txt", ".aw/profile/skills/zeta/assets/a.txt",
+		"skills/zeta/assets/z.txt", ".aw/profile/skills/zeta/assets/z.txt",
+		".claude/skills/zeta",
+		"skills/alpha/SKILL.md", ".aw/profile/skills/alpha/SKILL.md",
+		".claude/skills/alpha",
+		"artifacts/z.txt", ".aw/profile/artifacts/z.txt",
+		"artifacts/a.txt", ".aw/profile/artifacts/a.txt",
+		".aw/profile/ref.json",
+	}
+	if strings.Join(ref.ManagedSet, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("managed_set ordering\ngot:  %v\nwant: %v", ref.ManagedSet, want)
+	}
+}
+
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
 	target := t.TempDir()
 	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{

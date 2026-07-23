@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -145,6 +146,65 @@ func TestRefreshPublicLibraryProfilePrunesRemovedManagedFilesOnly(t *testing.T) 
 	}
 	if data, err := os.ReadFile(localPath); err != nil || string(data) != "local\n" {
 		t.Fatalf("local runtime state not preserved: %q err=%v", data, err)
+	}
+}
+
+func TestMaterializeAndPruneMigratesLegacyClaudeSkillLinkAndIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	legacyDir := filepath.Join(home, ".claude", "skills", "implement")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(legacyDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: developer\nname: Developer\nversion: 0.1.0\nmission: Implement.\naccepted_work: [implementation]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\nskills:\n  - path: skills/implement/SKILL.md\n"},
+		{Path: "instructions.md", ContentUTF8: "Implement.\n"},
+		{Path: "skills/implement/SKILL.md", ContentUTF8: "# Implement\n"},
+		{Path: "skills/implement/assets/checklist.md", ContentUTF8: "# Checklist\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "developer", files)
+	opts := blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir: home, ProfileRef: "developer", ProfileVersion: "0.1.0", ProfileDigest: digest,
+		RuntimeKind: "claude-code", Files: files, Force: true,
+	}
+	old := recordedProfileRef{ManagedSet: []string{".claude/skills/implement/SKILL.md"}}
+
+	result, err := materializeAndPruneLibraryProfileInHome(home, old, opts)
+	if err != nil {
+		t.Fatalf("legacy refresh transition: %v", err)
+	}
+	if got, readErr := os.Readlink(filepath.Join(home, ".claude", "skills", "implement")); readErr != nil || got != "../../skills/implement" {
+		t.Fatalf("Claude skill directory link=%q err=%v", got, readErr)
+	}
+	for _, rel := range []string{
+		"skills/implement/SKILL.md",
+		"skills/implement/assets/checklist.md",
+		".aw/profile/skills/implement/SKILL.md",
+		".aw/profile/skills/implement/assets/checklist.md",
+	} {
+		if _, statErr := os.Stat(filepath.Join(home, filepath.FromSlash(rel))); statErr != nil {
+			t.Fatalf("projected file %s: %v", rel, statErr)
+		}
+	}
+	var refreshed recordedProfileRef
+	refData, err := os.ReadFile(filepath.Join(home, ".aw", "profile", "ref.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(refData, &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(refreshed.ManagedSet, ".claude/skills/implement") || slices.Contains(refreshed.ManagedSet, ".claude/skills/implement/SKILL.md") {
+		t.Fatalf("new managed_set did not record only the directory link: %v", refreshed.ManagedSet)
+	}
+
+	if _, err := materializeAndPruneLibraryProfileInHome(home, refreshed, opts); err != nil {
+		t.Fatalf("new-layout refresh must be idempotent: %v", err)
+	}
+	if len(result.FilesWritten) == 0 {
+		t.Fatal("transition did not report materialized files")
 	}
 }
 
