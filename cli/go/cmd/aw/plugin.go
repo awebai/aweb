@@ -877,6 +877,11 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		if err != nil {
 			return nil, true, err
 		}
+		if result.Status >= http.StatusOK && result.Status < http.StatusMultipleChoices {
+			if err := applyLibraryManifestLocalMaterialize(name, verb, parsedArgs, result.Body); err != nil {
+				return nil, true, err
+			}
+		}
 		return result, true, nil
 	}
 	identity, err := resolveLocalSigningIdentity()
@@ -887,7 +892,13 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	if err != nil {
 		return nil, true, err
 	}
-	return &installedManifestToolResult{Status: result.Status, Body: result.Body}, true, nil
+	installedResult := &installedManifestToolResult{Status: result.Status, Body: result.Body}
+	if installedResult.Status >= http.StatusOK && installedResult.Status < http.StatusMultipleChoices {
+		if err := applyLibraryManifestLocalMaterialize(name, verb, parsedArgs, installedResult.Body); err != nil {
+			return nil, true, err
+		}
+	}
+	return installedResult, true, nil
 }
 
 func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes []byte, headers http.Header) (*installedManifestToolResult, error) {
