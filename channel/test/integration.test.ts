@@ -154,6 +154,28 @@ describe.sequential("channel integration", () => {
     }
   }, 45_000);
 
+  test("reports a live stream outage once and reconnects with durable catch-up guidance", async () => {
+    if (!server.managed) return;
+    await startChannelIfNeeded();
+
+    await composeAwebService(server, "stop");
+    const disconnected = await notifications.waitFor(
+      (item) => item.meta.type === "channel_status" && item.meta.stream_state === "disconnected",
+      20_000,
+    );
+    expect(disconnected.content).toMatch(/^aweb: event stream disconnected \([^)]+\) — retrying in \d+s$/);
+    expect(disconnected.content).not.toContain("TypeError");
+
+    await composeAwebService(server, "start");
+    await waitForHealthyServer(server.awebURL);
+    const reconnected = await notifications.waitFor(
+      (item) => item.meta.type === "channel_status" && item.meta.stream_state === "reconnected",
+      30_000,
+    );
+    expect(reconnected.content).toBe("aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed");
+    expect(channelStderr).not.toContain("TypeError: fetch failed");
+  }, 120_000);
+
   test("bridges live aw mail and chat from certificate workspaces into Claude channel notifications", async () => {
     await startChannelIfNeeded();
     await delay(750);
@@ -318,6 +340,18 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     envFilePath,
     overrideFilePath,
   };
+}
+
+async function composeAwebService(server: ServerHandle, action: "start" | "stop"): Promise<void> {
+  if (!server.managed || !server.envFilePath || !server.overrideFilePath) return;
+  await runCommand("docker", [
+    "compose",
+    "-f", join(serverDir, "docker-compose.yml"),
+    "-f", server.overrideFilePath,
+    "--env-file", server.envFilePath,
+    action,
+    "aweb",
+  ], { cwd: serverDir, timeoutMs: 120_000 });
 }
 
 async function stopServer(server: ServerHandle | undefined): Promise<void> {
