@@ -558,6 +558,26 @@ func callLibraryBind(agentID string, imported *libraryImportToShelfResponse) (*l
 	return &out, nil
 }
 
+func effectiveLibraryManifestMaterializeArgs(name, verb string, parsedArgs map[string]any, body []byte) (map[string]any, error) {
+	if name != libraryPluginName || verb != "materialize" || len(body) == 0 {
+		return parsedArgs, nil
+	}
+	effective := make(map[string]any, len(parsedArgs))
+	for key, value := range parsedArgs {
+		effective[key] = value
+	}
+	var bodyArgs map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&bodyArgs); err != nil {
+		return nil, fmt.Errorf("decode interpreted library materialize body: %w", err)
+	}
+	for key, value := range bodyArgs {
+		effective[key] = value
+	}
+	return effective, nil
+}
+
 func isLibraryManifestLocalMaterialize(name, verb string, args map[string]any) bool {
 	if name != libraryPluginName || verb != "materialize" {
 		return false

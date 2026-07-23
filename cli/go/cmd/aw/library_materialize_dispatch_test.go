@@ -150,9 +150,13 @@ func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *test
 	if err := os.WriteFile(filepath.Join(home, "local-state.txt"), []byte("keep\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	requestPath := filepath.Join(home, ".aw", "materialize-request.json")
+	if err := os.WriteFile(requestPath, []byte(`{"agent_id":"developer","runtime_kind":"claude-code","target":"local"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := withWorkingDir(home, func() error {
-		result, exists, err := executeInstalledManifestTool("library", []string{"materialize", "--agent_id", "developer", "--runtime_kind", "claude-code", "--target", "local"})
+		result, exists, err := executeInstalledManifestTool("library", []string{"materialize", "--body-file", requestPath})
 		if err != nil {
 			return err
 		}
