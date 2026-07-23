@@ -17,3 +17,9 @@ Do not fix this by blocking the whole SSE consumer: schedule independent event
 lanes (mail serially, chat per session) so a pending mid-turn mail cannot block
 control signals or unrelated chat. Persistent delivered-ID state prevents
 reconnect replay only after delivery; it must not masquerade as model delivery.
+
+Likewise, an HTTP/SSE response opening is not evidence that the event stream is
+healthy: proxies can return success and immediately EOF. Declare initial health
+or recovery only after live-stream evidence (for example, the first parsed SSE
+event), and back off early EOF/read failures. Otherwise flapping responses can
+tight-spin, oscillate recovery/down notices, and queue false catch-up wakes.

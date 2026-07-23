@@ -276,28 +276,41 @@ func (b *EventBus) run(ctx context.Context) {
 			continue
 		}
 
-		// Connection successful — reset backoff and report one recovery after
-		// any failed open/read period. The synthetic event prompts the provider
-		// to poll durable inboxes because SSE itself is not a catch-up store.
-		delay = 250 * time.Millisecond
-		b.setState(ConnStreaming)
-		if recoveryPending {
-			recoveryPending = false
-			disconnectReported = false
-			b.connectionNotice("aweb: event stream reconnected; catching up")
-			b.queue.Push(BusEvent{Priority: PriorityCommunication, Event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}})
+		// Opening the HTTP response is not proof that the event stream is live:
+		// a proxy can return 200 and immediately close the body. Confirm health
+		// only after the stream produces an event. This prevents early-EOF flaps
+		// from oscillating recovery/down and queueing false catch-up wakes.
+		streamConfirmed := false
+		confirmStream := func() {
+			if streamConfirmed {
+				return
+			}
+			streamConfirmed = true
+			delay = 250 * time.Millisecond
+			b.setState(ConnStreaming)
+			if recoveryPending {
+				recoveryPending = false
+				disconnectReported = false
+				b.connectionNotice("aweb: event stream reconnected; catching up")
+				b.queue.Push(BusEvent{Priority: PriorityCommunication, Event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}})
+			}
 		}
 
-		consumeErr := b.consumeStream(streamCtx, source)
+		consumeErr := b.consumeStream(streamCtx, source, confirmStream)
 		streamContextErr := streamCtx.Err()
 		_ = source.Close()
 		cancel()
 		if consumeErr != nil && ctx.Err() == nil && streamContextErr == nil {
+			b.setState(ConnReconnecting)
 			recoveryPending = true
 			if !disconnectReported {
 				disconnectReported = true
 				b.connectionNotice(formatStreamDisconnectNotice(consumeErr, delay))
 			}
+			if !sleepForRetry(ctx, b.now, time.Time{}, delay) {
+				return
+			}
+			delay = nextRetryDelay(delay, maxDelay)
 		}
 	}
 }
@@ -326,11 +339,14 @@ func formatStreamDisconnectNotice(err error, delay time.Duration) string {
 	return "aweb: event stream disconnected (" + cause + ") — retrying in " + delay.String()
 }
 
-func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource) error {
+func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource, confirmStream func()) error {
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)
 		if err != nil {
 			return err
+		}
+		if confirmStream != nil {
+			confirmStream()
 		}
 
 		if ev.Type == awid.AgentEventConnected {

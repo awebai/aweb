@@ -77,6 +77,44 @@ describe("parseAgentEvent", () => {
     vi.useRealTimers();
   });
 
+  test("backs off early-EOF flaps without claiming recovery", async () => {
+    vi.useFakeTimers();
+    const states: EventStreamState[] = [];
+    const abort = new AbortController();
+    let attempts = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const _event of streamAgentEvents(client as never, abort.signal, (state) => states.push(state))) {
+        // Empty streams must not yield or prove recovery.
+      }
+    })();
+
+    await vi.waitFor(() => expect(states).toHaveLength(1));
+    expect(attempts).toBe(1);
+    expect(states).toEqual([
+      { state: "disconnected", cause: "connection closed", retryInMs: 1000 },
+    ]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(600);
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    expect(states.some((state) => state.state === "reconnected")).toBe(false);
+
+    abort.abort();
+    await vi.runAllTimersAsync();
+    await consuming;
+    vi.useRealTimers();
+  });
+
   test("maps actionable_chat to chat_message", () => {
     expect(
       parseAgentEvent(

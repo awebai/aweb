@@ -1638,6 +1638,8 @@ async function* streamAgentEvents(client, signal, onState = () => {
 }) {
   let connectedOnce = false;
   let disconnected = false;
+  let retryInMs = 1e3;
+  const maxRetryInMs = 5e3;
   while (!signal.aborted) {
     const deadline = new Date(Date.now() + 5 * 60 * 1e3).toISOString();
     let resp;
@@ -1646,41 +1648,50 @@ async function* streamAgentEvents(client, signal, onState = () => {
     } catch (err2) {
       if (signal.aborted)
         return;
+      const fetchRetryInMs = maxRetryInMs;
       if (!disconnected) {
         disconnected = true;
-        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: 5e3 });
+        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: fetchRetryInMs });
       }
-      await sleep(5e3, signal);
+      retryInMs = fetchRetryInMs;
+      await sleep(retryInMs, signal);
       continue;
-    }
-    if (disconnected) {
-      disconnected = false;
-      connectedOnce = true;
-      onState({ state: "reconnected" });
-    } else if (!connectedOnce) {
-      connectedOnce = true;
-      onState({ state: "connected" });
     }
     try {
       const openedAt = Date.now();
-      yield* parseSSEResponse(resp, signal);
+      let streamConfirmed = false;
+      for await (const event of parseSSEResponse(resp, signal)) {
+        if (!streamConfirmed) {
+          streamConfirmed = true;
+          retryInMs = 1e3;
+          if (disconnected) {
+            disconnected = false;
+            connectedOnce = true;
+            onState({ state: "reconnected" });
+          } else if (!connectedOnce) {
+            connectedOnce = true;
+            onState({ state: "connected" });
+          }
+        }
+        yield event;
+      }
       if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1e3) {
         if (!disconnected) {
           disconnected = true;
-          onState({ state: "disconnected", cause: "connection closed", retryInMs: 1e3 });
+          onState({ state: "disconnected", cause: "connection closed", retryInMs });
         }
-        await sleep(1e3, signal);
+        await sleep(retryInMs, signal);
+        retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
       }
     } catch (err2) {
       if (signal.aborted)
         return;
-      if (!isExpectedStreamTermination(err2)) {
-        if (!disconnected) {
-          disconnected = true;
-          onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: 1e3 });
-        }
-        await sleep(1e3, signal);
+      if (!disconnected) {
+        disconnected = true;
+        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs });
       }
+      await sleep(retryInMs, signal);
+      retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
     } finally {
       resp.body?.cancel().catch(() => {
       });
@@ -1793,12 +1804,6 @@ function streamErrorCause(err2) {
   if (detail.includes("terminated") || detail.includes("closed"))
     return "connection closed";
   return "connection failed";
-}
-function isExpectedStreamTermination(err2) {
-  if (!(err2 instanceof Error))
-    return false;
-  const name = err2.name.toLowerCase();
-  return name === "aborterror";
 }
 function sleep(ms, signal) {
   return new Promise((resolve) => {

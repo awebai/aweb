@@ -54,6 +54,8 @@ export async function* streamAgentEvents(
 ): AsyncGenerator<AgentEvent> {
   let connectedOnce = false;
   let disconnected = false;
+  let retryInMs = 1000;
+  const maxRetryInMs = 5000;
   while (!signal.aborted) {
     const deadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     let resp: Response;
@@ -64,42 +66,53 @@ export async function* streamAgentEvents(
       );
     } catch (err) {
       if (signal.aborted) return;
+      const fetchRetryInMs = maxRetryInMs;
       if (!disconnected) {
         disconnected = true;
-        onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs: 5000 });
+        onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs: fetchRetryInMs });
       }
-      await sleep(5000, signal);
+      retryInMs = fetchRetryInMs;
+      await sleep(retryInMs, signal);
       continue;
-    }
-
-    if (disconnected) {
-      disconnected = false;
-      connectedOnce = true;
-      onState({ state: "reconnected" });
-    } else if (!connectedOnce) {
-      connectedOnce = true;
-      onState({ state: "connected" });
     }
 
     try {
       const openedAt = Date.now();
-      yield* parseSSEResponse(resp, signal);
+      let streamConfirmed = false;
+      for await (const event of parseSSEResponse(resp, signal)) {
+        if (!streamConfirmed) {
+          streamConfirmed = true;
+          retryInMs = 1000;
+          if (disconnected) {
+            disconnected = false;
+            connectedOnce = true;
+            onState({ state: "reconnected" });
+          } else if (!connectedOnce) {
+            connectedOnce = true;
+            onState({ state: "connected" });
+          }
+        }
+        yield event;
+      }
       if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1000) {
         if (!disconnected) {
           disconnected = true;
-          onState({ state: "disconnected", cause: "connection closed", retryInMs: 1000 });
+          onState({ state: "disconnected", cause: "connection closed", retryInMs });
         }
-        await sleep(1000, signal);
+        await sleep(retryInMs, signal);
+        retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
       }
     } catch (err) {
       if (signal.aborted) return;
-      if (!isExpectedStreamTermination(err)) {
-        if (!disconnected) {
-          disconnected = true;
-          onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs: 1000 });
-        }
-        await sleep(1000, signal);
+      if (!disconnected) {
+        disconnected = true;
+        onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs });
       }
+      // AbortError is only expected when our signal is aborted (handled above).
+      // A server/proxy termination while still active is a failed stream and
+      // must back off like any other read failure.
+      await sleep(retryInMs, signal);
+      retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
     } finally {
       resp.body?.cancel().catch(() => {});
     }
@@ -208,12 +221,6 @@ export function streamErrorCause(err: unknown): string {
   if (detail.includes("network") || detail.includes("fetch failed")) return "network unavailable";
   if (detail.includes("terminated") || detail.includes("closed")) return "connection closed";
   return "connection failed";
-}
-
-function isExpectedStreamTermination(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const name = err.name.toLowerCase();
-  return name === "aborterror";
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
