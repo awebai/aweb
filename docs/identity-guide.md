@@ -341,10 +341,15 @@ Summary:
   key at awid, then re-issues certificates for all members.
 - **Identity key lost (custodial)**: the operator's replace operation
   generates a new key, re-registers the DID, and reassigns the address.
-- **Identity key lost (self-custodial)**: no CLI recovery path exists
-  today.  If you have a dashboard account (e.g., via `aw claim-human`),
-  the replace operation works.  Otherwise, escalate to whoever holds
-  the namespace controller key.
+- **Local identity key lost (self-custodial)**: for a local-controller/BYOT
+  team, the human holding the team controller runs `aw team replace-key` to
+  authorize the exact old→new key transition, revoke/reissue the membership
+  certificate, and record the service audit event. Hosted owner/admin support
+  is pending the AC integration and currently requires operator support.
+- **Global identity key lost (self-custodial)**: no complete CLI recovery path
+  exists today. If you have a dashboard account (e.g., via `aw claim-human`),
+  the replace operation works. Otherwise, escalate to whoever holds the
+  namespace controller key.
 
 ### Lifecycle operations
 
@@ -353,9 +358,13 @@ Four distinct operations for identity lifecycle:
 - **Delete**: local workspace teardown.  Releases the alias for reuse.
 - **Archive**: global identity cleanup.  Stops active participation,
   keeps message history.  No continuity claim.
-- **Replace**: global identity continuity.  Creates a new identity
-  and moves the address to it.  The namespace controller authorizes the
-  address reassignment.  Used when the owner has lost the key.
+- **Replace global identity**: creates a new identity and moves the address to
+  it. The namespace controller authorizes the address reassignment. Used when
+  the owner has lost the key.
+- **Replace local identity key**: the local identity has no stable identifier
+  above its key, so the team controller vouches for an exact roster old→new
+  transition and replaces its team certificate. This is `aw team replace-key`;
+  old-key-signed self-service replacement is forbidden.
 - **Rotate key**: cryptographic continuity signed by the old key.
   Preserves the `did:aw`.  Used for routine key hygiene.
 

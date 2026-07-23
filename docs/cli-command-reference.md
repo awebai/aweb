@@ -883,6 +883,7 @@ Subcommands:
 - `list` List team memberships for this identity
 - `refresh` Re-materialize a team member's home from the latest version of its Library profile
 - `remove-agent` Remove an agent from a team
+- `replace-key` Replace a local agent identity key under team-controller authority
 - `switch` Switch the active team for this identity
 - `up` Launch local team agents in tmux
 
@@ -1064,6 +1065,26 @@ Flags:
 - `-h, --help help for remove-agent`
 - `--registry string Registry origin override`
 - `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
+
+## `team replace-key`
+
+### `team replace-key`
+
+Replace a local team-scoped agent's did:key under locally-held team-controller authority.
+
+This compare-and-swap operation updates the service roster, revokes the old
+team certificate, registers a new certificate, and records the controller-authorized
+transition. Hosted teams require the pending AC owner/admin integration or operator support.
+
+Flags:
+- `--aweb-url string Aweb service URL override`
+- `-h, --help help for replace-key`
+- `--home string Agent home whose new signing identity is verified and where the replacement certificate is installed`
+- `--new-did-key string Replacement local member did:key (required)`
+- `--old-cert-id string Old team certificate id (required without --home)`
+- `--old-did-key string Expected current local member did:key (required)`
+- `--registry string AWID registry URL override`
+- `--team-id string Canonical team id (<name>:<namespace>; defaults to active team)`
 
 ## `team switch`
 

@@ -60,7 +60,7 @@ var (
 
 var teamHumanCmd = &cobra.Command{
 	Use:   "team",
-	Short: "Everyday teams: create, add, invite, join, list, switch, leave, remove-agent",
+	Short: "Everyday teams: create, add, invite, join, list, switch, leave, replace-key, remove-agent",
 	Long: "Everyday team membership commands.\n\n" +
 		"Use these commands for the normal hosted invite/join membership flow and for\n" +
 		"checking or switching this identity's installed team memberships. Protocol/admin\n" +

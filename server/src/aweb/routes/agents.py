@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
+from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
@@ -183,6 +187,41 @@ class SendControlSignalRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     signal: Literal["pause", "resume", "interrupt"]
+
+
+class ReplaceLocalIdentityKeyRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    team_id: str = Field(..., min_length=1, max_length=256)
+    old_did_key: str = Field(..., min_length=1, max_length=256)
+    new_did_key: str = Field(..., min_length=1, max_length=256)
+    old_certificate_id: str = Field(..., min_length=1, max_length=256)
+    new_certificate_id: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("old_did_key", "new_did_key")
+    @classmethod
+    def validate_identity_did_key(cls, value: str) -> str:
+        return validate_did_key(value)
+
+    @model_validator(mode="after")
+    def require_changed_key(self):
+        if self.old_did_key == self.new_did_key:
+            raise ValueError("new_did_key must differ from old_did_key")
+        return self
+
+
+class ReplaceLocalIdentityKeyResponse(BaseModel):
+    status: Literal["replaced"] = "replaced"
+    audit_id: str
+    agent_id: str
+    team_id: str
+    alias: str
+    old_did_key: str
+    new_did_key: str
+    old_certificate_id: str
+    new_certificate_id: str
+    authorized_by: str
+    authorized_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +783,186 @@ async def patch_agent_workspace(
         role=new_role,
         role_name=new_role,
         human_name=new_human_name,
+    )
+
+
+@router.post("/{alias}/replace-key", response_model=ReplaceLocalIdentityKeyResponse)
+async def replace_local_identity_key(
+    request: Request,
+    alias: str,
+    payload: ReplaceLocalIdentityKeyRequest,
+    db=Depends(get_db),
+) -> ReplaceLocalIdentityKeyResponse:
+    """Replace a local member did:key under team-controller authority."""
+    alias = alias.strip()
+    if not alias:
+        raise HTTPException(status_code=422, detail="Agent alias is required")
+    team_id = payload.team_id.strip()
+    try:
+        parse_team_id(team_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    aweb_db = db.get_manager("aweb")
+    team = await aweb_db.fetch_one(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1",
+        team_id,
+    )
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    authorizer_did = verify_signed_json_request(
+        request,
+        payload_dict={
+            "operation": "replace_local_identity_key",
+            "team_id": team_id,
+            "agent_alias": alias,
+            "old_did_key": payload.old_did_key,
+            "new_did_key": payload.new_did_key,
+            "old_certificate_id": payload.old_certificate_id,
+            "new_certificate_id": payload.new_certificate_id,
+        },
+    )
+    if authorizer_did != str(team["team_did_key"]):
+        raise HTTPException(
+            status_code=403,
+            detail="Team controller authorization is required for local identity key replacement",
+        )
+
+    try:
+        async with aweb_db.transaction() as tx:
+            agent = await tx.fetch_one(
+                """
+                SELECT agent_id, did_key, identity_scope
+                FROM {{tables.agents}}
+                WHERE team_id = $1
+                  AND alias = $2
+                  AND deleted_at IS NULL
+                FOR UPDATE
+                """,
+                team_id,
+                alias,
+            )
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if str(agent["identity_scope"]) != "local":
+                raise HTTPException(
+                    status_code=409,
+                    detail="replace-key is only valid for local team-scoped identities",
+                )
+            current_did_key = str(agent["did_key"])
+            audit = None
+            if current_did_key == payload.new_did_key:
+                # A controller may safely replay the exact transition when the
+                # committed response was lost. No other new-key request is a replay.
+                audit = await tx.fetch_one(
+                    """
+                    SELECT id, created_at
+                    FROM {{tables.audit_log}}
+                    WHERE team_id = $1
+                      AND alias = $2
+                      AND event_type = 'local_identity_key_replaced'
+                      AND resource = $3
+                      AND details->>'agent_id' = $4
+                      AND details->>'agent_alias' = $5
+                      AND details->>'authorized_by' = $2
+                      AND details->>'old_did_key' = $6
+                      AND details->>'new_did_key' = $7
+                      AND details->>'old_certificate_id' = $8
+                      AND details->>'new_certificate_id' = $9
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    team_id,
+                    authorizer_did,
+                    f"agent:{agent['agent_id']}",
+                    str(agent["agent_id"]),
+                    alias,
+                    payload.old_did_key,
+                    payload.new_did_key,
+                    payload.old_certificate_id,
+                    payload.new_certificate_id,
+                )
+            if current_did_key != payload.old_did_key and audit is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "identity_key_changed",
+                        "message": (
+                            "Agent did:key no longer matches old_did_key; "
+                            "re-read the roster before replacing it"
+                        ),
+                        "current_did_key": current_did_key,
+                    },
+                )
+            if audit is None:
+                collision = await tx.fetch_one(
+                    """
+                    SELECT agent_id
+                    FROM {{tables.agents}}
+                    WHERE team_id = $1
+                      AND did_key = $2
+                      AND deleted_at IS NULL
+                      AND agent_id <> $3
+                    """,
+                    team_id,
+                    payload.new_did_key,
+                    agent["agent_id"],
+                )
+                if collision is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="new_did_key is already assigned to another active team agent",
+                    )
+
+                await tx.execute(
+                    "UPDATE {{tables.agents}} SET did_key = $2 WHERE agent_id = $1",
+                    agent["agent_id"],
+                    payload.new_did_key,
+                )
+                audit = await tx.fetch_one(
+                    """
+                    INSERT INTO {{tables.audit_log}}
+                        (team_id, alias, event_type, resource, details)
+                    VALUES ($1, $2, 'local_identity_key_replaced', $3, $4)
+                    RETURNING id, created_at
+                    """,
+                    team_id,
+                    authorizer_did,
+                    f"agent:{agent['agent_id']}",
+                    json.dumps(
+                        {
+                            "agent_id": str(agent["agent_id"]),
+                            "agent_alias": alias,
+                            "authorized_by": authorizer_did,
+                            "old_did_key": payload.old_did_key,
+                            "new_did_key": payload.new_did_key,
+                            "old_certificate_id": payload.old_certificate_id,
+                            "new_certificate_id": payload.new_certificate_id,
+                        }
+                    ),
+                )
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
+            raise
+        raise HTTPException(
+            status_code=409,
+            detail="new_did_key is already assigned to another active team agent",
+        ) from exc
+
+    return ReplaceLocalIdentityKeyResponse(
+        audit_id=str(audit["id"]),
+        agent_id=str(agent["agent_id"]),
+        team_id=team_id,
+        alias=alias,
+        old_did_key=payload.old_did_key,
+        new_did_key=payload.new_did_key,
+        old_certificate_id=payload.old_certificate_id,
+        new_certificate_id=payload.new_certificate_id,
+        authorized_by=authorizer_did,
+        authorized_at=audit["created_at"].isoformat(),
     )
 
 
