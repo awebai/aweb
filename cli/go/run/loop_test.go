@@ -330,6 +330,59 @@ func TestLoopDoesNotExposeProviderInputWithoutPTY(t *testing.T) {
 	}
 }
 
+func TestLoopAcknowledgesWakeOnlyAfterSuccessfulProviderDelivery(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	acknowledged := false
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		if acknowledged {
+			t.Fatal("wake acknowledged before provider delivery completed")
+		}
+		onLine("ignored")
+		return nil
+	}
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{
+			Mission: "incoming mail",
+			AfterDelivery: func(context.Context) error {
+				acknowledged = true
+				return nil
+			},
+		}},
+	}
+
+	if err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !acknowledged {
+		t.Fatal("wake was not acknowledged after successful provider delivery")
+	}
+}
+
+func TestLoopLeavesWakePendingWhenProviderDeliveryFails(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	acknowledged := false
+	loop.Runner = func(context.Context, string, []string, func(string), any) error {
+		return errors.New("provider failed before consuming prompt")
+	}
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{
+			Mission: "incoming mail",
+			AfterDelivery: func(context.Context) error {
+				acknowledged = true
+				return nil
+			},
+		}},
+	}
+
+	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
+	if err == nil || !strings.Contains(err.Error(), "provider failed before consuming prompt") {
+		t.Fatalf("Run error=%v", err)
+	}
+	if acknowledged {
+		t.Fatal("failed provider delivery must leave wake source pending")
+	}
+}
+
 func TestLoopExposesProviderInputWithPTY(t *testing.T) {
 	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
 	var sawStdinReady bool
@@ -705,7 +758,7 @@ func TestFormatRunStatusOmitsRunLabel(t *testing.T) {
 func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 	st := &state{Autofeed: true, ConnState: ConnReconnecting}
 	got := formatWaitStatus("waiting for prompt", st)
-	want := "waiting for prompt · autofeed · reconnecting..."
+	want := "waiting for prompt · autofeed · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -728,7 +781,7 @@ func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 		ConnState:         ConnStreaming,
 	}
 	got := formatRunStatus(st)
-	want := "$0.05 · autofeed · streaming"
+	want := "$0.05 · autofeed · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -741,7 +794,7 @@ func TestFormatRunStatusShowsClaimedTaskRef(t *testing.T) {
 		ConnState:      ConnStreaming,
 	}
 	got := formatRunStatus(st)
-	want := "task aweb-aaag · streaming"
+	want := "task aweb-aaag · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -754,7 +807,7 @@ func TestFormatRunStatusShowsReconnecting(t *testing.T) {
 		ConnState:         ConnReconnecting,
 	}
 	got := formatRunStatus(st)
-	want := "$0.05 · reconnecting..."
+	want := "$0.05 · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

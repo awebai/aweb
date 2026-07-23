@@ -15,16 +15,21 @@ export class APIClient {
     async get(path) {
         return this.request("GET", path);
     }
+    async getFresh(path) {
+        return this.request("GET", path, undefined, true);
+    }
     async post(path, body) {
         return this.request("POST", path, body);
     }
-    async request(method, path, body) {
+    async request(method, path, body, noCache = false) {
         const url = this.baseURL + path;
         const bodyText = body === undefined ? "" : JSON.stringify(body);
         const headers = {
             Accept: "application/json",
             ...this.authHeaders(path, bodyText),
         };
+        if (noCache)
+            headers["Cache-Control"] = "no-cache";
         const init = { method, headers };
         if (body !== undefined) {
             headers["Content-Type"] = "application/json";

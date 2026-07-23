@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { APIClient } from "./api/client.js";
-import { streamAgentEvents, type AgentEvent } from "./api/events.js";
+import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore } from "./identity/pinstore.js";
@@ -48,11 +48,13 @@ export interface ChannelLoopOptions {
   self: SelfIdentity;
   signal: AbortSignal;
   onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
+  mailAcknowledgment?: "delivery" | "manual";
   deliveryStore?: DeliveryStore;
   localDecrypt?: LocalDecryptProvider;
   workdir?: string;
   awCommand?: string;
   log?: (message: string) => void;
+  onStreamState?: (state: EventStreamState) => void;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -160,15 +162,53 @@ export async function startChannelLoop(options: ChannelLoopOptions): Promise<voi
   const localDecrypt = options.localDecrypt || (
     options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
   );
-  const log = options.log || (() => {});
+  await consumeAgentEvents(
+    { ...options, deliveryStore, localDecrypt },
+    dispatched,
+    streamAgentEvents(options.client, options.signal, options.onStreamState),
+    options.log || (() => {}),
+  );
+}
 
-  for await (const event of streamAgentEvents(options.client, options.signal)) {
-    try {
-      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
-      pruneDispatched(dispatched);
-    } catch (err) {
-      log(`[aw-channel] dispatch error: ${err}`);
-    }
+export async function consumeAgentEvents(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  events: AsyncIterable<AgentEvent>,
+  log: (message: string) => void = () => {},
+): Promise<void> {
+  const lanes = new Map<string, Promise<void>>();
+  const pending = new Set<Promise<void>>();
+
+  for await (const event of events) {
+    const lane = eventDispatchLane(event);
+    const previous = lane ? lanes.get(lane) : undefined;
+    const job = (previous || Promise.resolve())
+      .then(async () => {
+        await dispatchAgentEvent(options, dispatched, event);
+        pruneDispatched(dispatched);
+      })
+      .catch(() => {
+        log("aweb: could not process an incoming event; it remains pending");
+      });
+    pending.add(job);
+    if (lane) lanes.set(lane, job);
+    void job.finally(() => {
+      pending.delete(job);
+      if (lane && lanes.get(lane) === job) lanes.delete(lane);
+    });
+  }
+
+  await Promise.all([...pending]);
+}
+
+function eventDispatchLane(event: AgentEvent): string {
+  switch (event.type) {
+    case "mail_message":
+      return "mail";
+    case "chat_message":
+      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+    default:
+      return "";
   }
 }
 
@@ -284,7 +324,9 @@ async function dispatchMailEvent(
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
-      if (!msg.read_at) await ackMessage(options.client, msg.message_id);
+      if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
+        await ackMessage(options.client, msg.message_id);
+      }
       continue;
     }
 
@@ -325,7 +367,9 @@ async function dispatchMailEvent(
       options.deliveryStore.mark(key);
       await options.deliveryStore.save();
     }
-    await ackMessage(options.client, msg.message_id);
+    if (options.mailAcknowledgment !== "manual") {
+      await ackMessage(options.client, msg.message_id);
+    }
   }
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
@@ -486,6 +530,9 @@ export function isTrustedVerificationStatus(status: VerificationStatus | undefin
 
 export function trustWarningLine(status: VerificationStatus | undefined): string {
   if (isTrustedVerificationStatus(status)) return "";
+  if (status === "verification_stale") {
+    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+  }
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 
@@ -586,8 +633,13 @@ function senderDisplayAddress(alias: string | undefined, address: string | undef
 
 function senderTrustAddress(alias: string | undefined, address: string | undefined): string {
   const qualified = (address || "").trim();
+  const localAlias = (alias || "").trim();
+  // Local self-custodial identities may expose only did:key as from_address.
+  // Resolve their team roster metadata by alias; did:key is the message's
+  // signing-key source, not a registry-address lookup key.
+  if (qualified.startsWith("did:key:") && localAlias) return localAlias;
   if (qualified) return qualified;
-  return (alias || "").trim();
+  return localAlias;
 }
 
 function isSelfSender(

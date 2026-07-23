@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { APIClient } from "../src/api/client.js";
+import { APIClient } from "@awebai/channel-core";
 
 describe("APIClient URL construction", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -18,6 +18,19 @@ describe("APIClient URL construction", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  test("getFresh bypasses HTTP caches for authoritative roster refresh", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ did_key: "did:key:fresh" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = new APIClient("https://app.example", auth);
+
+    await client.getFresh("/v1/teams/backend%3Aacme.com/agents/alice");
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get("Cache-Control")).toBe("no-cache");
   });
 
   test.each([

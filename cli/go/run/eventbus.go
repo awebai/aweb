@@ -55,7 +55,7 @@ func classifyAgentEvent(evt awid.AgentEvent) (EventPriority, bool) {
 	switch evt.Type {
 	case awid.AgentEventControlInterrupt, awid.AgentEventControlPause, awid.AgentEventControlResume:
 		return PriorityInterrupt, true
-	case awid.AgentEventActionableMail, awid.AgentEventActionableChat:
+	case awid.AgentEventActionableMail, awid.AgentEventActionableChat, awid.AgentEventChannelReconnected:
 		return PriorityCommunication, true
 	case awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved:
 		return PriorityCoordination, true
@@ -155,9 +155,10 @@ type EventBus struct {
 	deduper    *recentEventDeduper
 	streamTTL  time.Duration
 
-	connState     atomic.Int32
-	onStateChange func(ConnectionState)
-	onError       func(awid.AgentEvent)
+	connState          atomic.Int32
+	onStateChange      func(ConnectionState)
+	onConnectionNotice func(string)
+	onError            func(awid.AgentEvent)
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -247,6 +248,8 @@ func (b *EventBus) run(ctx context.Context) {
 
 	delay := 250 * time.Millisecond
 	maxDelay := 2 * time.Second
+	recoveryPending := false
+	disconnectReported := false
 
 	for ctx.Err() == nil {
 		b.setState(ConnReconnecting)
@@ -257,8 +260,14 @@ func (b *EventBus) run(ctx context.Context) {
 		if err != nil {
 			cancel()
 			if code, ok := awid.HTTPStatusCode(err); ok && code >= 400 && code < 500 {
+				b.connectionNotice("aweb: event stream disconnected (authentication or request rejected); not retrying")
 				b.setState(ConnDisconnected)
 				return
+			}
+			recoveryPending = true
+			if !disconnectReported {
+				disconnectReported = true
+				b.connectionNotice(formatStreamDisconnectNotice(err, delay))
 			}
 			if !sleepForRetry(ctx, b.now, deadline, delay) {
 				return
@@ -267,21 +276,77 @@ func (b *EventBus) run(ctx context.Context) {
 			continue
 		}
 
-		// Connection successful — reset backoff.
-		delay = 250 * time.Millisecond
-		b.setState(ConnStreaming)
+		// Opening the HTTP response is not proof that the event stream is live:
+		// a proxy can return 200 and immediately close the body. Confirm health
+		// only after the stream produces an event. This prevents early-EOF flaps
+		// from oscillating recovery/down and queueing false catch-up wakes.
+		streamConfirmed := false
+		confirmStream := func() {
+			if streamConfirmed {
+				return
+			}
+			streamConfirmed = true
+			delay = 250 * time.Millisecond
+			b.setState(ConnStreaming)
+			if recoveryPending {
+				recoveryPending = false
+				disconnectReported = false
+				b.connectionNotice("aweb: event stream reconnected; catching up")
+				b.queue.Push(BusEvent{Priority: PriorityCommunication, Event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}})
+			}
+		}
 
-		b.consumeStream(streamCtx, source)
+		consumeErr := b.consumeStream(streamCtx, source, confirmStream)
+		streamContextErr := streamCtx.Err()
 		_ = source.Close()
 		cancel()
+		if consumeErr != nil && ctx.Err() == nil && streamContextErr == nil {
+			b.setState(ConnReconnecting)
+			recoveryPending = true
+			if !disconnectReported {
+				disconnectReported = true
+				b.connectionNotice(formatStreamDisconnectNotice(consumeErr, delay))
+			}
+			if !sleepForRetry(ctx, b.now, time.Time{}, delay) {
+				return
+			}
+			delay = nextRetryDelay(delay, maxDelay)
+		}
 	}
 }
 
-func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource) {
+func (b *EventBus) connectionNotice(message string) {
+	if b.onConnectionNotice != nil {
+		b.onConnectionNotice(message)
+	}
+}
+
+func formatStreamDisconnectNotice(err error, delay time.Duration) string {
+	cause := "connection failed"
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(text, "connection refused"):
+		cause = "connection refused"
+	case strings.Contains(text, "no such host"), strings.Contains(text, "dns"), strings.Contains(text, "lookup"):
+		cause = "DNS lookup failed"
+	case strings.Contains(text, "timeout"), strings.Contains(text, "timed out"):
+		cause = "connection timed out"
+	case strings.Contains(text, "certificate"), strings.Contains(text, "tls"):
+		cause = "TLS connection failed"
+	case strings.Contains(text, "fetch"), strings.Contains(text, "network"), strings.Contains(text, "503"):
+		cause = "network unavailable"
+	}
+	return "aweb: event stream disconnected (" + cause + ") — retrying in " + delay.String()
+}
+
+func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource, confirmStream func()) error {
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)
 		if err != nil {
-			return
+			return err
+		}
+		if confirmStream != nil {
+			confirmStream()
 		}
 
 		if ev.Type == awid.AgentEventConnected {
@@ -307,12 +372,13 @@ func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource) {
 			select {
 			case b.interrupts <- busEvt:
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
 		} else {
 			b.queue.Push(busEvt)
 		}
 	}
+	return ctx.Err()
 }
 
 type recentEventDeduper struct {

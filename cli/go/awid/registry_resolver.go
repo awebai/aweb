@@ -124,12 +124,20 @@ func (r *RegistryResolver) SetFallbackRegistryURL(raw string) error {
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolve(ctx, identifier, false)
+}
+
+func (r *RegistryResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolve(ctx, identifier, true)
+}
+
+func (r *RegistryResolver) resolve(ctx context.Context, identifier string, forceRefresh bool) (*ResolvedIdentity, error) {
 	if strings.HasPrefix(strings.TrimSpace(identifier), "did:aw:") {
 		return nil, fmt.Errorf("RegistryResolver: bare did:aw first-contact is unsupported; use domain/name address or stored route")
 	}
 
 	if teamID, alias, ok := splitTeamMemberReference(identifier); ok {
-		member, err := r.resolveTeamMember(ctx, teamID, alias)
+		member, err := r.resolveTeamMemberFresh(ctx, teamID, alias, forceRefresh)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +146,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 			address = strings.TrimSpace(identifier)
 		}
 		if stableID := strings.TrimSpace(member.response.MemberDIDAW); stableID != "" {
-			keyRes, err := r.resolveKey(ctx, member.authority.RegistryURL, stableID)
+			keyRes, err := r.resolveKeyFresh(ctx, member.authority.RegistryURL, stableID, forceRefresh)
 			if err != nil {
 				return nil, err
 			}
@@ -151,7 +159,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 			}
 			deliveryOrigin := ""
 			if domain, name, ok := splitRegistryAddress(address); ok {
-				addr, err := r.resolveAddress(ctx, domain, name)
+				addr, err := r.resolveAddressFresh(ctx, domain, name, forceRefresh)
 				if err != nil {
 					return nil, err
 				}
@@ -199,11 +207,11 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 	if !ok {
 		return nil, fmt.Errorf("RegistryResolver: invalid identifier %q", identifier)
 	}
-	address, err := r.resolveAddress(ctx, domain, name)
+	address, err := r.resolveAddressFresh(ctx, domain, name, forceRefresh)
 	if err != nil {
 		return nil, err
 	}
-	keyRes, err := r.resolveKey(ctx, address.authority.RegistryURL, address.response.DIDAW)
+	keyRes, err := r.resolveKeyFresh(ctx, address.authority.RegistryURL, address.response.DIDAW, forceRefresh)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +267,10 @@ func canonicalDeliveryOrigin(keyRes *DidKeyResolution, address *registryAddressR
 }
 
 func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {
+	return r.VerifyStableIdentityCurrent(ctx, address, stableID, "")
+}
+
+func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification {
 	domain, name, ok := splitRegistryAddress(address)
 	if !ok || strings.TrimSpace(stableID) == "" {
 		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
@@ -271,9 +283,15 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 		}
 	}
 	if addr.response.DIDAW != stableID {
-		return &StableIdentityVerification{
-			Outcome: StableIdentityHardError,
-			Error:   "registry address did:aw mismatch",
+		addr, err = r.resolveAddressFresh(ctx, domain, name, true)
+		if err != nil {
+			return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: err.Error()}
+		}
+		if addr.response.DIDAW != stableID {
+			return &StableIdentityVerification{
+				Outcome: StableIdentityHardError,
+				Error:   "registry address did:aw mismatch",
+			}
 		}
 	}
 	keyRes, err := r.resolveKey(ctx, addr.authority.RegistryURL, stableID)
@@ -281,6 +299,18 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 		return &StableIdentityVerification{
 			Outcome: StableIdentityDegraded,
 			Error:   err.Error(),
+		}
+	}
+	expectedCurrentDIDKey = strings.TrimSpace(expectedCurrentDIDKey)
+	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey {
+		staleCurrentDIDKey := keyRes.CurrentDIDKey
+		keyRes, err = r.resolveKeyFresh(ctx, addr.authority.RegistryURL, stableID, true)
+		if err != nil {
+			return &StableIdentityVerification{
+				Outcome:       StableIdentityStaleCache,
+				CurrentDIDKey: staleCurrentDIDKey,
+				Error:         err.Error(),
+			}
 		}
 	}
 	if strings.TrimSpace(keyRes.DIDAW) != stableID {
@@ -361,16 +391,22 @@ func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, r
 }
 
 func (r *RegistryResolver) resolveAddress(ctx context.Context, domain, name string) (*registryAddressCacheValue, error) {
+	return r.resolveAddressFresh(ctx, domain, name, false)
+}
+
+func (r *RegistryResolver) resolveAddressFresh(ctx context.Context, domain, name string, forceRefresh bool) (*registryAddressCacheValue, error) {
 	cacheKey := domain + "/" + name
-	if cached, ok := r.loadAddressCache(cacheKey); ok {
-		return cached, nil
+	if !forceRefresh {
+		if cached, ok := r.loadAddressCache(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	authority, err := r.discoverAuthority(ctx, domain)
 	if err != nil {
 		return nil, err
 	}
 	var resp registryAddressResponse
-	if err := r.getAddressJSON(ctx, authority.RegistryURL, domain, name, &resp); err != nil {
+	if err := r.getAddressJSON(ctx, authority.RegistryURL, domain, name, forceRefresh, &resp); err != nil {
 		return nil, err
 	}
 	value := &registryAddressCacheValue{
@@ -382,9 +418,15 @@ func (r *RegistryResolver) resolveAddress(ctx context.Context, domain, name stri
 }
 
 func (r *RegistryResolver) resolveTeamMember(ctx context.Context, teamID, alias string) (*registryTeamMemberCacheValue, error) {
+	return r.resolveTeamMemberFresh(ctx, teamID, alias, false)
+}
+
+func (r *RegistryResolver) resolveTeamMemberFresh(ctx context.Context, teamID, alias string, forceRefresh bool) (*registryTeamMemberCacheValue, error) {
 	cacheKey := teamID + "/" + alias
-	if cached, ok := r.loadMemberCache(cacheKey); ok {
-		return cached, nil
+	if !forceRefresh {
+		if cached, ok := r.loadMemberCache(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	domain, name, err := ParseTeamID(teamID)
 	if err != nil {
@@ -395,13 +437,15 @@ func (r *RegistryResolver) resolveTeamMember(ctx context.Context, teamID, alias 
 		return nil, err
 	}
 	var resp registryTeamMemberResponse
-	if err := r.getJSON(
-		ctx,
-		authority.RegistryURL,
-		"/v1/namespaces/"+urlPathEscape(domain)+"/teams/"+urlPathEscape(name)+"/members/"+urlPathEscape(alias),
-		&resp,
-	); err != nil {
-		return nil, err
+	memberPath := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/members/" + urlPathEscape(alias)
+	var fetchErr error
+	if forceRefresh {
+		fetchErr = r.getJSONWithHeaders(ctx, authority.RegistryURL, memberPath, map[string]string{"Cache-Control": "no-cache"}, &resp)
+	} else {
+		fetchErr = r.getJSON(ctx, authority.RegistryURL, memberPath, &resp)
+	}
+	if fetchErr != nil {
+		return nil, fetchErr
 	}
 	value := &registryTeamMemberCacheValue{
 		authority: authority,
@@ -412,11 +456,23 @@ func (r *RegistryResolver) resolveTeamMember(ctx context.Context, teamID, alias 
 }
 
 func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW string) (*DidKeyResolution, error) {
-	if cached, ok := r.loadKeyCache(didAW); ok {
-		return cached, nil
+	return r.resolveKeyFresh(ctx, registryURL, didAW, false)
+}
+
+func (r *RegistryResolver) resolveKeyFresh(ctx context.Context, registryURL, didAW string, forceRefresh bool) (*DidKeyResolution, error) {
+	if !forceRefresh {
+		if cached, ok := r.loadKeyCache(didAW); ok {
+			return cached, nil
+		}
 	}
 	var wire didKeyResolutionWire
-	if err := r.getJSON(ctx, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", &wire); err != nil {
+	var err error
+	if forceRefresh {
+		err = r.getJSONWithHeaders(ctx, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", map[string]string{"Cache-Control": "no-cache"}, &wire)
+	} else {
+		err = r.getJSON(ctx, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", &wire)
+	}
+	if err != nil {
 		return nil, err
 	}
 	res := &DidKeyResolution{
@@ -492,8 +548,11 @@ func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string)
 	return authority, nil
 }
 
-func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, name string, out any) error {
+func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, name string, bypassCache bool, out any) error {
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses/" + urlPathEscape(name)
+	if bypassCache {
+		return r.getJSONWithHeaders(ctx, baseURL, path, map[string]string{"Cache-Control": "no-cache"}, out)
+	}
 	return r.getJSON(ctx, baseURL, path, out)
 }
 

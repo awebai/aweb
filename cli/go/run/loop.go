@@ -176,16 +176,21 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		defer func() { _ = serviceSupervisor.Stop() }()
 	}
 	if l.EventBus != nil {
+		streamErrorReported := false
 		l.EventBus.onStateChange = func(cs ConnectionState) {
 			state.ConnState = cs
+			if cs == ConnStreaming {
+				streamErrorReported = false
+			}
 			l.refreshStatusLine(state)
 		}
-		l.EventBus.onError = func(ev awid.AgentEvent) {
-			if text := strings.TrimSpace(ev.Text); text != "" {
-				l.printf("info: event stream error: %s\n", text)
-			} else {
-				l.println("info: event stream error")
+		l.EventBus.onConnectionNotice = l.println
+		l.EventBus.onError = func(awid.AgentEvent) {
+			if streamErrorReported {
+				return
 			}
+			streamErrorReported = true
+			l.println("aweb: event stream reported a server error; incoming events may be delayed")
 		}
 		l.EventBus.Start(ctx)
 		defer l.EventBus.Stop()
@@ -228,6 +233,11 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 				return nil
 			}
 			return err
+		}
+		if decision.AfterDelivery != nil {
+			if err := decision.AfterDelivery(ctx); err != nil {
+				l.printf("info: post-delivery acknowledgement failed; source remains pending: %v\n", err)
+			}
 		}
 		if state.ExitConfirmPending {
 			if err := l.waitForExitConfirmation(ctx, state); err != nil {

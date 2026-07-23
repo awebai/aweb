@@ -1543,16 +1543,21 @@ var APIClient = class {
   async get(path) {
     return this.request("GET", path);
   }
+  async getFresh(path) {
+    return this.request("GET", path, void 0, true);
+  }
   async post(path, body) {
     return this.request("POST", path, body);
   }
-  async request(method, path, body) {
+  async request(method, path, body, noCache = false) {
     const url = this.baseURL + path;
     const bodyText = body === void 0 ? "" : JSON.stringify(body);
     const headers = {
       Accept: "application/json",
       ...this.authHeaders(path, bodyText)
     };
+    if (noCache)
+      headers["Cache-Control"] = "no-cache";
     const init = { method, headers };
     if (body !== void 0) {
       headers["Content-Type"] = "application/json";
@@ -1629,7 +1634,12 @@ var APIError = class extends Error {
 };
 
 // ../channel-core/dist/api/events.js
-async function* streamAgentEvents(client, signal) {
+async function* streamAgentEvents(client, signal, onState = () => {
+}) {
+  let connectedOnce = false;
+  let disconnected = false;
+  let retryInMs = 1e3;
+  const maxRetryInMs = 5e3;
   while (!signal.aborted) {
     const deadline = new Date(Date.now() + 5 * 60 * 1e3).toISOString();
     let resp;
@@ -1638,19 +1648,50 @@ async function* streamAgentEvents(client, signal) {
     } catch (err2) {
       if (signal.aborted)
         return;
-      console.error(`[aw-channel] events stream connect failed: ${err2}`);
-      await sleep(5e3, signal);
+      const fetchRetryInMs = maxRetryInMs;
+      if (!disconnected) {
+        disconnected = true;
+        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs: fetchRetryInMs });
+      }
+      retryInMs = fetchRetryInMs;
+      await sleep(retryInMs, signal);
       continue;
     }
     try {
-      yield* parseSSEResponse(resp, signal);
+      const openedAt = Date.now();
+      let streamConfirmed = false;
+      for await (const event of parseSSEResponse(resp, signal)) {
+        if (!streamConfirmed) {
+          streamConfirmed = true;
+          retryInMs = 1e3;
+          if (disconnected) {
+            disconnected = false;
+            connectedOnce = true;
+            onState({ state: "reconnected" });
+          } else if (!connectedOnce) {
+            connectedOnce = true;
+            onState({ state: "connected" });
+          }
+        }
+        yield event;
+      }
+      if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1e3) {
+        if (!disconnected) {
+          disconnected = true;
+          onState({ state: "disconnected", cause: "connection closed", retryInMs });
+        }
+        await sleep(retryInMs, signal);
+        retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
+      }
     } catch (err2) {
       if (signal.aborted)
         return;
-      if (!isExpectedStreamTermination(err2)) {
-        console.error(`[aw-channel] events stream parse failed: ${err2}`);
+      if (!disconnected) {
+        disconnected = true;
+        onState({ state: "disconnected", cause: streamErrorCause(err2), retryInMs });
       }
-      await sleep(1e3, signal);
+      await sleep(retryInMs, signal);
+      retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
     } finally {
       resp.body?.cancel().catch(() => {
       });
@@ -1736,12 +1777,33 @@ function parseAgentEvent(eventName, data) {
     return { type: eventName };
   }
 }
-function isExpectedStreamTermination(err2) {
-  if (!(err2 instanceof Error))
-    return false;
-  const name = err2.name.toLowerCase();
-  const message = err2.message.toLowerCase();
-  return name === "aborterror" || message === "terminated";
+function formatEventStreamState(state) {
+  if (state.state === "connected")
+    return "aweb: event stream connected";
+  if (state.state === "reconnected") {
+    return "aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed";
+  }
+  const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1e3));
+  return `aweb: event stream disconnected (${state.cause || "connection failed"}) \u2014 retrying in ${seconds}s`;
+}
+function streamErrorCause(err2) {
+  const error = err2 instanceof Error ? err2 : void 0;
+  const nested = error?.cause;
+  const code = typeof nested?.code === "string" ? nested.code.toUpperCase() : "";
+  const detail = [error?.message, typeof nested?.message === "string" ? nested.message : ""].filter(Boolean).join(": ").toLowerCase();
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || detail.includes("getaddrinfo"))
+    return "DNS lookup failed";
+  if (code === "ECONNREFUSED" || detail.includes("connection refused"))
+    return "connection refused";
+  if (code === "ETIMEDOUT" || detail.includes("timed out") || detail.includes("timeout"))
+    return "connection timed out";
+  if (code.startsWith("CERT_") || detail.includes("certificate") || detail.includes("tls"))
+    return "TLS connection failed";
+  if (detail.includes("network") || detail.includes("fetch failed"))
+    return "network unavailable";
+  if (detail.includes("terminated") || detail.includes("closed"))
+    return "connection closed";
+  return "connection failed";
 }
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -5110,7 +5172,7 @@ var RegistryResolver = class {
     this.now = now;
     this.fallbackRegistryURL = options?.fallbackRegistryURL ? canonicalServerOrigin(options.fallbackRegistryURL) : "";
   }
-  async verifyStableIdentity(address, stableID) {
+  async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "") {
     const split2 = splitRegistryAddress(address);
     if (!split2 || !stableID.trim()) {
       return { outcome: "OK_DEGRADED" };
@@ -5122,13 +5184,32 @@ var RegistryResolver = class {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      try {
+        resolvedAddress = await this.resolveAddress(split2.domain, split2.name, true);
+      } catch (error) {
+        return { outcome: "STALE_CACHE", error: String(error) };
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
     let resolution;
     try {
       resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID);
     } catch (error) {
       return { outcome: "OK_DEGRADED", error: String(error) };
+    }
+    const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey) {
+      try {
+        resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID, true);
+      } catch (error) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: String(error)
+        };
+      }
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
@@ -5195,34 +5276,37 @@ var RegistryResolver = class {
     });
     return resolvedAuthority;
   }
-  async resolveAddress(domain, name) {
+  async resolveAddress(domain, name, forceRefresh = false) {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
-    const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`);
+    const response = await this.getJSON(registryURL, `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`, forceRefresh);
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
     return value;
   }
-  async resolveDidKey(registryURL, stableID) {
+  async resolveDidKey(registryURL, stableID, forceRefresh = false) {
     const cached = this.keyCache.get(stableID);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
-    const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`);
+    const response = await this.getJSON(registryURL, `/v1/did/${pathSafeSegment(stableID)}/key`, forceRefresh);
     this.keyCache.set(stableID, {
       value: response,
       expiresAt: this.now() + REGISTRY_KEY_TTL_MS
     });
     return response;
   }
-  async getJSON(baseURL, path) {
+  async getJSON(baseURL, path, bypassCache = false) {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...bypassCache ? { "Cache-Control": "no-cache" } : {}
+      },
       signal: AbortSignal.timeout(1e4)
     });
     if (!response.ok) {
@@ -5593,6 +5677,7 @@ var SenderTrustManager = class {
   }
   async normalizeTrust(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, verificationAddress) {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const recipientBindingMismatch = verificationStatus === "verified" && status === "identity_mismatch";
     if (!status || !rawAddress.trim()) {
       return { status, stored: false };
     }
@@ -5600,7 +5685,11 @@ var SenderTrustManager = class {
     const meta = await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(status, (verificationAddress || rawAddress).trim(), fromDID, fromStableID);
     status = registryCheck.status;
-    return this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+    const pinResult = this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+    if (pinResult.status === "identity_mismatch" && !recipientBindingMismatch && fromDID && isLocalAliasReference(rawAddress.trim()) && !fromStableID?.startsWith("did:aw:")) {
+      return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
+    }
+    return pinResult;
   }
   checkRecipientBinding(status, toDID, toStableID) {
     if (status !== "verified") {
@@ -5630,7 +5719,10 @@ var SenderTrustManager = class {
     if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
       return { status, confirmedCurrentKey: false };
     }
-    const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID);
+    const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
+    if (registryResult.outcome === "STALE_CACHE") {
+      return { status: "verification_stale", confirmedCurrentKey: false };
+    }
     if (registryResult.outcome === "HARD_ERROR") {
       return { status: "identity_mismatch", confirmedCurrentKey: false };
     }
@@ -5795,18 +5887,42 @@ var SenderTrustManager = class {
     }
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
-  async resolveAgentMeta(address) {
+  async reconcileLocalMismatch(store, rawAddress, trustAddress, fromDID) {
+    const fresh = await this.resolveAgentMeta(rawAddress, true);
+    if (!fresh.resolved) {
+      return {
+        status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+        stored: false
+      };
+    }
+    if (fresh.identityScope !== "local") {
+      return { status: "identity_mismatch", stored: false };
+    }
+    if (!fresh.did) {
+      return { status: "verification_stale", stored: false };
+    }
+    if (fresh.did !== fromDID) {
+      return { status: "identity_mismatch", stored: false };
+    }
+    let removed = store.removeAddress(trustAddress);
+    if (rawAddress && rawAddress !== trustAddress) {
+      removed = store.removeAddress(rawAddress) || removed;
+    }
+    return { status: "verification_stale", stored: removed };
+  }
+  async resolveAgentMeta(address, forceRefresh = false) {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (cached)
+    if (!forceRefresh && cached)
       return cached;
     try {
-      const identity = await this.resolveIdentity(rawAddress);
+      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta = {
+        did: identity.did,
         identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,
@@ -5814,11 +5930,17 @@ var SenderTrustManager = class {
       };
       this.metaCache.set(trustAddress, meta);
       return meta;
-    } catch {
-      return { identityScope: "global", custody: "self", resolved: false };
+    } catch (error) {
+      const statusCode = error?.statusCode;
+      return {
+        identityScope: "global",
+        custody: "self",
+        resolved: false,
+        resolutionError: statusCode === 404 ? "not_found" : "unavailable"
+      };
     }
   }
-  async resolveIdentity(address) {
+  async resolveIdentity(address, forceRefresh = false) {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -5829,7 +5951,8 @@ var SenderTrustManager = class {
     if (trimmed.includes("~") || !this.teamID) {
       throw new Error(`unsupported local address ${trimmed}`);
     }
-    const response = await this.client.get(`/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`);
+    const path = `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`;
+    const response = forceRefresh ? await this.client.getFresh(path) : await this.client.get(path);
     return {
       did: response.did_key || "",
       stableID: response.did_aw,
@@ -5839,6 +5962,9 @@ var SenderTrustManager = class {
     };
   }
 };
+function isLocalAliasReference(value) {
+  return value !== "" && !value.includes("/") && !value.includes("~") && !value.startsWith("did:");
+}
 function isTimestampFresh(value) {
   const time = Date.parse(value);
   if (Number.isNaN(time))
@@ -6044,15 +6170,41 @@ async function startChannelLoop(options) {
   const dispatched = /* @__PURE__ */ new Set();
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
   const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : void 0);
-  const log = options.log || (() => {
-  });
-  for await (const event of streamAgentEvents(options.client, options.signal)) {
-    try {
-      await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
+  await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal, options.onStreamState), options.log || (() => {
+  }));
+}
+async function consumeAgentEvents(options, dispatched, events, log = () => {
+}) {
+  const lanes = /* @__PURE__ */ new Map();
+  const pending = /* @__PURE__ */ new Set();
+  for await (const event of events) {
+    const lane = eventDispatchLane(event);
+    const previous = lane ? lanes.get(lane) : void 0;
+    const job = (previous || Promise.resolve()).then(async () => {
+      await dispatchAgentEvent(options, dispatched, event);
       pruneDispatched(dispatched);
-    } catch (err2) {
-      log(`[aw-channel] dispatch error: ${err2}`);
-    }
+    }).catch(() => {
+      log("aweb: could not process an incoming event; it remains pending");
+    });
+    pending.add(job);
+    if (lane)
+      lanes.set(lane, job);
+    void job.finally(() => {
+      pending.delete(job);
+      if (lane && lanes.get(lane) === job)
+        lanes.delete(lane);
+    });
+  }
+  await Promise.all([...pending]);
+}
+function eventDispatchLane(event) {
+  switch (event.type) {
+    case "mail_message":
+      return "mail";
+    case "chat_message":
+      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+    default:
+      return "";
   }
 }
 async function dispatchAgentEvent(options, dispatched, event) {
@@ -6157,8 +6309,9 @@ async function dispatchMailEvent(options, dispatched, event) {
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
-      if (!msg.read_at)
+      if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
         await ackMessage(options.client, msg.message_id);
+      }
       continue;
     }
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
@@ -6200,7 +6353,9 @@ async function dispatchMailEvent(options, dispatched, event) {
       options.deliveryStore.mark(key);
       await options.deliveryStore.save();
     }
-    await ackMessage(options.client, msg.message_id);
+    if (options.mailAcknowledgment !== "manual") {
+      await ackMessage(options.client, msg.message_id);
+    }
   }
   if (pinsDirty)
     await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
@@ -6328,6 +6483,9 @@ function isTrustedVerificationStatus(status) {
 function trustWarningLine(status) {
   if (isTrustedVerificationStatus(status))
     return "";
+  if (status === "verification_stale") {
+    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+  }
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 function formatAwakeningForAgent(awakening) {
@@ -6425,9 +6583,12 @@ function senderDisplayAddress(alias, address) {
 }
 function senderTrustAddress(alias, address) {
   const qualified = (address || "").trim();
+  const localAlias = (alias || "").trim();
+  if (qualified.startsWith("did:key:") && localAlias)
+    return localAlias;
   if (qualified)
     return qualified;
-  return (alias || "").trim();
+  return localAlias;
 }
 function isSelfSender(alias, address, stableID, did, self) {
   const msgAddress = (address || "").trim();
@@ -6483,7 +6644,9 @@ function awakeningFields(awakening) {
   };
 }
 function createWakeLogger(prefix = "aweb-pi-extension") {
+  const enabled = /^(1|true|yes)$/i.test((process.env.AWEB_CHANNEL_DEBUG || "").trim());
   return (event, fields = {}) => {
+    if (!enabled) return;
     const line = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
       component: prefix,
@@ -6520,13 +6683,19 @@ function createWakeDispatcher(pi, log) {
   const queue = [];
   let draining = false;
   let turnActive = false;
+  let closed;
+  let inFlight;
+  const nextDeliverableIndex = () => queue.findIndex(({ awakening }) => !turnActive || awakening.deliveryIntent !== "wake");
   const drain = () => {
-    if (draining) return;
+    if (draining || nextDeliverableIndex() < 0) return;
     draining = true;
     setImmediate(async () => {
       try {
-        let next;
-        while (next = queue.shift()) {
+        let index;
+        while ((index = nextDeliverableIndex()) >= 0) {
+          const [pending] = queue.splice(index, 1);
+          inFlight = pending;
+          const next = pending.awakening;
           const options = deliveryOptionsForAwakening(next, turnActive);
           const fields = { ...awakeningFields(next), options };
           log("wake_delivering", fields);
@@ -6541,25 +6710,43 @@ function createWakeDispatcher(pi, log) {
               options
             );
             if (isThenable(result)) await result;
-            log("wake_delivered", fields);
+            if (closed) {
+              pending.reject(closed);
+            } else {
+              log("wake_delivered", fields);
+              pending.resolve();
+            }
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
+            pending.reject(error);
+          } finally {
+            if (inFlight === pending) inFlight = void 0;
           }
         }
       } finally {
         draining = false;
-        if (queue.length > 0) drain();
+        if (nextDeliverableIndex() >= 0) drain();
       }
     });
   };
   return {
     enqueue(awakening) {
-      queue.push(awakening);
+      if (closed) return Promise.reject(closed);
+      const delivered = new Promise((resolve, reject) => {
+        queue.push({ awakening, resolve, reject });
+      });
       log("wake_enqueued", { ...awakeningFields(awakening), queue_length: queue.length });
       drain();
+      return delivered;
     },
     setTurnActive(active) {
       turnActive = active;
+      if (!active) drain();
+    },
+    close(reason = new Error("Pi wake dispatcher closed")) {
+      closed = reason;
+      inFlight?.reject(reason);
+      for (const pending of queue.splice(0)) pending.reject(reason);
     }
   };
 }
@@ -6720,6 +6907,7 @@ function awebPiExtension(pi) {
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = void 0;
+    wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
     wakeDispatcher = void 0;
   });
   pi.on("session_start", async (_event, ctx) => {
@@ -6776,7 +6964,7 @@ ${message}`),
     );
     if (ctx.hasUI) {
       const theme = ctx.ui.theme;
-      ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "\u2713")} ${theme.fg("dim", "aweb connected")}`);
+      ctx.ui.setStatus("aweb-channel", `${theme.fg("warning", "\u2026")} ${theme.fg("dim", "aweb connecting")}`);
     }
     void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
       if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
@@ -6795,7 +6983,29 @@ ${message}`),
       },
       signal,
       workdir: ctx.cwd,
-      onAwakening: (awakening) => wakeDispatcher?.enqueue(awakening),
+      onAwakening: (awakening) => {
+        const dispatcher = wakeDispatcher;
+        if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
+        return dispatcher.enqueue(awakening);
+      },
+      onStreamState: (state) => {
+        if (ctx.hasUI) {
+          const theme = ctx.ui.theme;
+          if (state.state === "disconnected") {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "\u2715")} ${theme.fg("dim", "aweb events down; retrying")}`);
+          } else {
+            ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "\u2713")} ${theme.fg("dim", "aweb connected")}`);
+          }
+        }
+        if (state.state === "connected") return;
+        const content = formatEventStreamState(state);
+        pi.sendMessage({
+          customType: "aweb-channel-status",
+          content,
+          display: true,
+          details: { stream_state: state.state }
+        }, { deliverAs: "steer", triggerTurn: true });
+      },
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       }

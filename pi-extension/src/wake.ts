@@ -44,7 +44,9 @@ function awakeningFields(awakening: ChannelAwakening): Record<string, unknown> {
 }
 
 export function createWakeLogger(prefix = "aweb-pi-extension"): WakeLogger {
+  const enabled = /^(1|true|yes)$/i.test((process.env.AWEB_CHANNEL_DEBUG || "").trim());
   return (event, fields = {}) => {
+    if (!enabled) return;
     const line = {
       ts: new Date().toISOString(),
       component: prefix,
@@ -93,33 +95,49 @@ export function deliveryOptionsForAwakening(
 }
 
 export interface WakeDispatcher {
-  enqueue(awakening: ChannelAwakening): void;
+  enqueue(awakening: ChannelAwakening): Promise<void>;
   setTurnActive(active: boolean): void;
+  close(reason?: Error): void;
+}
+
+interface PendingWake {
+  awakening: ChannelAwakening;
+  resolve: () => void;
+  reject: (error: unknown) => void;
 }
 
 export function createWakeDispatcher(
   pi: ExtensionAPI,
   log: WakeLogger,
 ): WakeDispatcher {
-  const queue: ChannelAwakening[] = [];
+  const queue: PendingWake[] = [];
   let draining = false;
   let turnActive = false;
+  let closed: Error | undefined;
+  let inFlight: PendingWake | undefined;
+
+  const nextDeliverableIndex = (): number => queue.findIndex(({ awakening }) => (
+    !turnActive || awakening.deliveryIntent !== "wake"
+  ));
 
   const drain = () => {
-    if (draining) return;
+    if (draining || nextDeliverableIndex() < 0) return;
     draining = true;
     setImmediate(async () => {
       try {
-        let next: ChannelAwakening | undefined;
-        while ((next = queue.shift())) {
+        let index: number;
+        while ((index = nextDeliverableIndex()) >= 0) {
+          const [pending] = queue.splice(index, 1);
+          inFlight = pending;
+          const next = pending.awakening;
           const options = deliveryOptionsForAwakening(next, turnActive);
           const fields = { ...awakeningFields(next), options };
           log("wake_delivering", fields);
           try {
             // Pi's public extension type currently declares sendMessage as void,
             // but the runtime implementation is async. Await thenables here so
-            // wake-path rejections are logged locally without changing global
-            // unhandledRejection semantics for the whole Pi host process.
+            // the channel core does not acknowledge mail until Pi accepted the
+            // injection at idle/turn-end.
             const result = (pi.sendMessage as unknown as (
               message: Parameters<ExtensionAPI["sendMessage"]>[0],
               options: SendMessageOptions,
@@ -133,26 +151,44 @@ export function createWakeDispatcher(
               options,
             );
             if (isThenable(result)) await result;
-            log("wake_delivered", fields);
+            if (closed) {
+              pending.reject(closed);
+            } else {
+              log("wake_delivered", fields);
+              pending.resolve();
+            }
           } catch (error) {
             log("wake_delivery_failed", { ...fields, ...errorFields(error) });
+            pending.reject(error);
+          } finally {
+            if (inFlight === pending) inFlight = undefined;
           }
         }
       } finally {
         draining = false;
-        if (queue.length > 0) drain();
+        if (nextDeliverableIndex() >= 0) drain();
       }
     });
   };
 
   return {
     enqueue(awakening) {
-      queue.push(awakening);
+      if (closed) return Promise.reject(closed);
+      const delivered = new Promise<void>((resolve, reject) => {
+        queue.push({ awakening, resolve, reject });
+      });
       log("wake_enqueued", { ...awakeningFields(awakening), queue_length: queue.length });
       drain();
+      return delivered;
     },
     setTurnActive(active) {
       turnActive = active;
+      if (!active) drain();
+    },
+    close(reason = new Error("Pi wake dispatcher closed")) {
+      closed = reason;
+      inFlight?.reject(reason);
+      for (const pending of queue.splice(0)) pending.reject(reason);
     },
   };
 }

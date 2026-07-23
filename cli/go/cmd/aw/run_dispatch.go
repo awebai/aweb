@@ -16,8 +16,9 @@ import (
 )
 
 type runWakeResolution struct {
-	Skip         bool
-	CycleContext string
+	Skip          bool
+	CycleContext  string
+	AfterDelivery func(context.Context) error
 }
 
 type runWakeResolver func(context.Context, awid.AgentEvent) (runWakeResolution, error)
@@ -57,9 +58,10 @@ func (d runDispatcher) Next(ctx context.Context, autofeed bool, wakeEvent *awid.
 			return awrun.DispatchDecision{Skip: true, WaitSeconds: awrun.DefaultWaitSeconds}, nil
 		}
 		return awrun.DispatchDecision{
-			CycleContext: joinPromptSections(resolved.CycleContext, d.commsPromptSuffix),
-			DisplayLines: awrun.SplitDisplayText(awrun.DisplayKindCommunication, strings.TrimSpace(resolved.CycleContext)),
-			WaitSeconds:  awrun.DefaultWaitSeconds,
+			CycleContext:  joinPromptSections(resolved.CycleContext, d.commsPromptSuffix),
+			DisplayLines:  awrun.SplitDisplayText(awrun.DisplayKindCommunication, strings.TrimSpace(resolved.CycleContext)),
+			WaitSeconds:   awrun.DefaultWaitSeconds,
+			AfterDelivery: resolved.AfterDelivery,
 		}, nil
 	case awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved:
 		if !autofeed {
@@ -69,6 +71,11 @@ func (d runDispatcher) Next(ctx context.Context, autofeed bool, wakeEvent *awid.
 			CycleContext: joinPromptSections(formatWorkWakePrompt(*wakeEvent), d.workPromptSuffix),
 			DisplayLines: formatWorkWakeDisplay(*wakeEvent),
 			WaitSeconds:  awrun.DefaultWaitSeconds,
+		}, nil
+	case awid.AgentEventChannelReconnected:
+		return awrun.DispatchDecision{
+			CycleContext: "The aweb event stream reconnected after an outage. Check `aw mail inbox` and `aw chat pending` now for messages that may have arrived while this agent was deaf.",
+			DisplayLines: []awrun.DisplayLine{{Text: "aweb: event stream reconnected; catching up"}},
 		}, nil
 	case awid.AgentEventAppEvent:
 		summary := formatAppEventWakeSummary(*wakeEvent)
@@ -373,34 +380,37 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			}
 			return runWakeResolution{Skip: true}, nil
 		}
-		// Mark as read — seeing the full content means it's read.
-		if msg.MessageID != "" {
-			_, _ = client.AckMessage(ctx, msg.MessageID)
-		}
-		contextText := formatIncomingMailContext(
+		fromLabel := preferredIdentityDisplayLabel(
+			strings.TrimSpace(msg.FromAlias),
+			strings.TrimSpace(msg.FromAddress),
+			strings.TrimSpace(msg.FromStableID),
+			strings.TrimSpace(msg.FromDID),
 			preferredIdentityDisplayLabel(
-				strings.TrimSpace(msg.FromAlias),
-				strings.TrimSpace(msg.FromAddress),
-				strings.TrimSpace(msg.FromStableID),
-				strings.TrimSpace(msg.FromDID),
-				preferredIdentityDisplayLabel(
-					strings.TrimSpace(evt.FromAlias),
-					strings.TrimSpace(evt.FromAddress),
-					strings.TrimSpace(evt.FromStableID),
-					strings.TrimSpace(evt.FromDID),
-					"",
-				),
+				strings.TrimSpace(evt.FromAlias),
+				strings.TrimSpace(evt.FromAddress),
+				strings.TrimSpace(evt.FromStableID),
+				strings.TrimSpace(evt.FromDID),
+				"",
 			),
-			msg.Subject,
-			msg.Body,
 		)
+		contextText := formatIncomingMailContext(fromLabel, msg.Subject, msg.Body)
+		if msg.VerificationStatus == awid.VerificationStale {
+			contextText = joinPromptSections(contextText, "Sender verification: stale registry cache; retry verification before sensitive work.")
+		}
 		if strings.TrimSpace(msg.MessageID) != "" && strings.TrimSpace(msg.ConversationID) != "" {
 			contextText = joinPromptSections(
 				contextText,
 				fmt.Sprintf("Reply with: aw mail reply %s --body \"...\"", strings.TrimSpace(msg.MessageID)),
 			)
 		}
-		return runWakeResolution{CycleContext: contextText}, nil
+		resolution := runWakeResolution{CycleContext: contextText}
+		if deliveredMessageID := strings.TrimSpace(msg.MessageID); deliveredMessageID != "" {
+			resolution.AfterDelivery = func(deliveryCtx context.Context) error {
+				_, err := client.AckMessage(deliveryCtx, deliveredMessageID)
+				return err
+			}
+		}
+		return resolution, nil
 	}
 	if messageID == "" {
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil

@@ -385,6 +385,59 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	}
 }
 
+func TestRegistryResolverResolveFreshBypassesLocalTeamMemberCache(t *testing.T) {
+	t.Parallel()
+
+	oldPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(oldPub)
+	newDID := ComputeDIDKey(newPub)
+	requests := 0
+	freshNoCache := false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/namespaces/acme.com/teams/backend/members/alice" {
+			http.NotFound(w, r)
+			return
+		}
+		requests++
+		did := oldDID
+		if requests > 1 {
+			did = newDID
+			freshNoCache = r.Header.Get("Cache-Control") == "no-cache"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id": "backend:acme.com", "member_did_key": did, "alias": "alice", "identity_scope": "local",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute),
+	}
+	cached, err := resolver.Resolve(context.Background(), "backend:acme.com/alice")
+	if err != nil || cached.DID != oldDID {
+		t.Fatalf("cached resolve=%+v err=%v", cached, err)
+	}
+	again, err := resolver.Resolve(context.Background(), "backend:acme.com/alice")
+	if err != nil || again.DID != oldDID || requests != 1 {
+		t.Fatalf("second cached resolve=%+v requests=%d err=%v", again, requests, err)
+	}
+	fresh, err := resolver.ResolveFresh(context.Background(), "backend:acme.com/alice")
+	if err != nil || fresh.DID != newDID {
+		t.Fatalf("fresh resolve=%+v err=%v", fresh, err)
+	}
+	if requests != 2 || !freshNoCache {
+		t.Fatalf("fresh requests=%d no_cache=%v", requests, freshNoCache)
+	}
+}
+
 func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	t.Parallel()
 
@@ -891,6 +944,115 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogOnFirstContact(t *testi
 	}
 	if logCalls.Load() != 1 {
 		t.Fatalf("second log_calls=%d, want cached head reuse", logCalls.Load())
+	}
+}
+
+func TestRegistryResolverRefreshesCachedKeyForExpectedSignedMessageKey(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(oldPub)
+	newDID := ComputeDIDKey(newPub)
+	stableID := ComputeStableID(oldPub)
+	createEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW: stableID, CurrentDIDKey: oldDID,
+		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, StateHash: strings.Repeat("1", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
+	}).LogHead
+	prevHash := createEntry.EntryHash
+	rotateEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW: stableID, CurrentDIDKey: newDID,
+		LogHead: &DidKeyEvidence{Seq: 2, Operation: "rotate_key", PreviousDIDKey: &oldDID, NewDIDKey: newDID, PrevEntryHash: &prevHash, StateHash: strings.Repeat("2", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-10T00:00:00Z"},
+	}).LogHead
+
+	var keyCalls atomic.Int32
+	var refreshBypassedCache atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{"address_id": "addr-1", "domain": "acme.com", "name": "alice", "did_aw": stableID, "current_did_key": newDID, "created_at": "2026-04-04T00:00:00Z"})
+		case "/v1/did/" + stableID + "/key":
+			if keyCalls.Add(1) == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": stableID, "current_did_key": oldDID, "log_head": createEntry})
+			} else {
+				refreshBypassedCache.Store(r.Header.Get("Cache-Control") == "no-cache")
+				_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": stableID, "current_did_key": newDID, "log_head": rotateEntry})
+			}
+		case "/v1/did/" + stableID + "/log":
+			_ = json.NewEncoder(w).Encode([]DidKeyEvidence{*createEntry})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute)}
+
+	initial := resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+	if initial == nil || initial.Outcome != StableIdentityVerified || initial.CurrentDIDKey != oldDID {
+		t.Fatalf("initial=%+v", initial)
+	}
+	refreshed := resolver.VerifyStableIdentityCurrent(context.Background(), "acme.com/alice", stableID, newDID)
+	if refreshed == nil || refreshed.Outcome != StableIdentityVerified || refreshed.CurrentDIDKey != newDID {
+		t.Fatalf("refreshed=%+v", refreshed)
+	}
+	if keyCalls.Load() != 2 {
+		t.Fatalf("key calls=%d, want cached read plus one forced refresh", keyCalls.Load())
+	}
+	if !refreshBypassedCache.Load() {
+		t.Fatal("forced key refresh did not send Cache-Control: no-cache")
+	}
+}
+
+func TestRegistryResolverReportsStaleCacheWhenExpectedKeyRefreshFails(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(pub)
+	newDID := ComputeDIDKey(newPub)
+	stableID := ComputeStableID(pub)
+	createEntry := signedDidKeyResolution(t, priv, &DidKeyResolution{
+		DIDAW: stableID, CurrentDIDKey: oldDID,
+		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, StateHash: strings.Repeat("1", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
+	}).LogHead
+	var keyCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{"address_id": "addr-1", "domain": "acme.com", "name": "alice", "did_aw": stableID, "current_did_key": oldDID, "created_at": "2026-04-04T00:00:00Z"})
+		case "/v1/did/" + stableID + "/key":
+			if keyCalls.Add(1) > 1 {
+				http.Error(w, "registry unavailable during refresh", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": stableID, "current_did_key": oldDID, "log_head": createEntry})
+		case "/v1/did/" + stableID + "/log":
+			_ = json.NewEncoder(w).Encode([]DidKeyEvidence{*createEntry})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute)}
+	_ = resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+
+	result := resolver.VerifyStableIdentityCurrent(context.Background(), "acme.com/alice", stableID, newDID)
+	if result == nil || result.Outcome != StableIdentityStaleCache || !strings.Contains(result.Error, "503") {
+		t.Fatalf("result=%+v, want stale cache refresh failure", result)
 	}
 }
 

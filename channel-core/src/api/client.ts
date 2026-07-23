@@ -26,6 +26,10 @@ export class APIClient {
     return this.request("GET", path);
   }
 
+  async getFresh<T>(path: string): Promise<T> {
+    return this.request("GET", path, undefined, true);
+  }
+
   async post<T>(path: string, body?: unknown): Promise<T> {
     return this.request("POST", path, body);
   }
@@ -34,6 +38,7 @@ export class APIClient {
     method: string,
     path: string,
     body?: unknown,
+    noCache: boolean = false,
   ): Promise<T> {
     const url = this.baseURL + path;
     const bodyText = body === undefined ? "" : JSON.stringify(body);
@@ -41,6 +46,7 @@ export class APIClient {
       Accept: "application/json",
       ...this.authHeaders(path, bodyText),
     };
+    if (noCache) headers["Cache-Control"] = "no-cache";
     const init: RequestInit = { method, headers };
 
     if (body !== undefined) {

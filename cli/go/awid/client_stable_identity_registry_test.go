@@ -18,6 +18,10 @@ func (s *stubStableIdentityResolver) VerifyStableIdentity(context.Context, strin
 	return s.result
 }
 
+func (s *stubStableIdentityResolver) VerifyStableIdentityCurrent(context.Context, string, string, string) *StableIdentityVerification {
+	return s.result
+}
+
 func TestNormalizeSenderTrustRegistryDegradedFallsBackToTOFU(t *testing.T) {
 	t.Parallel()
 
@@ -45,6 +49,37 @@ func TestNormalizeSenderTrustRegistryDegradedFallsBackToTOFU(t *testing.T) {
 	}
 	if pin.DIDKey != did {
 		t.Fatalf("pin DIDKey=%q, want %q", pin.DIDKey, did)
+	}
+}
+
+func TestNormalizeSenderTrustRegistryStaleCacheIsNotIdentityMismatch(t *testing.T) {
+	t.Parallel()
+
+	c, err := New("http://example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := NewPinStore()
+	c.SetPinStore(ps, "")
+	c.SetResolver(&stubStableIdentityResolver{
+		result: &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: "refresh unavailable"},
+	})
+
+	status, _ := c.NormalizeSenderTrust(
+		context.Background(),
+		Verified,
+		"acme.com/alice",
+		"did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB",
+		"did:aw:49RVkxsgqYDxawqpb77fvYEmHw1t",
+		nil,
+		nil,
+		nil,
+	)
+	if status != VerificationStale {
+		t.Fatalf("status=%q, want %q", status, VerificationStale)
+	}
+	if len(ps.Pins) != 0 {
+		t.Fatalf("pins=%d, want 0", len(ps.Pins))
 	}
 }
 

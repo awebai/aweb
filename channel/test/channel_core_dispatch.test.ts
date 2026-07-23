@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  consumeAgentEvents,
   DeliveryStore,
   dispatchAgentEvent,
   formatAwakeningForAgent,
@@ -39,6 +40,51 @@ describe("channel-core dispatchAgentEvent", () => {
   const trust = {
     normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
+
+  test("pending mid-turn mail does not block control events from the SSE stream", async () => {
+    let finishMail: (() => void) | undefined;
+    const awakenings: ChannelAwakening[] = [];
+    const onAwakening = vi.fn((awakening: ChannelAwakening) => {
+      awakenings.push(awakening);
+      if (awakening.kind === "mail") {
+        return new Promise<void>((resolve) => { finishMail = resolve; });
+      }
+      return Promise.resolve();
+    });
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-lane-1",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "mid-turn",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield { type: "mail_message", message_id: "mail-lane-1" };
+      yield { type: "control_interrupt", signal_id: "interrupt-1" };
+    }
+
+    const consuming = consumeAgentEvents(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+      new Set(),
+      events(),
+    );
+    await vi.waitFor(() => expect(awakenings.some((item) => item.kind === "control")).toBe(true));
+
+    expect(awakenings.some((item) => item.kind === "mail")).toBe(true);
+    expect(client.post).not.toHaveBeenCalled();
+    finishMail?.();
+    await consuming;
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-lane-1/ack");
+  });
 
   test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
@@ -76,6 +122,47 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "world",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
+  });
+
+  test("keeps mail unread while host injection is pending", async () => {
+    let finishDelivery: (() => void) | undefined;
+    const onAwakening = vi.fn(() => new Promise<void>((resolve) => {
+      finishDelivery = resolve;
+    }));
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-pending-injection",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "wait for turn end",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const dispatch = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pending-injection" } satisfies AgentEvent,
+    );
+    await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledTimes(1));
+
+    expect(client.post).not.toHaveBeenCalled();
+    finishDelivery?.();
+    await dispatch;
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-pending-injection/ack");
   });
 
   test("decrypts encrypted mail locally before channel delivery", async () => {
@@ -368,6 +455,44 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenNthCalledWith(2, "/v1/messages/mail-retry/ack");
   });
 
+  test("manual mail acknowledgment keeps unread reconnect replay deduplicated", async () => {
+    const onAwakening = vi.fn();
+    const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-manual",
+          conversation_id: "conv-manual",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "stay visible",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const options = {
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      deliveryStore,
+      mailAcknowledgment: "manual" as const,
+      onAwakening,
+    };
+    const event = { type: "mail_message", message_id: "mail-manual" } satisfies AgentEvent;
+
+    await dispatchAgentEvent(options, new Set(), event);
+    await dispatchAgentEvent(options, new Set(), event);
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   test("retries chat read receipt without re-delivering when previous read failed after delivery", async () => {
     const onAwakening = vi.fn();
     const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
@@ -491,6 +616,70 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
+  });
+
+  test("live mail reports stale verifier cache without claiming identity mismatch", async () => {
+    const onAwakening = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-stale-verifier",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          from_did: vectors.did,
+          from_stable_id: vectors.stableID,
+          to_alias: "eve",
+          subject: "hello",
+          body: "fresh identity",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+          verification_status: "verified",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const staleTrust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verification_stale", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: staleTrust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-stale-verifier" } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({
+        trust_status: "verification_stale",
+        verified: "false",
+      }),
+    }));
+  });
+
+  test("formats stale verification as retryable rather than identity mismatch", () => {
+    const rendered = formatAwakeningForAgent({
+      kind: "mail",
+      content: "hello",
+      deliveryIntent: "wake",
+      meta: {
+        type: "mail",
+        from: "acme.com/alice",
+        message_id: "mail-stale",
+        trust_status: "verification_stale",
+        verified: "false",
+      },
+    });
+
+    expect(rendered).toContain("sender signature verified");
+    expect(rendered).toContain("not an identity-mismatch finding");
+    expect(rendered).toContain("retry verification");
   });
 
   test("chat trust uses signed-payload did:key when envelope carries stable did:aw", async () => {

@@ -66,9 +66,9 @@ func formatRunStatus(st *state) string {
 	}
 	switch st.ConnState {
 	case ConnStreaming:
-		parts = append(parts, "streaming")
+		parts = append(parts, "aweb events connected")
 	case ConnReconnecting:
-		parts = append(parts, "reconnecting...")
+		parts = append(parts, "aweb events down; retrying")
 	}
 	return strings.Join(parts, " · ")
 }
@@ -91,9 +91,9 @@ func formatWaitStatus(label string, st *state) string {
 	if st != nil {
 		switch st.ConnState {
 		case ConnStreaming:
-			parts = append(parts, "streaming")
+			parts = append(parts, "aweb events connected")
 		case ConnReconnecting:
-			parts = append(parts, "reconnecting...")
+			parts = append(parts, "aweb events down; retrying")
 		}
 	}
 	return strings.Join(parts, " · ")

@@ -372,18 +372,47 @@ describe("dispatchEvent", () => {
       "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
-    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
+    expect(client.post).not.toHaveBeenCalled();
   });
 
-  test("retries mail ack without duplicate notification when prior ack failed", async () => {
+  test("keeps mail unread after fire-and-forget Claude notification transport resolves", async () => {
+    let finishNotification: (() => void) | undefined;
+    const notification = vi.fn(() => new Promise<void>((resolve) => {
+      finishNotification = resolve;
+    }));
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-claude-pending")] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    const dispatch = dispatchEvent(
+      mcp as never,
+      client as never,
+      new PinStore(),
+      trust,
+      self,
+      new Set(),
+      { type: "mail_message", message_id: "msg-claude-pending" } satisfies AgentEvent,
+    );
+    await vi.waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
+
+    expect(client.post).not.toHaveBeenCalled();
+    finishNotification?.();
+    await dispatch;
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("deduplicates Claude notification replay without acknowledging unread mail", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
     const pinStore = new PinStore();
     const client = {
       get: vi.fn().mockResolvedValue({ messages: [{ ...(await signedInboxMail("msg-ack-retry")), conversation_id: "conv-ack-retry" }] }),
-      post: vi.fn()
-        .mockRejectedValueOnce(new Error("aweb: http 503"))
-        .mockResolvedValueOnce(undefined),
+      post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
       normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
@@ -395,13 +424,11 @@ describe("dispatchEvent", () => {
       conversation_id: "conv-ack-retry",
     } satisfies AgentEvent;
 
-    await expect(dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event)).rejects.toThrow("503");
+    await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
     await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
 
     expect(notification).toHaveBeenCalledTimes(1);
-    expect(client.post).toHaveBeenCalledTimes(2);
-    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/messages/msg-ack-retry/ack");
-    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/messages/msg-ack-retry/ack");
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {

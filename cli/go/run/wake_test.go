@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,21 +44,30 @@ func TestEventBusRetriesEarlyEOF(t *testing.T) {
 	defer cancel()
 	bus.Start(ctx)
 
-	select {
-	case <-bus.Queue().Ready():
-		evt, ok := bus.Queue().Pop()
-		if !ok {
-			t.Fatal("expected queued event")
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-bus.Queue().Ready():
+			for {
+				evt, ok := bus.Queue().Pop()
+				if !ok {
+					break
+				}
+				if evt.Event.Type == awid.AgentEventActionableChat {
+					if evt.Event.FromAlias != "mia" {
+						t.Fatalf("unexpected event: %#v", evt.Event)
+					}
+					if requests.Load() < 2 {
+						t.Fatalf("expected at least 2 stream attempts, got %d", requests.Load())
+					}
+					goto received
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for chat event")
 		}
-		if evt.Event.Type != awid.AgentEventActionableChat || evt.Event.FromAlias != "mia" {
-			t.Fatalf("unexpected event: %#v", evt.Event)
-		}
-		if requests.Load() < 2 {
-			t.Fatalf("expected at least 2 stream attempts, got %d", requests.Load())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for event")
 	}
+received:
 	cancel()
 	bus.Stop()
 }
@@ -105,7 +115,7 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := requests.Add(1)
-		if n == 1 {
+		if n <= 2 {
 			http.Error(w, `{"detail":"temporary"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -121,27 +131,60 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 	bus := NewEventBus(EventBusConfig{
 		Stream: NewEventStreamOpener(client),
 	})
+	notices := make(chan string, 8)
+	bus.onConnectionNotice = func(message string) { notices <- message }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	bus.Start(ctx)
 
-	select {
-	case <-bus.Queue().Ready():
-		evt, ok := bus.Queue().Pop()
-		if !ok {
-			t.Fatal("expected queued event")
+	deadline := time.After(2 * time.Second)
+	sawRecovery, sawMail := false, false
+	for !sawMail {
+		select {
+		case <-bus.Queue().Ready():
+			for {
+				evt, ok := bus.Queue().Pop()
+				if !ok {
+					break
+				}
+				switch evt.Event.Type {
+				case awid.AgentEventChannelReconnected:
+					sawRecovery = true
+				case awid.AgentEventActionableMail:
+					if evt.Event.FromAlias != "alice" {
+						t.Fatalf("unexpected event: %#v", evt.Event)
+					}
+					sawMail = true
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for recovery and mail events")
 		}
-		if evt.Event.Type != awid.AgentEventActionableMail || evt.Event.FromAlias != "alice" {
-			t.Fatalf("unexpected event: %#v", evt.Event)
-		}
-		if requests.Load() < 2 {
-			t.Fatalf("expected retry after transient failure, got %d requests", requests.Load())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for event")
 	}
 	cancel()
 	bus.Stop()
+	if !sawRecovery {
+		t.Fatal("recovery did not enqueue a catch-up event")
+	}
+	if requests.Load() < 3 {
+		t.Fatalf("expected retries after transient failures, got %d requests", requests.Load())
+	}
+	var gotNotices []string
+	for {
+		select {
+		case notice := <-notices:
+			gotNotices = append(gotNotices, notice)
+		default:
+			goto noticesDone
+		}
+	}
+noticesDone:
+	if len(gotNotices) < 2 || !strings.HasPrefix(gotNotices[0], "aweb: event stream disconnected (network unavailable)") || gotNotices[1] != "aweb: event stream reconnected; catching up" {
+		t.Fatalf("connection notices=%v", gotNotices)
+	}
+	if strings.Contains(strings.Join(gotNotices, "\n"), "TypeError") {
+		t.Fatalf("raw error leaked in notices: %v", gotNotices)
+	}
 }
 
 func TestEventBusFailsFastOnClientError(t *testing.T) {

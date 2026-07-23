@@ -30,6 +30,7 @@ export class SenderTrustManager {
     }
     async normalizeTrust(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, verificationAddress) {
         let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+        const recipientBindingMismatch = verificationStatus === "verified" && status === "identity_mismatch";
         if (!status || !rawAddress.trim()) {
             return { status, stored: false };
         }
@@ -37,7 +38,15 @@ export class SenderTrustManager {
         const meta = await this.resolveAgentMeta(rawAddress);
         const registryCheck = await this.checkStableIdentityRegistry(status, (verificationAddress || rawAddress).trim(), fromDID, fromStableID);
         status = registryCheck.status;
-        return this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+        const pinResult = this.checkTOFUPinWithMeta(store, status, rawAddress.trim(), trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryCheck.confirmedCurrentKey);
+        if (pinResult.status === "identity_mismatch"
+            && !recipientBindingMismatch
+            && fromDID
+            && isLocalAliasReference(rawAddress.trim())
+            && !fromStableID?.startsWith("did:aw:")) {
+            return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
+        }
+        return pinResult;
     }
     checkRecipientBinding(status, toDID, toStableID) {
         if (status !== "verified") {
@@ -71,7 +80,10 @@ export class SenderTrustManager {
         if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
             return { status, confirmedCurrentKey: false };
         }
-        const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID);
+        const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
+        if (registryResult.outcome === "STALE_CACHE") {
+            return { status: "verification_stale", confirmedCurrentKey: false };
+        }
         if (registryResult.outcome === "HARD_ERROR") {
             return { status: "identity_mismatch", confirmedCurrentKey: false };
         }
@@ -266,18 +278,42 @@ export class SenderTrustManager {
         }
         return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
     }
-    async resolveAgentMeta(address) {
+    async reconcileLocalMismatch(store, rawAddress, trustAddress, fromDID) {
+        const fresh = await this.resolveAgentMeta(rawAddress, true);
+        if (!fresh.resolved) {
+            return {
+                status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+                stored: false,
+            };
+        }
+        if (fresh.identityScope !== "local") {
+            return { status: "identity_mismatch", stored: false };
+        }
+        if (!fresh.did) {
+            return { status: "verification_stale", stored: false };
+        }
+        if (fresh.did !== fromDID) {
+            return { status: "identity_mismatch", stored: false };
+        }
+        let removed = store.removeAddress(trustAddress);
+        if (rawAddress && rawAddress !== trustAddress) {
+            removed = store.removeAddress(rawAddress) || removed;
+        }
+        return { status: "verification_stale", stored: removed };
+    }
+    async resolveAgentMeta(address, forceRefresh = false) {
         const rawAddress = address.trim();
         const trustAddress = this.canonicalTrustAddress(rawAddress);
         if (!trustAddress) {
             return { identityScope: "global", custody: "self", resolved: false };
         }
         const cached = this.metaCache.get(trustAddress);
-        if (cached)
+        if (!forceRefresh && cached)
             return cached;
         try {
-            const identity = await this.resolveIdentity(rawAddress);
+            const identity = await this.resolveIdentity(rawAddress, forceRefresh);
             const meta = {
+                did: identity.did,
                 identityScope: identity.identityScope,
                 custody: identity.custody || "self",
                 controllerDid: identity.controllerDid,
@@ -286,11 +322,17 @@ export class SenderTrustManager {
             this.metaCache.set(trustAddress, meta);
             return meta;
         }
-        catch {
-            return { identityScope: "global", custody: "self", resolved: false };
+        catch (error) {
+            const statusCode = error?.statusCode;
+            return {
+                identityScope: "global",
+                custody: "self",
+                resolved: false,
+                resolutionError: statusCode === 404 ? "not_found" : "unavailable",
+            };
         }
     }
-    async resolveIdentity(address) {
+    async resolveIdentity(address, forceRefresh = false) {
         const trimmed = address.trim();
         if (!trimmed) {
             throw new Error("missing address");
@@ -301,7 +343,10 @@ export class SenderTrustManager {
         if (trimmed.includes("~") || !this.teamID) {
             throw new Error(`unsupported local address ${trimmed}`);
         }
-        const response = await this.client.get(`/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`);
+        const path = `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`;
+        const response = forceRefresh
+            ? await this.client.getFresh(path)
+            : await this.client.get(path);
         return {
             did: response.did_key || "",
             stableID: response.did_aw,
@@ -310,6 +355,9 @@ export class SenderTrustManager {
             identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
         };
     }
+}
+function isLocalAliasReference(value) {
+    return value !== "" && !value.includes("/") && !value.includes("~") && !value.startsWith("did:");
 }
 function isTimestampFresh(value) {
     const time = Date.parse(value);

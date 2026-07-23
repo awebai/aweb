@@ -8,6 +8,15 @@ import (
 	"github.com/awebai/aw/chat"
 )
 
+func TestFormatVerificationTagDistinguishesStaleVerifierFromMismatch(t *testing.T) {
+	if got := formatVerificationTag(awid.VerificationStale); got != " [verification stale]" {
+		t.Fatalf("stale tag=%q", got)
+	}
+	if got := formatVerificationTag(awid.IdentityMismatch); got != " [IDENTITY MISMATCH]" {
+		t.Fatalf("mismatch tag=%q", got)
+	}
+}
+
 func TestFormatChatSendUsesReplyMessageTagsNotReadReceipt(t *testing.T) {
 	// Regression: send-and-wait can receive a read_receipt before the reply
 	// message, and the read_receipt is typically unsigned/unverified. The

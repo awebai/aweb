@@ -21,6 +21,8 @@ func formatVerificationTag(status awid.VerificationStatus) string {
 		return " [IDENTITY MISMATCH]"
 	case awid.Unverified:
 		return " [unverified]"
+	case awid.VerificationStale:
+		return " [verification stale]"
 	default:
 		return ""
 	}

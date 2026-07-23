@@ -2,7 +2,11 @@
  * Consume the agent event stream (GET /v1/events/stream).
  * Yields parsed AgentEvent objects. Reconnects on stream end.
  */
-export async function* streamAgentEvents(client, signal) {
+export async function* streamAgentEvents(client, signal, onState = () => { }) {
+    let connectedOnce = false;
+    let disconnected = false;
+    let retryInMs = 1000;
+    const maxRetryInMs = 5000;
     while (!signal.aborted) {
         const deadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
         let resp;
@@ -12,22 +16,55 @@ export async function* streamAgentEvents(client, signal) {
         catch (err) {
             if (signal.aborted)
                 return;
-            console.error(`[aw-channel] events stream connect failed: ${err}`);
-            // Back off on connection failure
-            await sleep(5000, signal);
+            const fetchRetryInMs = maxRetryInMs;
+            if (!disconnected) {
+                disconnected = true;
+                onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs: fetchRetryInMs });
+            }
+            retryInMs = fetchRetryInMs;
+            await sleep(retryInMs, signal);
             continue;
         }
         try {
-            yield* parseSSEResponse(resp, signal);
+            const openedAt = Date.now();
+            let streamConfirmed = false;
+            for await (const event of parseSSEResponse(resp, signal)) {
+                if (!streamConfirmed) {
+                    streamConfirmed = true;
+                    retryInMs = 1000;
+                    if (disconnected) {
+                        disconnected = false;
+                        connectedOnce = true;
+                        onState({ state: "reconnected" });
+                    }
+                    else if (!connectedOnce) {
+                        connectedOnce = true;
+                        onState({ state: "connected" });
+                    }
+                }
+                yield event;
+            }
+            if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1000) {
+                if (!disconnected) {
+                    disconnected = true;
+                    onState({ state: "disconnected", cause: "connection closed", retryInMs });
+                }
+                await sleep(retryInMs, signal);
+                retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
+            }
         }
         catch (err) {
             if (signal.aborted)
                 return;
-            if (!isExpectedStreamTermination(err)) {
-                console.error(`[aw-channel] events stream parse failed: ${err}`);
+            if (!disconnected) {
+                disconnected = true;
+                onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs });
             }
-            // Stream ended or errored — reconnect after brief pause
-            await sleep(1000, signal);
+            // AbortError is only expected when our signal is aborted (handled above).
+            // A server/proxy termination while still active is a failed stream and
+            // must back off like any other read failure.
+            await sleep(retryInMs, signal);
+            retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
         }
         finally {
             resp.body?.cancel().catch(() => { });
@@ -107,12 +144,36 @@ export function parseAgentEvent(eventName, data) {
         return { type: eventName };
     }
 }
-function isExpectedStreamTermination(err) {
-    if (!(err instanceof Error))
-        return false;
-    const name = err.name.toLowerCase();
-    const message = err.message.toLowerCase();
-    return name === "aborterror" || message === "terminated";
+export function formatEventStreamState(state) {
+    if (state.state === "connected")
+        return "aweb: event stream connected";
+    if (state.state === "reconnected") {
+        return "aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed";
+    }
+    const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1000));
+    return `aweb: event stream disconnected (${state.cause || "connection failed"}) — retrying in ${seconds}s`;
+}
+export function streamErrorCause(err) {
+    const error = err instanceof Error ? err : undefined;
+    const nested = error?.cause;
+    const code = typeof nested?.code === "string" ? nested.code.toUpperCase() : "";
+    const detail = [error?.message, typeof nested?.message === "string" ? nested.message : ""]
+        .filter(Boolean)
+        .join(": ")
+        .toLowerCase();
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN" || detail.includes("getaddrinfo"))
+        return "DNS lookup failed";
+    if (code === "ECONNREFUSED" || detail.includes("connection refused"))
+        return "connection refused";
+    if (code === "ETIMEDOUT" || detail.includes("timed out") || detail.includes("timeout"))
+        return "connection timed out";
+    if (code.startsWith("CERT_") || detail.includes("certificate") || detail.includes("tls"))
+        return "TLS connection failed";
+    if (detail.includes("network") || detail.includes("fetch failed"))
+        return "network unavailable";
+    if (detail.includes("terminated") || detail.includes("closed"))
+        return "connection closed";
+    return "connection failed";
 }
 function sleep(ms, signal) {
     return new Promise((resolve) => {

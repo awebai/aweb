@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -500,6 +501,46 @@ func TestEventBusInjectAutofeed(t *testing.T) {
 	}
 }
 
+func TestEventBusEarlyEOFFlapsUseBackoffAndDoNotClaimRecovery(t *testing.T) {
+	var calls atomic.Int32
+	var noticesMu sync.Mutex
+	var notices []string
+	bus := NewEventBus(EventBusConfig{
+		Stream: func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+			calls.Add(1)
+			return newFakeEventSource(), nil
+		},
+	})
+	bus.onConnectionNotice = func(notice string) {
+		noticesMu.Lock()
+		notices = append(notices, notice)
+		noticesMu.Unlock()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	bus.Start(ctx)
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	bus.Stop()
+
+	if got := calls.Load(); got > 1 {
+		t.Fatalf("early-EOF stream tight-spun: opens=%d in 30ms", got)
+	}
+	noticesMu.Lock()
+	defer noticesMu.Unlock()
+	if len(notices) != 1 || !strings.Contains(notices[0], "disconnected") {
+		t.Fatalf("notices=%q, want one disconnect", notices)
+	}
+	for _, notice := range notices {
+		if strings.Contains(notice, "reconnected") || strings.Contains(notice, "catching up") {
+			t.Fatalf("false recovery notice during early-EOF flap: %q", notice)
+		}
+	}
+	if got := bus.Queue().Len(); got != 0 {
+		t.Fatalf("false catch-up event queued during early-EOF flap: %d", got)
+	}
+}
+
 func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 	first := newFakeEventSource(
 		awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "evt-1", AppID: "folio", AppEventType: "folio/doc.changed", ResourceRef: "pitch", DeliveryIntent: "wake"},
@@ -533,17 +574,23 @@ func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for app_event wake")
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 
-	if got := bus.Queue().Len(); got != 1 {
-		t.Fatalf("expected exactly 1 app_event after replay, got %d", got)
+	queued := bus.Queue().Drain()
+	appEvents, recoveries := 0, 0
+	for _, evt := range queued {
+		switch evt.Event.Type {
+		case awid.AgentEventAppEvent:
+			appEvents++
+			if evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
+				t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+			}
+		case awid.AgentEventChannelReconnected:
+			recoveries++
+		}
 	}
-	evt, ok := bus.Queue().Pop()
-	if !ok {
-		t.Fatal("expected queued app_event")
-	}
-	if evt.Event.Type != awid.AgentEventAppEvent || evt.Event.EventID != "evt-1" || evt.Event.DeliveryIntent != "wake" {
-		t.Fatalf("unexpected app_event wake: %#v", evt.Event)
+	if appEvents != 1 || recoveries != 1 {
+		t.Fatalf("queued app_events=%d recoveries=%d; all=%v", appEvents, recoveries, queued)
 	}
 
 	cancel()
@@ -628,10 +675,20 @@ func TestEventBusDedupesReplayByMessageIDAcrossReconnects(t *testing.T) {
 		t.Fatal("timed out waiting for queue ready")
 	}
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 
-	if got := bus.Queue().Len(); got != 1 {
-		t.Fatalf("expected exactly 1 queued event after replay, got %d", got)
+	queued := bus.Queue().Drain()
+	chats, recoveries := 0, 0
+	for _, evt := range queued {
+		switch evt.Event.Type {
+		case awid.AgentEventActionableChat:
+			chats++
+		case awid.AgentEventChannelReconnected:
+			recoveries++
+		}
+	}
+	if chats != 1 || recoveries != 1 {
+		t.Fatalf("queued chats=%d recoveries=%d; all=%v", chats, recoveries, queued)
 	}
 
 	cancel()

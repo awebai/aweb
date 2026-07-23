@@ -180,9 +180,11 @@ var apiTransientRetryBaseDelay = 100 * time.Millisecond
 
 // agentMeta holds cached metadata about a resolved agent.
 type agentMeta struct {
-	Lifetime string // "persistent" or "ephemeral"
-	Custody  string // "self" or "custodial"
-	Resolved bool
+	DID             string
+	Lifetime        string // "persistent" or "ephemeral"
+	Custody         string // "self" or "custodial"
+	Resolved        bool
+	ResolutionError string // "not_found" or "unavailable" after a forced refresh
 }
 
 // Client is an aweb HTTP client.
@@ -447,13 +449,19 @@ func (c *Client) canonicalTrustAddress(address string) string {
 // On first contact, resolves via the client's IdentityResolver and caches the result.
 // Returns an unresolved marker if no resolver is set or resolution fails.
 func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMeta {
+	return c.resolveAgentMetaFresh(ctx, address, false)
+}
+
+func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forceRefresh bool) *agentMeta {
 	rawAddress := strings.TrimSpace(address)
 	trustAddress := c.canonicalTrustAddress(rawAddress)
 	if trustAddress == "" {
 		return &agentMeta{}
 	}
-	if v, ok := c.metaCache.Load(trustAddress); ok {
-		return v.(*agentMeta)
+	if !forceRefresh {
+		if v, ok := c.metaCache.Load(trustAddress); ok {
+			return v.(*agentMeta)
+		}
 	}
 	fallback := &agentMeta{
 		Lifetime: LifetimePersistent,
@@ -461,8 +469,17 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 		Resolved: true,
 	}
 	if c.resolver != nil {
-		if identity, err := c.resolver.Resolve(ctx, trustAddress); err == nil {
+		resolve := c.resolver.Resolve
+		if forceRefresh {
+			fresh, ok := c.resolver.(FreshIdentityResolver)
+			if !ok {
+				return &agentMeta{ResolutionError: "unavailable"}
+			}
+			resolve = fresh.ResolveFresh
+		}
+		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
+				DID:      strings.TrimSpace(identity.DID),
 				Lifetime: LifetimePersistent,
 				Custody:  CustodySelf,
 				Resolved: true,
@@ -475,6 +492,12 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 			}
 			c.metaCache.Store(trustAddress, meta)
 			return meta
+		} else if forceRefresh {
+			resolutionError := "unavailable"
+			if code, ok := HTTPStatusCode(err); ok && code == http.StatusNotFound {
+				resolutionError = "not_found"
+			}
+			return &agentMeta{ResolutionError: resolutionError}
 		}
 	}
 	// Bare local aliases are ambiguous across teams; fail closed unless the
@@ -493,6 +516,10 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 // signature verification. It suppresses contact tags for ephemeral senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
+	// Mail applies recipient binding before sender continuity normalization.
+	// Never let local-sender cache reconciliation weaken that authoritative
+	// recipient mismatch to verification_stale.
+	recipientBindingMismatch := status == IdentityMismatch
 	if strings.TrimSpace(rawAddress) == "" {
 		return status, isContact
 	}
@@ -504,7 +531,42 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	var registryConfirmedCurrentKey bool
 	status, registryConfirmedCurrentKey = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
 	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryConfirmedCurrentKey)
+	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
+	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
+		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
+	}
 	return status, isContact
+}
+
+func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
+	fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
+	if fresh == nil || !fresh.Resolved {
+		if fresh != nil && fresh.ResolutionError == "not_found" {
+			return IdentityMismatch
+		}
+		return VerificationStale
+	}
+	if fresh.Lifetime != LifetimeEphemeral {
+		return IdentityMismatch
+	}
+	if strings.TrimSpace(fresh.DID) == "" {
+		return VerificationStale
+	}
+	if strings.TrimSpace(fresh.DID) != strings.TrimSpace(fromDID) {
+		return IdentityMismatch
+	}
+	if c.pinStore != nil {
+		c.pinStore.mu.Lock()
+		removed := c.pinStore.RemoveAddress(trustAddress)
+		if rawAddress != "" && rawAddress != trustAddress {
+			removed = c.pinStore.RemoveAddress(rawAddress) || removed
+		}
+		c.pinStore.mu.Unlock()
+		if removed {
+			c.savePinStore()
+		}
+	}
+	return VerificationStale
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
@@ -524,11 +586,18 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 	if !ok {
 		return status, false
 	}
-	result := verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
+	var result *StableIdentityVerification
+	if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
+		result = currentVerifier.VerifyStableIdentityCurrent(ctx, trustAddress, fromStableID, fromDID)
+	} else {
+		result = verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
+	}
 	if result == nil {
 		return status, false
 	}
 	switch result.Outcome {
+	case StableIdentityStaleCache:
+		return VerificationStale, false
 	case StableIdentityVerified:
 		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
 		if currentDIDKey != "" && currentDIDKey != fromDID {

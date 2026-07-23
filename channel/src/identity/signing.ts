@@ -28,6 +28,7 @@ export type VerificationStatus =
   | "verified_custodial"
   | "unverified"
   | "failed"
+  | "verification_stale"
   | "identity_mismatch";
 
 /**

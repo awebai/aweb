@@ -108,15 +108,41 @@ export async function startChannelLoop(options) {
     const dispatched = new Set();
     const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
     const localDecrypt = options.localDecrypt || (options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined);
-    const log = options.log || (() => { });
-    for await (const event of streamAgentEvents(options.client, options.signal)) {
-        try {
-            await dispatchAgentEvent({ ...options, deliveryStore, localDecrypt }, dispatched, event);
+    await consumeAgentEvents({ ...options, deliveryStore, localDecrypt }, dispatched, streamAgentEvents(options.client, options.signal, options.onStreamState), options.log || (() => { }));
+}
+export async function consumeAgentEvents(options, dispatched, events, log = () => { }) {
+    const lanes = new Map();
+    const pending = new Set();
+    for await (const event of events) {
+        const lane = eventDispatchLane(event);
+        const previous = lane ? lanes.get(lane) : undefined;
+        const job = (previous || Promise.resolve())
+            .then(async () => {
+            await dispatchAgentEvent(options, dispatched, event);
             pruneDispatched(dispatched);
-        }
-        catch (err) {
-            log(`[aw-channel] dispatch error: ${err}`);
-        }
+        })
+            .catch(() => {
+            log("aweb: could not process an incoming event; it remains pending");
+        });
+        pending.add(job);
+        if (lane)
+            lanes.set(lane, job);
+        void job.finally(() => {
+            pending.delete(job);
+            if (lane && lanes.get(lane) === job)
+                lanes.delete(lane);
+        });
+    }
+    await Promise.all([...pending]);
+}
+function eventDispatchLane(event) {
+    switch (event.type) {
+        case "mail_message":
+            return "mail";
+        case "chat_message":
+            return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+        default:
+            return "";
     }
 }
 export async function dispatchAgentEvent(options, dispatched, event) {
@@ -221,8 +247,9 @@ async function dispatchMailEvent(options, dispatched, event) {
         const conversationID = msg.conversation_id || event.conversation_id;
         const key = dispatchKey("mail", conversationID, msg.message_id);
         if (dispatched.has(key) || options.deliveryStore?.has(key)) {
-            if (!msg.read_at)
+            if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
                 await ackMessage(options.client, msg.message_id);
+            }
             continue;
         }
         const from = senderDisplayAddress(msg.from_alias, msg.from_address);
@@ -264,7 +291,9 @@ async function dispatchMailEvent(options, dispatched, event) {
             options.deliveryStore.mark(key);
             await options.deliveryStore.save();
         }
-        await ackMessage(options.client, msg.message_id);
+        if (options.mailAcknowledgment !== "manual") {
+            await ackMessage(options.client, msg.message_id);
+        }
     }
     if (pinsDirty)
         await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
@@ -394,6 +423,9 @@ export function isTrustedVerificationStatus(status) {
 export function trustWarningLine(status) {
     if (isTrustedVerificationStatus(status))
         return "";
+    if (status === "verification_stale") {
+        return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+    }
     return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 export function formatAwakeningForAgent(awakening) {
@@ -497,9 +529,15 @@ function senderDisplayAddress(alias, address) {
 }
 function senderTrustAddress(alias, address) {
     const qualified = (address || "").trim();
+    const localAlias = (alias || "").trim();
+    // Local self-custodial identities may expose only did:key as from_address.
+    // Resolve their team roster metadata by alias; did:key is the message's
+    // signing-key source, not a registry-address lookup key.
+    if (qualified.startsWith("did:key:") && localAlias)
+        return localAlias;
     if (qualified)
         return qualified;
-    return (alias || "").trim();
+    return localAlias;
 }
 function isSelfSender(alias, address, stableID, did, self) {
     const msgAddress = (address || "").trim();
