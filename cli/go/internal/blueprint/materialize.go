@@ -138,24 +138,26 @@ func materializeOps(bp *Blueprint, profile Profile, runtimeKind string, provenan
 		if err != nil {
 			return nil, err
 		}
-		sourceRel, err := resourceSourceRel(profile.ID, "skills", skill.Path)
-		if err != nil {
-			return nil, err
+		for _, sourcePath := range skillPayloadPaths(bp.PayloadFiles, profile.ID, skillName) {
+			sourceRel, err := resourceSourceRel(profile.ID, "skills", sourcePath)
+			if err != nil {
+				return nil, err
+			}
+			rootDest := filepath.ToSlash(filepath.Join("skills", filepath.FromSlash(sourceRel)))
+			op, err := materializeCopyOp(bp.Source.Ref, sourcePath, rootDest)
+			if err != nil {
+				return nil, err
+			}
+			ops = append(ops, op)
+			profileDest := filepath.ToSlash(filepath.Join(".aw", "profile", "skills", filepath.FromSlash(sourceRel)))
+			op, err = materializeCopyOp(bp.Source.Ref, sourcePath, profileDest)
+			if err != nil {
+				return nil, err
+			}
+			ops = append(ops, op)
 		}
-		rootDest := filepath.ToSlash(filepath.Join("skills", filepath.FromSlash(sourceRel)))
-		op, err := materializeCopyOp(bp.Source.Ref, skill.Path, rootDest)
-		if err != nil {
-			return nil, err
-		}
-		ops = append(ops, op)
-		profileDest := filepath.ToSlash(filepath.Join(".aw", "profile", "skills", filepath.FromSlash(sourceRel)))
-		op, err = materializeCopyOp(bp.Source.Ref, skill.Path, profileDest)
-		if err != nil {
-			return nil, err
-		}
-		ops = append(ops, op)
 		if isClaudeRuntimeKind(runtimeKind) {
-			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: filepath.ToSlash(filepath.Join(".claude", "skills", skillName, "SKILL.md")), LinkTarget: filepath.ToSlash(filepath.Join("..", "..", "..", "skills", skillName, "SKILL.md"))})
+			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: filepath.ToSlash(filepath.Join(".claude", "skills", skillName)), LinkTarget: filepath.ToSlash(filepath.Join("..", "..", "skills", skillName))})
 		}
 	}
 	for _, artifact := range profile.Artifacts {
@@ -298,6 +300,18 @@ func findProfile(bp *Blueprint, id string) (Profile, bool) {
 		}
 	}
 	return Profile{}, false
+}
+
+func skillPayloadPaths(payloadFiles []string, profileID, skillName string) []string {
+	prefix := filepath.ToSlash(filepath.Join("profiles", profileID, "skills", skillName)) + "/"
+	paths := make([]string, 0)
+	for _, payloadPath := range payloadFiles {
+		if strings.HasPrefix(payloadPath, prefix) {
+			paths = append(paths, payloadPath)
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func skillNameFromPath(profileID, blueprintRelativePath string) (string, error) {
@@ -688,7 +702,37 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		}
 		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
+	if force && info.IsDir() {
+		legacy, err := isLegacyClaudeSkillFileLinkDir(path, op)
+		if err != nil {
+			return err
+		}
+		if legacy {
+			return nil
+		}
+	}
 	return fmt.Errorf("%s already exists and is not a symlink", rel)
+}
+
+func isLegacyClaudeSkillFileLinkDir(path string, op materializeWriteOp) (bool, error) {
+	rel := filepath.ToSlash(op.Rel)
+	parts := strings.Split(rel, "/")
+	if len(parts) != 3 || parts[0] != ".claude" || parts[1] != "skills" || parts[2] == "" {
+		return false, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) != 1 || entries[0].Name() != "SKILL.md" || entries[0].Type()&os.ModeSymlink == 0 {
+		return false, nil
+	}
+	target, err := os.Readlink(filepath.Join(path, "SKILL.md"))
+	if err != nil {
+		return false, err
+	}
+	expected := filepath.ToSlash(filepath.Join("..", filepath.FromSlash(op.LinkTarget), "SKILL.md"))
+	return filepath.ToSlash(target) == expected, nil
 }
 
 func rejectSymlinkedExistingSymlinkTarget(targetRoot, baseDir, linkTarget, label string) error {
@@ -737,7 +781,20 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 			return nil, err
 		}
 		if op.Kind == opSymlink {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			info, err := os.Lstat(path)
+			if err == nil && info.IsDir() {
+				legacy, legacyErr := isLegacyClaudeSkillFileLinkDir(path, op)
+				if legacyErr != nil {
+					return nil, legacyErr
+				}
+				if !legacy {
+					return nil, fmt.Errorf("%s existing directory is not a legacy Claude skill link", filepath.ToSlash(op.Rel))
+				}
+				err = os.RemoveAll(path)
+			} else if err == nil {
+				err = os.Remove(path)
+			}
+			if err != nil && !os.IsNotExist(err) {
 				return nil, err
 			}
 			if err := os.Symlink(op.LinkTarget, path); err != nil {

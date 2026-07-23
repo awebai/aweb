@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -230,6 +231,9 @@ func pruneRemovedManagedProfileFiles(homeDir string, oldManaged, newManaged []st
 		if err := validateManagedSetPath(rel); err != nil {
 			return err
 		}
+		if hasNewManagedAncestor(rel, newSet) {
+			continue
+		}
 		remove = append(remove, rel)
 	}
 	sort.Slice(remove, func(i, j int) bool { return len(remove[i]) > len(remove[j]) })
@@ -253,6 +257,15 @@ func pruneRemovedManagedProfileFiles(homeDir string, oldManaged, newManaged []st
 		}
 	}
 	return nil
+}
+
+func hasNewManagedAncestor(rel string, newSet map[string]bool) bool {
+	for parent := path.Dir(rel); parent != "." && parent != "/"; parent = path.Dir(parent) {
+		if newSet[parent] {
+			return true
+		}
+	}
+	return false
 }
 
 func validateManagedSetPath(rel string) error {

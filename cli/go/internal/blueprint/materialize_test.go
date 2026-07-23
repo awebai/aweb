@@ -43,6 +43,62 @@ func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
 	if ref.RuntimeKind != "pi" {
 		t.Fatalf("runtime_kind=%q", ref.RuntimeKind)
 	}
+	for _, rel := range []string{
+		"skills/implement/assets/checklist.md",
+		".aw/profile/skills/implement/assets/checklist.md",
+	} {
+		if _, err := os.Stat(filepath.Join(target, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("runtime-independent skill asset %s: %v", rel, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(target, ".claude", "skills", "implement")); !os.IsNotExist(err) {
+		t.Fatalf("pi runtime should not have a Claude skill link: %v", err)
+	}
+}
+
+func TestMaterializeManagedSetUsesDeclarationAndPerSkillPathOrder(t *testing.T) {
+	target := t.TempDir()
+	files := withPayloadFileSHA([]LibraryProfilePayloadFile{
+		{Path: "skills/zeta/assets/z.txt", ContentUTF8: "z\n"},
+		{Path: "artifacts/a.txt", ContentUTF8: "a\n"},
+		{Path: "skills/alpha/SKILL.md", ContentUTF8: "# Alpha\n"},
+		{Path: "instructions.md", ContentUTF8: "Build.\n"},
+		{Path: "skills/zeta/SKILL.md", ContentUTF8: "# Zeta\n"},
+		{Path: "artifacts/z.txt", ContentUTF8: "z\n"},
+		{Path: "skills/zeta/assets/a.txt", ContentUTF8: "a\n"},
+		{Path: "profile.yaml", ContentUTF8: "id: builder\nname: Builder\nversion: 0.1.0\nmission: Build.\naccepted_work: [implementation]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\nskills:\n  - path: skills/zeta/SKILL.md\n  - path: skills/alpha/SKILL.md\nartifacts:\n  - path: artifacts/z.txt\n  - path: artifacts/a.txt\n"},
+	})
+
+	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir: target, ProfileRef: "builder", ProfileVersion: "0.1.0",
+		RuntimeKind: "claude-code", Files: files,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, ".aw", "profile", "ref.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ref materializedProfileRef
+	if err := json.Unmarshal(data, &ref); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"AGENTS.md", "CLAUDE.md", ".aw/profile/profile.yaml", ".aw/profile/instructions.md",
+		"skills/zeta/SKILL.md", ".aw/profile/skills/zeta/SKILL.md",
+		"skills/zeta/assets/a.txt", ".aw/profile/skills/zeta/assets/a.txt",
+		"skills/zeta/assets/z.txt", ".aw/profile/skills/zeta/assets/z.txt",
+		".claude/skills/zeta",
+		"skills/alpha/SKILL.md", ".aw/profile/skills/alpha/SKILL.md",
+		".claude/skills/alpha",
+		"artifacts/z.txt", ".aw/profile/artifacts/z.txt",
+		"artifacts/a.txt", ".aw/profile/artifacts/a.txt",
+		".aw/profile/ref.json",
+	}
+	if strings.Join(ref.ManagedSet, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("managed_set ordering\ngot:  %v\nwant: %v", ref.ManagedSet, want)
+	}
 }
 
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
@@ -62,6 +118,53 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 	}
 	if _, err := os.Lstat(filepath.Join(target, "AGENTS.md")); err != nil {
 		t.Fatalf("profile was not materialized: %v", err)
+	}
+}
+
+func TestMaterializeLocalProfileForceMigratesLegacyClaudeSkillFileLink(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	legacyDir := filepath.Join(target, ".claude", "skills", "implement")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(legacyDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, RuntimeKind: "claude-code", Force: true}); err != nil {
+		t.Fatalf("migrate legacy Claude skill link: %v", err)
+	}
+	link := filepath.Join(target, ".claude", "skills", "implement")
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("directory skill link: %v", err)
+	}
+	if got != "../../skills/implement" {
+		t.Fatalf("directory skill link target=%q", got)
+	}
+}
+
+func TestMaterializeLocalProfileForceDoesNotReplaceUnmanagedClaudeSkillDirectory(t *testing.T) {
+	fixture := engineeringFixtureRoot(t)
+	target := t.TempDir()
+	userFile := filepath.Join(target, ".claude", "skills", "implement", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(userFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userFile, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := MaterializeLocalProfile(MaterializeOptions{SourceDir: filepath.Join(fixture, "source"), ProfileID: "developer", TargetDir: target, RuntimeKind: "claude-code", Force: true})
+	if err == nil || !strings.Contains(err.Error(), "already exists and is not a symlink") {
+		t.Fatalf("error=%v", err)
+	}
+	if got, readErr := os.ReadFile(userFile); readErr != nil || string(got) != "keep me\n" {
+		t.Fatalf("unmanaged skill directory was changed: content=%q err=%v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("preflight should prevent partial writes, stat err=%v", statErr)
 	}
 }
 

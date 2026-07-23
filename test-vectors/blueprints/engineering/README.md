@@ -15,7 +15,8 @@ source/
   profiles/<id>/
     profile.yaml
     instructions.md
-    skills/
+    skills/<name>/SKILL.md
+    skills/<name>/**
     artifacts/
 ```
 
@@ -51,6 +52,12 @@ Blueprint and profile digests use the Folio-compatible canonical JSON primitive:
 - compact separators `,` and `:`;
 - literal UTF-8 (`ensure_ascii=false` / Go `SetEscapeHTML(false)`);
 - SHA-256 over the canonical UTF-8 bytes, encoded as `sha256:<hex>`.
+
+Adding `profiles/developer/skills/implement/assets/checklist.md` changes the
+fixture's content hashes by construction. The digest algorithm and ref-resolution
+rules are unchanged: import, profile, and blueprint digests are recomputed from
+the enriched source through the standard canonicalization path, and projection
+copies those already-digested payload bytes without inventing a new digest.
 
 The blueprint import payload canonical input is:
 
@@ -102,8 +109,9 @@ fixture shared by aw and Library. It supersedes the earlier verbatim
 ```text
 AGENTS.md
 CLAUDE.md -> AGENTS.md
-skills/...
-.claude/skills/... -> skills/...
+skills/<name>/SKILL.md
+skills/<name>/**
+.claude/skills/<name> -> ../../skills/<name>
 artifacts/...
 .aw/profile/ref.json
 .aw/profile/profile.yaml
@@ -111,6 +119,15 @@ artifacts/...
 .aw/profile/skills/...
 .aw/profile/artifacts/...
 ```
+
+A declared `skills/<name>/SKILL.md` projects every payload file under
+`skills/<name>/**` into both the home-root skill directory and the
+`.aw/profile/skills/<name>/` mirror. For `runtime_kind: claude-code`, the Claude
+projection is one directory symlink, never a per-file `SKILL.md` link. The
+runtime kind is required at the materialization API boundary; callers resolve
+any unspecified staffing/runtime choice client-side before materialization.
+Every expected `ref.json` in the active vector pins `runtime_kind` exactly to
+`claude-code`.
 
 `AGENTS.md` is composed from the profile fields per
 `docs/restructuring/agent-home-composition-contract.md`. `ref.json` contains

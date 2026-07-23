@@ -2,7 +2,7 @@
   "source": {
     "kind": "local_dir",
     "ref": "FIXTURE/source",
-    "digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
     "digest_scope": "local_import_payload"
   },
   "blueprint": {
@@ -11,7 +11,7 @@
     "version": "0.1.0",
     "summary": "Coordinator, developer, and reviewer profiles for repo work.",
     "description": "First-party starter blueprint for local engineering agent teams.",
-    "digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
     "expected_apps": [
       "audit",
       "github",
@@ -92,7 +92,7 @@
       "id": "developer",
       "name": "Developer",
       "version": "0.1.0",
-      "digest": "sha256:577c7144d2b1ce8f11d2033362e8fba390dc8dba318c47d6a19ed56b3354594d",
+      "digest": "sha256:02bc3dc1a0669a1b29048822555f68bfda1ebe0c1ade5d34ff262f617cf7b838",
       "default_count": 2,
       "min": 1,
       "max": 4,
@@ -207,7 +207,7 @@
     "separate_future_step": true,
     "library_endpoint": "POST /v1/blueprints/import",
     "would_upload_on_import": true,
-    "payload_digest": "sha256:cf4d764bb473a2b9bfe4faf3a2182e626b255bed2d785d37e397854b58a5f04b",
+    "payload_digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
     "payload_files": [
       "README.md",
       "blueprint.yaml",
@@ -220,6 +220,7 @@
       "profiles/developer/instructions.md",
       "profiles/developer/profile.yaml",
       "profiles/developer/skills/implement/SKILL.md",
+      "profiles/developer/skills/implement/assets/checklist.md",
       "profiles/reviewer/artifacts/review-template.md",
       "profiles/reviewer/instructions.md",
       "profiles/reviewer/profile.yaml",
