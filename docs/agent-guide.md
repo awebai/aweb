@@ -343,8 +343,8 @@ aw id show                          # Your identity and registry status
 aw id resolve <did_aw>              # Resolve any did:aw to its current key
 aw id verify <did_aw>               # Verify the full cryptographic audit log
 aw id rotate-key                    # Rotate a global signing key (requires old key)
-aw team replace-key <name> --old-did-key <old> --new-did-key <new> --home <agent-home>
-                                     # Team-authorized local key replacement (local-controller/BYOT)
+aw team replace-key <name> --old-did-key <old> --home <agent-home> --generate-new-key
+                                     # Generate/install a team-authorized replacement for a lost local key (local-controller/BYOT)
 aw id namespace <domain>            # Inspect addresses under a namespace
 aw id cert show                     # Show your team membership certificate
 ```

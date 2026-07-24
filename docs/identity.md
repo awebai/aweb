@@ -207,7 +207,7 @@ the later wire/schema cleanup removes the legacy names. The model term is
 | Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
-| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | `aw team replace-key NAME --old-did-key OLD --new-did-key NEW --home AGENT_HOME` | Local-controller/BYOT teams in phase 1; requires the locally held team controller key. Hosted owner/admin integration is pending. |
+| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Local-controller/BYOT teams in phase 1; requires the locally held team controller key. Hosted owner/admin integration is pending. |
 | Remove member | Revoke a team certificate | `aw team remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
 
 ## Key material and local files
@@ -228,25 +228,46 @@ mismatch. Copying the complete `.aw/` directory is how the same identity and
 membership survive a move to another machine; a fresh checkout plus a freshly
 generated key is not continuity.
 
-When forced replacement is necessary (lost `.aw`, re-provisioning, ephemeral
-respawn, or compromise), a local-controller/BYOT team operator uses `aw team
-replace-key` with the exact old and new `did:key` values. The controller-signed
-operation updates the roster, records the transition in the service audit log,
-revokes the old membership certificate, and issues the new one. Pass `--home`
-to verify the home already holds the new signing identity and install the new
-certificate there; without `--home`, pass `--old-cert-id` and the command emits
-the certificate plus explicit placement instructions. Old-key-signed
-self-service handover is intentionally unsupported: a stolen member key must
-not be able to bless its own replacement. Phase 1 requires a locally held team
-controller key; hosted owner/admin replacement awaits the AC integration and
-currently goes through operator support.
+When forced replacement is necessary, preserve the real local home state
+(`.aw/workspace.yaml`, `.aw/teams.yaml`, and the old team certificate). If its
+signing key was lost, a local-controller/BYOT team operator runs:
+
+```bash
+aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key
+```
+
+The command refuses to overwrite an existing `.aw/signing.key`, generates and
+persists the missing key before the remote transition, updates the roster,
+records the transition in the service audit log, revokes the old membership
+certificate, installs the new one, and re-signs/publishes the active E2E
+encryption-key assertion under the replacement identity. If a present key is
+compromised, back it up and remove it deliberately before using
+`--generate-new-key`. If replacement
+key material was provisioned separately, pass its `--new-did-key` instead.
+Without `--home`, pass `--old-cert-id`; the command emits the public replacement
+certificate and placement instructions but does not generate or install a
+private key. Complete loss of `.aw/` still requires restoring the membership
+state from backup or operator records first.
+
+Old-key-signed self-service handover is intentionally unsupported: a stolen
+member key must not be able to bless its own replacement. Phase 1 requires a
+locally held team controller key; hosted owner/admin replacement awaits the AC
+integration and currently goes through operator support.
 
 Because the roster/audit database and AWID certificate registry are separate
 systems, the CLI reconciles an ambiguous roster response by replaying the exact
 controller-authorized transition. The server returns the original audit result
 only when every DID and certificate field matches. Any post-roster failure
 reports the precise partial state and emits the exact audited replacement
-certificate material needed for operator recovery.
+certificate material needed for operator recovery. If only E2E assertion refresh
+fails, the error confirms that key/roster/certificate replacement completed and
+instructs the operator to run `aw id encryption-key setup` from the home. A
+generated private key is
+retained in the home on every later failure; the error names its path and
+`did:key`. Never generate another key for that attempt. Follow the error's
+phase-specific recovery: a pre-commit failure may reuse the key via
+`--new-did-key`, while a completed roster/certificate transition must not be
+replayed merely to repair a later E2E publication failure.
 
 Global identity metadata is stored in `.aw/identity.yaml`. Team certificates
 are stored under `.aw/team-certs/`, and membership selection state is stored in

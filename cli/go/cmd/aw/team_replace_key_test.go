@@ -59,21 +59,33 @@ func seedReplaceKeyWorkspace(t *testing.T, serverURL string) (root, agentHome, o
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(agentHome), newKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(agentHome, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:           newDID,
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeLocal,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
-		t.Fatal(err)
-	}
 	oldCert, _ = awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team:          "backend:acme.com",
 		MemberDIDKey:  oldDID,
 		Alias:         "alice",
 		IdentityScope: awid.IdentityModeLocal,
 	})
-	if _, err := awconfig.SaveTeamCertificateForTeam(agentHome, "backend:acme.com", oldCert); err != nil {
+	certPath, err := awconfig.SaveTeamCertificateForTeam(agentHome, "backend:acme.com", oldCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinedAt := time.Now().UTC().Format(time.RFC3339)
+	if err := awconfig.SaveTeamState(agentHome, &awconfig.TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID: "backend:acme.com", Alias: "alice", CertPath: certPath,
+			JoinedAt: joinedAt, AwebURL: serverURL, RegistryURL: serverURL,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(agentHome, awconfig.DefaultWorktreeWorkspaceRelativePath()), &awconfig.WorktreeWorkspace{
+		AwebURL: serverURL, WorkspacePath: agentHome,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID: "backend:acme.com", Alias: "alice", CertPath: certPath,
+			JoinedAt: joinedAt, WorkspaceID: "workspace-alice",
+		}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return root, agentHome, oldDID, newDID, teamKey, oldCert
@@ -94,23 +106,88 @@ func TestLocalIdentityKeyReplacementAuthPayloadMatchesServerCanonicalOrder(t *te
 	}
 }
 
-func TestReplacementHomeRejectsGlobalIdentityScope(t *testing.T) {
+func TestTeamReplaceKeyGenerateFlagRequiresHomeAndRejectsExplicitNewDID(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	oldPub, _, _ := awid.GenerateKeypair()
+	newPub, _, _ := awid.GenerateKeypair()
+	teamHumanReplaceKeyOldDID = awid.ComputeDIDKey(oldPub)
+	teamHumanReplaceKeyGenerateNewKey = true
+
+	err := runTeamHumanReplaceKey(nil, []string{"alice"})
+	if err == nil || !strings.Contains(err.Error(), "--home is required with --generate-new-key") {
+		t.Fatalf("missing-home error=%v", err)
+	}
+
+	teamHumanReplaceKeyHome = t.TempDir()
+	teamHumanReplaceKeyNewDID = awid.ComputeDIDKey(newPub)
+	err = runTeamHumanReplaceKey(nil, []string{"alice"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("conflict error=%v", err)
+	}
+}
+
+func TestReplacementHomeRejectsGlobalMembershipCertificate(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
-	_, agentHome, oldDID, newDID, _, _ := seedReplaceKeyWorkspace(t, server.URL)
-	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(agentHome)
+	_, agentHome, oldDID, newDID, teamKey, _ := seedReplaceKeyWorkspace(t, server.URL)
+	globalCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team: "backend:acme.com", MemberDIDKey: oldDID, MemberDIDAW: "did:aw:alice",
+		MemberAddress: "acme.com/alice", Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity.IdentityScope = awid.IdentityModeGlobal
-	identity.Lifetime = ""
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(agentHome, awconfig.DefaultWorktreeIdentityRelativePath()), identity); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(agentHome, "backend:acme.com", globalCert); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err = preflightReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, newDID, "")
-	if err == nil || !strings.Contains(err.Error(), "must contain a local team-scoped identity") {
+	if err == nil || !strings.Contains(err.Error(), "local member") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestGenerateReplacementKeyUsesRealLocalHomeWithoutIdentityYAML(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	_, agentHome, oldDID, _, _, oldCert := seedReplaceKeyWorkspace(t, server.URL)
+	keyPath := awconfig.WorktreeSigningKeyPath(agentHome)
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCertID, newDID, generatedPath, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldCertID != oldCert.CertificateID || generatedPath != keyPath || newDID == "" || newDID == oldDID {
+		t.Fatalf("old_cert=%q new_did=%q path=%q", oldCertID, newDID, generatedPath)
+	}
+	generatedKey, err := awid.LoadSigningKey(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := awid.ComputeDIDKey(generatedKey.Public().(ed25519.PublicKey)); got != newDID {
+		t.Fatalf("generated did=%s, want %s", got, newDID)
+	}
+	if _, err := os.Stat(filepath.Join(agentHome, awconfig.DefaultWorktreeIdentityRelativePath())); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml must not be required or created: %v", err)
+	}
+}
+
+func TestGenerateReplacementKeyRefusesToOverwriteExistingSigningKey(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	_, agentHome, oldDID, _, _, _ := seedReplaceKeyWorkspace(t, server.URL)
+
+	_, _, _, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	if err == nil {
+		t.Fatal("expected existing-key refusal")
+	}
+	for _, want := range []string{"already exists", "back up", "remove", "rerun"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
 	}
 }
 
@@ -179,6 +256,9 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			order = append(order, "refresh-e2e")
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -193,7 +273,7 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 	if err := runTeamHumanReplaceKey(nil, []string{"alice"}); err != nil {
 		t.Fatalf("runTeamHumanReplaceKey: %v", err)
 	}
-	if strings.Join(order, ",") != "roster,revoke-old,register-new" {
+	if strings.Join(order, ",") != "roster,revoke-old,register-new,refresh-e2e" {
 		t.Fatalf("operation order=%v", order)
 	}
 	if servicePayload.OldCertificateID != oldCert.CertificateID {
@@ -208,6 +288,9 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 	}
 	if installed.MemberDIDKey != newDID || installed.CertificateID != servicePayload.NewCertificateID {
 		t.Fatalf("installed=%+v", installed)
+	}
+	if keyID := requireWorktreeEncryptionKeyForTest(t, agentHome); keyID == "" {
+		t.Fatal("replacement did not refresh E2E encryption state")
 	}
 }
 
@@ -313,8 +396,10 @@ func TestTeamReplaceKeyReconcilesCommittedRosterAfterResponseLoss(t *testing.T) 
 			})
 		case strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"revoked": true})
-		case strings.HasSuffix(r.URL.Path, "/certificates"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -337,6 +422,40 @@ func TestTeamReplaceKeyReconcilesCommittedRosterAfterResponseLoss(t *testing.T) 
 	}
 	if installed.CertificateID == oldCert.CertificateID || installed.MemberDIDKey != newDID {
 		t.Fatalf("installed certificate=%+v", installed)
+	}
+}
+
+func TestTeamReplaceKeyGenerateRetainsNewKeyOnRosterFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/agents/alice/replace-key" {
+			http.Error(w, "old key changed", http.StatusConflict)
+			return
+		}
+		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+
+	_, agentHome, oldDID, _, _, _ := seedReplaceKeyWorkspace(t, server.URL)
+	keyPath := awconfig.WorktreeSigningKeyPath(agentHome)
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanReplaceKeyOldDID = oldDID
+	teamHumanReplaceKeyNewDID = ""
+	teamHumanReplaceKeyHome = agentHome
+	teamHumanReplaceKeyGenerateNewKey = true
+
+	err := runTeamHumanReplaceKey(nil, []string{"alice"})
+	if err == nil {
+		t.Fatal("expected roster failure")
+	}
+	for _, want := range []string{"no certificate changes were attempted", "generated replacement signing key retained", keyPath, "new DID did:key:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+	if _, loadErr := awid.LoadSigningKey(keyPath); loadErr != nil {
+		t.Fatalf("generated key not retained: %v", loadErr)
 	}
 }
 
@@ -419,6 +538,59 @@ func TestTeamReplaceKeyReportsOldCertificateRevocationFailureState(t *testing.T)
 	}
 	if registerCalled {
 		t.Fatal("register called")
+	}
+}
+
+func TestTeamReplaceKeyReportsEncryptionRefreshFailureState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/agents/alice/replace-key":
+			var body localIdentityKeyReplacementRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "replaced", "audit_id": "audit-1", "agent_id": "agent-1", "team_id": body.TeamID,
+				"alias": "alice", "old_did_key": body.OldDIDKey, "new_did_key": body.NewDIDKey,
+				"old_certificate_id": body.OldCertificateID, "new_certificate_id": body.NewCertificateID,
+				"authorized_by": strings.Fields(r.Header.Get("Authorization"))[1], "authorized_at": "2026-07-23T00:00:00+00:00",
+			})
+		case strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"revoked": true})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			http.Error(w, "publish failed", http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, agentHome, oldDID, _, _, _ := seedReplaceKeyWorkspace(t, server.URL)
+	keyPath := awconfig.WorktreeSigningKeyPath(agentHome)
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	teamHumanReplaceKeyOldDID = oldDID
+	teamHumanReplaceKeyNewDID = ""
+	teamHumanReplaceKeyHome = agentHome
+	teamHumanReplaceKeyGenerateNewKey = true
+
+	err := runTeamHumanReplaceKey(nil, []string{"alice"})
+	if err == nil {
+		t.Fatal("expected E2E partial-state error")
+	}
+	for _, want := range []string{"roster row and audit were updated", "old certificate was revoked", "signing key/certificate", "were installed", "E2E encryption-key assertion was not refreshed", "aw id encryption-key setup", agentHome, "generated replacement signing key retained", "follow the phase-specific recovery"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "retry without --generate-new-key") {
+		t.Fatalf("post-commit error recommends impossible replacement replay: %v", err)
+	}
+	installed, loadErr := awconfig.LoadTeamCertificateForTeam(agentHome, "backend:acme.com")
+	generatedKey, keyErr := awid.LoadSigningKey(keyPath)
+	if loadErr != nil || keyErr != nil || installed.MemberDIDKey != awid.ComputeDIDKey(generatedKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("replacement key/certificate not installed: cert=%+v cert_err=%v key_err=%v", installed, loadErr, keyErr)
 	}
 }
 

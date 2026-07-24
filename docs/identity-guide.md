@@ -342,9 +342,11 @@ Summary:
 - **Identity key lost (custodial)**: the operator's replace operation
   generates a new key, re-registers the DID, and reassigns the address.
 - **Local identity key lost (self-custodial)**: for a local-controller/BYOT
-  team, the human holding the team controller runs `aw team replace-key` to
-  authorize the exact old→new key transition, revoke/reissue the membership
-  certificate, and record the service audit event. Hosted owner/admin support
+  team, the human holding the team controller runs `aw team replace-key <name>
+  --old-did-key <old> --home <agent-home> --generate-new-key`. The command
+  generates the missing key without overwriting one, authorizes the exact
+  old→new transition, revokes/reissues the membership certificate, and records
+  the service audit event. Hosted owner/admin support
   is pending the AC integration and currently requires operator support.
 - **Global identity key lost (self-custodial)**: no complete CLI recovery path
   exists today. If you have a dashboard account (e.g., via `aw claim-human`),

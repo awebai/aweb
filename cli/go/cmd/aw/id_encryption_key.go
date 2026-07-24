@@ -181,7 +181,7 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 			if !shouldRefreshEncryptionKeyForIdentityBinding(err) {
 				return idEncryptionKeyOutput{}, err
 			}
-			record, assertion, err = createLocalEncryptionKeyRecord(identity, signingKey, record.KeyID)
+			record, assertion, err = rebindLocalEncryptionKeyRecord(identity, signingKey, record, material, assertion)
 			if err != nil {
 				return idEncryptionKeyOutput{}, err
 			}
@@ -190,7 +190,7 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 			if err := awconfig.SaveEncryptionKeyStateTo(statePath, state); err != nil {
 				return idEncryptionKeyOutput{}, err
 			}
-			status = "rotated"
+			status = "rebound"
 		}
 	}
 
@@ -255,7 +255,7 @@ func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
 			if !shouldRefreshEncryptionKeyForIdentityBinding(err) {
 				return err
 			}
-			next, _, err := createLocalEncryptionKeyRecord(identity, signingKey, record.KeyID)
+			next, _, err := rebindLocalEncryptionKeyRecord(identity, signingKey, record, material, assertion)
 			if err != nil {
 				return err
 			}
@@ -424,6 +424,37 @@ func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signing
 		NotBefore:      assertion.NotBefore,
 		ExpiresAt:      assertion.ExpiresAt,
 	}, assertion, nil
+}
+
+func rebindLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, record *awconfig.EncryptionKeyRecord, material *encryptionRecordKeyMaterial, previousAssertion *awid.EncryptionKeyAssertion) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, error) {
+	if identity == nil || record == nil || material == nil {
+		return nil, nil, errors.New("cannot rebind incomplete E2E encryption key state")
+	}
+	rawPublicKey, err := base64.RawStdEncoding.DecodeString(material.PublicKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode active E2E encryption public key: %w", err)
+	}
+	previousKeyID := ""
+	if previousAssertion != nil && previousAssertion.PreviousEncryptionKeyID != nil {
+		previousKeyID = strings.TrimSpace(*previousAssertion.PreviousEncryptionKeyID)
+	}
+	assertion, err := awid.BuildEncryptionKeyAssertion(signingKey, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), rawPublicKey, previousKeyID, time.Now().UTC())
+	if err != nil {
+		return nil, nil, err
+	}
+	if assertion.EncryptionKeyID != strings.TrimSpace(record.KeyID) {
+		return nil, nil, errors.New("re-signed E2E assertion changed the active encryption key id")
+	}
+	assertionPath := resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath)
+	if err := saveEncryptionAssertion(assertionPath, assertion); err != nil {
+		return nil, nil, err
+	}
+	next := *record
+	next.PublicKey = assertion.EncryptionPublicKey
+	next.CreatedAt = assertion.CreatedAt
+	next.NotBefore = assertion.NotBefore
+	next.ExpiresAt = assertion.ExpiresAt
+	return &next, assertion, nil
 }
 
 type encryptionRecordKeyMaterial struct {

@@ -22,13 +22,14 @@ import (
 )
 
 var (
-	teamHumanReplaceKeyTeamID      string
-	teamHumanReplaceKeyOldDID      string
-	teamHumanReplaceKeyNewDID      string
-	teamHumanReplaceKeyOldCertID   string
-	teamHumanReplaceKeyHome        string
-	teamHumanReplaceKeyAwebURL     string
-	teamHumanReplaceKeyRegistryURL string
+	teamHumanReplaceKeyTeamID         string
+	teamHumanReplaceKeyOldDID         string
+	teamHumanReplaceKeyNewDID         string
+	teamHumanReplaceKeyOldCertID      string
+	teamHumanReplaceKeyHome           string
+	teamHumanReplaceKeyGenerateNewKey bool
+	teamHumanReplaceKeyAwebURL        string
+	teamHumanReplaceKeyRegistryURL    string
 )
 
 var teamHumanReplaceKeyCmd = &cobra.Command{
@@ -37,7 +38,9 @@ var teamHumanReplaceKeyCmd = &cobra.Command{
 	Long: "Replace a local team-scoped agent's did:key under locally-held team-controller authority.\n\n" +
 		"This compare-and-swap operation updates the service roster, revokes the old\n" +
 		"team certificate, registers a new certificate, and records the controller-authorized\n" +
-		"transition. Hosted teams require the pending AC owner/admin integration or operator support.",
+		"transition. When a real local home has lost signing.key, --generate-new-key creates\n" +
+		"and retains a replacement key without overwriting an existing one. Hosted teams require\n" +
+		"the pending AC owner/admin integration or operator support.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanReplaceKey,
 }
@@ -83,6 +86,8 @@ type teamHumanReplaceKeyOutput struct {
 	AuthorizedBy     string `json:"authorized_by"`
 	AuthorizedAt     string `json:"authorized_at"`
 	CertificatePath  string `json:"certificate_path,omitempty"`
+	SigningKeyPath   string `json:"signing_key_path,omitempty"`
+	EncryptionKeyID  string `json:"encryption_key_id,omitempty"`
 	TeamCertificate  string `json:"team_certificate,omitempty"`
 	Placement        string `json:"placement,omitempty"`
 }
@@ -90,9 +95,10 @@ type teamHumanReplaceKeyOutput struct {
 func init() {
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyTeamID, "team-id", "", "Canonical team id (<name>:<namespace>; defaults to active team)")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyOldDID, "old-did-key", "", "Expected current local member did:key (required)")
-	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyNewDID, "new-did-key", "", "Replacement local member did:key (required)")
+	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyNewDID, "new-did-key", "", "Replacement local member did:key (required unless --generate-new-key is used)")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyOldCertID, "old-cert-id", "", "Old team certificate id (required without --home)")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyHome, "home", "", "Agent home whose new signing identity is verified and where the replacement certificate is installed")
+	teamHumanReplaceKeyCmd.Flags().BoolVar(&teamHumanReplaceKeyGenerateNewKey, "generate-new-key", false, "Generate a replacement signing key in --home when signing.key is absent (cannot be combined with --new-did-key)")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyAwebURL, "aweb-url", "", "Aweb service URL override")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyRegistryURL, "registry", "", "AWID registry URL override")
 	teamHumanCmd.AddCommand(teamHumanReplaceKeyCmd)
@@ -121,24 +127,37 @@ func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityK
 	})
 }
 
-func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) error {
+func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	alias := strings.TrimSpace(args[0])
 	if !isValidWorkspaceAlias(alias) {
 		return usageError("invalid agent alias %q", alias)
 	}
 	oldDIDKey := strings.TrimSpace(teamHumanReplaceKeyOldDID)
 	newDIDKey := strings.TrimSpace(teamHumanReplaceKeyNewDID)
-	if oldDIDKey == "" || newDIDKey == "" {
-		return usageError("--old-did-key and --new-did-key are required")
+	generateNewKey := teamHumanReplaceKeyGenerateNewKey
+	if oldDIDKey == "" {
+		return usageError("--old-did-key is required")
 	}
-	if oldDIDKey == newDIDKey {
-		return usageError("--new-did-key must differ from --old-did-key")
+	if generateNewKey {
+		if strings.TrimSpace(teamHumanReplaceKeyHome) == "" {
+			return usageError("--home is required with --generate-new-key")
+		}
+		if newDIDKey != "" {
+			return usageError("--generate-new-key cannot be combined with --new-did-key")
+		}
+	} else if newDIDKey == "" {
+		return usageError("--new-did-key is required unless --generate-new-key is used")
 	}
 	if _, err := awid.ExtractPublicKey(oldDIDKey); err != nil {
 		return usageError("invalid --old-did-key: %v", err)
 	}
-	if _, err := awid.ExtractPublicKey(newDIDKey); err != nil {
-		return usageError("invalid --new-did-key: %v", err)
+	if newDIDKey != "" {
+		if oldDIDKey == newDIDKey {
+			return usageError("--new-did-key must differ from --old-did-key")
+		}
+		if _, err := awid.ExtractPublicKey(newDIDKey); err != nil {
+			return usageError("invalid --new-did-key: %v", err)
+		}
 	}
 
 	wd, err := os.Getwd()
@@ -164,17 +183,32 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) error {
 
 	homeDir := strings.TrimSpace(teamHumanReplaceKeyHome)
 	oldCertificateID := strings.TrimSpace(teamHumanReplaceKeyOldCertID)
+	generatedKeyPath := ""
 	if homeDir != "" {
 		homeDir, err = filepath.Abs(homeDir)
 		if err != nil {
 			return err
 		}
-		oldCertificateID, err = preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey, oldCertificateID)
+		if generateNewKey {
+			oldCertificateID, newDIDKey, generatedKeyPath, err = prepareGeneratedReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, oldCertificateID)
+		} else {
+			oldCertificateID, err = preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey, oldCertificateID)
+		}
 		if err != nil {
 			return err
 		}
 	} else if oldCertificateID == "" {
 		return usageError("--old-cert-id is required when --home is not supplied")
+	}
+	if generatedKeyPath != "" {
+		defer func() {
+			if runErr != nil {
+				runErr = fmt.Errorf("%w; generated replacement signing key retained at %s (new DID %s). Do not generate another key; follow the phase-specific recovery above using this same key and DID", runErr, generatedKeyPath, newDIDKey)
+			}
+		}()
+	}
+	if oldDIDKey == newDIDKey {
+		return usageError("generated --new-did-key unexpectedly matches --old-did-key")
 	}
 
 	serviceURL := strings.TrimSpace(teamHumanReplaceKeyAwebURL)
@@ -240,6 +274,14 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("replace-key partial state: roster row was replaced, old certificate was revoked, and new certificate %s was registered but not installed in %s: %w; save this replacement certificate material manually: %s", newCertificate.CertificateID, homeDir, err, encodedCertificate)
 		}
 		output.CertificatePath = filepath.ToSlash(filepath.Join(homeDir, ".aw", filepath.FromSlash(certPath)))
+		output.SigningKeyPath = filepath.ToSlash(generatedKeyPath)
+		encryptionCtx, encryptionCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		encryptionOutput, encryptionErr := setupOrRotateIdentityEncryptionKeyForDir(encryptionCtx, homeDir, false)
+		encryptionCancel()
+		if encryptionErr != nil {
+			return fmt.Errorf("replace-key partial state: roster row and audit were updated, old certificate was revoked, and replacement signing key/certificate %s were installed, but the E2E encryption-key assertion was not refreshed: %w; from %s run `aw id encryption-key setup`", newCertificate.CertificateID, encryptionErr, homeDir)
+		}
+		output.EncryptionKeyID = encryptionOutput.KeyID
 	} else {
 		output.TeamCertificate = encodedCertificate
 		output.Placement = fmt.Sprintf("base64-decode team_certificate as JSON into .aw/%s and chmod 600", awconfig.TeamCertificateRelativePath(teamID))
@@ -267,16 +309,12 @@ func loadLocalReplaceKeyController(domain, teamName string) (ed25519.PrivateKey,
 }
 
 func preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID string) (string, error) {
-	identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir)
+	if err := validateReplacementAgentHomeState(homeDir, teamID, alias); err != nil {
+		return "", err
+	}
+	oldCertificateID, _, err := loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID)
 	if err != nil {
-		return "", fmt.Errorf("load replacement agent identity from %s: %w", homeDir, err)
-	}
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(identity.IdentityScope, identity.Lifetime))
-	if identityScope != awid.IdentityModeLocal {
-		return "", usageError("replacement agent home identity scope is %q; --home must contain a local team-scoped identity", identityScope)
-	}
-	if strings.TrimSpace(identity.DID) != newDIDKey {
-		return "", usageError("replacement agent home identity did %s does not match --new-did-key %s", identity.DID, newDIDKey)
+		return "", err
 	}
 	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(homeDir))
 	if err != nil {
@@ -285,23 +323,74 @@ func preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey,
 	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); did != newDIDKey {
 		return "", usageError("replacement agent home signing key %s does not match --new-did-key %s", did, newDIDKey)
 	}
+	return oldCertificateID, nil
+}
+
+func prepareGeneratedReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, explicitOldCertificateID string) (string, string, string, error) {
+	if err := validateReplacementAgentHomeState(homeDir, teamID, alias); err != nil {
+		return "", "", "", err
+	}
+	oldCertificateID, oldCertificate, err := loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, "generated key", explicitOldCertificateID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if oldCertificate == nil {
+		return "", "", "", usageError("cannot generate a replacement key when both signing.key and the old team certificate are absent from --home; restore the old certificate first")
+	}
+	keyPath := awconfig.WorktreeSigningKeyPath(homeDir)
+	if _, err := os.Lstat(keyPath); err == nil {
+		return "", "", "", usageError("replacement signing key already exists at %s; --generate-new-key never overwrites recoverable identity material. For a compromised-key replacement, back up and remove that key yourself, then rerun", keyPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", "", fmt.Errorf("inspect replacement signing key path: %w", err)
+	}
+	publicKey, privateKey, err := awid.GenerateKeypair()
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := awid.SaveSigningKeyExclusive(keyPath, privateKey); err != nil {
+		return "", "", "", fmt.Errorf("persist generated replacement signing key: %w", err)
+	}
+	return oldCertificateID, awid.ComputeDIDKey(publicKey), keyPath, nil
+}
+
+func validateReplacementAgentHomeState(homeDir, teamID, alias string) error {
+	teamState, err := awconfig.LoadTeamState(homeDir)
+	if err != nil {
+		return fmt.Errorf("load replacement home teams.yaml: %w", err)
+	}
+	teamMembership := teamState.Membership(teamID)
+	if teamMembership == nil || strings.TrimSpace(teamMembership.Alias) != alias {
+		return usageError("replacement home teams.yaml does not contain member %s in %s", alias, teamID)
+	}
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(homeDir)
+	if err != nil {
+		return fmt.Errorf("load replacement home workspace.yaml: %w", err)
+	}
+	workspaceMembership := workspace.Membership(teamID)
+	if workspaceMembership == nil || strings.TrimSpace(workspaceMembership.Alias) != alias {
+		return usageError("replacement home workspace.yaml does not contain member %s in %s", alias, teamID)
+	}
+	return nil
+}
+
+func loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID string) (string, *awid.TeamCertificate, error) {
 	oldCertificate, err := awconfig.LoadTeamCertificateForTeam(homeDir, teamID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && explicitOldCertificateID != "" {
-			return explicitOldCertificateID, nil
+			return explicitOldCertificateID, nil, nil
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return "", usageError("old team certificate is absent from --home; pass --old-cert-id from the team registry or operator records")
+			return "", nil, usageError("old team certificate is absent from --home; pass --old-cert-id from the team registry or operator records")
 		}
-		return "", fmt.Errorf("load old team certificate from replacement agent home: %w", err)
+		return "", nil, fmt.Errorf("load old team certificate from replacement agent home: %w", err)
 	}
 	if oldCertificate.Team != teamID || oldCertificate.Alias != alias || oldCertificate.MemberDIDKey != oldDIDKey || awid.NormalizeIdentityScope(firstNonEmpty(oldCertificate.IdentityScope, oldCertificate.Lifetime)) != awid.IdentityModeLocal {
-		return "", usageError("old team certificate in %s does not match local member %s (%s -> %s)", homeDir, alias, oldDIDKey, newDIDKey)
+		return "", nil, usageError("old team certificate in %s does not match local member %s (%s -> %s)", homeDir, alias, oldDIDKey, newDIDKey)
 	}
 	if explicitOldCertificateID != "" && explicitOldCertificateID != oldCertificate.CertificateID {
-		return "", usageError("--old-cert-id %s does not match the certificate in --home (%s)", explicitOldCertificateID, oldCertificate.CertificateID)
+		return "", nil, usageError("--old-cert-id %s does not match the certificate in --home (%s)", explicitOldCertificateID, oldCertificate.CertificateID)
 	}
-	return oldCertificate.CertificateID, nil
+	return oldCertificate.CertificateID, oldCertificate, nil
 }
 
 func postLocalIdentityKeyReplacement(ctx context.Context, serviceURL, alias string, payload localIdentityKeyReplacementRequest, teamKey ed25519.PrivateKey) (*localIdentityKeyReplacementResponse, error) {
@@ -388,7 +477,13 @@ func formatTeamHumanReplaceKey(v any) string {
 	fmt.Fprintf(&b, "  old did:key: %s\n  new did:key: %s\n", out.OldDIDKey, out.NewDIDKey)
 	fmt.Fprintf(&b, "  audit: %s (authorized by %s at %s)\n", out.AuditID, out.AuthorizedBy, out.AuthorizedAt)
 	if out.CertificatePath != "" {
+		if out.SigningKeyPath != "" {
+			fmt.Fprintf(&b, "  replacement signing key generated: %s\n", out.SigningKeyPath)
+		}
 		fmt.Fprintf(&b, "  replacement certificate installed: %s\n", out.CertificatePath)
+		if out.EncryptionKeyID != "" {
+			fmt.Fprintf(&b, "  E2E encryption assertion refreshed: %s\n", out.EncryptionKeyID)
+		}
 	} else {
 		fmt.Fprintf(&b, "  replacement team certificate: %s\n  placement: %s\n", out.TeamCertificate, out.Placement)
 	}
