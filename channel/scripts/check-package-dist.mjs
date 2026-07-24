@@ -32,4 +32,23 @@ if (!dist.includes(appEventConsumer) || !dist.includes(appAwakeningKind)) {
   throw new Error("channel dist is missing bundled app_event consumer wake dispatch");
 }
 
+// Freshness gate: the plugin bundle inlines channel-core via the file: symlink,
+// so a stale channel-core/dist would silently ship the plugin WITHOUT merged
+// security fixes. Each marker is a string that only exists once its fix is
+// bundled from current channel-core src; a fresh build (prebuild rebuilds
+// channel-core) contains them all. If any is missing, channel-core was bundled
+// stale — rebuild it (npm run build in channel-core) and re-bundle.
+const securityFixMarkers = [
+  { task: "aajc.3 DID-log genesis/rotation authorization binding", marker: "not derived from genesis" },
+  { task: "aajr TS full-log walk", marker: "audit log current did:key mismatch" },
+  { task: "aajc.2 fail-closed trust pin store", marker: "refusing to start" },
+];
+for (const { task, marker } of securityFixMarkers) {
+  if (!dist.includes(marker)) {
+    throw new Error(
+      `channel dist is missing ${task} (marker "${marker}") — channel-core was bundled stale; rebuild channel-core before packaging`,
+    );
+  }
+}
+
 console.log(`channel package dist is coherent for ${pkg.version}`);
