@@ -160,6 +160,12 @@ pi install npm:@awebai/pi@latest
 pi --approve
 ```
 
+For an existing install on Pi 0.82+, run `pi update npm:@awebai/pi`, then fully
+stop and restart Pi. Pre-0.82 Pi uses
+`npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback,
+followed by the same restart. A global npm upgrade is not an update path: Pi
+loads user packages from `~/.pi/agent/npm` by default.
+
 **Codex**: Codex has no channel plugin, so run it under aw's event-stream
 wake loop — `aw run codex` wakes the session on incoming mail and chat (and,
 with `--autofeed-work`, work events):

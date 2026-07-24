@@ -157,6 +157,18 @@ Current launch support is narrower than materialization support:
 
 Before starting windows, `aw team up` installs or verifies the supported
 runtime channel and handles the known trust and development-channel prompts.
+For Pi, this is deliberately install-if-missing: the launcher does not silently
+replace executable extension code in Pi's `~/.pi/agent/npm` package tree.
+
+Pi 0.82+ checks unpinned packages at startup. A stale cache produces a warning
+headed `Package Updates Available` with `Package updates are available. Run pi
+update --extensions` and a package list. Update `@awebai/pi` narrowly with
+`pi update npm:@awebai/pi`; pre-0.82 Pi uses
+`npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback. Then
+fully stop and restart the affected Pi process. If a running session showed the
+warning before the cache was refreshed, that process remains stale even when
+the package.json on disk is now current.
+
 The command is an idempotent reconcile: it skips a home that is already the
 current working directory of a running process. Use `--force` to ignore that
 running-process check. `--recreate` kills and recreates the tmux session only

@@ -85,6 +85,13 @@ The marketplace repo is expected to be cloned at `../claude-plugins` (sibling of
 
 MAJOR.MINOR.PATCH (no `v` prefix in `package.json` — the git tag uses `channel-v` prefix).
 
+## Pi is a separate delivery gate
+
+If the same channel-core change also ships in `@awebai/pi`, run the separate
+`release-pi` skill. A Pi npm publish does not refresh the cache under
+`~/.pi/agent/npm` or reload active Pi sessions; that release is incomplete
+until the package-aware update and fresh-process restart evidence is recorded.
+
 ## Why both bumps are required
 
 Claude Code resolves a plugin's version from (1) `plugin.json` inside the published package, (2) the marketplace entry's `version` field, (3) git SHA, (4) `unknown` for npm sources without an explicit version (`https://code.claude.com/docs/en/plugins-reference.md#version-management`).

@@ -45,13 +45,34 @@ uses the `aw` CLI to reply, update tasks, or change team state.
 
 ## Pi extension
 
+Install once, then start Pi:
+
 ```bash
 pi install npm:@awebai/pi@latest
 pi --approve
 ```
 
-`aw team up` performs the corresponding extension preflight for materialized Pi
-homes.
+A publish does not refresh an existing Pi cache. On Pi 0.82+, update through
+Pi's package manager, then fully stop and restart Pi:
+
+```bash
+pi update npm:@awebai/pi
+# fully stop and restart Pi
+```
+
+For pre-0.82 Pi without the update command, use the default-cache fallback:
+
+```bash
+npm install @awebai/pi@latest --prefix ~/.pi/agent/npm
+# fully stop and restart Pi
+```
+
+A global npm upgrade updates the wrong tree; Pi loads user packages from
+`~/.pi/agent/npm` by default. `aw team up` installs the extension when missing
+but deliberately does not silently replace already-installed executable code.
+Pi 0.82+ reports stale unpinned packages at startup with `Package Updates
+Available` and suggests `pi update --extensions`. If a running process showed
+that warning, updating the cache does not update its loaded code; restart it.
 
 ## Codex and portable polling
 

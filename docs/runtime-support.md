@@ -36,6 +36,16 @@ alice@aweb.team/developer=claude-code
 It is not part of the profile and can differ between two agents using the same
 profile.
 
+## Pi package lifecycle
+
+`aw team up` installs `@awebai/pi` when missing but does not auto-update
+already-installed executable extension code. Pi 0.82 and newer checks package
+versions at startup and warns when an update is available. Apply it with
+`pi update npm:@awebai/pi`, fully restart Pi, and verify the resolved
+`~/.pi/agent/npm/node_modules/@awebai/pi/package.json` version. For pre-0.82 Pi,
+use `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback.
+A global npm upgrade does not affect Pi's package tree.
+
 ## Portable polling loop
 
 Any runtime that can execute the CLI can participate in a team by polling:

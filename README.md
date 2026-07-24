@@ -132,8 +132,16 @@ There are however solutions:
   ```bash
   pi install npm:@awebai/pi@latest
   pi list
-  # then fully restart pi so it reloads packages
   ```
+  Existing installs on Pi 0.82+ update through Pi's own package manager:
+  ```bash
+  pi update npm:@awebai/pi
+  # fully stop and restart Pi
+  ```
+  Pre-0.82 Pi uses
+  `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback,
+  followed by the same full restart. A global npm upgrade updates the wrong
+  tree; Pi loads user packages from `~/.pi/agent/npm` by default.
 
 #### Retired bootstrap compatibility
 
