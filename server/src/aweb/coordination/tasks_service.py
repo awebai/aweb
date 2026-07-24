@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -7,6 +8,8 @@ from uuid import UUID
 from awid.team_ids import team_slug
 from ..claims import claim_focus_task_ref, resolve_task_claim_apex
 from ..service_errors import ConflictError, NotFoundError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 _UNSET = object()
 
@@ -68,21 +71,92 @@ async def allocate_task_number(db, *, team_id: str) -> int:
     return await _allocate_task_number_on(aweb_db, team_id=team_id)
 
 
+async def _log_resolution_miss(
+    aweb_db,
+    *,
+    team_id: str,
+    ref: str,
+    ref_suffix: str,
+    lookup: str,
+    task_uuid: UUID | None = None,
+) -> None:
+    """Log a task ref resolution miss with enough context to diagnose it.
+
+    Production has shown misses for tasks that exist and resolve on
+    immediate retry (default-aagh). The diagnostics use separate pool
+    acquires, which at low concurrency usually return the same underlying
+    connection that served the miss (asyncpg pools are LIFO). A match for
+    the requesting team that is not soft-deleted therefore proves the miss
+    was a visibility anomaly; an empty match list is ambiguous and does
+    not prove the row was absent. Match tuples carry the row xmin so a
+    positive match can be compared against the logged snapshot post hoc.
+    """
+    try:
+        if task_uuid is not None:
+            matches = await aweb_db.fetch_all(
+                """
+                SELECT team_id, deleted_at IS NOT NULL AS deleted, xmin::text AS row_xmin
+                FROM {{tables.tasks}}
+                WHERE task_id = $1
+                LIMIT 5
+                """,
+                task_uuid,
+            )
+        else:
+            matches = await aweb_db.fetch_all(
+                """
+                SELECT team_id, deleted_at IS NOT NULL AS deleted, xmin::text AS row_xmin
+                FROM {{tables.tasks}}
+                WHERE task_ref_suffix = $1
+                LIMIT 5
+                """,
+                ref_suffix,
+            )
+        conn_info = await aweb_db.fetch_one(
+            "SELECT pg_backend_pid() AS backend_pid, pg_current_snapshot()::text AS snapshot"
+        )
+        logger.warning(
+            "task ref resolution miss: team_id=%r ref=%r suffix=%r lookup=%s "
+            "matches=%s backend_pid=%s snapshot=%s",
+            team_id,
+            ref,
+            ref_suffix,
+            lookup,
+            [(r["team_id"], r["deleted"], r["row_xmin"]) for r in matches],
+            conn_info["backend_pid"],
+            conn_info["snapshot"],
+        )
+    except Exception:
+        logger.warning(
+            "task ref resolution miss: team_id=%r ref=%r suffix=%r lookup=%s (diagnostics unavailable)",
+            team_id,
+            ref,
+            ref_suffix,
+            lookup,
+            exc_info=True,
+        )
+
+
 async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
     aweb_db = db.get_manager("aweb")
 
     try:
         task_uuid = UUID(ref)
+    except ValueError:
+        task_uuid = None
+
+    if task_uuid is not None:
         row = await aweb_db.fetch_one(
             "SELECT task_id FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL",
             task_uuid,
             team_id,
         )
         if not row:
+            await _log_resolution_miss(
+                aweb_db, team_id=team_id, ref=ref, ref_suffix="", lookup="task_id", task_uuid=task_uuid
+            )
             raise NotFoundError("Task not found")
         return row["task_id"]
-    except ValueError:
-        pass
 
     slug = _get_team_slug(team_id)
     prefix = slug + "-"
@@ -100,6 +174,7 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
     if row:
         return row["task_id"]
 
+    await _log_resolution_miss(aweb_db, team_id=team_id, ref=ref, ref_suffix=ref_suffix, lookup="task_ref_suffix")
     raise NotFoundError("Task not found")
 
 
