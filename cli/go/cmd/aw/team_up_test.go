@@ -25,13 +25,16 @@ func resetTeamUpTmuxForTest(t *testing.T) {
 	oldExists := teamUpSessionExists
 	oldRun := teamUpRunTmux
 	oldOutput := teamUpRunTmuxOutput
+	oldGuardedPath := teamUpGuardedAgentPath
 	oldWait := teamUpConfirmClaudePromptWait
 	t.Cleanup(func() {
 		teamUpSessionExists = oldExists
 		teamUpRunTmux = oldRun
 		teamUpRunTmuxOutput = oldOutput
+		teamUpGuardedAgentPath = oldGuardedPath
 		teamUpConfirmClaudePromptWait = oldWait
 	})
+	teamUpGuardedAgentPath = func() (string, error) { return "/guard/bin:/usr/bin:/bin", nil }
 }
 
 func writeMaterializedAgentForTeamUp(t *testing.T, root, name, runtimeKind string) string {
@@ -505,7 +508,7 @@ func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 			if err := launchAgentWindow(nil, "aw-team", agent); err != nil {
 				t.Fatalf("launchAgentWindow: %v", err)
 			}
-			if len(got) != 1 || !strings.HasPrefix(got[0], tc.wantPrefix) || !strings.Contains(got[0], "cd '/tmp/dev home' && exec 'claude' '--flag'") {
+			if len(got) != 1 || !strings.HasPrefix(got[0], tc.wantPrefix) || !strings.Contains(got[0], "unset AWEB_TMUX_KILL_OK && export PATH='/guard/bin:/usr/bin:/bin' && cd '/tmp/dev home' && exec 'claude' '--flag'") {
 				t.Fatalf("tmux calls=%v", got)
 			}
 		})

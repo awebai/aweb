@@ -163,9 +163,26 @@ running-process check. `--recreate` kills and recreates the tmux session only
 when the target session has no running agent windows; otherwise it refuses
 unless you pass `--force-kill`.
 
-Dogfood and test launches should use a throwaway `--session` name and an
-isolated `TMUX_TMPDIR`; direct tmux experiments should use an isolated socket
-such as `tmux -L awdogfood ...` so they cannot touch the live agent tmux server.
+Live-agent tmux is isolated from the human/default socket by setting
+`AWEB_TMUX_TMPDIR` before `aw team up`, `aw team add --start`, or
+`aw team extend --start`. The CLI maps that value to `TMUX_TMPDIR` for each
+tmux child and strips inherited `TMUX`, even when invoked inside another tmux
+client. The same value can be persisted as `aweb_tmux_tmpdir` in
+`.aw/workspace.yaml`; the environment variable wins.
+
+These names are deliberately different: **raw `tmux` ignores
+`AWEB_TMUX_TMPDIR`**. A direct tmux command must receive `TMUX_TMPDIR` (or an
+explicit socket), otherwise it silently reaches the default server. Launched
+agents also receive a generated `~/.config/aw/guard-bin/tmux` first on `PATH`;
+it rejects `kill-server`, including when the call is hidden in a script, trap,
+or subshell. Claude/Pi command hooks are an additional visible-command gate,
+not a substitute for the inherited PATH guard.
+
+Tmux dogfood is never an ad-hoc command or inline cleanup trap. Add a committed,
+reviewed harness, make it prepend `scripts/guard-bin`, use a throwaway named
+session on an isolated socket, and tear down only that named session. Never use
+`kill-server`. See [Agent tmux cutover](agent-tmux-cutover.md) for the reviewed
+per-team migration procedure.
 
 ## 4. Public blueprint source
 
