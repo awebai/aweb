@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { createLocalAWDecryptProvider } from "../../channel-core/src/index.js";
+import { createLocalAWDecryptProvider } from "../src/index.js";
 
 describe("createLocalAWDecryptProvider", () => {
   test("reads decrypted mail from aw mail show JSON", async () => {

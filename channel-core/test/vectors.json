@@ -1,0 +1,55 @@
+{
+  "seed": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "publicKey": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  "stableID": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+  "vectors": [
+    {
+      "name": "mail with optional fields",
+      "envelope": {
+        "from": "alice",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "bob",
+        "to_did": "",
+        "type": "mail",
+        "subject": "hello",
+        "body": "world",
+        "timestamp": "2025-01-01T00:00:00Z",
+        "from_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "message_id": "msg-001"
+      },
+      "canonical": "{\"body\":\"world\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"message_id\":\"msg-001\",\"subject\":\"hello\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"mail\"}",
+      "signature": "37ZbXgoIMkmO4dsFhe720VQQojGuG6UmB5jfbctiNZOC9+ibj23Bbx8GxIlfLBJ75xGkeuJOUjrbm0BAlAFvCQ"
+    },
+    {
+      "name": "chat with special characters",
+      "envelope": {
+        "from": "alice",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "bob",
+        "to_did": "",
+        "type": "chat",
+        "subject": "",
+        "body": "line1\nline2\ttab \"quoted\"",
+        "timestamp": "2025-01-01T00:00:00Z"
+      },
+      "canonical": "{\"body\":\"line1\\nline2\\ttab \\\"quoted\\\"\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"chat\"}",
+      "signature": "rlZOZWjpnx0r4ZdnN6MqqLGUFASNAa3wDf3DmZ/kBJGLOkf4Chn3d+41tLiiKVqBPEM/4d3fOkINcH+ANx6kAQ"
+    },
+    {
+      "name": "minimal envelope",
+      "envelope": {
+        "from": "alice",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "bob",
+        "to_did": "",
+        "type": "mail",
+        "subject": "",
+        "body": "",
+        "timestamp": "2025-01-01T00:00:00Z"
+      },
+      "canonical": "{\"body\":\"\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"subject\":\"\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"mail\"}",
+      "signature": "IvcvLA1Ri+V2B+T5J73mATgzjoZpTp36L0E237wLGY9UPgCJ6AcK7DxstF2CRdkogRlaq4zjZOK2UZ43UfXLCQ"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import {
   streamAgentEvents,
   streamErrorCause,
   type EventStreamState,
-} from "@awebai/channel-core";
+} from "../src/index.js";
 import { parseAgentEvent } from "../src/api/events.js";
 
 describe("parseAgentEvent", () => {

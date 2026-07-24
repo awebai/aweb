@@ -2,10 +2,10 @@ import { describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentEvent } from "../src/api/events.js";
-import { PinStore } from "../src/identity/pinstore.js";
-import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
-import { SenderTrustManager } from "../src/identity/trust.js";
+import type { AgentEvent } from "../../channel-core/src/api/events.js";
+import { PinStore } from "../../channel-core/src/identity/pinstore.js";
+import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
+import { SenderTrustManager } from "../../channel-core/src/identity/trust.js";
 import { dispatchEvent } from "../src/index.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
