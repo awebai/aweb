@@ -81,6 +81,24 @@ export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promi
   }
 }
 
+/**
+ * Load the pin store for an adapter session. On any load failure it reports the
+ * error and returns undefined — never a fresh empty store — so an adapter fails
+ * closed instead of silently starting with a discarded trust database. Adapters
+ * MUST treat undefined as "do not start the channel".
+ */
+export async function loadSessionPinStore(
+  onError: (message: string) => void,
+  load: () => Promise<PinStore> = loadPinStore,
+): Promise<PinStore | undefined> {
+  try {
+    return await load();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return undefined;
+  }
+}
+
 export class DeliveryStore {
   private constructor(
     private readonly path: string,

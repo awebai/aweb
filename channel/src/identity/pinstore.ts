@@ -132,11 +132,21 @@ export class PinStore {
       // still throw.
       data = yaml.load(content, { schema: yaml.JSON_SCHEMA });
     } catch (error) {
-      throw new Error(`pin store YAML is invalid: ${(error as Error).message}`);
+      // Report the reason and location only; js-yaml's message embeds a snippet
+      // of the offending file lines, which we do not want to surface.
+      const ex = error as { reason?: string; mark?: { line?: number; column?: number } };
+      const where = ex.mark ? ` at line ${(ex.mark.line ?? 0) + 1} column ${(ex.mark.column ?? 0) + 1}` : "";
+      throw new Error(`pin store YAML is invalid${where}: ${ex.reason ?? "parse error"}`);
     }
 
     const store = new PinStore();
-    if (data === null || data === undefined) return store;
+    // An absent file becomes an empty store in loadPinStore; a present file that
+    // yields no document (empty, whitespace, comments, or a bare null) is
+    // truncation/corruption, since the serializer always emits a mapping. An
+    // intentional empty store is written as "{}".
+    if (data === null || data === undefined) {
+      throw new Error("pin store is empty or has no document (truncated?); an intentional empty store is '{}'");
+    }
     if (typeof data !== "object" || Array.isArray(data)) {
       throw new Error("pin store root must be a mapping");
     }

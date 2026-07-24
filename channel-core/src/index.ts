@@ -22,6 +22,7 @@ export {
   formatAwakeningForAgent,
   isTrustedVerificationStatus,
   loadPinStore,
+  loadSessionPinStore,
   resolveRegistryFallbackURL,
   startChannelLoop,
   trustWarningLine,

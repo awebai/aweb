@@ -53,9 +53,30 @@ describe("PinStore.fromYAML schema validation", () => {
     expect(store.pins.get("did:key:zAlice")?.server).toBe("");
   });
 
-  test("empty and null documents produce an empty store", () => {
-    expect(PinStore.fromYAML("").pins.size).toBe(0);
-    expect(PinStore.fromYAML("null\n").pins.size).toBe(0);
+  test("an explicit empty mapping loads as an empty store", () => {
+    expect(PinStore.fromYAML("{}").pins.size).toBe(0);
+    expect(PinStore.fromYAML("pins: {}\naddresses: {}\n").pins.size).toBe(0);
+  });
+
+  test("a present-but-empty document throws (truncation/corruption)", () => {
+    // The serializer always emits pins/addresses mappings, so a present file
+    // yielding no document is corruption, not an intentional empty store.
+    for (const content of ["", "   \n\t ", "# only a comment\n", "null\n", "~\n"]) {
+      expect(() => PinStore.fromYAML(content), JSON.stringify(content)).toThrow(/empty or has no document/i);
+    }
+  });
+
+  test("parse errors report location without dumping file content", () => {
+    const marker = "SUPERSECRETMARKER";
+    const bad = `pins:\n  did:key:z${marker}: {oops\n`;
+    let message = "";
+    try {
+      PinStore.fromYAML(bad);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/invalid/i);
+    expect(message).not.toContain(marker);
   });
 
   test("rejects a dangling address reference", () => {
