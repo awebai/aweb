@@ -11,6 +11,7 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -98,6 +99,65 @@ def _files_with_changes(base_files: list[dict[str, str]], *, version: str, repla
 
 def _changeset(*assets: dict[str, Any]) -> dict[str, Any]:
     return {"schema": PROFILE_ASSET_CHANGESET_SCHEMA, "assets": list(assets)}
+
+
+@pytest.mark.parametrize("target", ["memory", "skill", "workflow"])
+async def test_create_proposal_rejects_unsupported_targets(migrated_db, target: str) -> None:
+    await migrated_db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, team_did_key) VALUES ($1, $2)"
+        " ON CONFLICT (team_id) DO NOTHING",
+        _TEAM,
+        "did:key:zMintTest",
+    )
+    principal = SimpleNamespace(team_id=_TEAM, alias="dev")
+    with pytest.raises(HTTPException) as excinfo:
+        await create_proposal(
+            migrated_db,
+            principal=principal,
+            request=ProposalCreateRequest(
+                target=target,
+                content={"title": "unsupported"},
+            ),
+        )
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail == (
+        f"Unsupported proposal target '{target}'; only profile proposals are supported"
+    )
+
+
+async def test_approve_legacy_non_profile_proposal_fails_closed(migrated_db) -> None:
+    db = migrated_db
+    await db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, team_did_key) VALUES ($1, $2)"
+        " ON CONFLICT (team_id) DO NOTHING",
+        _TEAM,
+        "did:key:zMintTest",
+    )
+    proposal_id = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.proposals}}"
+        " (proposal_id, team_id, target, content, created_by_alias)"
+        " VALUES ($1, $2, $3, $4::jsonb, $5)",
+        proposal_id,
+        _TEAM,
+        "memory",
+        '{"title":"legacy"}',
+        "dev",
+    )
+
+    principal = SimpleNamespace(team_id=_TEAM, alias="dev")
+    with pytest.raises(HTTPException) as excinfo:
+        await approve_proposal(db, principal=principal, proposal_id=str(proposal_id))
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.detail == (
+        "Unsupported proposal target 'memory'; only profile proposals are supported"
+    )
+    row = await db.fetch_one(
+        "SELECT status FROM {{tables.proposals}} WHERE team_id = $1 AND proposal_id = $2",
+        _TEAM,
+        proposal_id,
+    )
+    assert row["status"] == "open"
 
 
 async def test_approve_applies_file_asset_to_current_profile_and_mints(migrated_db) -> None:

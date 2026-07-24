@@ -1129,9 +1129,18 @@ async def _get_proposal(
     return _proposal_row(row)
 
 
+def _unsupported_proposal_target(target: str) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail=f"Unsupported proposal target '{target}'; only profile proposals are supported",
+    )
+
+
 async def create_proposal(
     db: AsyncDatabaseManager, *, principal: Principal, request: ProposalCreateRequest
 ) -> dict[str, Any]:
+    if request.target != "profile":
+        raise _unsupported_proposal_target(request.target)
     proposal_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.proposals}}"
@@ -1390,14 +1399,13 @@ async def approve_proposal(
     proposal = await _get_proposal(db, principal.team_id, pid)
     if proposal["status"] != "open":
         raise HTTPException(status_code=409, detail=f"Proposal is already {proposal['status']}")
-    minted = None
-    if proposal["target"] == "profile":
-        minted = await _mint_from_proposal(db, principal=principal, proposal=proposal)
+    if proposal["target"] != "profile":
+        raise _unsupported_proposal_target(str(proposal["target"]))
+    minted = await _mint_from_proposal(db, principal=principal, proposal=proposal)
     result = await _set_proposal_status(
         db, principal=principal, proposal_id=proposal_id, status="approved"
     )
-    if minted is not None:
-        result["minted"] = minted
+    result["minted"] = minted
     return result
 
 
