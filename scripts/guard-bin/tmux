@@ -1,0 +1,24 @@
+#!/bin/bash
+# PATH-shim guard for tmux. Sits before the real tmux in PATH for every
+# agent process tree, so scripts, exit traps, and subshells inherit it.
+# Refuses server-wide teardown unless a human explicitly overrides.
+# Three fleet outages were caused by kill-server reaching the default
+# socket; command-string hooks cannot see kills inside scripts — this can.
+
+REAL_TMUX="/opt/homebrew/bin/tmux"
+[ -x "$REAL_TMUX" ] || REAL_TMUX="/usr/bin/tmux"
+
+for arg in "$@"; do
+  case "$arg" in
+    kill-server)
+      if [ "${AWEB_TMUX_KILL_OK:-}" != "1" ]; then
+        echo "tmux-guard: kill-server REFUSED. It destroys every session on the socket (three fleet outages)." >&2
+        echo "tmux-guard: kill only named throwaway sessions (kill-session -t <name>) under an isolated TMUX_TMPDIR." >&2
+        echo "tmux-guard: a human may override with AWEB_TMUX_KILL_OK=1." >&2
+        exit 86
+      fi
+      ;;
+  esac
+done
+
+exec "$REAL_TMUX" "$@"
