@@ -1,0 +1,118 @@
+name: OSS federation e2e
+
+# Blocking real-stack federation gate. Every PR instantiates the stable final
+# check so it can be required without leaving unrelated PRs pending. The
+# expensive stack runs only when an identity/CLI/federation contract surface
+# changed. Relevant pushes to main also exercise the complete gate.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "cli/go/**"
+      - "server/**"
+      - "awid/**"
+      - "scripts/e2e-oss-federation.sh"
+      - ".github/workflows/federation-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: federation-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect federation-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Checkout aweb with comparison history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          relevant=true
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+              'cli/go/**' \
+              'server/**' \
+              'awid/**' \
+              'scripts/e2e-oss-federation.sh' \
+              '.github/workflows/federation-e2e.yml'; then
+              relevant=false
+            fi
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          echo "Federation-relevant changes: $relevant"
+
+  federation-e2e:
+    name: OSS federation real-stack e2e
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout aweb
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+
+      # The replay/idempotency phase invokes `uv run` against the server source.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      # GitHub-hosted runners share Docker Hub egress and can hit anonymous
+      # pull limits for the Python, Postgres, and Redis images used by the
+      # generated federation compose stack.
+      - name: Route Docker Hub pulls through a mirror
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Run OSS federation e2e
+        run: ./scripts/e2e-oss-federation.sh
+
+  federation-gate:
+    name: OSS federation gate
+    needs: [changes, federation-e2e]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require federation e2e for relevant changes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          E2E_RESULT: ${{ needs.federation-e2e.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Change classification failed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$RELEVANT" == "false" ]]; then
+            echo "No federation contract paths changed; gate passes without the real stack."
+            exit 0
+          fi
+          if [[ "$RELEVANT" != "true" ]]; then
+            echo "Change classification returned an invalid value: $RELEVANT" >&2
+            exit 1
+          fi
+          if [[ "$E2E_RESULT" != "success" ]]; then
+            echo "Federation e2e result is $E2E_RESULT; relevant changes require success." >&2
+            exit 1
+          fi
+          echo "Federation e2e passed for relevant changes."
