@@ -26,7 +26,6 @@ func TestVerifyDidKeyResolutionVerified(t *testing.T) {
 			Seq:          1,
 			Operation:    "create",
 			NewDIDKey:    did,
-			StateHash:    "5d00a7ffa63b444a8515c2cbd9fd6ca0ab12fd97ac49cc359316833cf5c71976",
 			AuthorizedBy: did,
 			Timestamp:    "2026-02-22T10:00:00Z",
 		},
@@ -61,7 +60,6 @@ func TestVerifyDidKeyResolutionVerifiedRegisterDIDCreate(t *testing.T) {
 			Seq:          1,
 			Operation:    "register_did",
 			NewDIDKey:    did,
-			StateHash:    "5d00a7ffa63b444a8515c2cbd9fd6ca0ab12fd97ac49cc359316833cf5c71976",
 			AuthorizedBy: did,
 			Timestamp:    "2026-02-22T10:00:00Z",
 		},
@@ -124,7 +122,6 @@ func TestVerifyDidKeyResolutionHardErrorOnCurrentKeyMismatch(t *testing.T) {
 			Seq:          1,
 			Operation:    "create",
 			NewDIDKey:    did,
-			StateHash:    "5d00a7ffa63b444a8515c2cbd9fd6ca0ab12fd97ac49cc359316833cf5c71976",
 			AuthorizedBy: did,
 			Timestamp:    "2026-02-22T10:00:00Z",
 		},
@@ -159,7 +156,6 @@ func TestVerifyDidKeyResolutionDegradedOnSeqGap(t *testing.T) {
 			PreviousDIDKey: &oldDid,
 			NewDIDKey:      did,
 			PrevEntryHash:  &prev,
-			StateHash:      "8ee240bac1f366d008e77b006f8d9f0f7ea43a6bf69b46aa3e33f2525255a8ce",
 			AuthorizedBy:   did,
 			Timestamp:      "2026-02-22T10:05:00Z",
 		},
@@ -195,7 +191,6 @@ func TestVerifyDidKeyResolutionHardErrorOnRegression(t *testing.T) {
 			Seq:          1,
 			Operation:    "create",
 			NewDIDKey:    did,
-			StateHash:    "5d00a7ffa63b444a8515c2cbd9fd6ca0ab12fd97ac49cc359316833cf5c71976",
 			AuthorizedBy: did,
 			Timestamp:    "2026-02-22T10:00:00Z",
 		},
@@ -217,6 +212,9 @@ func TestVerifyDidKeyResolutionHardErrorOnRegression(t *testing.T) {
 
 func signedDidKeyResolution(t *testing.T, priv ed25519.PrivateKey, res *DidKeyResolution) *DidKeyResolution {
 	t.Helper()
+	if res.LogHead.StateHash == "" {
+		res.LogHead.StateHash = stableIdentityStateHash(res.DIDAW, res.LogHead.NewDIDKey)
+	}
 	payload := CanonicalDidLogPayload(res.DIDAW, res.LogHead)
 	sum := sha256Hex([]byte(payload))
 	res.LogHead.EntryHash = sum

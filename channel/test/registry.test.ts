@@ -93,7 +93,8 @@ describe("registry dns", () => {
 });
 
 describe("registry verification", () => {
-  test("verifies signed log-head vectors", () => {
+  test("verifies signed rotation adjacent to a cached genesis head", () => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
     const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key");
     expect(rotate).toBeDefined();
 
@@ -110,9 +111,31 @@ describe("registry verification", () => {
     expect(canonicalDidLogPayload(identityLogVectors.mapping.did_aw, resolution.log_head!))
       .toBe(rotate!.canonical_entry_payload);
 
-    const result = verifyDidKeyResolution(resolution, undefined, Date.now());
+    // A rotation can only be OK_VERIFIED against the head it continues from.
+    const cachedGenesis = {
+      seq: 1,
+      entryHash: register.entry_hash,
+      stateHash: register.entry_payload.state_hash,
+      currentDidKey: identityLogVectors.mapping.initial_did_key,
+      fetchedAt: Date.now(),
+    };
+    const result = verifyDidKeyResolution(resolution, cachedGenesis, Date.now());
     expect(result.outcome).toBe("OK_VERIFIED");
     expect(result.nextHead?.entryHash).toBe(rotate!.entry_hash);
+  });
+
+  test("degrades an unanchored rotation with no cached head", () => {
+    const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
+    const result = verifyDidKeyResolution({
+      did_aw: identityLogVectors.mapping.did_aw,
+      current_did_key: identityLogVectors.mapping.rotated_did_key,
+      log_head: {
+        ...rotate.entry_payload,
+        entry_hash: rotate.entry_hash,
+        signature: rotate.signature_b64,
+      },
+    }, undefined, Date.now());
+    expect(result.outcome).toBe("OK_DEGRADED");
   });
 
   test("verifies register_did log-head vectors", () => {

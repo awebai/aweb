@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import * as ed from "@noble/ed25519";
 import { getDomain } from "tldts";
-import { extractPublicKey } from "./did.js";
+import { computeStableID, extractPublicKey } from "./did.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -427,7 +427,26 @@ export function verifyDidKeyResolution(
     if (head.previous_did_key != null) {
       return { outcome: "HARD_ERROR", error: "seq=1 requires null previous_did_key" };
     }
+    // Genesis is self-authorizing: the identity holder signs its own
+    // registration with the key being bound.
+    if (head.authorized_by !== head.new_did_key) {
+      return { outcome: "HARD_ERROR", error: "genesis authorized_by must equal new_did_key" };
+    }
+    // The did:aw must be the canonical derivation of the genesis key, so a
+    // forged genesis cannot claim an unrelated identity.
+    let genesisPub: Uint8Array;
+    try {
+      genesisPub = extractPublicKey(head.new_did_key);
+    } catch (error) {
+      return { outcome: "HARD_ERROR", error: `invalid genesis new_did_key: ${error}` };
+    }
+    if (computeStableID(genesisPub) !== resolution.did_aw) {
+      return { outcome: "HARD_ERROR", error: "did:aw not derived from genesis key" };
+    }
   } else {
+    if (head.operation !== "rotate_key") {
+      return { outcome: "HARD_ERROR", error: "seq>1 requires rotate_key operation" };
+    }
     if (!head.prev_entry_hash || !isLowerHex(head.prev_entry_hash)) {
       return { outcome: "HARD_ERROR", error: "seq>1 requires hex prev_entry_hash" };
     }
@@ -439,6 +458,11 @@ export function verifyDidKeyResolution(
     } catch (error) {
       return { outcome: "HARD_ERROR", error: `invalid previous_did_key: ${error}` };
     }
+    // A rotation is authorized only by the retiring key signing its own
+    // replacement.
+    if (head.authorized_by !== head.previous_did_key) {
+      return { outcome: "HARD_ERROR", error: "rotation authorized_by must equal previous_did_key" };
+    }
   }
   try {
     extractPublicKey(head.authorized_by);
@@ -447,6 +471,11 @@ export function verifyDidKeyResolution(
   }
   if (!isLowerHex(head.entry_hash) || !isLowerHex(head.state_hash)) {
     return { outcome: "HARD_ERROR", error: "invalid entry/state hash" };
+  }
+  // state_hash must be the canonical hash of the resulting identity state, so
+  // a valid signature over a mismatched state cannot pass.
+  if (head.state_hash !== stableIdentityStateHash(resolution.did_aw, head.new_did_key)) {
+    return { outcome: "HARD_ERROR", error: "state_hash mismatch" };
   }
   if (!isCanonicalTimestamp(head.timestamp)) {
     return { outcome: "HARD_ERROR", error: "timestamp must be RFC3339 second precision" };
@@ -479,12 +508,25 @@ export function verifyDidKeyResolution(
     if (head.seq === cached.seq && head.entry_hash !== cached.entryHash) {
       return { outcome: "HARD_ERROR", error: "log_head split view" };
     }
-    if (head.seq === cached.seq + 1 && head.prev_entry_hash !== cached.entryHash) {
-      return { outcome: "HARD_ERROR", error: "log_head broken chain" };
+    if (head.seq === cached.seq + 1) {
+      if (head.previous_did_key !== cached.currentDidKey) {
+        return { outcome: "HARD_ERROR", error: "log_head previous_did_key discontinuity" };
+      }
+      if (head.prev_entry_hash !== cached.entryHash) {
+        return { outcome: "HARD_ERROR", error: "log_head broken chain" };
+      }
     }
     if (head.seq > cached.seq + 1) {
       return { outcome: "OK_DEGRADED" };
     }
+  }
+
+  // Only genesis (self-anchored via its did:aw derivation) or a head adjacent
+  // to a previously verified head can be OK_VERIFIED. An unanchored seq>1 head
+  // proves internal consistency but not the transition from genesis, so it
+  // must degrade and force full-log verification before it can be trusted.
+  if (head.seq > 1 && !cached) {
+    return { outcome: "OK_DEGRADED" };
   }
 
   return {
@@ -497,6 +539,11 @@ export function verifyDidKeyResolution(
       fetchedAt: nowMs,
     },
   };
+}
+
+function stableIdentityStateHash(didAW: string, currentDidKey: string): string {
+  const payload = `{"current_did_key":"${escapeJSON(currentDidKey)}","did_aw":"${escapeJSON(didAW)}"}`;
+  return bytesToHex(sha256(new TextEncoder().encode(payload)));
 }
 
 export function canonicalDidLogPayload(didAW: string, head: DidKeyEvidence): string {
