@@ -13,8 +13,8 @@ import {
   type AgentEvent,
   type ChannelAwakening,
   SenderTrustManager,
-} from "../../channel-core/src/index.js";
-import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
+} from "../src/index.js";
+import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(

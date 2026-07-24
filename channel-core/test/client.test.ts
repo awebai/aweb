@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { APIClient } from "@awebai/channel-core";
+import { APIClient } from "../src/index.js";
 
 describe("APIClient URL construction", () => {
   const fetchMock = vi.fn<typeof fetch>();

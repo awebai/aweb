@@ -12,7 +12,7 @@ import {
   canonicalRotationJSON,
   type ReplacementAnnouncement,
   type RotationAnnouncement,
-} from "@awebai/channel-core";
+} from "../src/index.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
