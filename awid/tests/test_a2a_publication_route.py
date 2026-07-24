@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-import awid_service.routes.a2a_publications as a2a_routes
 from awid.a2a_publication import (
     A2A_AUTHORITY_SELF_DELEGATION,
     A2A_AUTHORITY_SELF_IDENTITY_KEY,
@@ -31,16 +30,21 @@ from awid.signing import canonical_json_bytes, sign_message
 from conftest import build_signed_headers
 
 _ROOT = Path(__file__).resolve().parents[2]
-_ISSUED_AT = "2026-06-07T20:00:00Z"
-_PUBLISHED_AT = "2026-06-07T20:01:00Z"
-_EXPIRES_AT = "2026-07-07T20:00:00Z"
 _REGISTRY_URL = "https://API.AWID.AI/"
 _CARD_DIGEST = "sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e736f3d5c7"
 
 
-@pytest.fixture(autouse=True)
-def _allow_static_timestamp(monkeypatch):
-    monkeypatch.setattr(a2a_routes, "enforce_timestamp_skew", lambda _timestamp: None)
+def _contract_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _valid_route_times() -> dict[str, str]:
+    now = datetime.now(timezone.utc)
+    return {
+        "issued_at": _contract_timestamp(now),
+        "published_at": _contract_timestamp(now),
+        "expires_at": _contract_timestamp(now + timedelta(days=30)),
+    }
 
 
 def test_a2a_publication_vector_canonical_bytes_and_conflict_codes():
@@ -76,7 +80,14 @@ async def _register_namespace(client, signing_key, controller_did, domain="examp
     return resp.json()
 
 
-async def _insert_did_mapping_with_log(db, *, did_aw: str, did_key: str, signing_key) -> None:
+async def _insert_did_mapping_with_log(
+    db,
+    *,
+    did_aw: str,
+    did_key: str,
+    signing_key,
+    timestamp: str,
+) -> None:
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     payload = log_entry_payload(
         did_aw=did_aw,
@@ -87,7 +98,7 @@ async def _insert_did_mapping_with_log(db, *, did_aw: str, did_key: str, signing
         prev_entry_hash=None,
         state_hash=state_hash,
         authorized_by=did_key,
-        timestamp=_ISSUED_AT,
+        timestamp=timestamp,
     )
     signature = sign_message(signing_key, payload)
     entry_hash = sha256_hex(payload)
@@ -117,7 +128,7 @@ async def _insert_did_mapping_with_log(db, *, did_aw: str, did_key: str, signing
         state_hash,
         did_key,
         signature,
-        _ISSUED_AT,
+        timestamp,
     )
 
 
@@ -130,6 +141,7 @@ async def _seed_address(client, awid_db_infra, controller_identity):
     gateway_signing_key, gateway_public_key = generate_keypair()
     gateway_did_key = did_from_public_key(gateway_public_key)
     gateway_did_aw = stable_id_from_did_key(gateway_did_key)
+    route_times = _valid_route_times()
 
     db = awid_db_infra.get_manager("aweb")
     ns = await db.fetch_one(
@@ -141,12 +153,14 @@ async def _seed_address(client, awid_db_infra, controller_identity):
         did_aw=identity_did_aw,
         did_key=identity_did_key,
         signing_key=identity_signing_key,
+        timestamp=route_times["issued_at"],
     )
     await _insert_did_mapping_with_log(
         db,
         did_aw=gateway_did_aw,
         did_key=gateway_did_key,
         signing_key=gateway_signing_key,
+        timestamp=route_times["issued_at"],
     )
     await db.execute(
         """
@@ -162,6 +176,7 @@ async def _seed_address(client, awid_db_infra, controller_identity):
         "identity_did_key": identity_did_key,
         "identity_did_aw": identity_did_aw,
         "gateway_did_aw": gateway_did_aw,
+        **route_times,
     }
 
 
@@ -173,6 +188,8 @@ def _delegation_body(
     status: str = A2A_STATUS_ACTIVE,
     revoked_at: str | None = None,
     revocation_reason: str | None = None,
+    issued_at: str | None = None,
+    expires_at: str | None = None,
 ) -> dict:
     fields = normalize_a2a_delegation_fields(
         A2ADelegationFields(
@@ -192,8 +209,8 @@ def _delegation_body(
             authority_source=A2A_AUTHORITY_SELF_DELEGATION,
             signer_did=seed["identity_did_key"],
             signer_kid=seed["identity_did_key"] + "#ed25519",
-            issued_at=_ISSUED_AT,
-            expires_at=_EXPIRES_AT,
+            issued_at=issued_at or seed["issued_at"],
+            expires_at=expires_at or seed["expires_at"],
             status=status,
             revoked_at=revoked_at,
             revocation_reason=revocation_reason,
@@ -251,8 +268,8 @@ def _publication_body(
             card_revision=card_revision,
             default_for_host=False,
             status=A2A_STATUS_ACTIVE,
-            published_at=_PUBLISHED_AT,
-            expires_at=_EXPIRES_AT,
+            published_at=seed["published_at"],
+            expires_at=seed["expires_at"],
             registry_url=_REGISTRY_URL,
             identity_custody=identity_custody,
             authority_source=authority_source,
@@ -293,6 +310,26 @@ async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_i
     assert payload["a2a"]["verification"] == "awid_publication_available"
     assert payload["a2a"]["card_digest"] == _CARD_DIGEST
     assert "tenant" not in payload["a2a"]
+
+
+@pytest.mark.asyncio
+async def test_a2a_expired_delegation_rejects_publication(client, awid_db_infra, controller_identity):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    now = datetime.now(timezone.utc)
+    delegation = _delegation_body(
+        seed,
+        issued_at=_contract_timestamp(now - timedelta(minutes=2)),
+        expires_at=_contract_timestamp(now - timedelta(minutes=1)),
+    )
+    delegation_resp = await client.post("/v1/a2a/delegations", json=delegation)
+    assert delegation_resp.status_code == 200, delegation_resp.text
+
+    publication = _publication_body(seed, delegation)
+    publication_resp = await client.post("/v1/a2a/publications", json=publication)
+
+    assert publication_resp.status_code == 409, publication_resp.text
+    assert publication_resp.json()["detail"]["code"] == "a2a_delegation_expired"
+    assert await _counts(awid_db_infra) == (1, 0)
 
 
 @pytest.mark.asyncio
@@ -530,7 +567,7 @@ async def test_a2a_revoked_delegation_suppresses_delegated_publication_lookup(
     revoked = _delegation_body(
         seed,
         status="revoked",
-        revoked_at="2026-06-08T20:00:00Z",
+        revoked_at=_contract_timestamp(datetime.now(timezone.utc)),
         revocation_reason="operator_revoked",
     )
     revoke_resp = await client.post("/v1/a2a/delegations", json=revoked)
