@@ -85,6 +85,13 @@ type deleteReasonRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+type conditionalAddressDeleteRequest struct {
+	Reason                string `json:"reason,omitempty"`
+	ExpectedAddressID     string `json:"expected_address_id"`
+	ExpectedDIDAW         string `json:"expected_did_aw"`
+	ExpectedCurrentDIDKey string `json:"expected_current_did_key"`
+}
+
 type NamespaceReverifyResult struct {
 	NamespaceID        string `json:"namespace_id"`
 	Domain             string `json:"domain"`
@@ -611,6 +618,53 @@ func (c *RegistryClient) DeleteAddressAt(
 	)
 }
 
+func (c *RegistryClient) DeleteAddressIfMatchesAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	expectedAddressID string,
+	expectedDIDAW string,
+	expectedCurrentDIDKey string,
+	controllerSigningKey ed25519.PrivateKey,
+	reason string,
+) error {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	expectedAddressID = strings.TrimSpace(expectedAddressID)
+	expectedDIDAW = strings.TrimSpace(expectedDIDAW)
+	expectedCurrentDIDKey = strings.TrimSpace(expectedCurrentDIDKey)
+	if domain == "" || name == "" {
+		return fmt.Errorf("domain and name are required")
+	}
+	if expectedAddressID == "" || expectedDIDAW == "" || expectedCurrentDIDKey == "" {
+		return fmt.Errorf("expected address id, did:aw, and current did:key are required")
+	}
+	if controllerSigningKey == nil {
+		return fmt.Errorf("controller signing key is required")
+	}
+
+	preconditions := map[string]string{
+		"expected_address_id":      expectedAddressID,
+		"expected_did_aw":          expectedDIDAW,
+		"expected_current_did_key": expectedCurrentDIDKey,
+	}
+	return c.requestJSON(
+		ctx,
+		http.MethodDelete,
+		registryURL,
+		"/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name),
+		signedAddressHeadersWithFields(domain, name, "delete_address", controllerSigningKey, preconditions),
+		conditionalAddressDeleteRequest{
+			Reason:                strings.TrimSpace(reason),
+			ExpectedAddressID:     expectedAddressID,
+			ExpectedDIDAW:         expectedDIDAW,
+			ExpectedCurrentDIDKey: expectedCurrentDIDKey,
+		},
+		nil,
+	)
+}
+
 func requireSigningKeyMatchesDID(signingKey ed25519.PrivateKey, expectedDID string) error {
 	if signingKey == nil {
 		return fmt.Errorf("signing key is required")
@@ -646,13 +700,27 @@ func signedAddressHeaders(
 	operation string,
 	signingKey ed25519.PrivateKey,
 ) map[string]string {
+	return signedAddressHeadersWithFields(domain, name, operation, signingKey, nil)
+}
+
+func signedAddressHeadersWithFields(
+	domain string,
+	name string,
+	operation string,
+	signingKey ed25519.PrivateKey,
+	extra map[string]string,
+) map[string]string {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	return signedCanonicalHeaders(map[string]string{
+	fields := map[string]string{
 		"domain":    canonicalizeDomain(domain),
 		"name":      strings.TrimSpace(name),
 		"operation": strings.TrimSpace(operation),
 		"timestamp": timestamp,
-	}, signingKey, timestamp)
+	}
+	for key, value := range extra {
+		fields[key] = strings.TrimSpace(value)
+	}
+	return signedCanonicalHeaders(fields, signingKey, timestamp)
 }
 
 func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {

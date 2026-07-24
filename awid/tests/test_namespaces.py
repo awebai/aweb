@@ -1386,6 +1386,59 @@ async def test_delete_address_happy_path(client, controller_identity, awid_db_in
 
 
 @pytest.mark.asyncio
+async def test_conditional_delete_preserves_reassigned_address(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "conditional-delete.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    original = await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    replacement_key, replacement_pub = generate_keypair()
+    replacement_did_key = did_from_public_key(replacement_pub)
+    replacement_did_aw = stable_id_from_did_key(replacement_did_key)
+    await _register_identity(client, replacement_key, replacement_did_key)
+    reassign_headers = _sign(
+        ns_key,
+        ns_did,
+        domain=domain,
+        operation="reassign_address",
+        name="alice",
+    )
+    reassign = await client.post(
+        f"/v1/namespaces/{domain}/addresses/alice/reassign",
+        json={"did_aw": replacement_did_aw, "current_did_key": replacement_did_key},
+        headers=reassign_headers,
+    )
+    assert reassign.status_code == 200, reassign.text
+
+    expected = {
+        "expected_address_id": original["address_id"],
+        "expected_did_aw": original["did_aw"],
+        "expected_current_did_key": original["current_did_key"],
+    }
+    delete_headers = _sign(
+        ns_key,
+        ns_did,
+        domain=domain,
+        operation="delete_address",
+        name="alice",
+        **expected,
+    )
+    response = await client.request(
+        "DELETE",
+        f"/v1/namespaces/{domain}/addresses/alice",
+        headers=delete_headers,
+        json={**expected, "reason": "rollback stale claim"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "changed since it was claimed" in response.text
+    current = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert current.status_code == 200, current.text
+    assert current.json()["did_aw"] == replacement_did_aw
+    assert current.json()["current_did_key"] == replacement_did_key
+
+
+@pytest.mark.asyncio
 async def test_delete_address_with_active_certificates_returns_409(client, controller_identity):
     ns_key, ns_did = controller_identity
     domain = "active-address.example"

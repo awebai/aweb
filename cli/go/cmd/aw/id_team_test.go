@@ -2620,6 +2620,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 	writeControllerKeyForTest(t, home, "acme.com", controllerKey)
 
 	var claimDryRuns []bool
+	var events []string
 	var sawCert bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2629,7 +2630,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 				"current_did_key": memberDID,
 				"log_head": map[string]any{
 					"seq":              2,
-					"operation":        "rotate_did_key",
+					"operation":        "rotate_key",
 					"previous_did_key": awid.ComputeDIDKey(oldPub),
 					"new_did_key":      memberDID,
 					"prev_entry_hash":  "prevhash",
@@ -2645,18 +2646,30 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			claimDryRuns = append(claimDryRuns, payload["dry_run"] == true)
+			dryRun := payload["dry_run"] == true
+			claimDryRuns = append(claimDryRuns, dryRun)
+			if dryRun {
+				events = append(events, "claim-dry-run")
+			} else {
+				events = append(events, "claim-apply")
+			}
 			if payload["did_aw"] != memberDIDAW || payload["current_did_key"] != memberDID || payload["address_name"] != "alice" {
 				t.Fatalf("claim payload=%+v", payload)
 			}
 			proof, _ := payload["did_log_proof"].(map[string]any)
-			if proof["operation"] != "rotate_did_key" || proof["new_did_key"] != memberDID {
+			if proof["operation"] != "rotate_key" || proof["new_did_key"] != memberDID {
 				t.Fatalf("did_log_proof=%+v", proof)
 			}
+			status, addressStatus := "claimed", "created"
+			if dryRun {
+				status, addressStatus = "available", "would_create"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "claimed", "dry_run": payload["dry_run"], "domain": "acme.com", "name": "alice", "did_aw": memberDIDAW, "current_did_key": memberDID,
+				"status": status, "dry_run": dryRun, "domain": "acme.com", "name": "alice", "did_aw": memberDIDAW, "current_did_key": memberDID,
+				"did_status": "existing", "address_status": addressStatus,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/certificates":
+			events = append(events, "register-certificate")
 			sawCert = true
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -2693,8 +2706,220 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 	if !sawCert || len(claimDryRuns) != 2 || !claimDryRuns[0] || claimDryRuns[1] {
 		t.Fatalf("sawCert=%v claimDryRuns=%v", sawCert, claimDryRuns)
 	}
+	if got, want := strings.Join(events, ","), "claim-dry-run,claim-apply,register-certificate"; got != want {
+		t.Fatalf("default claim order=%s want %s", got, want)
+	}
 	if accepted.Certificate.MemberDIDAW != memberDIDAW || accepted.Certificate.MemberAddress != "acme.com/alice" {
 		t.Fatalf("cert global fields=%q/%q", accepted.Certificate.MemberDIDAW, accepted.Certificate.MemberAddress)
+	}
+}
+
+func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := t.TempDir()
+
+	oldPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(pub)
+	memberDIDAW := awid.ComputeStableID(oldPub)
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:            memberDID,
+		StableID:       memberDIDAW,
+		Address:        "otherco.com/alice",
+		Custody:        awid.CustodySelf,
+		IdentityScope:  awid.IdentityModeGlobal,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-06-30T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, home, "acme.com", "backend", teamKey)
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeControllerKeyForTest(t, home, "acme.com", controllerKey)
+
+	addressExists := false
+	certificateAttempts := 0
+	deleteAttempts := 0
+	var events []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberDIDAW+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": memberDIDAW, "current_did_key": memberDID,
+				"log_head": map[string]any{
+					"seq": 2, "operation": "rotate_key", "previous_did_key": awid.ComputeDIDKey(oldPub),
+					"new_did_key": memberDID, "prev_entry_hash": strings.Repeat("a", 64), "entry_hash": strings.Repeat("b", 64),
+					"state_hash": strings.Repeat("c", 64), "authorized_by": awid.ComputeDIDKey(oldPub),
+					"timestamp": "2026-06-30T00:00:00Z", "signature": "sig",
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses/claims":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			dryRun := payload["dry_run"] == true
+			status, addressStatus := "available", "would_create"
+			if addressExists {
+				status, addressStatus = "already_applied", "existing"
+			} else if !dryRun {
+				addressExists = true
+				status, addressStatus = "claimed", "created"
+			}
+			events = append(events, fmt.Sprintf("claim-%t-%s", dryRun, addressStatus))
+			response := map[string]any{
+				"status": status, "dry_run": dryRun, "domain": "acme.com", "name": "alice",
+				"did_aw": memberDIDAW, "current_did_key": memberDID,
+				"did_status": "existing", "address_status": addressStatus,
+			}
+			if !dryRun {
+				response["address"] = map[string]any{
+					"address_id": "claim-address-id", "domain": "acme.com", "name": "alice",
+					"did_aw": memberDIDAW, "current_did_key": memberDID,
+				}
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/certificates":
+			certificateAttempts++
+			if certificateAttempts == 1 {
+				events = append(events, "certificate-failed")
+				http.Error(w, "certificate rejected", http.StatusBadRequest)
+				return
+			}
+			events = append(events, "certificate-registered")
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			deleteAttempts++
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["expected_address_id"] != "claim-address-id" || payload["expected_did_aw"] != memberDIDAW || payload["expected_current_did_key"] != memberDID {
+				t.Fatalf("conditional rollback payload=%+v", payload)
+			}
+			events = append(events, "rollback-failed")
+			http.Error(w, "address changed since it was claimed", http.StatusConflict)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: "2026-06-30T00:00:00Z"}
+	writeTeamInviteForTest(t, home, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	if err == nil || !strings.Contains(err.Error(), "newly claimed") || !strings.Contains(err.Error(), "rollback failed") || !strings.Contains(err.Error(), "retry the same invite") {
+		t.Fatalf("first failure lacks honest recovery state: %v", err)
+	}
+	if !addressExists {
+		t.Fatal("failed rollback should leave the claimed address for retry")
+	}
+
+	accepted, err := acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatalf("retry should reuse the existing claim: %v", err)
+	}
+	if accepted.Certificate.MemberAddress != "acme.com/alice" {
+		t.Fatalf("accepted address=%q", accepted.Certificate.MemberAddress)
+	}
+	if certificateAttempts != 2 || deleteAttempts != 1 {
+		t.Fatalf("certificate attempts=%d delete attempts=%d", certificateAttempts, deleteAttempts)
+	}
+	wantEvents := "claim-true-would_create,claim-false-created,certificate-failed,rollback-failed,claim-true-existing,claim-false-existing,certificate-registered"
+	if got := strings.Join(events, ","); got != wantEvents {
+		t.Fatalf("resume events=%s want %s", got, wantEvents)
+	}
+}
+
+func TestRollbackDefaultAddressClaimDeletesOnlyNewlyCreatedAddress(t *testing.T) {
+	var deleteAttempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/namespaces/acme.com/addresses/alice" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		deleteAttempts++
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["expected_address_id"] != "claim-address-id" || payload["expected_did_aw"] != "did:aw:claim" || payload["expected_current_did_key"] != "did:key:claim" {
+			t.Fatalf("conditional delete payload=%+v", payload)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := awid.NewAWIDRegistryClient(server.Client(), nil)
+	claim := &awid.AtomicAddressClaimParams{
+		Domain:                        "acme.com",
+		AddressName:                   "alice",
+		NamespaceControllerSigningKey: controllerKey,
+	}
+	cause := errors.New("certificate registration failed")
+
+	err = rollbackDefaultAddressClaimAfterCertificateFailure(
+		registry,
+		server.URL,
+		claim,
+		&awid.AtomicAddressClaimResult{
+			AddressStatus: "created",
+			Address: &awid.RegistryAddress{
+				AddressID: "claim-address-id", DIDAW: "did:aw:claim", CurrentDIDKey: "did:key:claim",
+			},
+		},
+		cause,
+	)
+	if err == nil || !strings.Contains(err.Error(), "newly claimed default address acme.com/alice was rolled back") {
+		t.Fatalf("successful rollback error=%v", err)
+	}
+	if deleteAttempts != 1 {
+		t.Fatalf("delete attempts=%d want 1", deleteAttempts)
+	}
+
+	err = rollbackDefaultAddressClaimAfterCertificateFailure(
+		registry,
+		server.URL,
+		claim,
+		&awid.AtomicAddressClaimResult{AddressStatus: "existing"},
+		cause,
+	)
+	if !errors.Is(err, cause) {
+		t.Fatalf("pre-existing claim error=%v want cause", err)
+	}
+	if deleteAttempts != 1 {
+		t.Fatalf("pre-existing claim was deleted: attempts=%d", deleteAttempts)
 	}
 }
 

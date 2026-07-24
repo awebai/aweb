@@ -79,15 +79,15 @@ def _verify_address_signature(
     domain: str,
     name: str,
     operation: str,
+    signed_preconditions: dict[str, str] | None = None,
 ) -> str:
-    return verify_signed_json_request(
-        request,
-        payload_dict={
-            "domain": domain,
-            "name": name,
-            "operation": operation,
-        },
-    )
+    payload = {
+        "domain": domain,
+        "name": name,
+        "operation": operation,
+    }
+    payload.update(signed_preconditions or {})
+    return verify_signed_json_request(request, payload_dict=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -258,14 +258,17 @@ class AddressDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=512)
+    expected_address_id: str | None = Field(default=None, max_length=64)
+    expected_did_aw: str | None = Field(default=None, max_length=256)
+    expected_current_did_key: str | None = Field(default=None, max_length=256)
 
 
 class AtomicClaimDidLogProof(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     did_aw: str = Field(..., max_length=256)
-    seq: Literal[1]
-    operation: Literal["register_did"]
+    seq: int = Field(..., ge=1)
+    operation: Literal["register_did", "rotate_key"]
     previous_did_key: str | None = Field(..., max_length=256)
     new_did_key: str = Field(..., max_length=256)
     prev_entry_hash: str | None
@@ -455,19 +458,42 @@ def _validated_did_log_proof(
         raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw mismatch")
     if proof.new_did_key != fields.current_did_key:
         raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof new_did_key mismatch")
-    if proof.authorized_by != fields.current_did_key:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof authorized_by mismatch")
-    if proof.previous_did_key is not None or proof.prev_entry_hash is not None:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "register_did proof must not carry previous key state")
-    try:
-        enforce_timestamp_skew(proof.timestamp)
-        derived = stable_id_from_public_key(public_key_from_did(proof.new_did_key))
-    except HTTPException as exc:
-        raise _claim_error(401, _CLAIM_TIMESTAMP_STALE, "did_log_proof timestamp outside allowed skew window") from exc
-    except Exception as exc:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
-    if derived != proof.did_aw:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw does not match key derivation")
+
+    if proof.seq == 1:
+        if proof.operation != "register_did":
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "seq=1 proof must register_did")
+        if proof.previous_did_key is not None or proof.prev_entry_hash is not None:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "register_did proof must not carry previous key state")
+        if proof.authorized_by != fields.current_did_key:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "register_did proof must be authorized by current did:key")
+        try:
+            enforce_timestamp_skew(proof.timestamp)
+            derived = stable_id_from_public_key(public_key_from_did(proof.new_did_key))
+        except HTTPException as exc:
+            raise _claim_error(401, _CLAIM_TIMESTAMP_STALE, "did_log_proof timestamp outside allowed skew window") from exc
+        except Exception as exc:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
+        if derived != proof.did_aw:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw does not match key derivation")
+        proof_signer = proof.new_did_key
+    else:
+        if proof.operation != "rotate_key":
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "seq>1 proof must rotate_key")
+        if proof.previous_did_key is None or proof.prev_entry_hash is None:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "rotate_key proof requires previous key state")
+        try:
+            _validate_did_key(proof.previous_did_key)
+            if len(proof.prev_entry_hash) != 64:
+                raise ValueError("rotate_key proof prev_entry_hash must be 64 hex characters")
+            int(proof.prev_entry_hash, 16)
+        except ValueError as exc:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
+        if proof.authorized_by != proof.previous_did_key:
+            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "rotate_key proof must be authorized by previous did:key")
+        # A rotation log head is historical registry evidence, so its timestamp
+        # need not be fresh. The outer atomic claim signatures still carry and
+        # enforce a fresh request timestamp.
+        proof_signer = proof.previous_did_key
 
     state_hash = awid_identity_state_hash(
         did_aw=proof.did_aw,
@@ -488,7 +514,7 @@ def _validated_did_log_proof(
     )
     try:
         verify_did_key_signature(
-            did_key=proof.new_did_key,
+            did_key=proof_signer,
             payload=payload,
             signature_b64=proof.signature,
         )
@@ -735,12 +761,48 @@ async def claim_identity_address(
                 _CLAIM_DID_TAKEN_DIFFERENT_KEY,
                 "did:aw is already registered to a different current did:key",
             )
+        if did_row is not None and body.did_log_proof is not None and body.did_log_proof.seq > 1:
+            registered_head = await tx.fetch_one(
+                """
+                SELECT seq, operation, previous_did_key, new_did_key,
+                       prev_entry_hash, state_hash, authorized_by, signature, timestamp
+                FROM {{tables.did_aw_log}}
+                WHERE did_aw = $1
+                ORDER BY seq DESC
+                LIMIT 1
+                """,
+                fields.did_aw,
+            )
+            proof = body.did_log_proof
+            if registered_head is None or any(
+                (
+                    registered_head["seq"] != proof.seq,
+                    registered_head["operation"] != proof.operation,
+                    registered_head["previous_did_key"] != proof.previous_did_key,
+                    registered_head["new_did_key"] != proof.new_did_key,
+                    registered_head["prev_entry_hash"] != proof.prev_entry_hash,
+                    registered_head["state_hash"] != proof.state_hash,
+                    registered_head["authorized_by"] != proof.authorized_by,
+                    registered_head["signature"] != proof.signature,
+                    registered_head["timestamp"] != proof.timestamp,
+                )
+            ):
+                raise _claim_error(
+                    409,
+                    _CLAIM_DID_LOG_PROOF_INVALID,
+                    "rotate_key proof does not match the registered did log head",
+                )
         did_status = "existing" if did_row is not None else "would_create"
-        if did_row is None and did_log_proof is None:
+        if did_row is None and (
+            did_log_proof is None
+            or body.did_log_proof is None
+            or body.did_log_proof.seq != 1
+            or body.did_log_proof.operation != "register_did"
+        ):
             raise _claim_error(
                 409,
                 _CLAIM_DID_LOG_PROOF_REQUIRED,
-                "did_log_proof is required when the did:aw is not already registered",
+                "a genesis register_did proof is required when the did:aw is not already registered",
             )
 
         existing = await _fetch_active_address_for_registration(
@@ -1054,8 +1116,17 @@ async def delete_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
+    signed_preconditions = {}
+    if body is not None:
+        for field in ("expected_address_id", "expected_did_aw", "expected_current_did_key"):
+            if value := getattr(body, field):
+                signed_preconditions[field] = value
     caller_did = _verify_address_signature(
-        request, domain=domain, name=name, operation="delete_address",
+        request,
+        domain=domain,
+        name=name,
+        operation="delete_address",
+        signed_preconditions=signed_preconditions,
     )
 
     ns_row = await _require_namespace(db, domain)
@@ -1064,16 +1135,27 @@ async def delete_address(
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT address_id
-            FROM {{tables.public_addresses}}
-            WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-            FOR UPDATE
+            SELECT pa.address_id, pa.did_aw, m.current_did_key
+            FROM {{tables.public_addresses}} pa
+            JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+            WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
+            FOR UPDATE OF pa
             """,
             ns_row["namespace_id"],
             name,
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
+        if body is not None and any(
+            (
+                body.expected_address_id is not None
+                and body.expected_address_id != str(row["address_id"]),
+                body.expected_did_aw is not None and body.expected_did_aw != row["did_aw"],
+                body.expected_current_did_key is not None
+                and body.expected_current_did_key != row["current_did_key"],
+            )
+        ):
+            raise HTTPException(status_code=409, detail="Address changed since it was claimed")
 
         active_cert = await tx.fetch_one(
             """
