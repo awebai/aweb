@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,9 +94,22 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 
 	mapping, err := registry.RotateDIDKey(ctx, registryURL, identity.StableID, signingKey, newPriv)
 	if err != nil {
-		_ = removePendingRotationState(rotationDir, identity.StableID)
-		_ = cleanupPendingRotationKeypair(pendingKeyPath)
-		return err
+		var outcomeErr *awid.DIDRotationError
+		if errors.As(err, &outcomeErr) && outcomeErr.Outcome == awid.DIDRotationDefinitelyNotApplied {
+			if cleanupErr := cleanupPendingRotationKeypair(pendingKeyPath); cleanupErr != nil {
+				return fmt.Errorf("%w; failed to discard the unused replacement signing key: %v", err, cleanupErr)
+			}
+			if cleanupErr := removePendingRotationState(rotationDir, identity.StableID); cleanupErr != nil {
+				return fmt.Errorf("%w; failed to remove pending rotation state: %v", err, cleanupErr)
+			}
+			return err
+		}
+		return fmt.Errorf(
+			"%w; replacement signing key retained at %s with pending recovery state at %s; verify the authoritative registry current key before retrying or recovering",
+			err,
+			pendingKeyPath,
+			pendingRotationStatePath(rotationDir, identity.StableID),
+		)
 	}
 	if mapping == nil {
 		return rotationFinalizeError(rotationDir, identity.StableID, "registry rotation returned no mapping", nil)
