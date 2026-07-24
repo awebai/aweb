@@ -202,16 +202,14 @@ func TestAwIDRotateKeyPreservesPendingKeyWhenRegistryOutcomeIsUnknown(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	thirdPublic, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
 	oldDID := awid.ComputeDIDKey(oldPublic)
-	thirdDID := awid.ComputeDIDKey(thirdPublic)
 	stableID := awid.ComputeStableID(oldPublic)
 	fixture := newCLIRotationRegistryFixture(t, stableID, oldDID, func(f *cliRotationRegistryFixture, w http.ResponseWriter, _ map[string]any) {
-		f.currentDID = thirdDID
-		f.dropResponse(w)
+		if f.putCalls == 1 {
+			f.dropResponse(w)
+			return
+		}
+		http.Error(w, "rotation rejected", http.StatusConflict)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -267,7 +265,7 @@ func TestAwIDRotateKeyPreservesPendingKeyWhenRegistryOutcomeIsUnknown(t *testing
 		t.Fatalf("restart error missing recovery state path:\n%s", restartOut)
 	}
 	_, putCalls := fixture.snapshot()
-	if putCalls != 1 {
-		t.Fatalf("rotation PUT calls=%d, want 1 across process restart", putCalls)
+	if putCalls != 2 {
+		t.Fatalf("rotation PUT calls=%d, want 2 across process restart", putCalls)
 	}
 }

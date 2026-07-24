@@ -171,6 +171,24 @@ func TestRegistryClientRetriesRotationOnlyAfterConfirmingFirstAttemptDidNotApply
 	}
 }
 
+func TestRegistryClientKeepsOutcomeUnknownWhenRetryCannotResolveFirstAmbiguousAttempt(t *testing.T) {
+	oldDID, oldPrivate, _, newPrivate, didAW := newRotationTestKeys(t)
+	fixture := newRotationRegistryFixture(t, didAW, oldDID, func(f *rotationRegistryFixture, w http.ResponseWriter, _ *http.Request, _ didUpdateRequest) {
+		if f.putCalls == 1 {
+			f.dropResponse(w)
+			return
+		}
+		http.Error(w, "rotation rejected", http.StatusConflict)
+	})
+
+	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
+	var outcomeErr *DIDRotationError
+	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {
+		t.Fatalf("error=%v, want outcome-unknown DIDRotationError", err)
+	}
+}
+
 func TestRegistryClientAcceptsExactRotationReplayWhenRegistryHasReplacementKey(t *testing.T) {
 	oldDID, oldPrivate, newDID, newPrivate, didAW := newRotationTestKeys(t)
 	fixture := newRotationRegistryFixture(t, didAW, oldDID, func(f *rotationRegistryFixture, w http.ResponseWriter, _ *http.Request, request didUpdateRequest) {

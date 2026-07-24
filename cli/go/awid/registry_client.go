@@ -390,11 +390,13 @@ func (c *RegistryClient) RotateDIDKey(
 		Signature:     signature,
 	}
 	path := "/v1/did/" + urlPathEscape(strings.TrimSpace(didAW))
-	for retried := false; ; {
+	for retried, hadAmbiguousSubmit := false, false; ; {
 		submitErr := c.requestJSON(ctx, http.MethodPut, registryURL, path, nil, req, nil)
 		if submitErr == nil {
 			return &DIDMapping{DIDAW: didAW, CurrentDIDKey: newDID}, nil
 		}
+		ambiguousSubmit := isAmbiguousDIDRotationSubmitError(submitErr)
+		hadAmbiguousSubmit = hadAmbiguousSubmit || ambiguousSubmit
 
 		resolution, resolveErr := c.ResolveKeyAt(ctx, registryURL, didAW)
 		if resolveErr != nil {
@@ -414,9 +416,15 @@ func (c *RegistryClient) RotateDIDKey(
 		case newDID:
 			return &DIDMapping{DIDAW: didAW, CurrentDIDKey: newDID}, nil
 		case oldDID:
-			if !retried && isAmbiguousDIDRotationSubmitError(submitErr) {
+			if !retried && ambiguousSubmit {
 				retried = true
 				continue
+			}
+			if hadAmbiguousSubmit {
+				return nil, &DIDRotationError{
+					Outcome: DIDRotationOutcomeUnknown,
+					Cause:   fmt.Errorf("an earlier submit had an ambiguous outcome; latest submit failed while registry still reports the old did:key: %w", submitErr),
+				}
 			}
 			return nil, &DIDRotationError{Outcome: DIDRotationDefinitelyNotApplied, Cause: submitErr}
 		default:
