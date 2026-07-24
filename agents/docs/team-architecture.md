@@ -17,6 +17,11 @@ every agent — and every human — understands the system they're running.
 checkout — coordinator, reviewer) or `worktree` (own git worktree on its
 own branch — developers).
 
+Worktree discipline: every agent that writes code works in its own git
+worktree on its own branch; the shared main checkout has exactly one
+writer, the coordinator, and only at merge gates. Reviewers read from
+main but never write. Two agents must never share a working tree.
+
 Aliases: bare role for standing singletons (`coordinator`);
 `<role>-<purpose>` for work-specific instances (`developer-authflow`,
 `reviewer-pr-7`).
