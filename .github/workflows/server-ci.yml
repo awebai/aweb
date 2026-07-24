@@ -29,7 +29,13 @@ jobs:
         run: ./scripts/check-server-version-bump-test.sh
 
       - name: Require version bump for server changes
-        run: ./scripts/check-server-version-bump.sh
+        env:
+          # Change base: PR base tip, or the previous main tip on push.
+          # The guard checks the change range against it in addition to
+          # the release-tag floor, so a later change cannot inherit an
+          # earlier unreleased bump.
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-server-version-bump.sh "$BASE_REF"
 
   server:
     runs-on: ubuntu-latest
