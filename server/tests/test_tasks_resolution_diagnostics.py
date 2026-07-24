@@ -3,9 +3,11 @@
 Production intermittently returns 404 "Task not found" for tasks that
 exist and resolve on immediate retry. These tests pin the diagnostic
 logging that makes each miss self-describing in server logs: the exact
-lookup inputs, whether the suffix exists under any team (and if it is
-soft-deleted), and the serving connection's backend pid and MVCC
-snapshot so connection-level visibility anomalies can be proven.
+lookup inputs, whether the looked-up ref exists under any team (with
+soft-delete state and row xmin), and the diagnostic connection's
+backend pid and MVCC snapshot. A match for the requesting team at miss
+time proves a visibility anomaly; an empty match list is ambiguous
+because the recheck may run on the connection that just missed.
 """
 
 from __future__ import annotations
@@ -98,7 +100,7 @@ async def test_suffix_miss_logs_inputs_and_connection_diagnostics(aweb_cloud_db,
     assert "'backend:acme.com'" in message
     assert "'backend-zzzz'" in message
     assert "'zzzz'" in message
-    assert "suffix_matches=[]" in message
+    assert "matches=[]" in message
     assert "backend_pid=" in message
     assert "snapshot=" in message
 
@@ -134,12 +136,40 @@ async def test_suffix_miss_reports_matches_under_other_teams_and_deleted(aweb_cl
     records = _miss_records(caplog)
     assert len(records) == 1
     message = records[0].getMessage()
-    assert "('frontend:acme.com', False)" in message
-    assert "('backend:acme.com', True)" in message
+    # Match tuples are (team_id, deleted, row_xmin); xmin is unpredictable.
+    assert "('frontend:acme.com', False," in message
+    assert "('backend:acme.com', True," in message
 
 
 @pytest.mark.asyncio
-async def test_uuid_miss_logs_diagnostics(aweb_cloud_db, caplog):
+async def test_uuid_miss_reports_matches_under_other_teams(aweb_cloud_db, caplog):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    await _seed_team(aweb_cloud_db.aweb_db, TEAM_ID, "acme.com", "backend")
+    await _seed_team(aweb_cloud_db.aweb_db, OTHER_TEAM_ID, "acme.com", "frontend")
+    other_task_id = uuid4()
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        team_id=OTHER_TEAM_ID,
+        task_id=other_task_id,
+        task_number=1,
+        suffix="aaaa",
+        title="Other team's task",
+    )
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        with pytest.raises(NotFoundError):
+            await resolve_task_ref(db, team_id=TEAM_ID, ref=str(other_task_id))
+
+    records = _miss_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert str(other_task_id) in message
+    assert "lookup=task_id" in message
+    assert "('frontend:acme.com', False," in message
+
+
+@pytest.mark.asyncio
+async def test_uuid_miss_with_no_matches_logs_empty(aweb_cloud_db, caplog):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db, TEAM_ID, "acme.com", "backend")
     missing = uuid4()
@@ -153,6 +183,43 @@ async def test_uuid_miss_logs_diagnostics(aweb_cloud_db, caplog):
     message = records[0].getMessage()
     assert str(missing) in message
     assert "lookup=task_id" in message
+    assert "matches=[]" in message
+
+
+class _DiagnosticsBrokenDb:
+    """Manager wrapper whose fetch_all fails, breaking only the diagnostics.
+
+    The main resolution lookups use fetch_one; both diagnostic match
+    queries use fetch_all, so this exercises the fallback log branch.
+    """
+
+    def __init__(self, aweb_db) -> None:
+        self._db = aweb_db
+
+    def get_manager(self, name: str = "aweb"):
+        return self
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    async def fetch_all(self, *args, **kwargs):
+        raise RuntimeError("diagnostics query failed")
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_failure_still_logs_miss_and_raises(aweb_cloud_db, caplog):
+    db = _DiagnosticsBrokenDb(aweb_cloud_db.aweb_db)
+    await _seed_team(aweb_cloud_db.aweb_db, TEAM_ID, "acme.com", "backend")
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        with pytest.raises(NotFoundError):
+            await resolve_task_ref(db, team_id=TEAM_ID, ref="backend-zzzz")
+
+    records = _miss_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "'backend-zzzz'" in message
+    assert "diagnostics unavailable" in message
 
 
 @pytest.mark.asyncio
