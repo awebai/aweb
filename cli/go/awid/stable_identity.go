@@ -293,8 +293,15 @@ func requireCanonicalLogTimestamp(ts string) error {
 	if strings.Contains(ts, ".") {
 		return fmt.Errorf("timestamp must be second precision")
 	}
-	if _, err := time.Parse(time.RFC3339, ts); err != nil {
+	parsed, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
 		return fmt.Errorf("invalid timestamp: %w", err)
+	}
+	// Reject zone offsets of 24h or more. Go's RFC3339 parse accepts them but
+	// JS Date.parse (the TS verifier) rejects them; bound them so both runtimes
+	// agree.
+	if _, offset := parsed.Zone(); offset >= 24*3600 || offset <= -24*3600 {
+		return fmt.Errorf("timestamp zone offset out of range")
 	}
 	return nil
 }
