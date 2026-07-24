@@ -932,85 +932,27 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         "source_blueprint_digest": blueprint.digest,
     }
 
-    def assert_proposal_shape(
-        proposal: dict[str, Any], *, status: str, content: dict[str, Any], minted: bool = False
-    ) -> None:
-        expected_keys = {
-            "proposal_id",
-            "target",
-            "profile_ref",
-            "status",
-            "content",
-            "summary",
-            "rationale",
-            "created_by_alias",
-            "created_at",
-        }
-        if minted:
-            expected_keys.add("minted")
-        assert set(proposal) == expected_keys
-        assert isinstance(proposal["proposal_id"], str)
-        assert proposal["target"] == "memory"
-        assert proposal["profile_ref"] is None
-        assert proposal["status"] == status
-        assert proposal["content"] == content
-        assert proposal["summary"] is None
-        assert proposal["rationale"] is None
-        assert proposal["created_by_alias"] == team.alias
-        assert isinstance(proposal["created_at"], str)
-
-    def create_proposal(title: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        content = {
-            "title": title,
-            "summary": "Learned improvement from completed repo work.",
-            "changes": [{"path": "notes/lesson.md", "operation": "append"}],
-        }
-        proposal = _aw_json(
-            _post_json(
-                team,
-                f"{library.origin}/v1/proposals",
-                {
-                    "target": "memory",
-                    "content": content,
-                },
-            ),
-            context=f"create proposal {title}",
+    for unsupported_target in ("memory", "skill", "workflow"):
+        rejected_create = _post_json(
+            team,
+            f"{library.origin}/v1/proposals",
+            {
+                "target": unsupported_target,
+                "content": {"title": "unsupported no-op target"},
+            },
         )
-        assert_proposal_shape(proposal, status="open", content=content)
-        return proposal, content
-
-    approve_candidate, approve_content = create_proposal("Add handoff evidence reminder")
-    reject_candidate, reject_content = create_proposal("Rejected experiment")
-    assert approve_candidate["proposal_id"] != reject_candidate["proposal_id"]
+        _assert_aw_status(rejected_create, 422, context=f"reject {unsupported_target} proposal")
+        assert rejected_create.json() == {
+            "detail": (
+                f"Unsupported proposal target '{unsupported_target}'; "
+                "only profile proposals are supported"
+            )
+        }
 
     listed = _aw_json(
         _aw_request(team, "GET", f"{library.origin}/v1/proposals"), context="list proposals"
     )
-    assert {proposal["proposal_id"]: proposal for proposal in listed} == {
-        approve_candidate["proposal_id"]: approve_candidate,
-        reject_candidate["proposal_id"]: reject_candidate,
-    }
-
-    approved = _aw_json(
-        _post_json(
-            team, f"{library.origin}/v1/proposals/{approve_candidate['proposal_id']}/approve", {}
-        ),
-        context="approve proposal",
-    )
-    assert_proposal_shape(approved, status="approved", content=approve_content)
-    assert "minted" not in approved
-    assert approved == {**approve_candidate, "status": "approved"}
-
-    rejected = _aw_json(
-        _post_json(
-            team,
-            f"{library.origin}/v1/proposals/{reject_candidate['proposal_id']}/reject",
-            {"reason": "Not broadly useful."},
-        ),
-        context="reject proposal",
-    )
-    assert_proposal_shape(rejected, status="rejected", content=reject_content)
-    assert rejected == {**reject_candidate, "status": "rejected"}
+    assert listed == []
 
 
 def test_profile_proposal_approval_mints_and_rejects_stale_asset(
