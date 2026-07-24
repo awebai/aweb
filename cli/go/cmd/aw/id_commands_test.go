@@ -102,7 +102,7 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
 	address := "myteam.aweb.ai/alice"
-	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1)
 
 	var registerCalls atomic.Int32
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1405,7 +1405,7 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 	stableID := awid.ComputeStableID(oldPub)
 	address := "acme.com/alice"
 	registryURL := ""
-	logHead := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("b", 64))
+	logHead := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1)
 
 	var rotated atomic.Bool
 	var seenPut atomic.Bool
@@ -1750,7 +1750,7 @@ func TestAwIDVerifyUsesIdentityRegistryURLWithoutWorkspace(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
-	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("b", 64))
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1)
 
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1798,7 +1798,7 @@ func TestAwIDVerifyAWIDRegistryURLEnvOverridesIdentityRegistryURL(t *testing.T) 
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
-	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("c", 64))
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1)
 
 	var envHits atomic.Int32
 	envServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2096,7 +2096,7 @@ func TestAwIDVerifyWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
-	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1)
 
 	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2652,15 +2652,16 @@ func loadIdentityForTest(t *testing.T, workingDir string) *awconfig.WorktreeIden
 	return identity
 }
 
-func testDidLogEntry(t *testing.T, didAW string, signingKey ed25519.PrivateKey, newDID, operation string, previousDID, prevHash *string, seq int, stateHash string) awid.DidKeyEvidence {
+func testDidLogEntry(t *testing.T, didAW string, signingKey ed25519.PrivateKey, newDID, operation string, previousDID, prevHash *string, seq int) awid.DidKeyEvidence {
 	t.Helper()
+	stateSum := sha256.Sum256([]byte(fmt.Sprintf(`{"current_did_key":%q,"did_aw":%q}`, newDID, didAW)))
 	entry := awid.DidKeyEvidence{
 		Seq:            seq,
 		Operation:      operation,
 		PreviousDIDKey: previousDID,
 		NewDIDKey:      newDID,
 		PrevEntryHash:  prevHash,
-		StateHash:      stateHash,
+		StateHash:      hex.EncodeToString(stateSum[:]),
 		AuthorizedBy:   awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)),
 		Timestamp:      "2026-04-04T00:00:00Z",
 	}

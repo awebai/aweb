@@ -95,7 +95,7 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 				_ = json.NewEncoder(w).Encode([]map[string]any{{"seq": 1}})
 				return
 			}
-			logEntry := testDidLogEntry(t, fixture.StableID, fixture.SigningKey, fixture.DID, "create", nil, nil, 1, strings.Repeat("a", 64))
+			logEntry := testDidLogEntry(t, fixture.StableID, fixture.SigningKey, fixture.DID, "create", nil, nil, 1)
 			_ = json.NewEncoder(w).Encode([]map[string]any{didLogJSON(logEntry)})
 		case "/v1/namespaces/" + fixture.Domain + "/addresses/" + fixture.Handle:
 			switch opts["address"] {
