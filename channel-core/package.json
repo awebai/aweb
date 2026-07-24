@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -24,7 +25,8 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.5.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
   },
   "license": "MIT",
   "repository": {

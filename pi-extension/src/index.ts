@@ -251,7 +251,19 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     }
 
     const client = createChannelClient(config);
-    const pinStore = await loadPinStore();
+    let pinStore;
+    try {
+      pinStore = await loadPinStore();
+    } catch (error) {
+      // Fail closed: never start the channel with a discarded trust database.
+      const message = error instanceof Error ? error.message : String(error);
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: onboardingMessage(`aweb channel did not start: the trust pin store is unreadable or corrupt.\n\n${message}`),
+        display: true,
+      });
+      return;
+    }
     const registry = createRegistryResolver(config.registryURL);
     const trust = new SenderTrustManager(
       client,
