@@ -11,7 +11,7 @@ import {
   createRegistryResolver,
   dispatchAgentEvent,
   formatEventStreamState,
-  loadPinStore,
+  loadSessionPinStore,
   type PinStore,
   resolveConfig,
   resolveRegistryFallbackURL,
@@ -27,7 +27,13 @@ async function main() {
   const config = await resolveConfig(workdir);
 
   const client = createChannelClient(config);
-  const pinStore = await loadPinStore();
+  // Fail closed: a corrupt/unreadable trust store must abort startup, never
+  // silently start with a discarded (empty) store.
+  const pinStore = await loadSessionPinStore((message) => {
+    console.error(`[aw-channel] fatal: trust pin store unreadable or corrupt: ${message}`);
+    process.exit(1);
+  });
+  if (!pinStore) return;
   const registry = createRegistryResolver(config.registryURL);
   const trust = new SenderTrustManager(
     client,

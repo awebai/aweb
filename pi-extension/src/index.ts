@@ -3,7 +3,7 @@ import {
   createChannelClient,
   createRegistryResolver,
   formatEventStreamState,
-  loadPinStore,
+  loadSessionPinStore,
   resolveConfig,
   SenderTrustManager,
   startChannelLoop,
@@ -251,7 +251,15 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     }
 
     const client = createChannelClient(config);
-    const pinStore = await loadPinStore();
+    // Fail closed: never start the channel with a discarded (empty) trust store.
+    const pinStore = await loadSessionPinStore((message) => {
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: onboardingMessage(`aweb channel did not start: the trust pin store is unreadable or corrupt.\n\n${message}`),
+        display: true,
+      });
+    });
+    if (!pinStore) return;
     const registry = createRegistryResolver(config.registryURL);
     const trust = new SenderTrustManager(
       client,

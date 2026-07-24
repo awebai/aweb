@@ -58,11 +58,44 @@ export interface ChannelLoopOptions {
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
+  let content: string;
   try {
-    const content = await readFile(path, "utf-8");
+    content = await readFile(path, "utf-8");
+  } catch (error) {
+    // Only a genuinely absent file is a fresh first-run empty store. Any other
+    // read failure (permissions, I/O) must fail closed so corruption is never
+    // silently converted into unannounced first contact.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return new PinStore();
+    }
+    throw new Error(
+      `cannot read trust pin store at ${path} (${(error as NodeJS.ErrnoException)?.code ?? "read error"}); refusing to start without the trust database`,
+    );
+  }
+  try {
     return PinStore.fromYAML(content);
-  } catch {
-    return new PinStore();
+  } catch (error) {
+    throw new Error(
+      `trust pin store at ${path} is corrupt: ${(error as Error).message}; refusing to start (the existing file is left unchanged — repair or remove it)`,
+    );
+  }
+}
+
+/**
+ * Load the pin store for an adapter session. On any load failure it reports the
+ * error and returns undefined — never a fresh empty store — so an adapter fails
+ * closed instead of silently starting with a discarded trust database. Adapters
+ * MUST treat undefined as "do not start the channel".
+ */
+export async function loadSessionPinStore(
+  onError: (message: string) => void,
+  load: () => Promise<PinStore> = loadPinStore,
+): Promise<PinStore | undefined> {
+  try {
+    return await load();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return undefined;
   }
 }
 
