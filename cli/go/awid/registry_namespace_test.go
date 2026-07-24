@@ -736,6 +736,63 @@ func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 	}
 }
 
+func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
+	t.Parallel()
+
+	controllerPub, controllerPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(controllerPub)
+	var gotBody conditionalAddressDeleteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/namespaces/acme.com/addresses/alice" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		auth := strings.Fields(r.Header.Get("Authorization"))
+		if len(auth) != 3 || auth[0] != "DIDKey" || auth[1] != controllerDID {
+			t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
+		}
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		payload := canonicalRegistryJSON(map[string]string{
+			"domain":                   "acme.com",
+			"name":                     "alice",
+			"operation":                "delete_address",
+			"timestamp":                timestamp,
+			"expected_address_id":      "address-1",
+			"expected_did_aw":          "did:aw:owner",
+			"expected_current_did_key": "did:key:owner",
+		})
+		signature, err := base64.RawStdEncoding.DecodeString(auth[2])
+		if err != nil || !ed25519.Verify(controllerPub, []byte(payload), signature) {
+			t.Fatalf("conditional delete signature invalid: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	if err := client.DeleteAddressIfMatchesAt(
+		context.Background(),
+		server.URL,
+		"acme.com",
+		"alice",
+		"address-1",
+		"did:aw:owner",
+		"did:key:owner",
+		controllerPriv,
+		"rollback",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.ExpectedAddressID != "address-1" || gotBody.ExpectedDIDAW != "did:aw:owner" || gotBody.ExpectedCurrentDIDKey != "did:key:owner" {
+		t.Fatalf("body=%+v", gotBody)
+	}
+}
+
 func TestDeleteAddressAtRequiresControllerSigningKey(t *testing.T) {
 	t.Parallel()
 

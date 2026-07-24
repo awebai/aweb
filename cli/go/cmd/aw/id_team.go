@@ -1309,11 +1309,16 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, err
 	}
+	var appliedDefaultClaim *awid.AtomicAddressClaimResult
 	if plan.DefaultClaim != nil {
 		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
 			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
 		}
 		plan.DefaultClaim.DryRun = false
+		appliedDefaultClaim, err = registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim)
+		if err != nil {
+			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
+		}
 	}
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
@@ -1329,13 +1334,14 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	}
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
-		return nil, fmt.Errorf("register certificate at registry: %w", err)
-	}
-	if plan.DefaultClaim != nil {
-		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
-			accepted := &acceptedTeamInvite{Certificate: cert, RegistryURL: registryURL, Domain: invite.Domain, TeamName: invite.TeamName}
-			return nil, rollbackAddedTeamCertificate(workingDir, accepted, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err))
-		}
+		registerErr := fmt.Errorf("register certificate at registry: %w", err)
+		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
+			registry,
+			registryURL,
+			plan.DefaultClaim,
+			appliedDefaultClaim,
+			registerErr,
+		)
 	}
 
 	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
@@ -1360,6 +1366,47 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		Domain:      invite.Domain,
 		TeamName:    invite.TeamName,
 	}, nil
+}
+
+func rollbackDefaultAddressClaimAfterCertificateFailure(
+	registry *awid.RegistryClient,
+	registryURL string,
+	claim *awid.AtomicAddressClaimParams,
+	result *awid.AtomicAddressClaimResult,
+	cause error,
+) error {
+	if claim == nil || result == nil || strings.TrimSpace(result.AddressStatus) != "created" {
+		return cause
+	}
+	address := awconfig.NormalizeDomain(claim.Domain) + "/" + strings.ToLower(strings.TrimSpace(claim.AddressName))
+	if result.Address == nil {
+		return fmt.Errorf(
+			"%w; default address %s was newly claimed, but the registry response omitted its rollback identity; its state is unknown, so retry the same invite and address (the claim is idempotent) rather than choosing a new identity",
+			cause,
+			address,
+		)
+	}
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := registry.DeleteAddressIfMatchesAt(
+		rollbackCtx,
+		registryURL,
+		claim.Domain,
+		claim.AddressName,
+		result.Address.AddressID,
+		result.Address.DIDAW,
+		result.Address.CurrentDIDKey,
+		claim.NamespaceControllerSigningKey,
+		"rollback default address claim after team certificate registration failure",
+	); err != nil {
+		return fmt.Errorf(
+			"%w; default address %s was newly claimed, but rollback failed: %v; its state is unknown, so retry the same invite and address (the claim is idempotent) rather than choosing a new identity",
+			cause,
+			address,
+			err,
+		)
+	}
+	return fmt.Errorf("%w; newly claimed default address %s was rolled back", cause, address)
 }
 
 func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
