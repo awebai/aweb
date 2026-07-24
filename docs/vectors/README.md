@@ -26,6 +26,16 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Expected `entry_hash` (sha256 hex)
   - Expected Ed25519 signature (base64, **no padding**)
 
+- `identity-log-negative-v1.json`
+  - Shared DID-log verifier outcome vectors (positive + negative)
+  - Each `cases` entry feeds a `log_head` (and optional `cached` head) to the
+    verifier and asserts `expected_outcome`
+    (`OK_VERIFIED` / `OK_DEGRADED` / `HARD_ERROR`)
+  - `log_cases` feed full logs to the genesis-anchored chain verifier
+  - Consumed byte-for-byte by the Go (`VerifyDidKeyResolution`) and TypeScript
+    (`verifyDidKeyResolution`) verifiers to keep authorization, state-hash, and
+    anchoring semantics aligned
+
 - `stable-id-v1.json`
   - `did:key` → stable ID derivation vectors
 

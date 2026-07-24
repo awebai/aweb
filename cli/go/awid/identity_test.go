@@ -872,7 +872,6 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogOnFirstContact(t *testi
 			Seq:          1,
 			Operation:    "create",
 			NewDIDKey:    oldDID,
-			StateHash:    strings.Repeat("1", 64),
 			AuthorizedBy: oldDID,
 			Timestamp:    "2026-04-09T00:00:00Z",
 		},
@@ -887,7 +886,6 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogOnFirstContact(t *testi
 			PreviousDIDKey: &oldDID,
 			NewDIDKey:      newDID,
 			PrevEntryHash:  &prevHash,
-			StateHash:      strings.Repeat("2", 64),
 			AuthorizedBy:   oldDID,
 			Timestamp:      "2026-04-10T00:00:00Z",
 		},
@@ -963,12 +961,12 @@ func TestRegistryResolverRefreshesCachedKeyForExpectedSignedMessageKey(t *testin
 	stableID := ComputeStableID(oldPub)
 	createEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
 		DIDAW: stableID, CurrentDIDKey: oldDID,
-		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, StateHash: strings.Repeat("1", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
+		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
 	}).LogHead
 	prevHash := createEntry.EntryHash
 	rotateEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
 		DIDAW: stableID, CurrentDIDKey: newDID,
-		LogHead: &DidKeyEvidence{Seq: 2, Operation: "rotate_key", PreviousDIDKey: &oldDID, NewDIDKey: newDID, PrevEntryHash: &prevHash, StateHash: strings.Repeat("2", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-10T00:00:00Z"},
+		LogHead: &DidKeyEvidence{Seq: 2, Operation: "rotate_key", PreviousDIDKey: &oldDID, NewDIDKey: newDID, PrevEntryHash: &prevHash, AuthorizedBy: oldDID, Timestamp: "2026-04-10T00:00:00Z"},
 	}).LogHead
 
 	var keyCalls atomic.Int32
@@ -1026,7 +1024,7 @@ func TestRegistryResolverReportsStaleCacheWhenExpectedKeyRefreshFails(t *testing
 	stableID := ComputeStableID(pub)
 	createEntry := signedDidKeyResolution(t, priv, &DidKeyResolution{
 		DIDAW: stableID, CurrentDIDKey: oldDID,
-		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, StateHash: strings.Repeat("1", 64), AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
+		LogHead: &DidKeyEvidence{Seq: 1, Operation: "create", NewDIDKey: oldDID, AuthorizedBy: oldDID, Timestamp: "2026-04-09T00:00:00Z"},
 	}).LogHead
 	var keyCalls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1083,7 +1081,6 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogRejectsTailMismatch(t *
 			Seq:          1,
 			Operation:    "create",
 			NewDIDKey:    oldDID,
-			StateHash:    strings.Repeat("3", 64),
 			AuthorizedBy: oldDID,
 			Timestamp:    "2026-04-09T00:00:00Z",
 		},
@@ -1098,7 +1095,6 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogRejectsTailMismatch(t *
 			PreviousDIDKey: &oldDID,
 			NewDIDKey:      logDID,
 			PrevEntryHash:  &prevHash,
-			StateHash:      strings.Repeat("4", 64),
 			AuthorizedBy:   oldDID,
 			Timestamp:      "2026-04-10T00:00:00Z",
 		},

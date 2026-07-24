@@ -115,14 +115,23 @@ Rules:
    - Require `body.current_did_key` is a syntactically valid `did:key` (Ed25519).
    - If `log_head` is missing → return `OK_DEGRADED` (treat like “unverifiable mapping”).
 
-2. **Consistency checks**
+2. **Consistency + authorization checks**
    - Require `log_head.new_did_key == body.current_did_key`.
    - Require `log_head.seq >= 1`.
-   - If `log_head.seq == 1`:
-     - Require `log_head.prev_entry_hash == null`.
-     - Require `log_head.operation == "create"`.
-   - If `log_head.seq > 1`:
+   - If `log_head.seq == 1` (genesis):
+     - Require `log_head.prev_entry_hash == null` and `log_head.previous_did_key == null`.
+     - Require `log_head.operation` is `create` or `register_did`.
+     - Require `log_head.authorized_by == log_head.new_did_key` — genesis is
+       self-authorizing (the identity holder signs its own registration).
+     - Require `did_aw == derive_did_aw(log_head.new_did_key)` — the stable
+       identity MUST be the canonical derivation of the genesis key, so a forged
+       genesis cannot claim an unrelated `did:aw`.
+   - If `log_head.seq > 1` (rotation):
+     - Require `log_head.operation == "rotate_key"`.
      - Require `log_head.prev_entry_hash` is present and hex.
+     - Require `log_head.previous_did_key` is present and a valid `did:key`.
+     - Require `log_head.authorized_by == log_head.previous_did_key` — a rotation
+       is authorized only by the retiring key signing its own replacement.
 
 3. **Reconstruct canonical entry payload bytes**
    - Build the payload object exactly as in “Log-head verification payload” above.
@@ -132,34 +141,79 @@ Rules:
    - Compute `computed_entry_hash = sha256(payload_bytes)` (hex).
    - Require `computed_entry_hash == log_head.entry_hash`.
 
-5. **Verify signature**
-   - Verify Ed25519 signature `log_head.signature` over `payload_bytes` using the public key extracted from
-     `log_head.authorized_by` (a `did:key`).
+5. **Verify `state_hash`**
+   - Compute `computed_state_hash = sha256(canonical_json({"current_did_key":
+     log_head.new_did_key, "did_aw": did_aw}))` (lowercase hex). This is the
+     `identity_state_hash` produced by `aweb`.
+   - Require `computed_state_hash == log_head.state_hash`. A valid signature over
+     a payload whose `state_hash` does not equal the canonical state MUST NOT pass.
+
+6. **Verify signature**
+   - Verify Ed25519 signature `log_head.signature` over `payload_bytes` using the
+     public key extracted from `log_head.authorized_by` (a `did:key`). Because of
+     step 2, `authorized_by` is bound to the genesis key (`seq==1`) or the
+     retiring key (`seq>1`) — it is not a free-floating key the response chooses.
    - If verification fails → `HARD_ERROR`.
 
-6. **Cache monotonicity / regression checks (equivocation detection within a single client)**
+7. **Cache monotonicity / continuity checks (equivocation detection within a single client)**
    - If cache exists:
      - If `log_head.seq < cached_seq` → `HARD_ERROR` (regression).
      - If `log_head.seq == cached_seq` and `log_head.entry_hash != cached_entry_hash` → `HARD_ERROR` (split view).
-     - If `log_head.seq == cached_seq + 1` and `log_head.prev_entry_hash != cached_entry_hash` → `HARD_ERROR` (broken chain).
-     - If `log_head.seq > cached_seq + 1` → `OK_DEGRADED` (seq gap: the head verifies cryptographically but append-only continuity from the cached head cannot be proven without fetching `/log`).
+     - If `log_head.seq == cached_seq + 1`:
+       - If `log_head.previous_did_key != cached_current_did_key` → `HARD_ERROR` (key discontinuity).
+       - If `log_head.prev_entry_hash != cached_entry_hash` → `HARD_ERROR` (broken chain).
+     - If `log_head.seq > cached_seq + 1` → `OK_DEGRADED` (seq gap: the head is
+       internally consistent but append-only continuity from the cached head
+       cannot be proven without fetching `/log`).
 
-7. **Return**
-   - If all checks pass → `OK_VERIFIED` and update cache with the new head.
+8. **Anchoring gate + return**
+   - `OK_VERIFIED` requires the head to be *anchored*: either it is genesis
+     (`seq==1`, self-anchored via its `did:aw` derivation) or it is adjacent to a
+     previously verified head (`seq == cached_seq` or `cached_seq + 1`, having
+     passed the continuity checks above).
+   - If `log_head.seq > 1` and there is **no cached head** (or a seq gap), the
+     transition from genesis cannot be proven from a single head → `OK_DEGRADED`.
+     Fetch `GET /v1/did/{did_aw}/log` and verify the full chain from genesis
+     before trusting it.
+   - Otherwise → `OK_VERIFIED` and update cache with the new head.
    - Only update cache on `OK_VERIFIED`, not on `OK_DEGRADED`.
+
+### Full-log verification (`GET /v1/did/{did_aw}/log`)
+
+When a single head is not anchored (unanchored `seq>1`, or a seq gap from the
+cached head), verify the whole log:
+
+- The log MUST start at a valid genesis entry (step 2, `seq==1` rules).
+- Each subsequent entry MUST satisfy the `seq>1` rules and chain to its
+  predecessor: `seq` increments by one, `prev_entry_hash == predecessor.entry_hash`,
+  and `previous_did_key == predecessor.new_did_key`.
+- Every entry’s `state_hash`, `entry_hash`, and signature MUST verify (steps 4–6).
+- The final entry’s `new_did_key` MUST equal `body.current_did_key`.
+
+Only a fully genesis-anchored log verification (or a head adjacent to such a
+verified head) yields `OK_VERIFIED`.
 
 ### Notes on what this does and does not prove
 
 - `OK_VERIFIED` proves:
-  - `aweb` presented a log head whose signature verifies against a `did:key`
-    embedded in the response.
-  - The `entry_hash` is consistent with the payload.
+  - The transition is authorized by the correct key: genesis is self-signed by
+    the key being bound, and each rotation is signed by the retiring key it
+    replaces. `authorized_by` is bound to that key, not chosen freely by the
+    response.
+  - `did_aw` is the canonical derivation of the genesis key, and every entry’s
+    `state_hash` and `entry_hash` match the canonical payload.
+  - The head is anchored to genesis — either it *is* genesis, or it continues an
+    unbroken `seq`/`prev_entry_hash`/`previous_did_key` chain from a previously
+    verified head (or, via `/log`, from genesis directly).
   - This client’s observed history is append-only (no regressions) for this `did_aw`.
   - Monotonicity is **per-client only** — each client tracks its own cache and can detect regressions or split views against its own history.
 - `OK_VERIFIED` does **not** prove:
   - That the server is globally consistent (other clients may see a different
     head without witnesses/checkpoints).
-  - That intermediate entries between the cached head and the current head are valid (when `seq > cached_seq + 1`, the result is `OK_DEGRADED` — fetch `/log` to verify the full chain).
+- `OK_DEGRADED` means verification could **not** be completed (missing
+  `log_head`, or an unanchored `seq>1` head, or a seq gap). It is **not** a
+  trusted result: it MUST NOT replace or overwrite a pinned key. It may prompt a
+  full `/log` fetch, but on its own it can never authorize a pin change.
 
 ## How aw should use this result (recommended)
 
@@ -169,9 +223,14 @@ When receiving a message with `from_stable_id = did_aw`:
 - If result is `OK_VERIFIED`:
   - Treat `current_did_key` as `aweb`'s signed view of the current key.
   - If it conflicts with the message envelope’s `from_did`, treat as a hard identity mismatch (reject or quarantine).
+  - Only this result — a genesis-anchored verification — may replace a stale
+    TOFU-pinned key for this `did_aw`.
 - If result is `OK_DEGRADED`:
   - Continue operating with TOFU + rotation-announcement rules, but record
     that stable identity verification was degraded.
+  - MUST NOT replace or overwrite a pinned key on the strength of this result.
+    A degraded result may only trigger a full `/log` fetch to attempt a genesis
+    -anchored verification.
 - If result is `HARD_ERROR`:
   - Treat as security relevant; do not update pins, surface a strong warning, and consider rejecting messages that
     rely on this stable identity until the operator resolves it.
@@ -183,5 +242,6 @@ Interoperability vectors live in [vectors/](vectors/README.md):
 - `vectors/message-signing-v1.json` (canonical message signing payloads)
 - `vectors/stable-id-v1.json` (`did:key` -> `did:aw` derivation)
 - `vectors/identity-log-v1.json` (log entry hashing + signing)
+- `vectors/identity-log-negative-v1.json` (verifier authorization / state-hash / anchoring outcomes, shared Go↔TS)
 - `vectors/rotation-announcements-v1.json` (rotation announcement payload signing/chaining)
 - `vectors/dns-txt-v1.json` (canonical `_awid` DNS TXT records and optional `registry=` declaration)

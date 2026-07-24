@@ -84,7 +84,24 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		if head.PreviousDIDKey != nil {
 			return StableIdentityHardError, nil, fmt.Errorf("create requires null previous_did_key")
 		}
+		// Genesis is self-authorizing: the identity holder signs its own
+		// registration with the key being bound.
+		if strings.TrimSpace(head.AuthorizedBy) != strings.TrimSpace(head.NewDIDKey) {
+			return StableIdentityHardError, nil, fmt.Errorf("genesis authorized_by must equal new_did_key")
+		}
+		// The did:aw must be the canonical derivation of the genesis key, so a
+		// forged genesis cannot claim an unrelated identity.
+		genesisPub, err := ExtractPublicKey(strings.TrimSpace(head.NewDIDKey))
+		if err != nil {
+			return StableIdentityHardError, nil, fmt.Errorf("invalid genesis new_did_key: %w", err)
+		}
+		if ComputeStableID(genesisPub) != res.DIDAW {
+			return StableIdentityHardError, nil, fmt.Errorf("did:aw not derived from genesis key")
+		}
 	} else {
+		if head.Operation != "rotate_key" {
+			return StableIdentityHardError, nil, fmt.Errorf("seq>1 requires rotate_key operation")
+		}
 		if head.PrevEntryHash == nil || !isLowerHex(*head.PrevEntryHash) {
 			return StableIdentityHardError, nil, fmt.Errorf("seq>1 requires hex prev_entry_hash")
 		}
@@ -93,6 +110,11 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		}
 		if _, err := ExtractPublicKey(strings.TrimSpace(*head.PreviousDIDKey)); err != nil {
 			return StableIdentityHardError, nil, fmt.Errorf("invalid previous_did_key: %w", err)
+		}
+		// A rotation is authorized only by the retiring key signing its own
+		// replacement.
+		if strings.TrimSpace(head.AuthorizedBy) != strings.TrimSpace(*head.PreviousDIDKey) {
+			return StableIdentityHardError, nil, fmt.Errorf("rotation authorized_by must equal previous_did_key")
 		}
 	}
 	if _, err := ExtractPublicKey(strings.TrimSpace(head.AuthorizedBy)); err != nil {
@@ -103,6 +125,11 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 	}
 	if !isLowerHex(strings.TrimSpace(head.StateHash)) {
 		return StableIdentityHardError, nil, fmt.Errorf("invalid state_hash")
+	}
+	// state_hash must be the canonical hash of the resulting identity state, so
+	// a valid signature over a mismatched state cannot pass.
+	if head.StateHash != stableIdentityStateHash(res.DIDAW, head.NewDIDKey) {
+		return StableIdentityHardError, nil, fmt.Errorf("state_hash mismatch")
 	}
 	if err := requireCanonicalLogTimestamp(head.Timestamp); err != nil {
 		return StableIdentityHardError, nil, err
@@ -133,12 +160,23 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		case head.Seq == cached.Seq && head.EntryHash != cached.EntryHash:
 			return StableIdentityHardError, nil, fmt.Errorf("log_head split view")
 		case head.Seq == cached.Seq+1:
+			if head.PreviousDIDKey == nil || *head.PreviousDIDKey != cached.CurrentDIDKey {
+				return StableIdentityHardError, nil, fmt.Errorf("log_head previous_did_key discontinuity")
+			}
 			if head.PrevEntryHash == nil || *head.PrevEntryHash != cached.EntryHash {
 				return StableIdentityHardError, nil, fmt.Errorf("log_head broken chain")
 			}
 		case head.Seq > cached.Seq+1:
 			return StableIdentityDegraded, nil, nil
 		}
+	}
+
+	// Only genesis (self-anchored via its did:aw derivation) or a head adjacent
+	// to a previously verified head can be OK_VERIFIED. An unanchored seq>1 head
+	// proves internal consistency but not the transition from genesis, so it
+	// must degrade and force full-log verification before it can be trusted.
+	if head.Seq > 1 && cached == nil {
+		return StableIdentityDegraded, nil, nil
 	}
 
 	return StableIdentityVerified, &VerifiedLogHead{

@@ -93,7 +93,8 @@ describe("registry dns", () => {
 });
 
 describe("registry verification", () => {
-  test("verifies signed log-head vectors", () => {
+  test("verifies signed rotation adjacent to a cached genesis head", () => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
     const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key");
     expect(rotate).toBeDefined();
 
@@ -110,9 +111,31 @@ describe("registry verification", () => {
     expect(canonicalDidLogPayload(identityLogVectors.mapping.did_aw, resolution.log_head!))
       .toBe(rotate!.canonical_entry_payload);
 
-    const result = verifyDidKeyResolution(resolution, undefined, Date.now());
+    // A rotation can only be OK_VERIFIED against the head it continues from.
+    const cachedGenesis = {
+      seq: 1,
+      entryHash: register.entry_hash,
+      stateHash: register.entry_payload.state_hash,
+      currentDidKey: identityLogVectors.mapping.initial_did_key,
+      fetchedAt: Date.now(),
+    };
+    const result = verifyDidKeyResolution(resolution, cachedGenesis, Date.now());
     expect(result.outcome).toBe("OK_VERIFIED");
     expect(result.nextHead?.entryHash).toBe(rotate!.entry_hash);
+  });
+
+  test("degrades an unanchored rotation with no cached head", () => {
+    const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
+    const result = verifyDidKeyResolution({
+      did_aw: identityLogVectors.mapping.did_aw,
+      current_did_key: identityLogVectors.mapping.rotated_did_key,
+      log_head: {
+        ...rotate.entry_payload,
+        entry_hash: rotate.entry_hash,
+        signature: rotate.signature_b64,
+      },
+    }, undefined, Date.now());
+    expect(result.outcome).toBe("OK_DEGRADED");
   });
 
   test("verifies register_did log-head vectors", () => {
@@ -435,4 +458,91 @@ describe("registry resolver", () => {
       expect.anything(),
     );
   });
+});
+
+interface NegativeVectorFile {
+  cases: Array<{
+    name: string;
+    did_aw: string;
+    current_did_key: string;
+    log_head: DidKeyResolution["log_head"];
+    cached: {
+      seq: number;
+      entry_hash: string;
+      state_hash: string;
+      current_did_key: string;
+    } | null;
+    expected_outcome: "OK_VERIFIED" | "OK_DEGRADED" | "HARD_ERROR";
+  }>;
+  log_cases: Array<{
+    name: string;
+    did_aw: string;
+    entries: NonNullable<DidKeyResolution["log_head"]>[];
+    expect_error: boolean;
+    expected_current_did_key?: string;
+  }>;
+}
+
+const negativeVectors = JSON.parse(
+  readFileSync(join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json"), "utf-8"),
+) as NegativeVectorFile;
+
+// Mirror of Go VerifyDidLogEntries: walk the log from genesis feeding each
+// verified head forward as the cached anchor for the next entry.
+function verifyLog(didAW: string, entries: NonNullable<DidKeyResolution["log_head"]>[]): {
+  ok: boolean;
+  currentDidKey?: string;
+} {
+  let cached: Parameters<typeof verifyDidKeyResolution>[1] | undefined;
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    if (i === 0 && entry.seq !== 1) return { ok: false };
+    if (i > 0 && entry.seq !== entries[i - 1].seq + 1) return { ok: false };
+    const result = verifyDidKeyResolution(
+      { did_aw: didAW, current_did_key: entry.new_did_key, log_head: entry },
+      cached,
+      Date.now(),
+    );
+    if (result.outcome !== "OK_VERIFIED" || !result.nextHead) return { ok: false };
+    cached = result.nextHead;
+  }
+  return { ok: true, currentDidKey: cached?.currentDidKey };
+}
+
+describe("identity-log-negative-v1 shared vectors", () => {
+  for (const testCase of negativeVectors.cases) {
+    test(testCase.name, () => {
+      const cached = testCase.cached
+        ? {
+            seq: testCase.cached.seq,
+            entryHash: testCase.cached.entry_hash,
+            stateHash: testCase.cached.state_hash,
+            currentDidKey: testCase.cached.current_did_key,
+            fetchedAt: Date.now(),
+          }
+        : undefined;
+      const result = verifyDidKeyResolution(
+        {
+          did_aw: testCase.did_aw,
+          current_did_key: testCase.current_did_key,
+          log_head: testCase.log_head,
+        },
+        cached,
+        Date.now(),
+      );
+      expect(result.outcome).toBe(testCase.expected_outcome);
+    });
+  }
+
+  for (const logCase of negativeVectors.log_cases) {
+    test(logCase.name, () => {
+      const result = verifyLog(logCase.did_aw, logCase.entries);
+      if (logCase.expect_error) {
+        expect(result.ok).toBe(false);
+      } else {
+        expect(result.ok).toBe(true);
+        expect(result.currentDidKey).toBe(logCase.expected_current_did_key);
+      }
+    });
+  }
 });
