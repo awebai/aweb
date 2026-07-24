@@ -9,6 +9,7 @@ import {
   discoverAuthoritativeRegistry,
   parseAwidTXTRecord,
   verifyDidKeyResolution,
+  verifyDidLogEntries,
   type DidKeyResolution,
 } from "../src/identity/registry.js";
 
@@ -225,6 +226,94 @@ describe("registry resolver", () => {
       did: identityLogVectors.mapping.rotated_did_key,
       stableID: identityLogVectors.mapping.did_aw,
     });
+  });
+
+  test("anchors a first-contact rotated identity via the full log", async () => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
+    const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
+    const logURL = `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/log`;
+    let logCalls = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
+        return jsonResponse({
+          address_id: "addr-1",
+          domain: "acme.com",
+          name: "alice",
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          created_at: "2026-04-04T00:00:00Z",
+        });
+      }
+      // First contact only ever sees the current (seq>1) head here.
+      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
+        return jsonResponse({
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          log_head: { ...rotate.entry_payload, entry_hash: rotate.entry_hash, signature: rotate.signature_b64 },
+        });
+      }
+      if (url === logURL) {
+        logCalls++;
+        return jsonResponse([
+          { ...register.entry_payload, entry_hash: register.entry_hash, signature: register.signature_b64 },
+          { ...rotate.entry_payload, entry_hash: rotate.entry_hash, signature: rotate.signature_b64 },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+    const resolveTxt = vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]);
+    const resolver = new RegistryResolver(fetchImpl, resolveTxt);
+
+    const result = await resolver.verifyStableIdentity(
+      "acme.com/alice",
+      identityLogVectors.mapping.did_aw,
+      identityLogVectors.mapping.rotated_did_key,
+    );
+    expect(result).toMatchObject({
+      outcome: "OK_VERIFIED",
+      currentDidKey: identityLogVectors.mapping.rotated_did_key,
+    });
+    expect(logCalls).toBe(1);
+  });
+
+  test("rejects a first-contact forged log whose genesis is not the victim's key", async () => {
+    const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
+    const logURL = `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/log`;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
+        return jsonResponse({
+          address_id: "addr-1", domain: "acme.com", name: "alice",
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          created_at: "2026-04-04T00:00:00Z",
+        });
+      }
+      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
+        return jsonResponse({
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          log_head: { ...rotate.entry_payload, entry_hash: rotate.entry_hash, signature: rotate.signature_b64 },
+        });
+      }
+      if (url === logURL) {
+        // Forged: the log starts at the rotation (no valid genesis for this did:aw).
+        return jsonResponse([
+          { ...rotate.entry_payload, entry_hash: rotate.entry_hash, signature: rotate.signature_b64 },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+    const resolveTxt = vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]);
+    const resolver = new RegistryResolver(fetchImpl, resolveTxt);
+
+    const result = await resolver.verifyStableIdentity(
+      "acme.com/alice",
+      identityLogVectors.mapping.did_aw,
+      identityLogVectors.mapping.rotated_did_key,
+    );
+    expect(result.outcome).not.toBe("OK_VERIFIED");
   });
 
   test("refreshes cached key material when a signed message carries a newer current key", async () => {
@@ -487,28 +576,6 @@ const negativeVectors = JSON.parse(
   readFileSync(join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json"), "utf-8"),
 ) as NegativeVectorFile;
 
-// Mirror of Go VerifyDidLogEntries: walk the log from genesis feeding each
-// verified head forward as the cached anchor for the next entry.
-function verifyLog(didAW: string, entries: NonNullable<DidKeyResolution["log_head"]>[]): {
-  ok: boolean;
-  currentDidKey?: string;
-} {
-  let cached: Parameters<typeof verifyDidKeyResolution>[1] | undefined;
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i];
-    if (i === 0 && entry.seq !== 1) return { ok: false };
-    if (i > 0 && entry.seq !== entries[i - 1].seq + 1) return { ok: false };
-    const result = verifyDidKeyResolution(
-      { did_aw: didAW, current_did_key: entry.new_did_key, log_head: entry },
-      cached,
-      Date.now(),
-    );
-    if (result.outcome !== "OK_VERIFIED" || !result.nextHead) return { ok: false };
-    cached = result.nextHead;
-  }
-  return { ok: true, currentDidKey: cached?.currentDidKey };
-}
-
 describe("identity-log-negative-v1 shared vectors", () => {
   for (const testCase of negativeVectors.cases) {
     test(testCase.name, () => {
@@ -536,12 +603,13 @@ describe("identity-log-negative-v1 shared vectors", () => {
 
   for (const logCase of negativeVectors.log_cases) {
     test(logCase.name, () => {
-      const result = verifyLog(logCase.did_aw, logCase.entries);
+      const result = verifyDidLogEntries(logCase.did_aw, logCase.entries, Date.now());
       if (logCase.expect_error) {
-        expect(result.ok).toBe(false);
+        expect(result.error).toBeTruthy();
+        expect(result.head).toBeUndefined();
       } else {
-        expect(result.ok).toBe(true);
-        expect(result.currentDidKey).toBe(logCase.expected_current_did_key);
+        expect(result.error).toBeUndefined();
+        expect(result.head?.currentDidKey).toBe(logCase.expected_current_did_key);
       }
     });
   }

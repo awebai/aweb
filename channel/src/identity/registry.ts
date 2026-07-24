@@ -165,11 +165,53 @@ export class RegistryResolver {
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
       this.headCache.set(stableID, verification.nextHead);
     }
+    // An unanchored seq>1 head (first contact or a seq gap) degrades; recover by
+    // anchoring the full log to genesis, matching the Go resolver.
+    if (verification.outcome === "OK_DEGRADED" && !verification.error) {
+      return this.verifyStableIdentityViaFullLog(
+        resolvedAddress.registryURL,
+        stableID,
+        resolution.current_did_key,
+      );
+    }
     return {
       outcome: verification.outcome,
       currentDidKey: resolution.current_did_key,
       error: verification.error,
     };
+  }
+
+  private async verifyStableIdentityViaFullLog(
+    registryURL: string,
+    stableID: string,
+    currentDidKey: string,
+  ): Promise<StableIdentityVerification> {
+    let entries: DidKeyEvidence[];
+    try {
+      entries = await this.fetchDidLog(registryURL, stableID);
+    } catch (error) {
+      return { outcome: "OK_DEGRADED", currentDidKey, error: String(error) };
+    }
+    const { head, error } = verifyDidLogEntries(stableID, entries, this.now());
+    if (error) {
+      return { outcome: "HARD_ERROR", currentDidKey, error };
+    }
+    if (!head) {
+      return { outcome: "OK_DEGRADED", currentDidKey, error: "missing verified audit log head" };
+    }
+    if (head.currentDidKey.trim() !== currentDidKey.trim()) {
+      return { outcome: "HARD_ERROR", currentDidKey, error: "audit log current did:key mismatch" };
+    }
+    this.headCache.set(stableID, head);
+    return { outcome: "OK_VERIFIED", currentDidKey };
+  }
+
+  private async fetchDidLog(registryURL: string, stableID: string): Promise<DidKeyEvidence[]> {
+    return this.getJSON<DidKeyEvidence[]>(
+      registryURL,
+      `/v1/did/${pathSafeSegment(stableID)}/log`,
+      true,
+    );
   }
 
   async resolveAddressIdentity(address: string): Promise<{ did: string; stableID: string }> {
@@ -539,6 +581,45 @@ export function verifyDidKeyResolution(
       fetchedAt: nowMs,
     },
   };
+}
+
+// Mirror of Go VerifyDidLogEntries: verify a full DID log from genesis, walking
+// each entry with the previously verified head as its cached anchor.
+export function verifyDidLogEntries(
+  didAW: string,
+  entries: DidKeyEvidence[],
+  nowMs: number,
+): { head?: VerifiedLogHead; error?: string } {
+  didAW = didAW.trim();
+  if (!didAW.startsWith("did:aw:")) {
+    return { error: `invalid did:aw ${didAW}` };
+  }
+  if (entries.length === 0) {
+    return { error: "missing audit log entries" };
+  }
+  let cached: VerifiedLogHead | undefined;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const result = verifyDidKeyResolution(
+      { did_aw: didAW, current_did_key: entry.new_did_key, log_head: entry },
+      cached,
+      nowMs,
+    );
+    if (result.error) {
+      return { error: result.error };
+    }
+    if (result.outcome !== "OK_VERIFIED" || !result.nextHead) {
+      return { error: `unexpected verification outcome ${result.outcome} at seq ${entry.seq}` };
+    }
+    if (index === 0 && entry.seq !== 1) {
+      return { error: "audit log must start at seq 1" };
+    }
+    if (index > 0 && entry.seq !== entries[index - 1].seq + 1) {
+      return { error: `audit log sequence gap at seq ${entry.seq}` };
+    }
+    cached = result.nextHead;
+  }
+  return { head: cached };
 }
 
 function stableIdentityStateHash(didAW: string, currentDidKey: string): string {

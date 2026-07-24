@@ -1,5 +1,5 @@
 {
-  "comment": "Shared DID-log verifier vectors (aajc.3). Consumed byte-for-byte by Go VerifyDidKeyResolution and TS verifyDidKeyResolution. Each case feeds resolution(+cached) to the verifier and asserts expected_outcome.",
+  "comment": "Shared DID-log verifier vectors (aajc.3 + aajr). Consumed byte-for-byte by Go VerifyDidKeyResolution and TS verifyDidKeyResolution. Each case feeds resolution(+cached) to the verifier and asserts expected_outcome.",
   "cases": [
     {
       "name": "valid_genesis",
@@ -197,6 +197,26 @@
         "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
         "signature": "wYBVTsIIUvS7pzKQCgl+9g40yuubPtbaIafgBCIkadMfjSdyhlUGGa+OExmiQPT9pAwr7kJDjKSihaP9M2V5Dg",
         "timestamp": "2026-02-22T10:00:00Z"
+      },
+      "cached": null,
+      "expected_outcome": "HARD_ERROR"
+    },
+    {
+      "name": "timestamp_offset_out_of_range",
+      "comment": "zone offset \u003e= 24h must be rejected on both runtimes",
+      "did_aw": "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+      "current_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "log_head": {
+        "seq": 1,
+        "operation": "register_did",
+        "previous_did_key": null,
+        "new_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "prev_entry_hash": null,
+        "entry_hash": "ec19ec83bd762f99d434f049a55b5a654687838433210fdb513a4ae2669008de",
+        "state_hash": "d280725abb8857bc173da1188c4a008180023fc40687833f0a0b10056935310f",
+        "authorized_by": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "signature": "0b2KTkMyPcIZN2nSG3cbRG/idJDybpAqjcFGGO0Dn65RHb1cjjw2QJrQXD9esoH43QS84qToxknKtGwUprsFCg",
+        "timestamp": "2026-02-22T10:00:00+24:00"
       },
       "cached": null,
       "expected_outcome": "HARD_ERROR"
