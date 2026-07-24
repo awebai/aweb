@@ -21,13 +21,18 @@
 #
 # Environment:
 #   AW_BIN         aw binary to exercise (default: aw)
-#   DOGFOOD_TMUX   set to 1 to also exercise --start. Isolation is enforced
-#                  with TMUX_TMPDIR (not just tmux -L): aw shells out to
-#                  plain tmux, so relocating the socket directory is the only
-#                  way to keep the LAUNCH itself off the default server that
-#                  hosts the live team.
+#   DOGFOOD_TMUX   set to 1 to also exercise --start. The aw launcher receives
+#                  AWEB_TMUX_TMPDIR; every raw tmux probe receives TMUX_TMPDIR.
+#                  Raw tmux ignores the aweb-prefixed variable.
 
 set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+export PATH="$REPO_ROOT/scripts/guard-bin:$PATH"
+if [ "$(command -v tmux)" != "$REPO_ROOT/scripts/guard-bin/tmux" ]; then
+  echo "error: reviewed tmux PATH guard is not active" >&2
+  exit 2
+fi
 
 AW_BIN="${AW_BIN:-aw}"
 FAILURES=0
@@ -170,7 +175,7 @@ if [ "${DOGFOOD_TMUX:-0}" = "1" ]; then
   say "optional: --start on an isolated tmux server (TMUX_TMPDIR)"
   (
     cd "$TEAM_ROOT"
-    TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" "$AW_BIN" team extend extend-started \
+    AWEB_TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" "$AW_BIN" team extend extend-started \
       --start --no-attach --session aw-extend-dogfood --json >extend-started.json
   )
   if TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" tmux list-sessions 2>/dev/null |

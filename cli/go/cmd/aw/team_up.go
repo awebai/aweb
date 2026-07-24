@@ -54,11 +54,12 @@ type teamUpAgentPlan struct {
 }
 
 const (
-	teamUpActionStart   = "start"
-	teamUpActionSkip    = "skip"
-	teamUpTmuxTmpdirEnv = "AWEB_TMUX_TMPDIR"
-	tmuxTmpdirEnv       = "TMUX_TMPDIR"
-	tmuxEnv             = "TMUX"
+	teamUpActionStart         = "start"
+	teamUpActionSkip          = "skip"
+	teamUpTmuxTmpdirEnv       = "AWEB_TMUX_TMPDIR"
+	teamUpTmuxKillOverrideEnv = "AWEB_TMUX_KILL_OK"
+	tmuxTmpdirEnv             = "TMUX_TMPDIR"
+	tmuxEnv                   = "TMUX"
 )
 
 type teamUpRunningProcess struct {
@@ -72,6 +73,7 @@ var (
 	teamUpSessionExists           = tmuxSessionExists
 	teamUpRunTmux                 = runTmux
 	teamUpRunTmuxOutput           = runTmuxOutput
+	teamUpGuardedAgentPath        = ensureTeamUpGuardedAgentPath
 	teamUpConfirmClaudePromptWait = 45 * time.Second
 )
 
@@ -359,7 +361,11 @@ func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {
 }
 
 func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan) error {
-	shellCmd := teamUpShellCommand(agent)
+	guardedPath, err := teamUpGuardedAgentPath()
+	if err != nil {
+		return fmt.Errorf("prepare tmux guard for agent %q: %w", agent.Name, err)
+	}
+	shellCmd := teamUpShellCommand(agent, guardedPath)
 	windowName := teamUpWindowName(agent.Name)
 	if !teamUpSessionExists(session) {
 		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", windowName, shellCmd)
@@ -719,8 +725,8 @@ func printTeamUpPlan(out interface{ Write([]byte) (int, error) }, plan teamUpPla
 	return nil
 }
 
-func teamUpShellCommand(agent teamUpAgentPlan) string {
-	return "cd " + teamUpShellQuote(agent.HomeDir) + " && exec " + teamUpShellJoin(agent.Command)
+func teamUpShellCommand(agent teamUpAgentPlan, guardedPath string) string {
+	return "unset " + teamUpTmuxKillOverrideEnv + " && export PATH=" + teamUpShellQuote(guardedPath) + " && cd " + teamUpShellQuote(agent.HomeDir) + " && exec " + teamUpShellJoin(agent.Command)
 }
 
 func formatTeamUpNoTmuxGuidance(plan teamUpPlan) string {

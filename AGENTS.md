@@ -36,6 +36,15 @@ If you genuinely need to fold changes back into a fresh consolidated
 coordination — not a quiet edit. Escalate to coord-aweb (John) or
 coord-awid (Goto) before touching the file.
 
+## Tmux safety
+
+- Never create an ad-hoc script or inline cleanup trap that invokes tmux.
+- Any tmux-touching dogfood or migration harness must be committed, reviewed,
+  and run with `scripts/guard-bin` first on `PATH`.
+- Raw tmux reads `TMUX_TMPDIR`, not `AWEB_TMUX_TMPDIR`; confusing them silently
+  targets the default socket. Use a named throwaway session on an isolated
+  socket and tear down only that session. Never run `tmux kill-server`.
+
 <!-- AWEB:START -->
 ## aweb Coordination Rules
 

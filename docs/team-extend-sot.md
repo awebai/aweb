@@ -222,5 +222,8 @@ default-aaeq.23, stricter because `extend` has no wizard):
   taking precedence over the env var.
 - Dogfooding: a throwaway team only; exercise all three call sites (team
   root, agent home, clean dir + API key), plus the ambiguity error and the
-  tier-4 error. Any tmux experiment (`--start`) runs on an isolated socket
-  (`tmux -L awdogfood`) — never the default tmux server.
+  tier-4 error. A tmux experiment (`--start`) must be a committed, reviewed
+  harness that prepends `scripts/guard-bin` and sets `AWEB_TMUX_TMPDIR` for
+  the launcher plus `TMUX_TMPDIR` for every raw tmux command. Raw tmux ignores
+  `AWEB_TMUX_TMPDIR`. Tear down only the named throwaway session, never a
+  server.

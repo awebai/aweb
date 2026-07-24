@@ -6758,6 +6758,27 @@ function isThenable(value) {
 var require2 = createRequire(import.meta.url);
 var WELCOME_VERSION = "0.1.0";
 var WELCOME_STATE_PATH = join3(homedir2(), ".config", "aw", "pi-welcome.json");
+function tmuxCommandGuardReason(command) {
+  const words = command.match(/[A-Za-z0-9_./:@%+=,-]+/g) ?? [];
+  for (let index = 0; index < words.length; index += 1) {
+    const executable = words[index].split("/").pop();
+    if (executable === "tmux") {
+      const operation = words.slice(index + 1, index + 10).find(
+        (word) => word.startsWith("kill-serv") || word.startsWith("kill-sess")
+      );
+      if (operation) {
+        return `Blocked tmux ${operation}. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced migration or dogfood harness.`;
+      }
+    }
+    if (executable === "aw") {
+      const tail = words.slice(index + 1, index + 12);
+      if (tail.includes("team") && tail.includes("up") && tail.includes("--recreate")) {
+        return "Blocked aw team up --recreate. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced harness.";
+      }
+    }
+  }
+  return void 0;
+}
 async function isExecutable(path) {
   try {
     await access(path, fsConstants.X_OK);
@@ -6898,6 +6919,13 @@ function awebPiExtension(pi) {
   let wakeDispatcher;
   const wakeLog = createWakeLogger();
   installWakeDiagnostics(wakeLog);
+  pi.on("tool_call", (event) => {
+    if (event.toolName !== "bash") return void 0;
+    const command = event.input.command;
+    if (typeof command !== "string") return void 0;
+    const reason = tmuxCommandGuardReason(command);
+    return reason ? { block: true, reason } : void 0;
+  });
   pi.on("turn_start", () => {
     wakeDispatcher?.setTurnActive(true);
   });
@@ -7025,7 +7053,8 @@ ${message}`),
   });
 }
 export {
-  awebPiExtension as default
+  awebPiExtension as default,
+  tmuxCommandGuardReason
 };
 /*! Bundled license information:
 
