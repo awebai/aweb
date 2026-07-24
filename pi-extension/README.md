@@ -13,6 +13,37 @@ pi install npm:@awebai/pi@latest
 pi list
 ```
 
+## Upgrade an existing installation
+
+Pi owns a separate package tree under `~/.pi/agent/npm`; publishing this
+package or upgrading a global npm install does not update that tree. Pi 0.82
+and newer should update through Pi itself:
+
+```bash
+pi update npm:@awebai/pi
+```
+
+For pre-0.82 Pi versions that lack the package-update command, update the
+default cache directly:
+
+```bash
+npm install @awebai/pi@latest --prefix ~/.pi/agent/npm
+```
+
+Fully stop and restart every Pi process after either command. `/reload` can
+reload resources in current Pi, but it is not release-cutover proof: a fresh
+process ensures that no already-loaded extension code survives. Verify the
+resolved cache rather than a registry version or package self-report:
+
+```bash
+node -p "require(process.env.HOME + '/.pi/agent/npm/node_modules/@awebai/pi/package.json').version"
+```
+
+Pi 0.82+ also checks unpinned packages at startup. If a process displays
+`Package Updates Available` and `Package updates are available. Run pi update
+--extensions`, that process already loaded the stale extension. Refreshing the
+cache in another terminal does not update it; fully restart it.
+
 If you previously installed a local checkout (for example `/path/to/aweb/pi-extension`), remove it first:
 
 ```bash
@@ -45,7 +76,8 @@ Then open Pi:
 pi
 ```
 
-If Pi was already running, type `/reload` instead.
+After a first install, an already-running current Pi can load the package with
+`/reload`. After an upgrade, use the full process restart described above.
 
 ## What you get
 

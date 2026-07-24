@@ -111,7 +111,7 @@ Real-time push events arrive through an aweb channel integration. Use the channe
 
 Harness support differs:
 
-- **Pi**: install `@awebai/pi`; the aweb channel and these skills are bundled together.
+- **Pi**: install with `pi install npm:@awebai/pi@latest`; the aweb channel and these skills are bundled together. Existing installs on Pi 0.82+ update with `pi update npm:@awebai/pi`; pre-0.82 Pi falls back to `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm`. Fully restart Pi afterward. A global npm upgrade does not update Pi's `~/.pi/agent/npm` package tree.
 - **Claude Code**: install the `aweb-channel` plugin from the `awebai/claude-plugins` marketplace. See <https://github.com/awebai/aweb/blob/main/docs/channel.md>.
 - **Codex**: no always-on channel install in v1. Use regular coordination polling loops or `aw run codex` for a session-bound runner.
 
