@@ -82,6 +82,40 @@ func TestSaveLoadKeypairRoundtrip(t *testing.T) {
 	}
 }
 
+func TestSaveSigningKeyExclusiveNeverOverwritesExistingKey(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".aw", "signing.key")
+	_, first, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSigningKeyExclusive(path, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSigningKeyExclusive(path, second); err == nil {
+		t.Fatal("expected exclusive write to refuse existing key")
+	}
+	loaded, err := LoadSigningKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(loaded) {
+		t.Fatal("exclusive write replaced the original key")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode=%o", info.Mode().Perm())
+	}
+}
+
 func TestSaveKeypairAddressNormalization(t *testing.T) {
 	t.Parallel()
 

@@ -149,6 +149,124 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		t.Fatalf("reviewer missing/misconfigured in aweb team roster (connect-but-not-configured?); team=%+v\noutput:\n%s",
 			status.Team, statusOut.String())
 	}
+
+	// A forced local-key replacement must operate on the real home produced by
+	// team add. Local homes intentionally have no identity.yaml; losing
+	// signing.key must not make the recovery flow depend on a fixture-only file.
+	developerHome := filepath.Join(repo, "agents", "instances", "developer")
+	oldIdentityCmd := exec.Command(bin, "--json", "id", "show")
+	oldIdentityCmd.Dir = developerHome
+	oldIdentityCmd.Env = env
+	oldIdentityOut, err := oldIdentityCmd.Output()
+	if err != nil {
+		t.Fatalf("show developer identity before replacement: %v", err)
+	}
+	var oldIdentity struct {
+		DIDKey string `json:"did_key"`
+	}
+	if err := json.Unmarshal(oldIdentityOut, &oldIdentity); err != nil || oldIdentity.DIDKey == "" {
+		t.Fatalf("decode old developer identity: %v\n%s", err, oldIdentityOut)
+	}
+	if _, err := os.Stat(filepath.Join(developerHome, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("real local home unexpectedly has identity.yaml: %v", err)
+	}
+	oldEncryptionCmd := exec.Command(bin, "--json", "id", "encryption-key", "show")
+	oldEncryptionCmd.Dir = developerHome
+	oldEncryptionCmd.Env = env
+	oldEncryptionOut, err := oldEncryptionCmd.Output()
+	if err != nil {
+		t.Fatalf("show developer E2E key before replacement: %v", err)
+	}
+	var oldEncryption struct {
+		KeyID string `json:"key_id"`
+	}
+	if err := json.Unmarshal(oldEncryptionOut, &oldEncryption); err != nil || oldEncryption.KeyID == "" {
+		t.Fatalf("decode old developer E2E key: %v\n%s", err, oldEncryptionOut)
+	}
+	if err := os.Remove(filepath.Join(developerHome, ".aw", "signing.key")); err != nil {
+		t.Fatalf("simulate lost developer signing key: %v", err)
+	}
+
+	replaceCmd := exec.Command(bin, "--json", "team", "replace-key", "developer",
+		"--old-did-key", oldIdentity.DIDKey,
+		"--home", developerHome,
+		"--generate-new-key",
+		"--aweb-url", awebURL(),
+		"--registry", awidURL())
+	replaceCmd.Dir = repo
+	replaceCmd.Env = env
+	replaceOut, err := replaceCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("replace key in real materialized local home: %v\n%s", err, replaceOut)
+	}
+	var replaced struct {
+		NewDIDKey       string `json:"new_did_key"`
+		SigningKeyPath  string `json:"signing_key_path"`
+		CertificatePath string `json:"certificate_path"`
+		EncryptionKeyID string `json:"encryption_key_id"`
+	}
+	if err := json.Unmarshal(replaceOut, &replaced); err != nil {
+		t.Fatalf("decode replace-key output: %v\n%s", err, replaceOut)
+	}
+	if replaced.NewDIDKey == "" || replaced.NewDIDKey == oldIdentity.DIDKey || replaced.SigningKeyPath == "" || replaced.CertificatePath == "" || replaced.EncryptionKeyID == "" {
+		t.Fatalf("incomplete replace-key output: %+v", replaced)
+	}
+	if replaced.EncryptionKeyID != oldEncryption.KeyID {
+		t.Fatalf("replace-key rotated E2E key: got %s want preserved %s", replaced.EncryptionKeyID, oldEncryption.KeyID)
+	}
+
+	newIdentityCmd := exec.Command(bin, "--json", "id", "show")
+	newIdentityCmd.Dir = developerHome
+	newIdentityCmd.Env = env
+	newIdentityOut, err := newIdentityCmd.Output()
+	if err != nil {
+		t.Fatalf("show developer identity after replacement: %v", err)
+	}
+	var newIdentity struct {
+		DIDKey string `json:"did_key"`
+	}
+	if err := json.Unmarshal(newIdentityOut, &newIdentity); err != nil || newIdentity.DIDKey != replaced.NewDIDKey {
+		t.Fatalf("replacement signing identity mismatch: got=%+v err=%v\n%s", newIdentity, err, newIdentityOut)
+	}
+	newCertCmd := exec.Command(bin, "--json", "id", "cert", "show")
+	newCertCmd.Dir = developerHome
+	newCertCmd.Env = env
+	newCertOut, err := newCertCmd.Output()
+	if err != nil {
+		t.Fatalf("show replacement certificate: %v", err)
+	}
+	var newCertificate struct {
+		MemberDIDKey string `json:"member_did_key"`
+	}
+	if err := json.Unmarshal(newCertOut, &newCertificate); err != nil || newCertificate.MemberDIDKey != replaced.NewDIDKey {
+		t.Fatalf("replacement certificate mismatch: got=%+v err=%v\n%s", newCertificate, err, newCertOut)
+	}
+
+	doctorCmd := exec.Command(bin, "--json", "doctor")
+	doctorCmd.Dir = developerHome
+	doctorCmd.Env = env
+	doctorOut, err := doctorCmd.Output()
+	if err != nil {
+		t.Fatalf("doctor after replacement: %v", err)
+	}
+	var doctor struct {
+		Checks []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(doctorOut, &doctor); err != nil {
+		t.Fatalf("decode doctor output: %v\n%s", err, doctorOut)
+	}
+	assertionReady := false
+	for _, check := range doctor.Checks {
+		if check.ID == "identity.e2ee.assertion" && check.Status == "ok" {
+			assertionReady = true
+		}
+	}
+	if !assertionReady {
+		t.Fatalf("doctor did not confirm refreshed E2E assertion: %+v\n%s", doctor.Checks, doctorOut)
+	}
 }
 
 func gitInit(t *testing.T, dir string) {

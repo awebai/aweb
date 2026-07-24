@@ -1074,13 +1074,16 @@ Replace a local team-scoped agent's did:key under locally-held team-controller a
 
 This compare-and-swap operation updates the service roster, revokes the old
 team certificate, registers a new certificate, and records the controller-authorized
-transition. Hosted teams require the pending AC owner/admin integration or operator support.
+transition. When a real local home has lost signing.key, --generate-new-key creates
+and retains a replacement key without overwriting an existing one. Hosted teams require
+the pending AC owner/admin integration or operator support.
 
 Flags:
 - `--aweb-url string Aweb service URL override`
+- `--generate-new-key Generate a replacement signing key in --home when signing.key is absent (cannot be combined with --new-did-key)`
 - `-h, --help help for replace-key`
 - `--home string Agent home whose new signing identity is verified and where the replacement certificate is installed`
-- `--new-did-key string Replacement local member did:key (required)`
+- `--new-did-key string Replacement local member did:key (required unless --generate-new-key is used)`
 - `--old-cert-id string Old team certificate id (required without --home)`
 - `--old-did-key string Expected current local member did:key (required)`
 - `--registry string AWID registry URL override`

@@ -66,6 +66,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	oldReplaceNewDID := teamHumanReplaceKeyNewDID
 	oldReplaceOldCertID := teamHumanReplaceKeyOldCertID
 	oldReplaceHome := teamHumanReplaceKeyHome
+	oldReplaceGenerateNewKey := teamHumanReplaceKeyGenerateNewKey
 	oldReplaceAwebURL := teamHumanReplaceKeyAwebURL
 	oldReplaceRegistryURL := teamHumanReplaceKeyRegistryURL
 	teamHumanReplaceKeyTeamID = ""
@@ -73,6 +74,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanReplaceKeyNewDID = ""
 	teamHumanReplaceKeyOldCertID = ""
 	teamHumanReplaceKeyHome = ""
+	teamHumanReplaceKeyGenerateNewKey = false
 	teamHumanReplaceKeyAwebURL = ""
 	teamHumanReplaceKeyRegistryURL = ""
 	t.Cleanup(func() {
@@ -121,6 +123,7 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 		teamHumanReplaceKeyNewDID = oldReplaceNewDID
 		teamHumanReplaceKeyOldCertID = oldReplaceOldCertID
 		teamHumanReplaceKeyHome = oldReplaceHome
+		teamHumanReplaceKeyGenerateNewKey = oldReplaceGenerateNewKey
 		teamHumanReplaceKeyAwebURL = oldReplaceAwebURL
 		teamHumanReplaceKeyRegistryURL = oldReplaceRegistryURL
 	})

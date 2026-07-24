@@ -255,14 +255,18 @@ can authorize the explicit transition:
 ```bash
 aw team replace-key alice \
   --old-did-key did:key:OLD \
-  --new-did-key did:key:NEW \
-  --home agents/instances/alice
+  --home agents/instances/alice \
+  --generate-new-key
 ```
 
 The operation compare-and-swaps the service roster, records the controller DID
 and old→new transition in `audit_log`, revokes the old team certificate, mints
-and registers the replacement, and installs it in `--home`. It never accepts an
-old-member-key self-service handover. Without `--home`, the operator must pass
+and registers the replacement, installs it in `--home`, and refreshes the local
+E2E encryption-key assertion under the new signing identity. The generated key
+is written only when `.aw/signing.key` is absent; an existing key is never
+silently overwritten. For a compromised key, back it up and remove it
+deliberately before using `--generate-new-key`. It never accepts an old-member-key
+self-service handover. Without `--home`, the operator must pass
 `--old-cert-id`; the command outputs the new public certificate with placement
 instructions. Phase 1 supports locally held team-controller keys only. Hosted
 owner/admin replacement is a separate AC integration; until then it requires

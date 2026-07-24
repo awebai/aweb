@@ -663,7 +663,7 @@ func TestEncryptionKeySetupUsesActiveLocalCertificateIdentity(t *testing.T) {
 	}
 }
 
-func TestEncryptionKeyEnsureRefreshesGlobalAssertionForActiveLocalCertificate(t *testing.T) {
+func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := awid.GenerateKeypair()
@@ -736,15 +736,18 @@ func TestEncryptionKeyEnsureRefreshesGlobalAssertionForActiveLocalCertificate(t 
 	if active == nil {
 		t.Fatal("missing active encryption key")
 	}
-	if active.KeyID == oldRecord.KeyID {
-		t.Fatal("active local-certificate key was not refreshed")
+	if active.KeyID != oldRecord.KeyID {
+		t.Fatalf("identity rebind rotated active E2E key: got %s want %s", active.KeyID, oldRecord.KeyID)
 	}
 	assertion, err := loadEncryptionAssertion(tmp, active.AssertionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if assertion.IdentityStableID != nil {
-		t.Fatalf("refreshed local assertion identity_stable_id=%v, want nil", *assertion.IdentityStableID)
+		t.Fatalf("rebound local assertion identity_stable_id=%v, want nil", *assertion.IdentityStableID)
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, did, "", time.Now().UTC()); err != nil {
+		t.Fatalf("rebound assertion does not verify for local identity: %v", err)
 	}
 }
 

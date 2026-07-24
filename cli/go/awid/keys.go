@@ -41,6 +41,33 @@ func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 	return writePrivateKey(path, priv)
 }
 
+// SaveSigningKeyExclusive writes a private signing key only when path does not
+// already exist. It is used by recovery flows that must never overwrite
+// recoverable identity material.
+func SaveSigningKeyExclusive(path string, priv ed25519.PrivateKey) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create signing key directory: %w", err)
+	}
+	data := pem.EncodeToMemory(&pem.Block{
+		Type:  "ED25519 PRIVATE KEY",
+		Bytes: priv.Seed(),
+	})
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create private key %s without overwrite: %w", path, err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("write private key %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("close private key %s: %w", path, err)
+	}
+	return nil
+}
+
 // LoadSigningKey reads an Ed25519 private key from a PEM file.
 func LoadSigningKey(path string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)
