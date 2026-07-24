@@ -37,3 +37,7 @@ which builds from `server/` and publishes with `uv publish`.
 - Keep the git tag format as `server-vX.Y.Z`.
 - The workflow rejects tags that do not match `server/pyproject.toml`.
 - `server/uv.lock` should stay aligned with the package version metadata.
+- CI requires every `server/` change to carry a version bump
+  (`scripts/check-server-version-bump.sh`), so by release time
+  `server/pyproject.toml` usually already holds the next version and the
+  tag step tags it without a separate release commit.

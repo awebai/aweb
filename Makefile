@@ -143,6 +143,7 @@ awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
 
 release-server-check:
+	./scripts/check-server-version-bump.sh
 	rm -rf /tmp/uv-cache /tmp/pycache
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
 	rm -rf server/dist/
@@ -154,7 +155,7 @@ release-server-check:
 release-server-tag:
 	@git rev-parse --verify "server-v$(SERVER_VERSION)" >/dev/null 2>&1 && (echo "Tag server-v$(SERVER_VERSION) already exists."; exit 1) || true
 	git add server/pyproject.toml server/uv.lock Makefile .claude/skills/release-pypi/SKILL.md server/README.md
-	git commit -m "release: aweb server $(SERVER_VERSION)"
+	git diff --cached --quiet || git commit -m "release: aweb server $(SERVER_VERSION)"
 	git tag "server-v$(SERVER_VERSION)"
 	@echo "Created tag server-v$(SERVER_VERSION)."
 
