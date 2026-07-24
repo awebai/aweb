@@ -39,6 +39,27 @@ func (e *AlreadyRegisteredError) Error() string {
 	return fmt.Sprintf("did:aw %s is already registered to %s", e.DIDAW, e.ExistingDIDKey)
 }
 
+type DIDRotationOutcome string
+
+const (
+	DIDRotationDefinitelyNotApplied DIDRotationOutcome = "definitely_not_applied"
+	DIDRotationOutcomeUnknown       DIDRotationOutcome = "outcome_unknown"
+)
+
+type DIDRotationError struct {
+	Outcome DIDRotationOutcome
+	Cause   error
+}
+
+func (e *DIDRotationError) Error() string {
+	if e.Outcome == DIDRotationDefinitelyNotApplied {
+		return fmt.Sprintf("DID rotation definitely not applied: registry still reports the old did:key: %v", e.Cause)
+	}
+	return fmt.Sprintf("DID rotation outcome unknown: authoritative reconciliation failed: %v", e.Cause)
+}
+
+func (e *DIDRotationError) Unwrap() error { return e.Cause }
+
 type DIDMapping struct {
 	DIDAW         string    `json:"did_aw"`
 	CurrentDIDKey string    `json:"current_did_key"`
@@ -368,10 +389,58 @@ func (c *RegistryClient) RotateDIDKey(
 		Timestamp:     timestamp,
 		Signature:     signature,
 	}
-	if err := c.requestJSON(ctx, http.MethodPut, registryURL, "/v1/did/"+urlPathEscape(strings.TrimSpace(didAW)), nil, req, nil); err != nil {
-		return nil, err
+	path := "/v1/did/" + urlPathEscape(strings.TrimSpace(didAW))
+	for retried := false; ; {
+		submitErr := c.requestJSON(ctx, http.MethodPut, registryURL, path, nil, req, nil)
+		if submitErr == nil {
+			return &DIDMapping{DIDAW: didAW, CurrentDIDKey: newDID}, nil
+		}
+
+		resolution, resolveErr := c.ResolveKeyAt(ctx, registryURL, didAW)
+		if resolveErr != nil {
+			return nil, &DIDRotationError{
+				Outcome: DIDRotationOutcomeUnknown,
+				Cause:   fmt.Errorf("submit failed (%v); resolve current key: %w", submitErr, resolveErr),
+			}
+		}
+		if strings.TrimSpace(resolution.DIDAW) != strings.TrimSpace(didAW) {
+			return nil, &DIDRotationError{
+				Outcome: DIDRotationOutcomeUnknown,
+				Cause:   fmt.Errorf("registry returned a different did:aw during reconciliation"),
+			}
+		}
+
+		switch strings.TrimSpace(resolution.CurrentDIDKey) {
+		case newDID:
+			return &DIDMapping{DIDAW: didAW, CurrentDIDKey: newDID}, nil
+		case oldDID:
+			if !retried && isAmbiguousDIDRotationSubmitError(submitErr) {
+				retried = true
+				continue
+			}
+			return nil, &DIDRotationError{Outcome: DIDRotationDefinitelyNotApplied, Cause: submitErr}
+		default:
+			return nil, &DIDRotationError{
+				Outcome: DIDRotationOutcomeUnknown,
+				Cause:   fmt.Errorf("registry reports neither the old nor proposed replacement did:key after submit failed: %w", submitErr),
+			}
+		}
 	}
-	return c.GetDIDFull(ctx, registryURL, didAW, newSigningKey)
+}
+
+func isAmbiguousDIDRotationSubmitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var registryErr *RegistryError
+	if errors.As(err, &registryErr) {
+		return registryErr.StatusCode >= http.StatusInternalServerError
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, path string, headers map[string]string, body any, out any) error {
@@ -476,66 +545,21 @@ func isReplaySafeRegistryRequest(method, path string) bool {
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return true
 	}
-
-	// Keep writes explicit: every current route below is either an idempotent
-	// state set/upsert or is guarded by a deterministic identity, certificate,
-	// address, team, delegation, or publication conflict check in AWID. Unknown
-	// future writes must be audited before they inherit transport-level retries.
-	segments := registryPathSegments(path)
-	switch method {
-	case http.MethodPut:
-		return len(segments) == 3 && segments[0] == "v1" && segments[1] == "did"
-	case http.MethodPatch:
-		return len(segments) == 3 && segments[0] == "v1" && segments[1] == "namespaces"
-	case http.MethodDelete:
-		return isReplaySafeRegistryDeletePath(segments)
-	case http.MethodPost:
-		return isReplaySafeRegistryPostPath(segments)
-	default:
+	// A convergent state set or deterministic conflict is not enough. These two
+	// creates have route tests proving an exact replay receives the same success
+	// response; all other mutations require endpoint-specific reconciliation or
+	// a durable idempotency key before they can enter the generic retry loop.
+	if method != http.MethodPost {
 		return false
 	}
+	segments := registryPathSegments(path)
+	return (len(segments) == 2 && segments[0] == "v1" && segments[1] == "did") ||
+		(len(segments) == 4 && segments[0] == "v1" && segments[1] == "namespaces" && segments[3] == "addresses")
 }
 
 func registryPathSegments(path string) []string {
 	path, _, _ = strings.Cut(strings.TrimSpace(path), "?")
 	return strings.Split(strings.Trim(path, "/"), "/")
-}
-
-func isReplaySafeRegistryDeletePath(segments []string) bool {
-	if len(segments) == 3 {
-		return segments[0] == "v1" && segments[1] == "namespaces"
-	}
-	return len(segments) == 5 &&
-		segments[0] == "v1" &&
-		segments[1] == "namespaces" &&
-		(segments[3] == "addresses" || segments[3] == "teams")
-}
-
-func isReplaySafeRegistryPostPath(segments []string) bool {
-	if len(segments) == 2 {
-		return segments[0] == "v1" && (segments[1] == "did" || segments[1] == "namespaces")
-	}
-	if len(segments) == 3 {
-		return segments[0] == "v1" && segments[1] == "a2a" &&
-			(segments[2] == "delegations" || segments[2] == "publications")
-	}
-	if len(segments) == 4 {
-		return segments[0] == "v1" &&
-			((segments[1] == "did" && segments[3] == "encryption-key") ||
-				(segments[1] == "namespaces" &&
-					(segments[3] == "reverify" || segments[3] == "addresses" || segments[3] == "teams")))
-	}
-	if len(segments) == 5 {
-		return segments[0] == "v1" && segments[1] == "namespaces" &&
-			segments[3] == "addresses" && segments[4] == "claims"
-	}
-	if len(segments) == 6 {
-		return segments[0] == "v1" && segments[1] == "namespaces" && segments[3] == "teams" &&
-			(segments[5] == "visibility" || segments[5] == "certificates")
-	}
-	return len(segments) == 7 &&
-		segments[0] == "v1" && segments[1] == "namespaces" && segments[3] == "teams" &&
-		segments[5] == "certificates" && segments[6] == "revoke"
 }
 
 func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, body any) (*http.Request, error) {

@@ -2,7 +2,6 @@ package awid
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -194,50 +193,52 @@ func TestRegistryClientBoundsServiceUnavailableRetries(t *testing.T) {
 	}
 }
 
-func TestReplaySafeRegistryRequestsAreExplicit(t *testing.T) {
+func TestReplaySafeRegistryRequestsAreReadOnly(t *testing.T) {
 	t.Parallel()
 
-	for _, request := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/v1/did/did:aw:test/key"},
-		{http.MethodPost, "/v1/did"},
-		{http.MethodPost, "/v1/did/did:aw:test/encryption-key"},
-		{http.MethodPut, "/v1/did/did:aw:test"},
-		{http.MethodPost, "/v1/namespaces"},
-		{http.MethodPatch, "/v1/namespaces/acme.com"},
-		{http.MethodDelete, "/v1/namespaces/acme.com"},
-		{http.MethodPost, "/v1/namespaces/acme.com/reverify"},
-		{http.MethodPost, "/v1/namespaces/acme.com/addresses"},
-		{http.MethodPost, "/v1/namespaces/acme.com/addresses/claims"},
-		{http.MethodDelete, "/v1/namespaces/acme.com/addresses/alice"},
-		{http.MethodPost, "/v1/namespaces/acme.com/teams"},
-		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/visibility"},
-		{http.MethodDelete, "/v1/namespaces/acme.com/teams/backend"},
-		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/certificates"},
-		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/certificates/revoke"},
-		{http.MethodPost, "/v1/a2a/delegations"},
-		{http.MethodPost, "/v1/a2a/publications"},
-	} {
-		if !isReplaySafeRegistryRequest(request.method, request.path) {
-			t.Errorf("%s %s is not retryable", request.method, request.path)
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		if !isReplaySafeRegistryRequest(method, "/v1/did/did:aw:test/key") {
+			t.Errorf("%s read unexpectedly not retryable", method)
 		}
 	}
+}
 
+func TestRegistryMutationRetryAudit(t *testing.T) {
+	t.Parallel()
+
+	// Every mutation formerly allowlisted by the generic transport loop is
+	// classified here. Only routes with route-level proof of identical success
+	// responses for an exact replay stay admitted; all others need endpoint-
+	// specific reconciliation instead of blind resubmission.
 	for _, request := range []struct {
-		method string
-		path   string
+		method    string
+		path      string
+		semantics string
+		retry     bool
 	}{
-		{http.MethodPost, "/v1/future/non-idempotent-action"},
-		{http.MethodPut, "/v1/future/non-idempotent-action"},
-		{http.MethodPatch, "/v1/future/non-idempotent-action"},
-		{http.MethodDelete, "/v1/future/non-idempotent-action"},
-		{http.MethodConnect, "/v1/did"},
+		{http.MethodPost, "/v1/did", "exact-idempotent create", true},
+		{http.MethodPost, "/v1/did/did:aw:test/encryption-key", "signed state set", false},
+		{http.MethodPut, "/v1/did/did:aw:test", "sequence-checked compare-and-swap", false},
+		{http.MethodPost, "/v1/namespaces", "conflict-returning create", false},
+		{http.MethodPatch, "/v1/namespaces/acme.com", "authorized state set", false},
+		{http.MethodDelete, "/v1/namespaces/acme.com", "delete with non-identical replay response", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/reverify", "verification state transition", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/addresses", "exact-idempotent create", true},
+		{http.MethodPost, "/v1/namespaces/acme.com/addresses/claims", "conflict-returning claim", false},
+		{http.MethodDelete, "/v1/namespaces/acme.com/addresses/alice", "delete with non-identical replay response", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/teams", "conflict-returning create", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/visibility", "authorized state set", false},
+		{http.MethodDelete, "/v1/namespaces/acme.com/teams/backend", "delete with non-identical replay response", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/certificates", "conflict-returning create", false},
+		{http.MethodPost, "/v1/namespaces/acme.com/teams/backend/certificates/revoke", "revocation state transition", false},
+		{http.MethodPost, "/v1/a2a/delegations", "conflict-returning create", false},
+		{http.MethodPost, "/v1/a2a/publications", "conflict-returning create", false},
 	} {
-		if isReplaySafeRegistryRequest(request.method, request.path) {
-			t.Errorf("%s %s unexpectedly retryable", request.method, request.path)
-		}
+		t.Run(request.method+" "+request.path+" ("+request.semantics+")", func(t *testing.T) {
+			if got := isReplaySafeRegistryRequest(request.method, request.path); got != request.retry {
+				t.Errorf("%s %s (%s) retryable=%t, want %t", request.method, request.path, request.semantics, got, request.retry)
+			}
+		})
 	}
 }
 
@@ -275,7 +276,7 @@ func TestRegistryClientDoesNotRetryUnknownPost(t *testing.T) {
 	}
 }
 
-func TestRegistryClientRetriesRegisterIdentity(t *testing.T) {
+func TestRegistryClientRetriesExactIdempotentRegisterIdentity(t *testing.T) {
 	t.Parallel()
 
 	publicKey, signingKey, err := GenerateKeypair()
@@ -292,7 +293,7 @@ func TestRegistryClientRetriesRegisterIdentity(t *testing.T) {
 				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			_, _ = io.WriteString(w, `{"registered":true}`)
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+didAW+"/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          didAW,
@@ -307,7 +308,7 @@ func TestRegistryClientRetriesRegisterIdentity(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
-	if _, err := client.RegisterIdentity(context.Background(), server.URL, didKey, didAW, ed25519.PrivateKey(signingKey)); err != nil {
+	if _, err := client.RegisterIdentity(context.Background(), server.URL, didKey, didAW, signingKey); err != nil {
 		t.Fatalf("RegisterIdentity: %v", err)
 	}
 	if posts.Load() != 2 {
@@ -315,7 +316,7 @@ func TestRegistryClientRetriesRegisterIdentity(t *testing.T) {
 	}
 }
 
-func TestRegistryClientRetriesRegisterCertificate(t *testing.T) {
+func TestRegistryClientDoesNotGenericallyRetryRegisterCertificate(t *testing.T) {
 	t.Parallel()
 
 	_, teamKey, err := GenerateKeypair()
@@ -350,10 +351,12 @@ func TestRegistryClientRetriesRegisterCertificate(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
-	if err := client.RegisterCertificate(context.Background(), server.URL, "acme.com", "backend", certificate, teamKey); err != nil {
-		t.Fatalf("RegisterCertificate: %v", err)
+	err = client.RegisterCertificate(context.Background(), server.URL, "acme.com", "backend", certificate, teamKey)
+	var registryErr *RegistryError
+	if !errors.As(err, &registryErr) || registryErr.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("RegisterCertificate error=%v, want 503 RegistryError", err)
 	}
-	if posts.Load() != 2 {
-		t.Fatalf("certificate posts=%d, want 2", posts.Load())
+	if posts.Load() != 1 {
+		t.Fatalf("certificate posts=%d, want 1", posts.Load())
 	}
 }
