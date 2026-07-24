@@ -6,12 +6,31 @@ on:
     paths:
       - ".github/workflows/server-ci.yml"
       - "server/**"
+      - "scripts/check-server-version-bump.sh"
+      - "scripts/check-server-version-bump-test.sh"
   pull_request:
     paths:
       - ".github/workflows/server-ci.yml"
       - "server/**"
+      - "scripts/check-server-version-bump.sh"
+      - "scripts/check-server-version-bump-test.sh"
 
 jobs:
+  version-bump-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The guard diffs against the last server-v* tag, so it needs
+          # full history and tags.
+          fetch-depth: 0
+
+      - name: Guard scenario self-test
+        run: ./scripts/check-server-version-bump-test.sh
+
+      - name: Require version bump for server changes
+        run: ./scripts/check-server-version-bump.sh
+
   server:
     runs-on: ubuntu-latest
     services:

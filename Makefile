@@ -143,6 +143,7 @@ awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
 
 release-server-check:
+	./scripts/check-server-version-bump.sh
 	rm -rf /tmp/uv-cache /tmp/pycache
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
 	rm -rf server/dist/
