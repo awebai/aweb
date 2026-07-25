@@ -49,6 +49,12 @@ export interface StableIdentityVerification {
   outcome: StableIdentityOutcome;
   currentDidKey?: string;
   error?: string;
+  /**
+   * The log head this verification established, carried out so the caller can
+   * persist it as an anti-rollback checkpoint alongside the pin
+   * (default-aajc.8). Set only when outcome is OK_VERIFIED.
+   */
+  verifiedHead?: VerifiedLogHead;
 }
 
 export interface ResolvedRegistryIdentity {
@@ -64,7 +70,7 @@ function pathSafeSegment(value: string): string {
   return encodeURIComponent(value).replace(/%3A/gi, ":");
 }
 
-interface VerifiedLogHead {
+export interface VerifiedLogHead {
   seq: number;
   entryHash: string;
   stateHash: string;
@@ -178,7 +184,23 @@ export class RegistryResolver {
       outcome: verification.outcome,
       currentDidKey: resolution.current_did_key,
       error: verification.error,
+      verifiedHead: verification.nextHead,
     };
+  }
+
+  /**
+   * Install a previously verified log head as the anti-rollback anchor for
+   * stableID. Callers restore it from the checkpoint persisted with the pin so a
+   * restart does not forget which sequence was already verified — without it a
+   * registry can serve a valid truncated prefix and roll a rotated identity back
+   * to a retired key (default-aajc.8). Seeding never moves the anchor backwards.
+   */
+  seedVerifiedHead(stableID: string, head: VerifiedLogHead): void {
+    const id = stableID.trim();
+    if (!id || !head || head.seq < 1 || !isLowerHex(head.entryHash.trim())) return;
+    const existing = this.headCache.get(id);
+    if (existing && existing.seq >= head.seq) return;
+    this.headCache.set(id, head);
   }
 
   private async verifyStableIdentityViaFullLog(
@@ -202,8 +224,26 @@ export class RegistryResolver {
     if (head.currentDidKey.trim() !== currentDidKey.trim()) {
       return { outcome: "HARD_ERROR", currentDidKey, error: "audit log current did:key mismatch" };
     }
+    // A log that verifies from genesis is still not acceptable if it contradicts
+    // what we already verified: it must CONTAIN our checkpoint entry and extend
+    // it. Otherwise a registry can serve a valid truncated prefix (rollback to a
+    // retired key) or a valid fork that never included our entry
+    // (default-aajc.8).
+    const checkpoint = this.headCache.get(stableID);
+    if (checkpoint) {
+      if (head.seq < checkpoint.seq) {
+        return { outcome: "HARD_ERROR", currentDidKey, error: "audit log behind verified checkpoint" };
+      }
+      if (!didLogContainsEntry(entries, checkpoint.seq, checkpoint.entryHash)) {
+        return {
+          outcome: "HARD_ERROR",
+          currentDidKey,
+          error: "audit log does not extend verified checkpoint",
+        };
+      }
+    }
     this.headCache.set(stableID, head);
-    return { outcome: "OK_VERIFIED", currentDidKey };
+    return { outcome: "OK_VERIFIED", currentDidKey, verifiedHead: head };
   }
 
   private async fetchDidLog(registryURL: string, stableID: string): Promise<DidKeyEvidence[]> {
@@ -781,4 +821,21 @@ function escapeJSON(s: string): string {
     }
   }
   return result;
+}
+
+/**
+ * Whether the served log carries the exact entry we previously verified at seq,
+ * identifying a truncated prefix or a forked log that dropped it.
+ */
+function didLogContainsEntry(
+  entries: DidKeyEvidence[],
+  seq: number,
+  entryHash: string,
+): boolean {
+  const want = entryHash.trim();
+  if (!want) return false;
+  for (const entry of entries) {
+    if (entry.seq === seq) return String(entry.entry_hash ?? "").trim() === want;
+  }
+  return false;
 }

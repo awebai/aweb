@@ -196,6 +196,7 @@ describe("trust conformance vectors", () => {
       ) as SenderTrustManager & {
         // Access private method directly for isolated Pass C testing; production instance is real.
         checkStableIdentityRegistry(
+          store: PinStore,
           status: VerificationStatus | undefined,
           trustAddress: string,
           fromDID: string | undefined,
@@ -204,6 +205,7 @@ describe("trust conformance vectors", () => {
       };
 
       const result = await trust.checkStableIdentityRegistry(
+        new PinStore(),
         vector.initial_status,
         vector.trust_address,
         vector.from_did,
