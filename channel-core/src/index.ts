@@ -14,6 +14,7 @@ export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./i
 export {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
+  PinStoreCASConflictError,
   type LocalAWDecryptOptions,
   type LocalAWPinStoreOptions,
   type LocalDecryptProvider,

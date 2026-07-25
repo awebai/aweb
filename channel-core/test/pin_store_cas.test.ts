@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { beforeAll, describe, expect, test } from "vitest";
 
-import { createLocalAWPinStoreWriter, PinStore } from "../src/index.js";
+import {
+  createLocalAWPinStoreWriter,
+  PinStore,
+  PinStoreCASConflictError,
+} from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +46,7 @@ describe("pin store compare-and-set delegation", () => {
       expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
       const rejected = results.filter((result) => result.status === "rejected");
       expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.reason).toBeInstanceOf(PinStoreCASConflictError);
       expect(String(rejected[0]?.reason)).toMatch(/changed since it was read/);
 
       const persisted = PinStore.fromYAML(await readFile(path, "utf-8"));

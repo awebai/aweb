@@ -52,6 +52,7 @@ export class PinStore {
   // to prevent callers from replacing the object and silently losing that state.
   private readonly unknownPinFields: WeakMap<Pin, UnknownFields> = new WeakMap();
   private persistedYAML: string;
+  private operationTail: Promise<void> = Promise.resolve();
   private commitTail: Promise<void> = Promise.resolve();
   private pendingCommits = 0;
   private undurable = false;
@@ -201,6 +202,15 @@ export class PinStore {
     return true;
   }
 
+  // Keep a trust decision and its commit in one per-process critical section.
+  // A CAS conflict can then replace stale in-memory state without racing another
+  // decision that was computed from that state.
+  async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const attempt = this.operationTail.then(operation);
+    this.operationTail = attempt.then(() => {}, () => {});
+    return attempt;
+  }
+
   /**
    * Submit this process's desired snapshot with the exact semantic baseline it
    * read. aw reloads and checks that precondition while holding the shared file
@@ -228,6 +238,25 @@ export class PinStore {
 
   hasUndurableChanges(): boolean {
     return this.undurable || this.pendingCommits > 0;
+  }
+
+  // Adopt a native reread after aw refused a stale CAS. The refused desired
+  // snapshot was never written and must not influence the next trust decision.
+  replaceWithDurableState(source: PinStore): void {
+    if (this.pendingCommits !== 0) {
+      throw new Error("cannot replace pin store while a commit is pending");
+    }
+    this.mutablePins.clear();
+    for (const [key, pin] of source.mutablePins) {
+      this.mutablePins.set(key, pin);
+      const unknown = source.unknownPinFields.get(pin);
+      if (unknown) this.unknownPinFields.set(pin, new Map(unknown));
+    }
+    this.addresses.clear();
+    for (const [address, pinKey] of source.addresses) this.addresses.set(address, pinKey);
+    this.unknownRootFields = new Map(source.unknownRootFields);
+    this.persistedYAML = source.persistedYAML;
+    this.undurable = false;
   }
 
   /** Serialize to YAML (compatible with Go's known_agents.yaml). */

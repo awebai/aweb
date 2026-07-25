@@ -22,6 +22,13 @@ export interface LocalAWPinStoreOptions {
   awCommand?: string;
 }
 
+export class PinStoreCASConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PinStoreCASConflictError";
+  }
+}
+
 export function createLocalAWPinStoreWriter(options: LocalAWPinStoreOptions = {}): PinStoreWriter {
   const awCommand = options.awCommand || process.env.AW_BIN || "aw";
   return {
@@ -92,6 +99,10 @@ function execFileWithInput(command: string, args: string[], input: string, cwd: 
         return;
       }
       const detail = stderr.trim() || stdout.trim() || `exit ${code ?? signal ?? "unknown"}`;
+      if (detail.includes("trust pin store changed since it was read; refusing stale mutation")) {
+        finish(new PinStoreCASConflictError(`aw refused pin-store mutation: ${detail}`));
+        return;
+      }
       finish(new Error(`aw refused pin-store mutation: ${detail}`));
     });
     child.stdin.on("error", (error) => finish(new Error(`cannot send pin-store mutation to aw: ${error.message}`)));

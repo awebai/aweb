@@ -14,6 +14,7 @@ import type { VerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
+  PinStoreCASConflictError,
   type LocalDecryptProvider,
 } from "./local_aw.js";
 
@@ -494,11 +495,15 @@ async function dispatchMailEvent(
       });
       continue;
     }
-    const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
+    const trust = await normalizeAndPersistMessageTrust(
+      options,
+      msg,
+      msg.from_alias,
+      msg.from_address,
+      msg.to_did,
+      msg.to_stable_id,
+    );
     msg.verification_status = trust.status as InboxMessage["verification_status"];
-    if (trust.stored || options.pinStore.hasUndurableChanges()) {
-      await commitPinStore(options);
-    }
 
     const meta: Record<string, string> = {
       type: "mail",
@@ -552,11 +557,15 @@ async function dispatchChatEvent(
       });
       continue;
     }
-    const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
+    const trust = await normalizeAndPersistMessageTrust(
+      options,
+      msg,
+      msg.from_agent,
+      msg.from_address,
+      msg.to_did,
+      msg.to_stable_id,
+    );
     msg.verification_status = trust.status as ChatMessage["verification_status"];
-    if (trust.stored || options.pinStore.hasUndurableChanges()) {
-      await commitPinStore(options);
-    }
 
     const meta: Record<string, string> = {
       type: "chat",
@@ -589,7 +598,39 @@ async function commitPinStore(
     workdir: options.workdir,
     awCommand: options.awCommand,
   });
-  await options.pinStore.commit(writer, options.pinStorePath || DEFAULT_PIN_STORE_PATH);
+  const path = options.pinStorePath || DEFAULT_PIN_STORE_PATH;
+  try {
+    await options.pinStore.commit(writer, path);
+  } catch (error) {
+    if (error instanceof PinStoreCASConflictError) {
+      options.pinStore.replaceWithDurableState(await loadPinStore(path));
+    }
+    throw error;
+  }
+}
+
+async function normalizeAndPersistMessageTrust(
+  options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
+  fromAlias: string | undefined,
+  fromAddress: string | undefined,
+  toDID: string | undefined,
+  toStableID: string | undefined,
+) {
+  return options.pinStore.runExclusive(async () => {
+    const trust = await normalizeMessageTrust(
+      options,
+      msg,
+      fromAlias,
+      fromAddress,
+      toDID,
+      toStableID,
+    );
+    if (trust.stored || options.pinStore.hasUndurableChanges()) {
+      await commitPinStore(options);
+    }
+    return trust;
+  });
 }
 
 async function persistDeliveryMark(
