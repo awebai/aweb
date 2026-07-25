@@ -2254,6 +2254,140 @@ async def test_signed_continuation_requires_matching_conversation_id(aweb_cloud_
     assert "conversation_id" in resp.json()["detail"]
 
 
+async def _signed_local_mail_app(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:timestamp.example")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:timestamp.example",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice-timestamp",
+        address="timestamp.example/alice",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:timestamp.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob-timestamp",
+        address="timestamp.example/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice-timestamp",
+            address="timestamp.example/alice",
+            team_id="backend:timestamp.example",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    return app, alice_sk, alice_did_key
+
+
+def _signed_local_mail_payload(alice_sk, alice_did_key, *, timestamp, subject, include_signed_payload=True):
+    message_id = str(uuid4())
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "timestamp body",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": subject,
+            "timestamp": timestamp,
+            "to": "did:aw:bob-timestamp",
+            "to_did": "did:aw:bob-timestamp",
+            "type": "mail",
+        }
+    )
+    payload = {
+        "to_did": "did:aw:bob-timestamp",
+        "subject": subject,
+        "body": "timestamp body",
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+    }
+    if include_signed_payload:
+        payload["signed_payload"] = signed_payload.decode()
+    return message_id, payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset_seconds", [-360, 360])
+async def test_signed_plaintext_mail_rejects_timestamp_outside_federation_window(
+    aweb_cloud_db, offset_seconds
+):
+    app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
+    timestamp = (
+        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds)
+    ).isoformat().replace("+00:00", "Z")
+    _, payload = _signed_local_mail_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+        subject=f"mail skew {offset_seconds}",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "timestamp outside accepted skew"
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_mail_stores_server_time_and_preserves_attestation(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
+    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=4)
+    message_id, payload = _signed_local_mail_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=attested_at.isoformat().replace("+00:00", "Z"),
+        subject="mail separate timestamps",
+    )
+
+    before = datetime.now(timezone.utc)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", json=payload)
+    after = datetime.now(timezone.utc)
+
+    assert response.status_code == 200, response.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT created_at, signed_payload FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert before <= row["created_at"] <= after
+    assert row["created_at"] != attested_at
+    assert json.loads(row["signed_payload"])["timestamp"] == payload["timestamp"]
+    assert datetime.fromisoformat(response.json()["delivered_at"]) == row["created_at"].replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_mail_requires_signed_payload(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    _, payload = _signed_local_mail_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+        subject="mail missing attestation",
+        include_signed_payload=False,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "signed_payload is required when signature is provided"
+
+
 @pytest.mark.asyncio
 async def test_signed_legacy_first_mail_status_is_visible_and_allows_continuation(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
@@ -5544,7 +5678,7 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     message_id = str(uuid4())
-    timestamp = "2026-04-17T12:00:00Z"
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = json.dumps(
         {
             "type": "mail",

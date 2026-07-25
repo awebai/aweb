@@ -31,7 +31,12 @@ from aweb.e2ee_messages import (
     encrypted_message_storage_metadata,
     validate_e2ee_message_envelope,
 )
-from aweb.federation.envelope import FederationEnvelope, FederationEnvelopeError, verify_federation_envelope
+from aweb.federation.envelope import (
+    FederationEnvelope,
+    FederationEnvelopeError,
+    enforce_message_timestamp_skew,
+    verify_federation_envelope,
+)
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
@@ -109,6 +114,10 @@ def _parse_signed_timestamp(value: str) -> datetime:
     dt = _parse_timestamp(value, "timestamp")
     if dt.microsecond != 0:
         raise HTTPException(status_code=422, detail="timestamp must be second precision")
+    try:
+        enforce_message_timestamp_skew(dt)
+    except FederationEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return dt
 
 
@@ -131,7 +140,7 @@ def _validate_signed_chat_payload(
     hang_on: bool = False,
 ) -> None:
     if signed_payload is None:
-        return
+        raise HTTPException(status_code=422, detail="signed_payload is required when signature is provided")
     try:
         payload = json.loads(signed_payload)
     except Exception:
@@ -1259,7 +1268,10 @@ async def create_or_send(
                 conversation_id=str(requested_session_id),
                 sender_leaving=payload.leaving,
             )
-        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        # payload.timestamp is sender attestation retained in signed_payload or
+        # encrypted_envelope; send_in_session assigns independent server receipt
+        # time for ordering, so the two values may disagree.
+        _parse_signed_timestamp(str(payload.timestamp))
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
         route = await _resolve_remote_chat_route(
             db,
@@ -1305,7 +1317,6 @@ async def create_or_send(
             message_version=payload.message_version,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=msg_created_at,
             message_id=pre_message_id,
         )
         if msg_row is None:
@@ -1368,7 +1379,6 @@ async def create_or_send(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     aweb_db = db.get_manager("aweb")
-    msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
     encrypted_metadata = _validate_encrypted_chat_payload(
@@ -1380,7 +1390,10 @@ async def create_or_send(
     )
 
     if encrypted_metadata is not None:
-        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        # payload.timestamp is sender attestation retained in encrypted_envelope;
+        # send_in_session assigns independent server receipt time for ordering,
+        # so the two values may disagree.
+        _parse_signed_timestamp(str(payload.timestamp))
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
     elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -1409,7 +1422,10 @@ async def create_or_send(
             conversation_id=validation_conversation_id,
             sender_leaving=payload.leaving,
         )
-        msg_created_at = _parse_signed_timestamp(payload.timestamp)
+        # payload.timestamp is sender attestation retained in signed_payload;
+        # send_in_session assigns independent server receipt time for ordering,
+        # so the two values may disagree.
+        _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
     if payload.reply_to is not None:
@@ -1440,7 +1456,6 @@ async def create_or_send(
             message_version=payload.message_version,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=msg_created_at,
             message_id=pre_message_id,
         )
     except Exception as exc:
@@ -2286,7 +2301,6 @@ async def send_message(
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     encrypted_metadata = _validate_encrypted_chat_payload(
         payload,
@@ -2296,7 +2310,10 @@ async def send_message(
         recipient_rows=recipient_rows,
     )
     if encrypted_metadata is not None:
-        msg_created_at = _parse_signed_timestamp(str(payload.timestamp))
+        # payload.timestamp is sender attestation retained in encrypted_envelope;
+        # send_in_session assigns independent server receipt time for ordering,
+        # so the two values may disagree.
+        _parse_signed_timestamp(str(payload.timestamp))
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
     elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -2324,7 +2341,10 @@ async def send_message(
             sender_leaving=payload.leaving,
             hang_on=payload.hang_on,
         )
-        msg_created_at = _parse_signed_timestamp(payload.timestamp)
+        # payload.timestamp is sender attestation retained in signed_payload;
+        # send_in_session assigns independent server receipt time for ordering,
+        # so the two values may disagree.
+        _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
     remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
@@ -2391,7 +2411,6 @@ async def send_message(
                 message_version=payload.message_version,
                 encrypted_envelope=payload.encrypted_envelope,
                 encrypted_metadata=encrypted_metadata,
-                created_at=msg_created_at,
                 message_id=pre_message_id,
             )
         except Exception as exc:
@@ -2448,7 +2467,6 @@ async def send_message(
             message_version=payload.message_version,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=msg_created_at,
             message_id=pre_message_id,
         )
     except Exception as exc:

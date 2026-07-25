@@ -181,7 +181,9 @@ async def send_mail(
 
     if conversation_ref:
         message_id = uuid_mod.uuid4()
-        created_at = datetime.now(timezone.utc).replace(microsecond=0)
+        # sender_attested_at is signed sender intent; deliver_message returns
+        # independent server receipt time for ordering, so they may disagree.
+        sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         sender_did = primary_auth_did(auth)
         signature: str | None = None
         signed_payload: str | None = None
@@ -222,7 +224,7 @@ async def send_mail(
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(message_id),
             "subject": subject,
-            "timestamp": _utc_iso(created_at),
+            "timestamp": _utc_iso(sender_attested_at),
             "to": signed_to,
             "to_did": signed_to_did,
             "type": "mail",
@@ -280,7 +282,7 @@ async def send_mail(
                     encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
                     priority=cast(MessagePriority, priority),
                     message_id=str(message_id),
-                    timestamp=_utc_iso(created_at),
+                    timestamp=_utc_iso(sender_attested_at),
                     from_did=sender_did,
                     signature=None if encrypted is not None else signature,
                     signed_payload=None if encrypted is not None else signed_payload,
@@ -300,7 +302,6 @@ async def send_mail(
                     recipient_did=recipient_did,
                     to_agent_id=None,
                     to_alias=recipient_participant.get("alias"),
-                    created_at=created_at,
                     msg_uuid=message_id,
                 )
                 return json.dumps(
@@ -312,7 +313,7 @@ async def send_mail(
                         "to": recipient_participant.get("alias") or recipient_did,
                     }
                 )
-            message_id, created_at = await deliver_message(
+            message_id, server_received_at = await deliver_message(
                 db_infra,
                 registry_client=registry_client,
                 recipient_agent=recipient,
@@ -333,7 +334,6 @@ async def send_mail(
                 message_version=encrypted.message_version if encrypted is not None else 1,
                 encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
                 encrypted_metadata=encrypted_metadata,
-                created_at=created_at,
                 message_id=message_id,
                 conversation_id=conversation_ref,
                 skip_policy_check=True,
@@ -348,7 +348,7 @@ async def send_mail(
                 "message_id": str(message_id),
                 "conversation_id": conversation_ref,
                 "status": "delivered",
-                "delivered_at": _utc_iso(created_at),
+                "delivered_at": _utc_iso(server_received_at),
                 "to": recipient_participant.get("alias") or recipient_did,
             }
         )
@@ -412,7 +412,9 @@ async def send_mail(
 
     message_id = uuid_mod.uuid4()
     initial_conversation_id = uuid_mod.uuid4()
-    created_at = datetime.now(timezone.utc).replace(microsecond=0)
+    # sender_attested_at is signed sender intent; deliver_message returns
+    # independent server receipt time for ordering, so they may disagree.
+    sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
     sender_did = primary_auth_did(auth)
     signature: str | None = None
     signed_payload: str | None = None
@@ -431,7 +433,7 @@ async def send_mail(
         "from_did": (auth.did_key or "").strip(),
         "message_id": str(message_id),
         "subject": subject,
-        "timestamp": _utc_iso(created_at),
+        "timestamp": _utc_iso(sender_attested_at),
         "to": signed_to,
         "to_did": to_current_did,
         "type": "mail",
@@ -495,7 +497,7 @@ async def send_mail(
                 encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
                 priority=cast(MessagePriority, priority),
                 message_id=str(message_id),
-                timestamp=_utc_iso(created_at),
+                timestamp=_utc_iso(sender_attested_at),
                 from_did=sender_did,
                 signature=None if encrypted is not None else signature,
                 signed_payload=None if encrypted is not None else signed_payload,
@@ -515,7 +517,6 @@ async def send_mail(
                 recipient_did=recipient_did,
                 to_agent_id=None,
                 to_alias=recipient_alias,
-                created_at=created_at,
                 msg_uuid=message_id,
             )
             return json.dumps(
@@ -550,7 +551,7 @@ async def send_mail(
             ],
             team_id=auth.team_id,
         )
-        message_id, created_at = await deliver_message(
+        message_id, server_received_at = await deliver_message(
             db_infra,
             registry_client=registry_client,
             recipient_agent=recipient,
@@ -571,7 +572,6 @@ async def send_mail(
             message_version=encrypted.message_version if encrypted is not None else 1,
             encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
             encrypted_metadata=encrypted_metadata,
-            created_at=created_at,
             message_id=message_id,
             conversation_id=conversation["conversation_id"],
             skip_policy_check=True,
@@ -585,7 +585,7 @@ async def send_mail(
             "message_id": str(message_id),
             "conversation_id": conversation["conversation_id"],
             "status": "delivered",
-            "delivered_at": _utc_iso(created_at),
+            "delivered_at": _utc_iso(server_received_at),
             "to": recipient_alias,
         }
     )

@@ -8,7 +8,11 @@ from pydantic import ValidationError
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.federation.envelope import FederationEnvelopeError, verify_federation_envelope
+from aweb.federation.envelope import (
+    FederationEnvelopeError,
+    enforce_message_timestamp_skew,
+    verify_federation_envelope,
+)
 
 
 def _timestamp(offset_seconds: int = 0) -> str:
@@ -352,6 +356,17 @@ def test_verify_federation_envelope_rejects_invalid_signature():
 
     with pytest.raises(FederationEnvelopeError, match="Invalid federation message signature"):
         verify_federation_envelope(envelope, signature)
+
+
+def test_message_timestamp_skew_window_is_exactly_300_seconds():
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+
+    enforce_message_timestamp_skew(now - timedelta(seconds=300), now=now)
+    enforce_message_timestamp_skew(now + timedelta(seconds=300), now=now)
+    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+        enforce_message_timestamp_skew(now - timedelta(seconds=301), now=now)
+    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+        enforce_message_timestamp_skew(now + timedelta(seconds=301), now=now)
 
 
 def test_verify_federation_envelope_rejects_stale_timestamp():
