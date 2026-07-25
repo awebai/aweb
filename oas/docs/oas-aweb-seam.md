@@ -181,7 +181,7 @@ Do not compensate for any of this by pinning the rotatable `did:key`.
 
 ## Identity binding
 
-Declared per run, never inferred:
+Declared explicitly, never inferred:
 
 - **`attach`** — expected stable id, credential reference; `cleanup_owner = external`
 - **`provision`** — authority reference, requested alias; `cleanup_owner = instance`
@@ -189,6 +189,52 @@ Declared per run, never inferred:
 
 Inferring cleanup ownership from the presence of a `.aw` directory is rejected.
 That inference is the bug class that destroys durable identities.
+
+The attach-only walking skeleton is implemented by the
+`aweb.identity-attach` messaging capability under
+`oas/capabilities/aweb-identity-attach`. Its ID is deliberately distinct from
+upstream OAS's destructive per-instance `oas.aweb` lifecycle. The messaging
+layer must select this capability explicitly, so capability discovery order
+cannot substitute one retire policy for the other:
+
+```yaml
+capabilities:
+  layers:
+    messaging:
+      capability: aweb.identity-attach
+      global:
+        enabled: true
+        settings:
+          identity_binding:
+            schema_version: 1
+            mode: attach
+            principal: <declaration-basename>
+```
+
+At the production `spawn` hook, it validates the selected declaration, resolves
+and rechecks the host store, and confirms that the credentials selected by
+`aw --identity-home <credentials> whoami --json` agree with the declaration's
+address and stable ID. This is **not registry verification**: attach does not
+resolve the registry record, walk the DID log, call `aw id verify`, or verify
+rotation history. Independent proof observations may do those things, but must
+not attribute them to this hook.
+
+OAS persists the resulting non-secret reference at
+`instance.json.capabilityMeta["aweb.identity-attach"].identity_binding`,
+including `cleanup_owner: external`. It does not create an instance `.aw`
+directory or a second binding file.
+
+At the production `retire` hook, only a persisted v1 attach binding with
+external cleanup ownership produces an explicit `preserve_principal` receipt.
+The hook invokes no `aw` or principal filesystem cleanup operation. Missing or
+malformed metadata grants no cleanup authority. Modes other than `attach` are
+rejected in this slice rather than falling through to the pre-existing
+per-instance mint behavior.
+
+The v1 input is config-scoped `OAS_SETTINGS`, so it attaches every instance of
+the targeted soul to the same principal; it is not a per-instance override.
+Concurrent use remains unfenced until the admission lease lands. That limitation
+is accepted for this walking skeleton and is not solved by attach cleanup.
 
 Provisioning uses a write-ahead lifecycle journal: journal **intent** keyed by a
 stable idempotency key, record the created resource id atomically, mark
@@ -343,8 +389,9 @@ unexpired.
 
 ## Open
 
-- Whether the attach-time resolution path cryptographically verifies the audit
-  log, or trusts the registry response.
+- Whether attach should add registry resolution and cryptographic DID-log
+  verification. The v1 path does neither; it establishes only local
+  credential–declaration agreement.
 - Whether upstream deprecates its own aweb capability in favour of ours, or
   transfers maintainership. Two permanent implementations is not an acceptable
   steady state. Authority over vendor-depth correctness and security releases

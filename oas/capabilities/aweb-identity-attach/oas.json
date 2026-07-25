@@ -1,0 +1,20 @@
+{
+  "capability": "aweb.identity-attach",
+  "version": "0.1.0",
+  "compatibility": {
+    "oas": ">=0.18.0"
+  },
+  "layer": "messaging",
+  "description": "Attach an OAS instance to an externally owned aweb principal.",
+  "requires": [
+    {
+      "command": "aw",
+      "why": "confirm that external credentials agree with the selected declaration",
+      "install": "https://aweb.ai/docs"
+    }
+  ],
+  "hooks": {
+    "spawn": "bin/aweb-identity-attach.mjs spawn",
+    "retire": "bin/aweb-identity-attach.mjs retire"
+  }
+}
