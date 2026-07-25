@@ -19,6 +19,7 @@ from aweb.e2ee_messages import (
 from aweb.federation.envelope import (
     FederationEnvelope,
     FederationEnvelopeError,
+    enforce_message_timestamp_skew,
     verify_federation_envelope,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
@@ -380,6 +381,10 @@ def _parse_signed_timestamp(value: str) -> datetime:
     dt = dt.astimezone(timezone.utc)
     if dt.microsecond != 0:
         raise HTTPException(status_code=422, detail="timestamp must be second precision")
+    try:
+        enforce_message_timestamp_skew(dt)
+    except FederationEnvelopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return dt
 
 
@@ -402,7 +407,7 @@ def _validate_signed_mail_payload(
     conversation_id: str | None = None,
 ) -> None:
     if signed_payload is None:
-        return
+        raise HTTPException(status_code=422, detail="signed_payload is required when signature is provided")
     try:
         payload = json.loads(signed_payload)
     except Exception:
@@ -713,7 +718,6 @@ async def _deliver_remote_mail_and_project_locally(
     recipient_did: str,
     to_agent_id: str | None,
     to_alias: str | None,
-    created_at: datetime | None,
     msg_uuid: UUID | None,
 ) -> SendMessageResponse:
     delivery_origin = _remote_delivery_origin(recipient)
@@ -890,7 +894,6 @@ async def _deliver_remote_mail_and_project_locally(
             message_version=payload.message_version or 1,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation["conversation_id"],
             skip_policy_check=True,
@@ -988,7 +991,6 @@ async def _send_mail_conversation_continuation(
     conversation_id: str,
 ) -> SendMessageResponse:
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
-    created_at = None
 
     try:
         continuation = await mail_continuation_context(
@@ -1038,7 +1040,10 @@ async def _send_mail_conversation_continuation(
                 timestamp=payload.timestamp,
                 conversation_id=conversation_id,
             )
-            created_at = _parse_signed_timestamp(payload.timestamp)
+            # payload.timestamp is the sender's attestation retained in
+            # signed_payload; deliver_message separately assigns server receipt
+            # time for ordering, so the two values may disagree.
+            _parse_signed_timestamp(payload.timestamp)
         encrypted_metadata = _validate_encrypted_payload(
             payload,
             auth=auth,
@@ -1046,7 +1051,7 @@ async def _send_mail_conversation_continuation(
             recipient=recipient,
             recipient_did=recipient_participant["did"],
         )
-        message_id, created_at = await deliver_message(
+        message_id, server_received_at = await deliver_message(
             db,
             registry_client=registry_client,
             recipient_agent=recipient,
@@ -1067,7 +1072,6 @@ async def _send_mail_conversation_continuation(
             message_version=payload.message_version or 1,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation_id,
             sender_verified_team_id=auth.verified_team_id,
@@ -1101,7 +1105,7 @@ async def _send_mail_conversation_continuation(
         message_id=str(message_id),
         conversation_id=conversation_id,
         status="delivered",
-        delivered_at=_utc_iso(created_at),
+        delivered_at=_utc_iso(server_received_at),
     )
 
 
@@ -1122,7 +1126,8 @@ async def _send_federated_mail_conversation_continuation(
     except (ValidationError, ServiceError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
-    created_at = _parse_signed_timestamp(payload.timestamp) if payload.timestamp else None
+    if payload.timestamp:
+        _parse_signed_timestamp(payload.timestamp)
     return await _deliver_remote_mail_and_project_locally(
         request,
         payload,
@@ -1135,7 +1140,6 @@ async def _send_federated_mail_conversation_continuation(
         recipient_did=recipient_participant["did"],
         to_agent_id=None,
         to_alias=recipient_participant.get("alias"),
-        created_at=created_at,
         msg_uuid=msg_uuid,
     )
 
@@ -1500,7 +1504,6 @@ async def send_message(
         raise HTTPException(status_code=422, detail="Must provide to_did, to_address, to_agent_id, or to_alias")
 
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
-    created_at = None
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
@@ -1529,7 +1532,10 @@ async def send_message(
             timestamp=payload.timestamp,
             conversation_id=payload.conversation_id,
         )
-        created_at = _parse_signed_timestamp(payload.timestamp)
+        # payload.timestamp is the sender's attestation retained in
+        # signed_payload; deliver_message separately assigns server receipt
+        # time for ordering, so the two values may disagree.
+        _parse_signed_timestamp(payload.timestamp)
 
     if (recipient or {}).get("external"):
         return await _deliver_remote_mail_and_project_locally(
@@ -1544,7 +1550,6 @@ async def send_message(
             recipient_did=recipient_did or "",
             to_agent_id=to_agent_id,
             to_alias=to_alias,
-            created_at=created_at,
             msg_uuid=msg_uuid,
         )
 
@@ -1592,7 +1597,7 @@ async def send_message(
             ],
             team_id=auth.team_id,
         )
-        message_id, created_at = await deliver_message(
+        message_id, server_received_at = await deliver_message(
             db,
             registry_client=registry_client,
             recipient_agent=recipient,
@@ -1613,7 +1618,6 @@ async def send_message(
             message_version=payload.message_version or 1,
             encrypted_envelope=payload.encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=created_at,
             message_id=msg_uuid,
             conversation_id=conversation["conversation_id"],
             skip_policy_check=True,
@@ -1651,7 +1655,7 @@ async def send_message(
         message_id=str(message_id),
         conversation_id=conversation["conversation_id"],
         status="delivered",
-        delivered_at=_utc_iso(created_at),
+        delivered_at=_utc_iso(server_received_at),
     )
 
 

@@ -654,7 +654,6 @@ async def receive_federated_message(
                 message_version=envelope.message_version or 1,
                 encrypted_envelope=envelope.encrypted_envelope,
                 encrypted_metadata=encrypted_metadata,
-                created_at=_parse_timestamp(envelope.timestamp),
                 message_id=UUID(envelope.message_id),
                 conversation_id=conversation_id,
                 skip_policy_check=True,
@@ -683,7 +682,6 @@ async def receive_federated_message(
                 message_version=envelope.message_version or 1,
                 encrypted_envelope=envelope.encrypted_envelope,
                 encrypted_metadata=encrypted_metadata,
-                created_at=_parse_timestamp(envelope.timestamp),
                 message_id=UUID(envelope.message_id),
             )
             if msg_row is None:
