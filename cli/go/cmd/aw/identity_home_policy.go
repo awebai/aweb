@@ -27,7 +27,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw roles activate": {}, "aw roles add": {}, "aw roles deactivate": {}, "aw roles history": {}, "aw roles list": {}, "aw roles reset": {}, "aw roles set": {}, "aw roles show": {},
 	"aw run":        {},
 	"aw task close": {}, "aw task comment add": {}, "aw task comment list": {}, "aw task create": {}, "aw task delete": {}, "aw task dep add": {}, "aw task dep list": {}, "aw task dep remove": {}, "aw task list": {}, "aw task reopen": {}, "aw task show": {}, "aw task stats": {}, "aw task update": {},
-	"aw upgrade": {}, "aw version": {}, "aw whoami": {},
+	"aw whoami": {},
 	"aw work active": {}, "aw work blocked": {}, "aw work ready": {},
 	"aw workspace delete": {},
 }
