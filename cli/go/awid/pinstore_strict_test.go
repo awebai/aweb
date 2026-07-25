@@ -379,3 +379,18 @@ func TestLoadPinStoreRejectsBadNestedUnknownStructures(t *testing.T) {
 	mustFailLoad(t, base+"future:\n  - !evil x\n", "explicit tag")
 	mustFailLoad(t, base+"defaults: &d\n  k: v\n", "anchor")
 }
+
+// A custom or explicit tag on a mapping KEY is accepted by yaml.v3 and would be
+// silently normalised away on the next Save; Node's JSON_SCHEMA rejects it.
+// Keys are validated at every level, not just values.
+func TestLoadPinStoreRejectsTaggedKeys(t *testing.T) {
+	mustFailLoad(t, "!evil pins: {}\naddresses: {}\n", "explicit tag")
+	mustFailLoad(t, "!!str pins: {}\naddresses: {}\n", "explicit tag")
+	mustFailLoad(t,
+		"pins:\n  !evil did:key:zA:\n    address: a@b.c\n    first_seen: t\n    last_seen: t\naddresses: {}\n",
+		"explicit tag")
+	mustFailLoad(t,
+		"pins: {}\naddresses:\n  !evil a@b.c: did:key:zA\n",
+		"explicit tag")
+	mustFailLoad(t, "pins: {}\naddresses: {}\nfuture:\n  !evil k: v\n", "explicit tag")
+}
