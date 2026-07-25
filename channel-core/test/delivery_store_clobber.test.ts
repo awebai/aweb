@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { access, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +46,13 @@ function childExit(child: ChildProcess, stderr: () => string): Promise<void> {
   });
 }
 
+async function quarantinePaths(): Promise<string[]> {
+  const names = await readdir(dir);
+  return names
+    .filter((name) => name.startsWith("channel-delivered-ids.json.corrupt-"))
+    .map((name) => join(dir, name));
+}
+
 // aajy regression: two channel processes sharing a delivery store both load
 // the file once, mark different message ids, and save. A full overwrite with
 // only one process's in-memory map lets the later save clobber the earlier
@@ -85,37 +92,52 @@ describe("DeliveryStore concurrent writers", () => {
     }
   });
 
-  test("malformed content is visible and remains byte-identical after a refused save", async () => {
-    const store = await DeliveryStore.load(path);
+  test("load quarantines malformed bytes, reports the failure, and permits a clean retry", async () => {
     const malformed = "{not valid delivery JSON\n";
     await writeFile(path, malformed, "utf8");
-    store.mark("must-not-overwrite-corruption");
 
-    await expect(DeliveryStore.load(path)).rejects.toThrow(/delivery store.*malformed/i);
-    await expect(store.save()).rejects.toThrow(/delivery store.*malformed/i);
-    await expect(readFile(path, "utf8")).resolves.toBe(malformed);
+    await expect(DeliveryStore.load(path)).rejects.toThrow(/quarantined.*corrupt/i);
+    const quarantined = await quarantinePaths();
+    expect(quarantined).toHaveLength(1);
+    await expect(readFile(quarantined[0], "utf8")).resolves.toBe(malformed);
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const fresh = await DeliveryStore.load(path);
+    fresh.mark("after-load-quarantine");
+    await fresh.save();
+    expect((await DeliveryStore.load(path)).has("after-load-quarantine")).toBe(true);
   });
 
-  test("invalid mark timestamps are visible and remain byte-identical after a refused save", async () => {
+  test("save quarantines invalid timestamps byte-identically and succeeds on retry", async () => {
     const store = await DeliveryStore.load(path);
     const malformed = "{\"existing-mark\":\"not-a-timestamp\"}\n";
     await writeFile(path, malformed, "utf8");
-    store.mark("must-not-drop-invalid-mark");
+    store.mark("after-save-quarantine");
 
-    await expect(DeliveryStore.load(path)).rejects.toThrow(/invalid timestamp/i);
-    await expect(store.save()).rejects.toThrow(/invalid timestamp/i);
-    await expect(readFile(path, "utf8")).resolves.toBe(malformed);
+    await expect(store.save()).rejects.toThrow(/quarantined.*corrupt/i);
+    const quarantined = await quarantinePaths();
+    expect(quarantined).toHaveLength(1);
+    await expect(readFile(quarantined[0], "utf8")).resolves.toBe(malformed);
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await store.save();
+    expect((await DeliveryStore.load(path)).has("after-save-quarantine")).toBe(true);
   });
 
-  test("unreadable content is visible and is not replaced by a save", async () => {
+  test("save quarantines unreadable state and succeeds on retry", async () => {
     const store = await DeliveryStore.load(path);
     await rm(path);
     await mkdir(path);
-    store.mark("must-not-replace-unreadable-state");
+    store.mark("after-unreadable-quarantine");
 
-    await expect(DeliveryStore.load(path)).rejects.toThrow(/cannot read delivery store/i);
-    await expect(store.save()).rejects.toThrow(/cannot read delivery store/i);
-    expect((await stat(path)).isDirectory()).toBe(true);
+    await expect(store.save()).rejects.toThrow(/quarantined.*corrupt/i);
+    const quarantined = await quarantinePaths();
+    expect(quarantined).toHaveLength(1);
+    expect((await stat(quarantined[0])).isDirectory()).toBe(true);
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await store.save();
+    expect((await DeliveryStore.load(path)).has("after-unreadable-quarantine")).toBe(true);
   });
 
   test("reports failure instead of silently exhausting lock retries", { timeout: 15_000 }, async () => {

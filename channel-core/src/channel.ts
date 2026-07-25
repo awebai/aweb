@@ -119,39 +119,56 @@ export class DeliveryStore {
     try {
       content = await readFile(path, "utf-8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
-      throw new Error(
-        `cannot read delivery store at ${path} (${(error as NodeJS.ErrnoException).code ?? "read error"}); refusing to treat it as empty`,
-        { cause: error },
-      );
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return new Map();
+      return DeliveryStore.quarantine(path, `cannot read it (${code ?? "read error"})`, error);
     }
 
     let raw: unknown;
     try {
       raw = JSON.parse(content);
     } catch (error) {
-      throw new Error(
-        `delivery store at ${path} is malformed: ${(error as Error).message}; refusing to treat it as empty`,
-        { cause: error },
-      );
+      return DeliveryStore.quarantine(path, `its JSON is malformed: ${(error as Error).message}`, error);
     }
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error(`delivery store at ${path} is malformed: expected a JSON object; refusing to treat it as empty`);
+      return DeliveryStore.quarantine(path, "it does not contain a JSON object");
     }
 
     const entries = new Map<string, number>();
     const now = Date.now();
     for (const [key, value] of Object.entries(raw)) {
       if (typeof value !== "string" && typeof value !== "number") {
-        throw new Error(`delivery store at ${path} is malformed: mark ${JSON.stringify(key)} has an invalid timestamp`);
+        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
       }
       const timestamp = typeof value === "number" ? value : Date.parse(value);
       if (!Number.isFinite(timestamp)) {
-        throw new Error(`delivery store at ${path} is malformed: mark ${JSON.stringify(key)} has an invalid timestamp`);
+        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
       }
       if (now - timestamp <= DELIVERED_IDS_TTL_MS) entries.set(key, timestamp);
     }
     return entries;
+  }
+
+  private static async quarantine(path: string, reason: string, cause?: unknown): Promise<never> {
+    const quarantinePath = `${path}.corrupt-${Date.now()}-${process.pid}-${DeliveryStore.quarantineCounter += 1}`;
+    try {
+      await rename(path, quarantinePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(
+          `delivery store at ${path} was quarantined concurrently after detection (${reason}); retry the operation`,
+          { cause: cause ?? error },
+        );
+      }
+      throw new Error(
+        `delivery store at ${path} is corrupt (${reason}) and could not be quarantined (${(error as NodeJS.ErrnoException).code ?? "rename error"}); refusing to overwrite it`,
+        { cause: cause ?? error },
+      );
+    }
+    throw new Error(
+      `delivery store at ${path} was quarantined at ${quarantinePath} because ${reason}; retry the operation to start a fresh store`,
+      { cause },
+    );
   }
 
   has(key: string): boolean {
@@ -233,6 +250,7 @@ export class DeliveryStore {
   }
 
   private static tmpCounter = 0;
+  private static quarantineCounter = 0;
 
   private prune(): void {
     const now = Date.now();
@@ -318,8 +336,9 @@ export async function consumeAgentEvents(
         await dispatchAgentEvent(options, dispatched, event, log);
         pruneDispatched(dispatched);
       })
-      .catch(() => {
-        log("aweb: could not process an incoming event; it remains pending");
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
       });
     pending.add(job);
     if (lane) lanes.set(lane, job);
