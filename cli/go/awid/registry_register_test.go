@@ -75,9 +75,6 @@ func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldNow := registryNow
-	registryNow = func() time.Time { return timestamp.UTC() }
-	t.Cleanup(func() { registryNow = oldNow })
 
 	var got didRegisterRequest
 	var gotRaw map[string]any
@@ -109,6 +106,9 @@ func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	// Pin the clock per-client; mutating a package global races every parallel
+	// test that reads it through production code (default-aajc.15).
+	client.Now = func() time.Time { return timestamp.UTC() }
 	if _, err := client.RegisterIdentity(
 		context.Background(),
 		server.URL,

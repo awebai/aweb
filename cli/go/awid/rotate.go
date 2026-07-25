@@ -13,7 +13,7 @@ import (
 // RotateKeyRequest is the input to Client.RotateKey.
 type RotateKeyRequest struct {
 	NewDID       string            // did:key of the new key
-	NewPublicKey ed25519.PublicKey  // raw new public key
+	NewPublicKey ed25519.PublicKey // raw new public key
 	Custody      string            // "self" or "custodial"
 }
 
@@ -101,9 +101,9 @@ func CanonicalRotationJSON(oldDID, newDID, timestamp string) string {
 // For custodial→self graduation: set Custody="self" and provide NewDID/NewPublicKey.
 // For custodial→custodial rotation: set Custody="custodial" and leave NewDID/NewPublicKey empty.
 type RotateKeyCustodialRequest struct {
-	NewDID       string           // did:key of the new key (empty for custodial→custodial)
+	NewDID       string            // did:key of the new key (empty for custodial→custodial)
 	NewPublicKey ed25519.PublicKey // raw new public key (nil for custodial→custodial)
-	Custody      string           // "self" or "custodial"
+	Custody      string            // "self" or "custodial"
 }
 
 // RotateKeyCustodial sends a rotation request where the server holds the old key.
