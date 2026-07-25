@@ -246,6 +246,116 @@ func TestClientBoundsAndSanitizesErrorExcerpt(t *testing.T) {
 	}
 }
 
+func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
+	const attempts = 4
+	normalRequest := func(httpClient *http.Client) error {
+		client, err := New("https://trust.example")
+		if err != nil {
+			return err
+		}
+		client.SetHTTPClient(httpClient)
+		var out map[string]any
+		return client.Get(context.Background(), "/v1/trust", &out)
+	}
+	tests := []struct {
+		name       string
+		trace      string
+		statusCode int
+		body       func() io.Reader
+		invoke     func(*http.Client) error
+	}{
+		{
+			name:       "normal client trace oversize",
+			trace:      "1",
+			statusCode: http.StatusOK,
+			body: func() io.Reader {
+				return io.LimitReader(zeroReader{}, 10*1024*1024+1)
+			},
+			invoke: normalRequest,
+		},
+		{
+			name:       "normal client remote error",
+			statusCode: http.StatusInternalServerError,
+			body: func() io.Reader {
+				return strings.NewReader("malicious error")
+			},
+			invoke: normalRequest,
+		},
+		{
+			name:       "registry client malformed JSON",
+			statusCode: http.StatusOK,
+			body: func() io.Reader {
+				return strings.NewReader("{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}")
+			},
+			invoke: func(httpClient *http.Client) error {
+				_, err := NewAWIDRegistryClient(httpClient, nil).ResolveKeyAt(context.Background(), "https://trust.example", "did:aw:test")
+				return err
+			},
+		},
+		{
+			name:       "registry resolver malformed JSON",
+			statusCode: http.StatusOK,
+			body: func() io.Reader {
+				return strings.NewReader("{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}")
+			},
+			invoke: func(httpClient *http.Client) error {
+				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), "https://trust.example", "did:aw:test", true)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("AW_TRACE", test.trace)
+			closed := 0
+			httpClient := &http.Client{Transport: cleanupRoundTripper(func(req *http.Request) *http.Response {
+				return &http.Response{
+					StatusCode: test.statusCode,
+					Header:     make(http.Header),
+					Body: &cleanupBody{
+						Reader:  test.body(),
+						onClose: func() { closed++ },
+					},
+					Request: req,
+				}
+			})}
+
+			for range attempts {
+				if err := test.invoke(httpClient); err == nil {
+					t.Fatal("malicious response was accepted")
+				}
+			}
+			if closed != attempts {
+				t.Fatalf("closed %d response bodies after %d failures", closed, attempts)
+			}
+		})
+	}
+}
+
+type cleanupRoundTripper func(*http.Request) *http.Response
+
+func (f cleanupRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req), nil
+}
+
+type cleanupBody struct {
+	io.Reader
+	onClose func()
+}
+
+func (b *cleanupBody) Close() error {
+	b.onClose()
+	return nil
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 func TestTraceResponseCannotReadPastResponseLimit(t *testing.T) {
 	t.Setenv("AW_TRACE", "1")
 	body := bytes.Repeat([]byte("x"), MaxResponseSize+4096)

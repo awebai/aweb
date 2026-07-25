@@ -82,6 +82,36 @@ class SlowResponseStream(httpx.AsyncByteStream):
             yield b" "
 
 
+class ClosingErrorStream(httpx.AsyncByteStream):
+    def __init__(self, closed: list[bool]) -> None:
+        self.closed = closed
+
+    async def __aiter__(self):
+        yield b"{"
+        raise httpx.ReadError("malicious response failed mid-stream")
+
+    async def aclose(self) -> None:
+        self.closed.append(True)
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_closes_every_repeated_failed_response():
+    closed: list[bool] = []
+    transport = MockTransport(
+        lambda _request: Response(200, stream=ClosingErrorStream(closed))
+    )
+
+    for _attempt in range(16):
+        with pytest.raises(FederatedMailDeliveryError, match="failed"):
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+    assert len(closed) == 16
+
+
 @pytest.mark.asyncio
 async def test_federation_delivery_enforces_overall_deadline_on_slow_body():
     with pytest.raises(Exception, match="failed"):

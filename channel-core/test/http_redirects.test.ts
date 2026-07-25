@@ -2,6 +2,7 @@ import { createServer, type RequestListener } from "node:http";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { APIClient, RegistryResolver } from "../src/index.js";
+import { readBoundedResponse } from "../src/api/response.js";
 
 const openServers: Array<ReturnType<typeof createServer>> = [];
 
@@ -161,6 +162,28 @@ describe("trust response bounds", () => {
     const client = new APIClient(serverURL, auth);
 
     await expect(client.get("/gzip-bomb")).rejects.toThrow(/maximum|size|large|limit/i);
+  });
+
+  test("bounded reads cancel and unlock every repeated oversize response", async () => {
+    const attempts = 32;
+    let cancellations = 0;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(2048));
+        },
+        cancel() {
+          cancellations += 1;
+        },
+      });
+      await expect(readBoundedResponse(new Response(body), 1024)).rejects.toThrow(
+        /maximum|size|large|limit/i,
+      );
+      expect(body.locked).toBe(false);
+    }
+
+    expect(cancellations).toBe(attempts);
   });
 
   test("SSE errors stop reading at the diagnostic limit", async () => {

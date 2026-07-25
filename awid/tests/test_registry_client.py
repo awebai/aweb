@@ -70,6 +70,36 @@ class SlowResponseStream(httpx.AsyncByteStream):
             yield b" "
 
 
+class ClosingErrorStream(httpx.AsyncByteStream):
+    def __init__(self, closed: list[bool]) -> None:
+        self.closed = closed
+
+    async def __aiter__(self):
+        yield b"{"
+        raise httpx.ReadError("malicious response failed mid-stream")
+
+    async def aclose(self) -> None:
+        self.closed.append(True)
+
+
+@pytest.mark.asyncio
+async def test_registry_client_closes_every_repeated_failed_response():
+    closed: list[bool] = []
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(
+            lambda _request: Response(200, stream=ClosingErrorStream(closed))
+        ),
+    )
+    try:
+        for _attempt in range(16):
+            with pytest.raises(httpx.ReadError):
+                await registry.health()
+    finally:
+        await registry.aclose()
+    assert len(closed) == 16
+
+
 @pytest.mark.asyncio
 async def test_registry_client_enforces_overall_deadline_on_slow_body():
     registry = RegistryClient(
