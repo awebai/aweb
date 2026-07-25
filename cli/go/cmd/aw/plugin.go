@@ -444,9 +444,7 @@ func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin st
 		return nil, err
 	}
 	var manifest appmanifest.Manifest
-	decoder := json.NewDecoder(strings.NewReader(string(manifestBytes)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := appmanifest.DecodeSingleJSONStrict(manifestBytes, &manifest); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
 	reserved := reservedRootCommandNames()
@@ -591,12 +589,12 @@ func fetchManifest(manifestURL string) ([]byte, string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("fetch manifest: HTTP %d", resp.StatusCode)
 	}
-	h := sha256.New()
-	var b strings.Builder
-	if _, err := io.Copy(io.MultiWriter(&b, h), io.LimitReader(resp.Body, 10<<20)); err != nil {
-		return nil, "", err
+	data, err := readAllBounded(resp.Body, maxManifestBytes)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch manifest: %w", err)
 	}
-	return []byte(b.String()), "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	sum := sha256.Sum256(data)
+	return data, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func manifestPluginDir(dir, name string) string {
@@ -664,7 +662,7 @@ func installPluginSource(source, dest string) (string, error) {
 		return "", err
 	}
 	h := sha256.New()
-	_, copyErr := copyWithDigest(out, io.LimitReader(reader, 100<<20), h)
+	_, copyErr := copyBounded(out, reader, maxPluginBytes, h)
 	closeErr := out.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp)
@@ -685,8 +683,42 @@ func installPluginSource(source, dest string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func copyWithDigest(dst io.Writer, src io.Reader, h hash.Hash) (int64, error) {
-	return io.Copy(io.MultiWriter(dst, h), src)
+// Declared maxima for externally-influenced input. These are vars, not consts,
+// only so tests can lower them without multi-MiB fixtures; production keeps the
+// documented defaults.
+var (
+	maxManifestBytes int64 = 10 << 20  // 10 MiB: app manifest document
+	maxPluginBytes   int64 = 100 << 20 // 100 MiB: plugin executable
+	maxResponseBytes int64 = 10 << 20  // 10 MiB: manifest-tool HTTP response body
+	maxBodyFileBytes int64 = 10 << 20  // 10 MiB: --body-file / stdin request body
+)
+
+// readAllBounded reads up to max bytes from r and returns an error if r has
+// more than max bytes. It reads one extra byte to distinguish exactly-max
+// (accepted) from oversize (rejected), so a truncated prefix is never returned.
+func readAllBounded(r io.Reader, max int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("exceeds maximum size of %d bytes", max)
+	}
+	return data, nil
+}
+
+// copyBounded copies at most max bytes from src to dst (hashing via h) and
+// returns an error if src exceeds max, so a truncated artifact is never
+// accepted, hashed as provenance, or installed.
+func copyBounded(dst io.Writer, src io.Reader, max int64, h hash.Hash) (int64, error) {
+	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(src, max+1))
+	if err != nil {
+		return n, err
+	}
+	if n > max {
+		return n, fmt.Errorf("exceeds maximum size of %d bytes", max)
+	}
+	return n, nil
 }
 
 func pluginProvenancePath(dir, name string) string {
@@ -966,9 +998,7 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return nil, true, err
 	}
 	var manifest appmanifest.Manifest
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := appmanifest.DecodeSingleJSONStrict(data, &manifest); err != nil {
 		return nil, true, fmt.Errorf("decode manifest %s: %w", manifestPath, err)
 	}
 	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
@@ -1074,9 +1104,9 @@ func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := readAllBounded(resp.Body, maxResponseBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read manifest tool response: %w", err)
 	}
 	return &installedManifestToolResult{Status: resp.StatusCode, Body: responseBody}, nil
 }
@@ -1124,9 +1154,14 @@ func readManifestBodyFile(path string) ([]byte, error) {
 		return nil, usageError("--body-file requires a path or -")
 	}
 	if path == "-" {
-		return io.ReadAll(os.Stdin)
+		return readAllBounded(os.Stdin, maxBodyFileBytes)
 	}
-	return os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readAllBounded(f, maxBodyFileBytes)
 }
 
 func addManifestArgValue(out map[string]any, name, value string) {
