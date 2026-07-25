@@ -240,6 +240,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
+	if err := refuseExternalIdentityCleanup(workingDir, "aw workspace delete"); err != nil {
+		return err
+	}
 	client, _, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err

@@ -33,11 +33,13 @@ func splitTeamID(teamID string) (string, string) {
 }
 
 type Selection struct {
-	WorkingDir    string
-	WorkspacePath string
-	ServerName    string
-	BaseURL       string
-	AwebURL       string
+	WorkingDir           string
+	IdentityHome         string
+	ExternalIdentityHome bool
+	WorkspacePath        string
+	ServerName           string
+	BaseURL              string
+	AwebURL              string
 
 	TeamID        string
 	WorkspaceID   string
@@ -59,7 +61,9 @@ type Selection struct {
 type ResolveOptions struct {
 	ServerName string
 
-	WorkingDir string
+	WorkingDir           string
+	IdentityHome         string
+	ExternalIdentityHome bool
 
 	BaseURLOverride string
 
@@ -85,12 +89,28 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		}
 	}
 
+	identityHome := strings.TrimSpace(opts.IdentityHome)
 	workspace, teamState, rootDir, err := LoadWorkspaceAndTeamState(workingDir)
+	if identityHome != "" {
+		workspace, teamState, rootDir, err = LoadWorkspaceAndTeamStateFromIdentityHome(identityHome)
+	}
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
 			// No workspace — check for a standalone identity (created by aw id create).
-			if identity, _, identityErr := LoadWorktreeIdentityFromDir(workingDir); identityErr == nil {
-				return finalizeStandaloneIdentitySelection(workingDir, identity), nil
+			var identity *WorktreeIdentity
+			var identityErr error
+			if identityHome != "" {
+				identityPath, pathErr := IdentityHomePath(IdentityHome{Root: identityHome}, "identity.yaml")
+				if pathErr != nil {
+					identityErr = pathErr
+				} else {
+					identity, identityErr = LoadWorktreeIdentityFrom(identityPath)
+				}
+			} else {
+				identity, _, identityErr = LoadWorktreeIdentityFromDir(workingDir)
+			}
+			if identityErr == nil {
+				return finalizeStandaloneIdentitySelection(workingDir, identityHome, opts.ExternalIdentityHome, identity), nil
 			}
 			return nil, errors.New("current directory is not initialized for aw; run `aw init` here or start with `aw run <provider>` in a TTY")
 		}
@@ -98,9 +118,18 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 
 	var identity *WorktreeIdentity
-	if loadedIdentity, _, identityErr := LoadWorktreeIdentityFromDir(workingDir); identityErr == nil {
-		identity = loadedIdentity
-	} else if !errors.Is(identityErr, os.ErrNotExist) {
+	var identityErr error
+	if identityHome != "" {
+		identityPath, pathErr := IdentityHomePath(IdentityHome{Root: identityHome}, "identity.yaml")
+		if pathErr != nil {
+			identityErr = pathErr
+		} else {
+			identity, identityErr = LoadWorktreeIdentityFrom(identityPath)
+		}
+	} else {
+		identity, _, identityErr = LoadWorktreeIdentityFromDir(workingDir)
+	}
+	if identityErr != nil && !errors.Is(identityErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("invalid worktree identity: %w", identityErr)
 	}
 
@@ -143,10 +172,13 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		serverName = derived
 	}
 	workspacePath := filepath.Join(rootDir, DefaultWorktreeWorkspaceRelativePath())
-	return finalizeWorkspaceSelection(rootDir, workspacePath, serverName, baseURL, workspace, teamState, identity, teamID)
+	if identityHome != "" {
+		workspacePath = filepath.Join(identityHome, "workspace.yaml")
+	}
+	return finalizeWorkspaceSelection(workingDir, identityHome, opts.ExternalIdentityHome, workspacePath, serverName, baseURL, workspace, teamState, identity, teamID)
 }
 
-func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, ts *TeamState, identity *WorktreeIdentity, selectedTeamID string) (*Selection, error) {
+func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentityHome bool, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, ts *TeamState, identity *WorktreeIdentity, selectedTeamID string) (*Selection, error) {
 	domain := ""
 	alias := ""
 	workspaceID := ""
@@ -172,6 +204,13 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 			alias = strings.TrimSpace(selectedMembership.Alias)
 			workspaceID = strings.TrimSpace(selectedMembership.WorkspaceID)
 			certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+			if identityHome != "" {
+				var pathErr error
+				certPath, pathErr = IdentityHomeStoredPath(IdentityHome{Root: identityHome}, selectedMembership.CertPath)
+				if pathErr != nil {
+					return nil, pathErr
+				}
+			}
 			if cert, err := awid.LoadTeamCertificate(certPath); err == nil {
 				if v := strings.TrimSpace(cert.MemberDIDKey); v != "" {
 					did = v
@@ -228,30 +267,39 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		}
 		if strings.EqualFold(custody, "self") && strings.TrimSpace(workingDir) != "" {
 			signingKey = WorktreeSigningKeyPath(workingDir)
+			if identityHome != "" {
+				var pathErr error
+				signingKey, pathErr = IdentityHomePath(IdentityHome{Root: identityHome}, "signing.key")
+				if pathErr != nil {
+					return nil, pathErr
+				}
+			}
 		}
 	}
 	return &Selection{
-		WorkingDir:    strings.TrimSpace(workingDir),
-		WorkspacePath: strings.TrimSpace(workspacePath),
-		ServerName:    serverName,
-		BaseURL:       baseURL,
-		AwebURL:       awebURL,
-		TeamID:        teamID,
-		WorkspaceID:   workspaceID,
-		Alias:         alias,
-		Address:       address,
-		Domain:        domain,
-		DID:           did,
-		StableID:      stableID,
-		SigningKey:    signingKey,
-		Custody:       custody,
-		IdentityScope: identityScope,
-		Lifetime:      lifetime,
-		RegistryURL:   registryURL,
+		WorkingDir:           strings.TrimSpace(workingDir),
+		IdentityHome:         strings.TrimSpace(identityHome),
+		ExternalIdentityHome: externalIdentityHome,
+		WorkspacePath:        strings.TrimSpace(workspacePath),
+		ServerName:           serverName,
+		BaseURL:              baseURL,
+		AwebURL:              awebURL,
+		TeamID:               teamID,
+		WorkspaceID:          workspaceID,
+		Alias:                alias,
+		Address:              address,
+		Domain:               domain,
+		DID:                  did,
+		StableID:             stableID,
+		SigningKey:           signingKey,
+		Custody:              custody,
+		IdentityScope:        identityScope,
+		Lifetime:             lifetime,
+		RegistryURL:          registryURL,
 	}, nil
 }
 
-func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeIdentity) *Selection {
+func finalizeStandaloneIdentitySelection(workingDir, identityHome string, externalIdentityHome bool, identity *WorktreeIdentity) *Selection {
 	did := strings.TrimSpace(identity.DID)
 	stableID := strings.TrimSpace(identity.StableID)
 	address := strings.TrimSpace(identity.Address)
@@ -264,6 +312,11 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 	signingKey := ""
 	if strings.EqualFold(custody, "self") {
 		signingKey = WorktreeSigningKeyPath(workingDir)
+		if identityHome != "" {
+			if path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "signing.key"); err == nil {
+				signingKey = path
+			}
+		}
 	}
 	handle := ""
 	if address != "" {
@@ -272,17 +325,19 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 		}
 	}
 	return &Selection{
-		WorkingDir:    workingDir,
-		DID:           did,
-		StableID:      stableID,
-		Address:       address,
-		Alias:         handle,
-		Domain:        domainFromAddress(address),
-		SigningKey:    signingKey,
-		Custody:       custody,
-		IdentityScope: identityScope,
-		Lifetime:      lifetime,
-		RegistryURL:   strings.TrimSpace(identity.RegistryURL),
+		WorkingDir:           workingDir,
+		IdentityHome:         strings.TrimSpace(identityHome),
+		ExternalIdentityHome: externalIdentityHome,
+		DID:                  did,
+		StableID:             stableID,
+		Address:              address,
+		Alias:                handle,
+		Domain:               domainFromAddress(address),
+		SigningKey:           signingKey,
+		Custody:              custody,
+		IdentityScope:        identityScope,
+		Lifetime:             lifetime,
+		RegistryURL:          strings.TrimSpace(identity.RegistryURL),
 	}
 }
 

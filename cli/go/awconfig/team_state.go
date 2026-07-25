@@ -272,6 +272,32 @@ func LoadTeamState(workingDir string) (*TeamState, error) {
 // LoadWorkspaceAndTeamState loads workspace.yaml and teams.yaml from the same
 // worktree root. teams.yaml is authoritative for active-team selection after
 // LoadTeamState has applied any one-time legacy workspace migration.
+func LoadWorkspaceAndTeamStateFromIdentityHome(identityHome string) (*WorktreeWorkspace, *TeamState, string, error) {
+	identityHome = filepath.Clean(identityHome)
+	home := IdentityHome{Root: identityHome}
+	workspacePath, err := IdentityHomePath(home, "workspace.yaml")
+	if err != nil {
+		return nil, nil, "", err
+	}
+	workspace, err := LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	teamStatePath, err := IdentityHomePath(home, "teams.yaml")
+	if err != nil {
+		return workspace, nil, identityHome, err
+	}
+	data, err := os.ReadFile(teamStatePath)
+	if err != nil {
+		return workspace, nil, identityHome, err
+	}
+	var teamState TeamState
+	if err := yaml.Unmarshal(data, &teamState); err != nil {
+		return workspace, nil, identityHome, err
+	}
+	return workspace, &teamState, identityHome, nil
+}
+
 func LoadWorkspaceAndTeamState(startDir string) (*WorktreeWorkspace, *TeamState, string, error) {
 	workspace, workspacePath, err := LoadWorktreeWorkspaceFromDir(startDir)
 	if err != nil {

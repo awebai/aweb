@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
@@ -19,12 +20,11 @@ type pendingRotationState struct {
 	PendingKey  string `yaml:"pending_key"`
 }
 
-func rotationStateDirForCurrentWorktree() (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
+func rotationStateDirForIdentity(identity *awconfig.ResolvedIdentity) (string, error) {
+	if identity == nil || strings.TrimSpace(identity.IdentityHome) == "" {
+		return "", fmt.Errorf("identity home is required for rotation recovery")
 	}
-	return filepath.Join(wd, ".aw", "rotation"), nil
+	return filepath.Join(identity.IdentityHome, "rotation"), nil
 }
 
 func pendingRotationStatePath(rotationDir, stableID string) string {

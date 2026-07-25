@@ -14,16 +14,18 @@ import (
 const WorktreeIdentitySchemaVersion = 2
 
 type ResolvedIdentity struct {
-	WorkingDir     string
-	IdentityPath   string
-	SigningKeyPath string
-	DID            string
-	StableID       string
-	Address        string
-	Handle         string
-	Domain         string
-	Custody        string
-	IdentityScope  string
+	WorkingDir           string
+	IdentityHome         string
+	ExternalIdentityHome bool
+	IdentityPath         string
+	SigningKeyPath       string
+	DID                  string
+	StableID             string
+	Address              string
+	Handle               string
+	Domain               string
+	Custody              string
+	IdentityScope        string
 	// Lifetime is a deprecated-read-compat mirror of IdentityScope. New identity
 	// config writes identity_scope; keep this populated while downstream callers
 	// migrate from persistent/ephemeral helpers.
@@ -157,6 +159,29 @@ func WorktreeRootFromIdentityPath(path string) string {
 	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
 }
 
+func ResolveIdentityFromHome(workingDir, identityHome string) (*ResolvedIdentity, error) {
+	workingDir = strings.TrimSpace(workingDir)
+	identityHome = filepath.Clean(strings.TrimSpace(identityHome))
+	home := IdentityHome{Root: identityHome}
+	identityPath, err := IdentityHomePath(home, "identity.yaml")
+	if err != nil {
+		return nil, err
+	}
+	signingKeyPath, err := IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return nil, err
+	}
+	identity, err := LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := resolvedIdentityFromState(workingDir, identityHome, identityPath, signingKeyPath, identity)
+	if err != nil {
+		return nil, err
+	}
+	return resolved, nil
+}
+
 func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 	workingDir = strings.TrimSpace(workingDir)
 	if workingDir == "" {
@@ -176,11 +201,16 @@ func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 		root = workingDir
 	}
 
+	return resolvedIdentityFromState(root, "", identityPath, WorktreeSigningKeyPath(root), identity)
+}
+
+func resolvedIdentityFromState(workingDir, identityHome, identityPath, signingKeyPath string, identity *WorktreeIdentity) (*ResolvedIdentity, error) {
 	identityScope := strings.TrimSpace(identity.IdentityScope)
 	resolved := &ResolvedIdentity{
-		WorkingDir:     root,
+		WorkingDir:     workingDir,
+		IdentityHome:   identityHome,
 		IdentityPath:   identityPath,
-		SigningKeyPath: WorktreeSigningKeyPath(root),
+		SigningKeyPath: signingKeyPath,
 		DID:            strings.TrimSpace(identity.DID),
 		StableID:       strings.TrimSpace(identity.StableID),
 		Address:        strings.TrimSpace(identity.Address),

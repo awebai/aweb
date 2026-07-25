@@ -382,7 +382,12 @@ func saveA2ATaskTokenBestEffort(rpcURL string, task a2a.Task) {
 
 // loadA2ATaskTokenBestEffort returns the stored token for a specific task.
 func loadA2ATaskTokenBestEffort(cardURL, rpcURL, taskID string) string {
-	data, err := os.ReadFile(filepath.Join(".aw", "a2a-credentials.yaml"))
+	wd, _ := os.Getwd()
+	return loadA2ATaskTokenBestEffortForDir(wd, cardURL, rpcURL, taskID)
+}
+
+func loadA2ATaskTokenBestEffortForDir(workingDir, cardURL, rpcURL, taskID string) string {
+	data, err := os.ReadFile(filepath.Join(workingDir, ".aw", "a2a-credentials.yaml"))
 	if err != nil {
 		return ""
 	}
@@ -715,7 +720,19 @@ func resolveA2ACallTarget(ctx context.Context, cardURL string) (a2a.Card, string
 }
 
 func loadA2ACredentialBestEffort(cardURL, rpcURL string) a2a.Credential {
-	path := filepath.Join(".aw", "a2a-credentials.yaml")
+	wd, _ := os.Getwd()
+	return loadA2ACredentialBestEffortForDir(wd, cardURL, rpcURL)
+}
+
+func loadA2ACredentialBestEffortForDir(workingDir, cardURL, rpcURL string) a2a.Credential {
+	path := filepath.Join(workingDir, ".aw", "a2a-credentials.yaml")
+	if home, homeErr := identityHomeForDir(workingDir); homeErr == nil && home.External() {
+		if identityPath, pathErr := awconfig.IdentityHomePath(home, "a2a-credentials.yaml"); pathErr == nil {
+			path = identityPath
+		} else {
+			return a2a.Credential{}
+		}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return a2a.Credential{}
@@ -727,6 +744,9 @@ func loadA2ACredentialBestEffort(cardURL, rpcURL string) a2a.Credential {
 	cardHost := urlHost(cardURL)
 	rpcHost := urlHost(rpcURL)
 	for _, entry := range file.Credentials {
+		if strings.TrimSpace(entry.TaskID) != "" {
+			continue
+		}
 		if strings.TrimSpace(entry.URL) != "" && (strings.TrimSpace(entry.URL) == strings.TrimSpace(cardURL) || strings.TrimSpace(entry.URL) == strings.TrimSpace(rpcURL)) {
 			return credentialFromEntry(entry)
 		}

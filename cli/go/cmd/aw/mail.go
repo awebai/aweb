@@ -729,6 +729,13 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		}
 	}
 	statePath := awconfig.WorktreeEncryptionStatePath(sel.WorkingDir)
+	if strings.TrimSpace(sel.IdentityHome) != "" {
+		var pathErr error
+		statePath, pathErr = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: sel.IdentityHome}, "encryption.yaml")
+		if pathErr != nil {
+			return pathErr
+		}
+	}
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -746,11 +753,11 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		}
 		return usageError("E2E messaging requires an active local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
 	}
-	material, err := validateEncryptionRecordPrivateKey(sel.WorkingDir, record)
+	material, err := validateEncryptionRecordPrivateKeyAt(sel.WorkingDir, sel.IdentityHome, record)
 	if err != nil {
 		return err
 	}
-	assertion, err := loadEncryptionAssertion(sel.WorkingDir, record.AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(sel.WorkingDir, sel.IdentityHome, record.AssertionPath)
 	if err != nil {
 		return err
 	}
@@ -760,7 +767,10 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 			return err
 		}
 	}
-	privatePath := resolveWorktreeRelativePath(sel.WorkingDir, record.PrivateKeyPath)
+	privatePath, err := resolveIdentityStoredPath(sel.WorkingDir, sel.IdentityHome, record.PrivateKeyPath)
+	if err != nil {
+		return err
+	}
 	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
 	if err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,8 @@ var teamFlag string
 var debugFlag bool
 var jsonFlag bool
 var traceFlag bool
+var identityHomeFlag string
+var activeIdentityHome awconfig.IdentityHome
 
 const (
 	groupWorkspace    = "workspace"
@@ -27,15 +30,30 @@ var rootCmd = &cobra.Command{
 	Use:   "aw",
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 			debugFlag = true
 		}
 		if traceFlag {
 			_ = os.Setenv("AW_TRACE", "1")
 		}
+		identityHomeEnv, hadIdentityHomeEnv := os.LookupEnv(awconfig.IdentityHomeEnv)
+		home, err := awconfig.ResolveIdentityHome("", identityHomeFlag)
+		if err != nil {
+			return err
+		}
 		loadDotenvBestEffort()
+		if hadIdentityHomeEnv {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, identityHomeEnv)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+		activeIdentityHome = awconfig.IdentityHome{}
+		if home.External() {
+			activeIdentityHome = home
+		}
 		maybeCheckLatestVersion(cmd)
+		return nil
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -103,6 +121,7 @@ func init() {
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
+	rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use identity authority from this absolute credential root")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")
 	rootCmd.PersistentFlags().BoolVar(&traceFlag, "trace", false, "Trace redacted HTTP requests and responses to stderr")
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output as JSON")

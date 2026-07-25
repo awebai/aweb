@@ -141,6 +141,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	restoreIdentityHome, err := propagateIdentityHomeForRun(workingDir)
+	if err != nil {
+		return err
+	}
+	defer restoreIdentityHome()
 	if strings.TrimSpace(initialPrompt) == "" && onboarding != nil && strings.TrimSpace(onboarding.InitialPrompt) != "" {
 		initialPrompt = strings.TrimSpace(onboarding.InitialPrompt)
 	}
@@ -223,6 +228,31 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return err
+}
+
+func propagateIdentityHomeForRun(workingDir string) (func(), error) {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	return propagateResolvedIdentityHomeForRun(home)
+}
+
+func propagateResolvedIdentityHomeForRun(home awconfig.IdentityHome) (func(), error) {
+	if !home.External() {
+		return func() {}, nil
+	}
+	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
+	if err := os.Setenv(awconfig.IdentityHomeEnv, home.Root); err != nil {
+		return nil, err
+	}
+	return func() {
+		if existed {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, previous)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+	}, nil
 }
 
 func loadRunContinueRecap(workingDir string, out io.Writer) string {

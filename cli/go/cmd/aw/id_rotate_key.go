@@ -49,7 +49,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rotationDir, err := rotationStateDirForCurrentWorktree()
+	rotationDir, err := rotationStateDirForIdentity(identity)
 	if err != nil {
 		return err
 	}
