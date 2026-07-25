@@ -470,9 +470,12 @@ which is the exception — we built it first, and that ordering is corrected her
 3. **Clean external customer proof.** A fresh workspace, two developers,
    duplicate local instance names — the ordinary provision-and-retire journey
    end to end.
-4. **The validated hook environment map**, upstream, plus the adapter output
-   that uses it. This is what gives a launched process a deterministic identity;
-   without it there is no attachment, only verification.
+4. **A deterministic propagation mechanism** carrying the resolved identity
+   home into the launched process, plus the adapter output that uses it. A
+   validated hook environment map upstream is the *proposed* solution and the
+   smallest one we have found; the requirement is the deterministic propagation,
+   not that particular shape. Without some such mechanism there is no
+   attachment, only verification.
 5. **Throwaway Pi attach proof** — positive wake, reply, ordinary retire.
 6. **Explicit per-instance capability settings** and required-hook fatal
    outcome with rollback.
@@ -504,9 +507,11 @@ passes with attached evidence.
 hook verifies the principal and persists the binding in capability metadata
 (`aweb-identity-attach.mjs`, spawn path), but contributes nothing to the launch.
 OAS accepts a hook `launch` map of runtime → extra **command arguments**
-(`lib/core.mjs:1452`); it has no hook **environment** map, and the authority
-variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`) is never
-set for the session.
+(`lib/core.mjs:1452`); it has no hook **environment** map, so the authority
+variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`) is **not
+deterministically set by the hook or by OAS**. It is not "never set" — the
+launched process inherits an environment, and something in it may happen to
+carry that variable, which is precisely the ambient case described next.
 
 The precise claim is **no deterministic binding**, not "the model cannot act as
 the principal". The launch command does not scrub ambient identity state, so a
@@ -517,9 +522,15 @@ principal.
 
 `.17` exercises the real spawn/retire lifecycle through
 `oas spawn --no-launch`: kernel, hook dispatch, instance lifecycle and retire
-path are all real, and only session launch is skipped. `.24` is a different
-shape — it traces the attach path's complete HTTP request surface, and does not
-depend on `--no-launch` at all.
+path are all real, and only session launch is skipped.
+
+`.24` is a different shape — it traces the attach path's complete HTTP request
+surface, and its *conclusion* is launch-mode-independent in the current source,
+because the attach path issues the same single request either way. Its
+*evidence* is not purely so: the proof composes an exact-wire regression and the
+server handler's behaviour with a no-launch OAS wiring regression. So the
+conclusion would survive a launched session; the demonstration, as run, did not
+include one.
 
 So the established results are bounded **safety** results, and are exactly two:
 
