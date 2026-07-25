@@ -14,6 +14,7 @@ import {
   formatEventStreamState,
   loadSessionPinStore,
   type PinStore,
+  type PinStoreWriter,
   resolveConfig,
   resolveRegistryFallbackURL,
   type SelfIdentity,
@@ -117,11 +118,13 @@ export async function dispatchEvent(
   self: SelfIdentity,
   dispatched: Set<string>,
   event: AgentEvent,
+  pinStoreWriter?: PinStoreWriter,
 ): Promise<void> {
   await dispatchAgentEvent(
     {
       client,
       pinStore,
+      pinStoreWriter,
       trust,
       self,
       onAwakening: (awakening) => mcp.notification({

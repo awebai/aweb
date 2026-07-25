@@ -245,11 +245,7 @@ export class SenderTrustManager {
     head: VerifiedLogHead | undefined,
   ): boolean {
     if (!stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
-    const pin = store.pins.get(stableID);
-    if (!pin || head.seq <= (pin.log_seq ?? 0)) return false;
-    pin.log_seq = head.seq;
-    pin.log_entry_hash = head.entryHash;
-    return true;
+    return store.advanceLogCheckpoint(stableID, head.seq, head.entryHash);
   }
 
   private checkTOFUPinWithMeta(
@@ -275,11 +271,10 @@ export class SenderTrustManager {
     }
 
     if (meta.identityScope === "local") {
-      let removed = store.removeAddress(trustAddress);
-      if (rawAddress && rawAddress !== trustAddress) {
-        removed = store.removeAddress(rawAddress) || removed;
-      }
-      return { status, stored: removed };
+      return {
+        status,
+        stored: store.removeAddresses([trustAddress, rawAddress !== trustAddress ? rawAddress : ""]),
+      };
     }
 
     if (meta.custody === "custodial" && status === "verified") {
@@ -295,23 +290,17 @@ export class SenderTrustManager {
       pinKey = fromStableID;
       const existingDID = store.addresses.get(trustAddress);
       if (existingDID === fromDID) {
-        const rekey = store.rekeyPin(fromDID, fromStableID);
+        const rekey = store.bindStableIdentity(fromDID, fromStableID);
         if (rekey.status === "conflict") {
           return { status: "pin_conflict", stored: false };
         }
-        if ("pin" in rekey) rekey.pin.stable_id = fromStableID;
       }
     }
 
     const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
     switch (pinResult) {
       case "new":
-        store.storePin(pinKey, trustAddress, "", "");
-        if (fromStableID) {
-          const pin = store.pins.get(pinKey)!;
-          pin.stable_id = fromStableID;
-          pin.did_key = fromDID;
-        }
+        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
         return { status, stored: true };
       case "ok": {
         if (fromStableID) {
@@ -322,10 +311,7 @@ export class SenderTrustManager {
             // registry chain is sufficient here. It says nothing about address
             // ownership — that is enforced in the mismatch branch below.
             if (registryConfirmedCurrentKey) {
-              store.storePin(pinKey, trustAddress, "", "");
-              const updated = store.pins.get(pinKey)!;
-              updated.stable_id = fromStableID;
-              updated.did_key = fromDID;
+              store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
               return { status, stored: true };
             }
             if (
@@ -336,12 +322,7 @@ export class SenderTrustManager {
             }
           }
         }
-        store.storePin(pinKey, trustAddress, "", "");
-        if (fromStableID) {
-          const pin = store.pins.get(pinKey)!;
-          pin.stable_id = fromStableID;
-          pin.did_key = fromDID;
-        }
+        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
         return { status, stored: true };
       }
       case "mismatch": {
@@ -357,8 +338,7 @@ export class SenderTrustManager {
         if (fromStableID && pinnedKey === fromStableID) {
           const pin = store.pins.get(pinnedKey);
           if (pin?.did_key === fromDID) {
-            store.storePin(pinnedKey, trustAddress, "", "");
-            store.pins.get(pinnedKey)!.stable_id = fromStableID;
+            store.recordVerifiedIdentity(pinnedKey, trustAddress, fromStableID);
             return { status, stored: true };
           }
           if (
@@ -368,10 +348,7 @@ export class SenderTrustManager {
               || this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pin.did_key, meta)
             )
           ) {
-            store.storePin(pinnedKey, trustAddress, "", "");
-            const updated = store.pins.get(pinnedKey)!;
-            updated.stable_id = fromStableID;
-            updated.did_key = fromDID;
+            store.recordVerifiedIdentity(pinnedKey, trustAddress, fromStableID, fromDID);
             return { status, stored: true };
           }
         }
@@ -380,15 +357,7 @@ export class SenderTrustManager {
           this.verifyRotationAnnouncement(rotationAnnouncement, fromDID, pinnedKey)
           || this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pinnedKey, meta)
         ) {
-          if (pinnedKey) {
-            store.deletePin(pinnedKey);
-          }
-          store.storePin(pinKey, trustAddress, "", "");
-          if (fromStableID) {
-            const pin = store.pins.get(pinKey)!;
-            pin.stable_id = fromStableID;
-            pin.did_key = fromDID;
-          }
+          store.replaceVerifiedIdentity(pinnedKey, pinKey, trustAddress, fromStableID, fromDID);
           return { status, stored: true };
         }
         return { status: "identity_mismatch", stored: false };
@@ -505,10 +474,10 @@ export class SenderTrustManager {
     if (fresh.did !== fromDID) {
       return { status: "identity_mismatch", stored: false };
     }
-    let removed = store.removeAddress(trustAddress);
-    if (rawAddress && rawAddress !== trustAddress) {
-      removed = store.removeAddress(rawAddress) || removed;
-    }
+    const removed = store.removeAddresses([
+      trustAddress,
+      rawAddress !== trustAddress ? rawAddress : "",
+    ]);
     return { status: "verification_stale", stored: removed };
   }
 

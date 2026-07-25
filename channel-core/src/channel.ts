@@ -7,11 +7,15 @@ import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
-import { PinStore } from "./identity/pinstore.js";
+import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
-import { createLocalAWDecryptProvider, type LocalDecryptProvider } from "./local_aw.js";
+import {
+  createLocalAWDecryptProvider,
+  createLocalAWPinStoreWriter,
+  type LocalDecryptProvider,
+} from "./local_aw.js";
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
@@ -55,6 +59,7 @@ export interface ChannelLoopOptions {
   localDecrypt?: LocalDecryptProvider;
   workdir?: string;
   awCommand?: string;
+  pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
 }
@@ -466,7 +471,6 @@ async function dispatchMailEvent(
   log: (message: string) => void,
 ): Promise<void> {
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
-  let pinsDirty = false;
   for (const msg of messages) {
     if (msg.verification_error) continue;
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
@@ -492,7 +496,9 @@ async function dispatchMailEvent(
     }
     const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status as InboxMessage["verification_status"];
-    if (trust.stored) pinsDirty = true;
+    if (trust.stored || options.pinStore.hasUndurableChanges()) {
+      await commitPinStore(options);
+    }
 
     const meta: Record<string, string> = {
       type: "mail",
@@ -516,7 +522,6 @@ async function dispatchMailEvent(
       await ackMessage(options.client, msg.message_id);
     }
   }
-  if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
 
 async function dispatchChatEvent(
@@ -526,7 +531,6 @@ async function dispatchChatEvent(
 ): Promise<void> {
   if (!event.session_id) return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
-  let pinsDirty = false;
   let lastMessageId: string | undefined;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
@@ -550,7 +554,9 @@ async function dispatchChatEvent(
     }
     const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
     msg.verification_status = trust.status as ChatMessage["verification_status"];
-    if (trust.stored) pinsDirty = true;
+    if (trust.stored || options.pinStore.hasUndurableChanges()) {
+      await commitPinStore(options);
+    }
 
     const meta: Record<string, string> = {
       type: "chat",
@@ -574,7 +580,16 @@ async function dispatchChatEvent(
     lastMessageId = msg.message_id;
   }
   if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
-  if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
+}
+
+async function commitPinStore(
+  options: Pick<ChannelLoopOptions, "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand">,
+): Promise<void> {
+  const writer = options.pinStoreWriter || createLocalAWPinStoreWriter({
+    workdir: options.workdir,
+    awCommand: options.awCommand,
+  });
+  await options.pinStore.commit(writer, options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
 
 async function persistDeliveryMark(

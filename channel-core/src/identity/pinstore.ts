@@ -1,5 +1,3 @@
-import { dirname } from "node:path";
-import { mkdir, open, rename, rm } from "node:fs/promises";
 import yaml from "js-yaml";
 
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
@@ -22,6 +20,10 @@ const PIN_FIELDS = new Set([
   "last_seen",
   "server",
 ]);
+
+export interface PinStoreWriter {
+  compareAndSet(path: string, expectedYAML: string, desiredYAML: string): Promise<void>;
+}
 
 export interface Pin {
   address: string;
@@ -49,6 +51,14 @@ export class PinStore {
   // them without a second key-migration invariant. Pin membership stays private
   // to prevent callers from replacing the object and silently losing that state.
   private readonly unknownPinFields: WeakMap<Pin, UnknownFields> = new WeakMap();
+  private persistedYAML: string;
+  private commitTail: Promise<void> = Promise.resolve();
+  private pendingCommits = 0;
+  private undurable = false;
+
+  constructor() {
+    this.persistedYAML = this.toYAML();
+  }
 
   get pins(): ReadonlyMap<string, Pin> {
     return this.mutablePins;
@@ -145,25 +155,79 @@ export class PinStore {
     return removed;
   }
 
-  async save(path: string): Promise<void> {
-    const data = this.toYAML();
-    const dir = dirname(path);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-
-    const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
-    // "wx" (O_CREAT|O_EXCL) refuses to open an existing path, so an
-    // attacker-prepared symlink at tmpPath cannot redirect the write.
-    const file = await open(tmpPath, "wx", 0o600);
-    try {
-      await file.writeFile(data, "utf-8");
-      await file.sync();
-    } catch (error) {
-      await file.close().catch(() => {});
-      await rm(tmpPath, { force: true }).catch(() => {});
-      throw error;
+  removeAddresses(addresses: string[]): boolean {
+    let removed = false;
+    for (const address of addresses) {
+      if (address) removed = this.removeAddress(address) || removed;
     }
-    await file.close();
-    await rename(tmpPath, path);
+    return removed;
+  }
+
+  bindStableIdentity(currentKey: string, stableID: string): RekeyPinResult {
+    const rekey = this.rekeyPin(currentKey, stableID);
+    if ("pin" in rekey) rekey.pin.stable_id = stableID;
+    return rekey;
+  }
+
+  recordVerifiedIdentity(
+    pinKey: string,
+    address: string,
+    stableID?: string,
+    didKey?: string,
+  ): void {
+    this.storePin(pinKey, address, "", "");
+    if (!stableID) return;
+    const pin = this.mutablePins.get(pinKey)!;
+    pin.stable_id = stableID;
+    if (didKey) pin.did_key = didKey;
+  }
+
+  replaceVerifiedIdentity(
+    previousPinKey: string,
+    pinKey: string,
+    address: string,
+    stableID?: string,
+    didKey?: string,
+  ): void {
+    if (previousPinKey) this.deletePin(previousPinKey);
+    this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+  }
+
+  advanceLogCheckpoint(stableID: string, seq: number, entryHash: string): boolean {
+    const pin = this.mutablePins.get(stableID);
+    if (!pin || seq <= (pin.log_seq ?? 0)) return false;
+    pin.log_seq = seq;
+    pin.log_entry_hash = entryHash;
+    return true;
+  }
+
+  /**
+   * Submit this process's desired snapshot with the exact semantic baseline it
+   * read. aw reloads and checks that precondition while holding the shared file
+   * lock. Concurrent commits are queued so each successful desired snapshot
+   * becomes the next precondition.
+   */
+  async commit(writer: PinStoreWriter, path: string): Promise<void> {
+    this.pendingCommits += 1;
+    const attempt = this.commitTail.then(async () => {
+      try {
+        const desiredYAML = this.toYAML();
+        await writer.compareAndSet(path, this.persistedYAML, desiredYAML);
+        this.persistedYAML = desiredYAML;
+        if (this.pendingCommits === 1) this.undurable = false;
+      } catch (error) {
+        this.undurable = true;
+        throw error;
+      } finally {
+        this.pendingCommits -= 1;
+      }
+    });
+    this.commitTail = attempt.catch(() => {});
+    return attempt;
+  }
+
+  hasUndurableChanges(): boolean {
+    return this.undurable || this.pendingCommits > 0;
   }
 
   /** Serialize to YAML (compatible with Go's known_agents.yaml). */
@@ -275,6 +339,7 @@ export class PinStore {
       }
     }
 
+    store.persistedYAML = store.toYAML();
     return store;
   }
 }

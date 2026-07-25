@@ -40,6 +40,9 @@ describe("channel-core dispatchAgentEvent", () => {
   const trust = {
     normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
+  const acceptingPinStoreWriter = {
+    compareAndSet: vi.fn(async () => {}),
+  };
 
   test("pending mid-turn mail does not block control events from the SSE stream", async () => {
     let finishMail: (() => void) | undefined;
@@ -196,6 +199,53 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/quarantined at .*\.corrupt-/i));
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("does not deliver or acknowledge a message when pin persistence fails", async () => {
+    const onAwakening = vi.fn();
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-pin-failure",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "must not be delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const storingTrust = {
+      normalizeTrust: vi.fn()
+        .mockResolvedValueOnce({ status: "verified", stored: true })
+        .mockResolvedValueOnce({ status: "verified", stored: false }),
+    } as unknown as SenderTrustManager;
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async () => { throw new Error("aw binary missing"); }),
+    };
+
+    await expect(dispatchAgentEvent(
+      { client: client as never, pinStore, pinStoreWriter, trust: storingTrust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-failure" } satisfies AgentEvent,
+    )).rejects.toThrow(/aw binary missing/);
+
+    // The failed mutation remains undurable. Even if a retry's trust decision
+    // makes no further change, it must retry persistence and stay closed.
+    await expect(dispatchAgentEvent(
+      { client: client as never, pinStore, pinStoreWriter, trust: storingTrust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-failure" } satisfies AgentEvent,
+    )).rejects.toThrow(/aw binary missing/);
+
+    expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
+    expect(onAwakening).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
   });
 
@@ -1004,6 +1054,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
+        pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
         onAwakening,
@@ -1086,6 +1137,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
+        pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
         onAwakening,
@@ -1191,8 +1243,14 @@ describe("channel-core dispatchAgentEvent", () => {
     ownerPin.did_key = "did:key:address-owner";
 
     const pinStorePath = join(await mkdtemp(join(tmpdir(), "aw-checkpoint-only-")), "known_agents.yaml");
+    const pinStoreWriter = {
+      compareAndSet: async (path: string, _expectedYAML: string, desiredYAML: string) => {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, desiredYAML, "utf-8");
+      },
+    };
     await dispatchAgentEvent(
-      { client: client as never, pinStore, pinStorePath, trust, self, onAwakening },
+      { client: client as never, pinStore, pinStorePath, pinStoreWriter, trust, self, onAwakening },
       new Set(),
       {
         type: "chat_message",
