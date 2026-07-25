@@ -4,7 +4,15 @@ import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node
 
 const REQUIRED_FIELDS = ["schema_version", "address", "stable_id", "team_id", "soul"];
 const ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, "soul_version"]);
-const STABLE_ID_PATTERN = "^did:aw:[A-Za-z0-9]+$";
+const FIELD_PATTERNS = Object.freeze({
+  address: "^[^\\s/]+/[^\\s/]+$",
+  stable_id: "^did:aw:[A-Za-z0-9]+$",
+  team_id: "^[^:\\s/]+:[^:\\s/]+$",
+  soul: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+});
+const FIELD_REGEXPS = Object.fromEntries(
+  Object.entries(FIELD_PATTERNS).map(([field, pattern]) => [field, new RegExp(pattern)]),
+);
 
 export const principalDeclarationSchema = Object.freeze({
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -15,10 +23,10 @@ export const principalDeclarationSchema = Object.freeze({
   required: REQUIRED_FIELDS,
   properties: {
     schema_version: { type: "integer", const: 1 },
-    address: { type: "string", pattern: "^[^\\s/]+/[^\\s/]+$" },
-    stable_id: { type: "string", pattern: STABLE_ID_PATTERN },
-    team_id: { type: "string", pattern: "^[^:\\s/]+:[^:\\s/]+$" },
-    soul: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    address: { type: "string", pattern: FIELD_PATTERNS.address },
+    stable_id: { type: "string", pattern: FIELD_PATTERNS.stable_id },
+    team_id: { type: "string", pattern: FIELD_PATTERNS.team_id },
+    soul: { type: "string", pattern: FIELD_PATTERNS.soul },
     soul_version: { type: "string", minLength: 1 },
   },
 });
@@ -37,16 +45,16 @@ export function validatePrincipalDeclaration(declaration) {
   }
 
   if (declaration.schema_version !== 1) throw new TypeError("schema_version must be 1");
-  if (typeof declaration.address !== "string" || !/^[^\s/]+\/[^\s/]+$/.test(declaration.address)) {
+  if (typeof declaration.address !== "string" || !FIELD_REGEXPS.address.test(declaration.address)) {
     throw new TypeError("address must be a non-empty namespace/name address");
   }
-  if (typeof declaration.stable_id !== "string" || !/^did:aw:[A-Za-z0-9]+$/.test(declaration.stable_id)) {
+  if (typeof declaration.stable_id !== "string" || !FIELD_REGEXPS.stable_id.test(declaration.stable_id)) {
     throw new TypeError("stable_id must be a did:aw stable identity");
   }
-  if (typeof declaration.team_id !== "string" || !/^[^:\s/]+:[^:\s/]+$/.test(declaration.team_id)) {
+  if (typeof declaration.team_id !== "string" || !FIELD_REGEXPS.team_id.test(declaration.team_id)) {
     throw new TypeError("team_id must be a non-empty team:namespace identifier");
   }
-  if (typeof declaration.soul !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(declaration.soul)) {
+  if (typeof declaration.soul !== "string" || !FIELD_REGEXPS.soul.test(declaration.soul)) {
     throw new TypeError("soul must be a non-empty filesystem-safe reference");
   }
   if (Object.hasOwn(declaration, "soul_version")

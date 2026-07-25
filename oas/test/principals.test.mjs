@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
@@ -138,6 +138,37 @@ test("store resolution rejects a symlink in any existing path component", () => 
   const home = join(root, "principals");
   mkdirSync(home);
   symlinkSync(target, join(home, "test-team__example.test"), "dir");
+  assert.throws(
+    () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
+    /symbolic link/,
+  );
+});
+
+test("store resolution rejects links at principal, credentials, and state boundaries", () => {
+  for (const component of ["principal", "credentials", "state"]) {
+    const root = temporaryDirectory();
+    const target = temporaryDirectory();
+    const home = join(root, "principals");
+    const principal = join(home, "test-team__example.test", "2ThrowawayStableId123");
+    const linkedPath = component === "principal" ? principal : join(principal, component);
+    mkdirSync(dirname(linkedPath), { recursive: true });
+    symlinkSync(target, linkedPath, "dir");
+
+    assert.throws(
+      () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
+      /symbolic link/,
+      `${component} symlink must be rejected`,
+    );
+  }
+});
+
+test("store resolution rejects a dangling link rather than treating it as a missing path", () => {
+  const root = temporaryDirectory();
+  const home = join(root, "principals");
+  const principal = join(home, "test-team__example.test", "2ThrowawayStableId123");
+  mkdirSync(principal, { recursive: true });
+  symlinkSync(join(root, "missing-target"), join(principal, "credentials"), "dir");
+
   assert.throws(
     () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
     /symbolic link/,
