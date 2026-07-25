@@ -46,7 +46,7 @@ func init() {
 }
 
 func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
-	identity, rotationDir, lockPath, err := prepareRotationIdentity(true)
+	identity, rotationDir, lockPath, err := prepareRotationIdentity(false)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func runIDRotateKeyStatus(cmd *cobra.Command, args []string) error {
 }
 
 func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity, string, string, error) {
-	identity, err := resolveIdentity()
+	identity, err := resolveRotationIdentity()
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -145,8 +145,31 @@ func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity
 	return identity, rotationDir, lockPath, nil
 }
 
+func resolveRotationIdentity() (*awconfig.ResolvedIdentity, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	identityHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHome.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return resolveEphemeralIdentityWithoutState(workingDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	identity.ExternalIdentityHome = identityHome.External()
+	if strings.TrimSpace(identity.DID) == "" {
+		return nil, usageError("current identity is invalid: .aw/identity.yaml is missing did")
+	}
+	return identity, nil
+}
+
 func reloadRotationIdentity(lockIdentity *awconfig.ResolvedIdentity, rotationDir string) (*awconfig.ResolvedIdentity, error) {
-	identity, err := resolveIdentity()
+	identity, err := resolveRotationIdentity()
 	if err != nil {
 		return nil, err
 	}
@@ -156,13 +179,6 @@ func reloadRotationIdentity(lockIdentity *awconfig.ResolvedIdentity, rotationDir
 	}
 	if strings.TrimSpace(identity.StableID) != strings.TrimSpace(lockIdentity.StableID) || filepath.Clean(currentRotationDir) != filepath.Clean(rotationDir) {
 		return nil, fmt.Errorf("active identity changed while waiting for the rotation lock; retry the command")
-	}
-	signingKey, err := resolveIdentitySigningKey(identity)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
-		return nil, err
 	}
 	return identity, nil
 }

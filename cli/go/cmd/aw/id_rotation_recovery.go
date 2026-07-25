@@ -278,5 +278,11 @@ func loadRotationSigningKey(activeKeyPath string, pending *pendingRotationState)
 	if strings.TrimSpace(awid.ComputeDIDKey(activePriv.Public().(ed25519.PublicKey))) != strings.TrimSpace(pending.NewDID) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
 	}
+	// A crash may have moved the pending private key onto the active path but
+	// not its public sibling. Repair the pair before cleanup removes the only
+	// remaining copy of the replacement public key.
+	if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err != nil {
+		return nil, false, fmt.Errorf("repair promoted signing key pair: %w", err)
+	}
 	return activePriv, true, nil
 }

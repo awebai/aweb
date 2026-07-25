@@ -117,8 +117,12 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 		wantPending         bool
 		wantActiveNew       bool
 		localPromoted       bool
+		splitPromoted       bool
+		plainRecovery       bool
 	}{
 		{name: "applied", registryState: "new", wantStatus: "finalized", wantActiveNew: true},
+		{name: "applied after split active-key promotion", registryState: "new", wantStatus: "finalized", wantActiveNew: true, splitPromoted: true},
+		{name: "plain rotate recovers split active-key promotion", registryState: "new", wantStatus: "finalized", wantActiveNew: true, splitPromoted: true, plainRecovery: true},
 		{name: "not applied", registryState: "old", wantStatus: "rolled_back"},
 		{name: "old key from another identity", registryState: "old", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
 		{name: "new key from another identity", registryState: "new", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
@@ -181,10 +185,22 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if tc.splitPromoted {
+				if err := os.Rename(pendingKey, awconfig.WorktreeSigningKeyPath(dir)); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-			out := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
+			action := []string{"recover"}
+			if tc.plainRecovery {
+				action = nil
+			}
+			out := runRotationRecoveryCommand(t, ctx, bin, dir, action...)
 			if out.Status != tc.wantStatus {
 				t.Fatalf("recover status=%q, want %q", out.Status, tc.wantStatus)
+			}
+			if out.RerunRequired != tc.plainRecovery {
+				t.Fatalf("recover rerun_required=%v, want %v", out.RerunRequired, tc.plainRecovery)
 			}
 			pending, err := loadPendingRotationState(rotationDir, stableID)
 			if err != nil {
@@ -213,6 +229,13 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 			}
 			if gotActive != wantActive {
 				t.Fatalf("active did=%q, want %q", gotActive, wantActive)
+			}
+			activePublic, err := awid.LoadPublicKey(awid.PublicKeyPath(awconfig.WorktreeSigningKeyPath(dir)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !active.Public().(ed25519.PublicKey).Equal(activePublic) {
+				t.Fatal("active signing private/public key files do not match after recovery")
 			}
 			if !tc.wantPending {
 				repeated := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")

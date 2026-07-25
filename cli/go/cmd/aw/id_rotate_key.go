@@ -26,23 +26,11 @@ func init() {
 }
 
 func runIDRotateKey(cmd *cobra.Command, args []string) error {
-	lockIdentity, err := resolveIdentity()
+	// A crash may have promoted the private key before identity.yaml. Resolve
+	// only the stable transaction scope until pending recovery has had a chance
+	// to reconcile that intentionally split state under the lock.
+	lockIdentity, rotationDir, lockPath, err := prepareRotationIdentity(false)
 	if err != nil {
-		return err
-	}
-	lockSigningKey, err := resolveIdentitySigningKey(lockIdentity)
-	if err != nil {
-		return err
-	}
-	if err := requirePersistentSelfCustodialIdentity(lockIdentity, lockSigningKey); err != nil {
-		return err
-	}
-	rotationDir, err := rotationStateDirForIdentity(lockIdentity)
-	if err != nil {
-		return err
-	}
-	lockPath := pendingRotationStatePath(rotationDir, lockIdentity.StableID) + ".lock"
-	if err := preflightRotationFile(lockPath); err != nil {
 		return err
 	}
 	transactionLock, err := awconfig.LockExclusive(lockPath)
@@ -57,7 +45,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	// A preceding lock holder may have completed a rotation while this process
 	// waited. Reload both the identity and its signing key inside the transaction
 	// so a waiter cannot create recovery state from the retired key.
-	identity, err := resolveIdentity()
+	identity, err := resolveRotationIdentity()
 	if err != nil {
 		return err
 	}
@@ -67,13 +55,6 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(identity.StableID) != strings.TrimSpace(lockIdentity.StableID) || filepath.Clean(currentRotationDir) != filepath.Clean(rotationDir) {
 		return fmt.Errorf("active identity changed while waiting for the rotation lock; retry the rotation")
-	}
-	signingKey, err := resolveIdentitySigningKey(identity)
-	if err != nil {
-		return err
-	}
-	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
-		return err
 	}
 	if pending, err := loadPendingRotationState(rotationDir, identity.StableID); err != nil {
 		return err
@@ -85,6 +66,13 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		out.RerunRequired = true
 		printOutput(out, formatIDRotationRecovery)
 		return nil
+	}
+	signingKey, err := resolveIdentitySigningKey(identity)
+	if err != nil {
+		return err
+	}
+	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
+		return err
 	}
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
