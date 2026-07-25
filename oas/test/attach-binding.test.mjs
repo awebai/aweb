@@ -324,6 +324,28 @@ for (const malformed of [
   { name: "wrong schema", change: (binding) => ({ ...binding, schema_version: 2 }) },
   { name: "wrong mode", change: (binding) => ({ ...binding, mode: "provision" }) },
   { name: "wrong cleanup owner", change: (binding) => ({ ...binding, cleanup_owner: "instance" }) },
+  { name: "unknown binding field", change: (binding) => ({ ...binding, unexpected: "authority" }) },
+  { name: "unknown store field", change: (binding) => ({ ...binding, store: { ...binding.store, unexpected: "/tmp" } }) },
+  { name: "invalid public declaration value", change: (binding) => ({ ...binding, address: "not-an-address" }) },
+  {
+    name: "noncanonical declaration path",
+    change: (binding) => ({
+      ...binding,
+      declaration_path: binding.declaration_path.replace(`${sep}oas${sep}`, `${sep}discarded${sep}..${sep}oas${sep}`),
+    }),
+  },
+  {
+    name: "wrong declaration suffix",
+    change: (binding) => ({ ...binding, declaration_path: join(dirname(binding.declaration_path), "another.yaml") }),
+  },
+  {
+    name: "noncanonical store path",
+    change: (binding) => ({ ...binding, store: { ...binding.store, home: `${binding.store.home}${sep}discarded${sep}..` } }),
+  },
+  {
+    name: "wrong structural store derivation",
+    change: (binding) => ({ ...binding, store: { ...binding.store, credentials: join(binding.store.principal, "other-credentials") } }),
+  },
 ]) {
   test(`ordinary OAS retire grants no receipt to ${malformed.name}`, () => {
     const f = fixture();

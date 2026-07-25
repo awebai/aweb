@@ -151,21 +151,20 @@ survives rotation, while an address re-minted after a delete receives a *new*
 
 ### What the pin does and does not buy
 
-Guaranteed:
-- detection of alias delete-and-re-mint, and of a wrong stable identity;
-- resolution of legitimate key rotation without editing the declaration.
+The current v1 attach path compares the committed pin with the stable ID in the
+selected **local credentials**. It therefore detects attaching the wrong local
+credential set and tolerates a legitimate signing-key rotation without editing
+the declaration. That is its complete attach-time guarantee.
 
-**Not** guaranteed: detection of a compromised registry returning an
-attacker-controlled current `did:key` for the same `did:aw`. That holds only if
-resolution cryptographically verifies rotation history. `aw id verify <did_aw>`
-verifies the full audit log and a DID-log verifier exists in both Go and TS
-backed by shared signed vectors, so the primitive is probably present — but
-whether the *attach-time path* invokes it, rather than calling `aw id resolve`
-and trusting the answer, is an open test. Verifier parity is not runtime parity:
-this codebase has previously shipped a byte-identical verifier sitting behind a
-resolver that did not walk the log.
+Delete-and-re-mint detection requires a separate registry observation: resolve
+the address, compare the registry's current `did:aw` with the declaration, and
+attribute that evidence to the observation rather than to attach. Likewise,
+`aw id verify <did_aw>` can verify the registry audit log and rotation history,
+but v1 attach does not invoke it. Attach also cannot detect a compromised
+registry returning an attacker-controlled current `did:key`, because it does
+not consume a registry response at all.
 
-Do not compensate for this by pinning the rotatable `did:key`.
+Do not compensate for these boundaries by pinning the rotatable `did:key`.
 
 ## Identity binding
 
