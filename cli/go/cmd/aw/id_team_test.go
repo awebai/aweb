@@ -3753,9 +3753,13 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *testing.T) {
 	t.Parallel()
 
-	var registeredCert map[string]any
-	var memberDID string
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
 	memberDIDAW := "did:aw:alice"
+	var registeredCert guarded[map[string]any]
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
@@ -3769,9 +3773,11 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 				"created_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
-			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+			var cert map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&cert); err != nil {
 				t.Fatal(err)
 			}
+			registeredCert.set(cert)
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -3790,12 +3796,6 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
-
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID = awid.ComputeDIDKey(memberPub)
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
 		"--team", "backend",
@@ -3823,17 +3823,18 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 	if got["member_address"] != "acme.com/alice" {
 		t.Fatalf("member_address=%v", got["member_address"])
 	}
-	if registeredCert["member_did_key"] != memberDID {
-		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
+	gotCert := registeredCert.get()
+	if gotCert["member_did_key"] != memberDID {
+		t.Fatalf("registry cert member_did_key=%v", gotCert["member_did_key"])
 	}
-	if registeredCert["member_did_aw"] != memberDIDAW {
-		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
+	if gotCert["member_did_aw"] != memberDIDAW {
+		t.Fatalf("registry cert member_did_aw=%v", gotCert["member_did_aw"])
 	}
-	if registeredCert["member_address"] != "acme.com/alice" {
-		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	if gotCert["member_address"] != "acme.com/alice" {
+		t.Fatalf("registry cert member_address=%v", gotCert["member_address"])
 	}
-	if registeredCert["identity_scope"] != awid.IdentityModeGlobal {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
+	if gotCert["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("registry cert lifetime=%v", gotCert["identity_scope"])
 	}
 }
 
