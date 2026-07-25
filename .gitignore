@@ -49,3 +49,8 @@ pi-extension/skills/
 /cli/agents/instances/aw-reviewer-onboarding/
 /cli/agents/instances/aw-developer-2/
 /cli/agents/instances/aw-reviewer-2/
+/cli/agents/instances/aw-sec-dev/
+/cli/agents/instances/aw-sec-rev/
+/cli/agents/instances/oas-coordinator/
+/cli/agents/instances/oas-developer/
+/cli/agents/instances/oas-reviewer/
