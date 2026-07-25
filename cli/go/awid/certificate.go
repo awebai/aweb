@@ -189,7 +189,9 @@ func EncodeTeamCertificateHeader(cert *TeamCertificate) (string, error) {
 }
 
 // DecodeTeamCertificateHeader decodes a certificate from the
-// X-AWID-Team-Certificate HTTP header.
+// X-AWID-Team-Certificate HTTP header. This transport envelope deliberately
+// uses padded StdEncoding to round-trip headers emitted by TypeScript's
+// encodeTeamCertificateHeader; RawStdEncoding would reject those headers.
 func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {

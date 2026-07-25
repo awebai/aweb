@@ -136,7 +136,9 @@ export async function signMessage(
  * Verify a message envelope signature.
  * Returns 'unverified' if DID or signature is missing.
  * Returns 'failed' if signature doesn't verify.
- * Returns 'verified' if valid.
+ * Returns 'verified' if the signature is valid. This does not prove that the
+ * signer owns the claimed sender address; every inbound path must pass the
+ * result through SenderTrustManager.normalizeTrust for that binding decision.
  */
 export async function verifyMessage(
   env: MessageEnvelope,

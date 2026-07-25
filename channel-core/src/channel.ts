@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
@@ -110,23 +111,64 @@ export class DeliveryStore {
     return new DeliveryStore(path, await DeliveryStore.readEntries(path));
   }
 
-  // Read the on-disk marks, dropping expired ones. Absent, unreadable, or
-  // malformed content reads as no marks.
+  // Read the on-disk marks, dropping expired ones. Only an absent file is a
+  // fresh empty store; unreadable or malformed state must remain visible so a
+  // later save cannot silently overwrite every durable delivery mark.
   private static async readEntries(path: string): Promise<Map<string, number>> {
-    const entries = new Map<string, number>();
+    let content: string;
     try {
-      const raw = JSON.parse(await readFile(path, "utf-8")) as Record<string, string | number>;
-      const now = Date.now();
-      for (const [key, value] of Object.entries(raw)) {
-        const timestamp = typeof value === "number" ? value : Date.parse(value);
-        if (Number.isFinite(timestamp) && now - timestamp <= DELIVERED_IDS_TTL_MS) {
-          entries.set(key, timestamp);
-        }
+      content = await readFile(path, "utf-8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return new Map();
+      return DeliveryStore.quarantine(path, `cannot read it (${code ?? "read error"})`, error);
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(content);
+    } catch (error) {
+      return DeliveryStore.quarantine(path, `its JSON is malformed: ${(error as Error).message}`, error);
+    }
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return DeliveryStore.quarantine(path, "it does not contain a JSON object");
+    }
+
+    const entries = new Map<string, number>();
+    const now = Date.now();
+    for (const [key, value] of Object.entries(raw)) {
+      let timestamp: number;
+      if (typeof value === "number") timestamp = value;
+      else if (typeof value === "string") timestamp = Date.parse(value);
+      else timestamp = Number.NaN;
+      if (!Number.isFinite(timestamp)) {
+        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
       }
-    } catch {
-      // No readable/parseable store yet.
+      if (now - timestamp <= DELIVERED_IDS_TTL_MS) entries.set(key, timestamp);
     }
     return entries;
+  }
+
+  private static async quarantine(path: string, reason: string, cause?: unknown): Promise<never> {
+    const quarantinePath = `${path}.corrupt-${Date.now()}-${process.pid}-${DeliveryStore.quarantineCounter += 1}`;
+    try {
+      await rename(path, quarantinePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(
+          `delivery store at ${path} was quarantined concurrently after detection (${reason}); retry the operation`,
+          { cause: cause ?? error },
+        );
+      }
+      throw new Error(
+        `delivery store at ${path} is corrupt (${reason}) and could not be quarantined (${(error as NodeJS.ErrnoException).code ?? "rename error"}); refusing to overwrite it`,
+        { cause: cause ?? error },
+      );
+    }
+    throw new Error(
+      `delivery store at ${path} was quarantined at ${quarantinePath} because ${reason}; retry the operation to start a fresh store`,
+      { cause },
+    );
   }
 
   has(key: string): boolean {
@@ -139,15 +181,39 @@ export class DeliveryStore {
     this.prune();
   }
 
+  unmark(key: string): void {
+    this.entries.delete(key);
+  }
+
   // Persist marks with an atomic, merge-on-save read-modify-write. A plain
   // overwrite would clobber marks another writer added since we loaded — making
   // delivered messages look undelivered and replay on reconnect (default-aajy).
-  // Union the on-disk marks with our own, write atomically, and retry if a
-  // concurrent writer clobbered our marks between the merge and the rename.
+  // The complete transaction must be cross-process exclusive: readback retries
+  // can each observe success before a later rename silently replaces it.
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const own = new Map(this.entries);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    // Node has no portable flock, so use a maintained atomic-directory lock
+    // rather than a bespoke stale-lock protocol. A healthy owner heartbeats at
+    // 10s and remains live beyond the 30s stale threshold. Each competing save,
+    // including immediately after SIGKILL, gives up with ELOCKED after about 5s;
+    // only a later call made after the lock age exceeds 30s can reclaim it. A
+    // false reclaim can cause redelivery but cannot cross a trust boundary.
+    let compromised: Error | undefined;
+    const release = await lock(this.path, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: {
+        retries: 200,
+        factor: 1,
+        minTimeout: 25,
+        maxTimeout: 25,
+        randomize: true,
+      },
+      onCompromised: (error) => { compromised = error; },
+    });
+    try {
       const merged = await DeliveryStore.readEntries(this.path);
       for (const [key, value] of own) {
         const existing = merged.get(key);
@@ -156,8 +222,9 @@ export class DeliveryStore {
       this.entries = merged;
       this.prune();
       await this.writeAtomic();
-      const onDisk = await DeliveryStore.readEntries(this.path);
-      if ([...own.keys()].every((key) => onDisk.has(key) || !this.entries.has(key))) return;
+      if (compromised) throw compromised;
+    } finally {
+      if (!compromised) await release();
     }
   }
 
@@ -183,6 +250,7 @@ export class DeliveryStore {
   }
 
   private static tmpCounter = 0;
+  private static quarantineCounter = 0;
 
   private prune(): void {
     const now = Date.now();
@@ -268,8 +336,9 @@ export async function consumeAgentEvents(
         await dispatchAgentEvent(options, dispatched, event, log);
         pruneDispatched(dispatched);
       })
-      .catch(() => {
-        log("aweb: could not process an incoming event; it remains pending");
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
       });
     pending.add(job);
     if (lane) lanes.set(lane, job);
@@ -387,11 +456,7 @@ async function dispatchAppEvent(
     deliveryIntent: event.delivery_intent || "ambient",
     meta,
   });
-  dispatched.add(key);
-  if (options.deliveryStore) {
-    options.deliveryStore.mark(key);
-    await options.deliveryStore.save();
-  }
+  await persistDeliveryMark(options.deliveryStore, dispatched, key);
 }
 
 async function dispatchMailEvent(
@@ -446,11 +511,7 @@ async function dispatchMailEvent(
       meta,
       deliveryIntent: "wake",
     });
-    dispatched.add(key);
-    if (options.deliveryStore) {
-      options.deliveryStore.mark(key);
-      await options.deliveryStore.save();
-    }
+    await persistDeliveryMark(options.deliveryStore, dispatched, key);
     if (options.mailAcknowledgment !== "manual") {
       await ackMessage(options.client, msg.message_id);
     }
@@ -509,15 +570,30 @@ async function dispatchChatEvent(
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
-    dispatched.add(key);
-    if (options.deliveryStore) {
-      options.deliveryStore.mark(key);
-      await options.deliveryStore.save();
-    }
+    await persistDeliveryMark(options.deliveryStore, dispatched, key);
     lastMessageId = msg.message_id;
   }
   if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
+}
+
+async function persistDeliveryMark(
+  deliveryStore: DeliveryStore | undefined,
+  dispatched: Set<string>,
+  key: string,
+): Promise<void> {
+  if (deliveryStore) {
+    deliveryStore.mark(key);
+    try {
+      await deliveryStore.save();
+    } catch (error) {
+      // A transient in-memory mark must not turn a failed durable save into an
+      // acknowledgment on the next event. Leave the message pending instead.
+      deliveryStore.unmark(key);
+      throw error;
+    }
+  }
+  dispatched.add(key);
 }
 
 async function normalizeMessageTrust(
