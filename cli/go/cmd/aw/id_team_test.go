@@ -4181,9 +4181,18 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runAdd := exec.CommandContext(ctx, bin, "id", "team", "add", token, "--json")
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceHome := filepath.Join(canonicalTmp, "empty-instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(canonicalTmp, ".aw")
+	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--name", "alice", "--address", "acme.com/alice", token, "--json")
 	runAdd.Env = testCommandEnv(tmp)
-	runAdd.Dir = tmp
+	runAdd.Dir = instanceHome
 	addOut, err := runAdd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team add failed: %v\n%s", err, string(addOut))
@@ -4218,7 +4227,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if teamState.ActiveTeam != "backend:acme.com" {
+	if teamState.ActiveTeam != "ops:acme.com" {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if teamState.Membership("ops:acme.com") == nil {
@@ -4228,9 +4237,9 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
 	}
 
-	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
+	runList := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "list", "--json")
 	runList.Env = testCommandEnv(tmp)
-	runList.Dir = tmp
+	runList.Dir = instanceHome
 	listOut, err := runList.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team list failed: %v\n%s", err, string(listOut))
@@ -4242,13 +4251,13 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, listOut), &listGot); err != nil {
 		t.Fatalf("invalid list json: %v\n%s", err, string(listOut))
 	}
-	if listGot.ActiveTeam != "backend:acme.com" || len(listGot.Memberships) != 2 {
+	if listGot.ActiveTeam != "ops:acme.com" || len(listGot.Memberships) != 2 {
 		t.Fatalf("list=%+v", listGot)
 	}
 
-	runSwitch := exec.CommandContext(ctx, bin, "id", "team", "switch", "ops:acme.com", "--json")
+	runSwitch := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "switch", "backend:acme.com", "--json")
 	runSwitch.Env = testCommandEnv(tmp)
-	runSwitch.Dir = tmp
+	runSwitch.Dir = instanceHome
 	switchOut, err := runSwitch.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team switch failed: %v\n%s", err, string(switchOut))
@@ -4257,20 +4266,20 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, switchOut), &switchGot); err != nil {
 		t.Fatalf("invalid switch json: %v\n%s", err, string(switchOut))
 	}
-	if switchGot["active_team"] != "ops:acme.com" {
+	if switchGot["active_team"] != "backend:acme.com" {
 		t.Fatalf("active_team=%v", switchGot["active_team"])
 	}
 	teamState, err = awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if teamState.ActiveTeam != "ops:acme.com" {
+	if teamState.ActiveTeam != "backend:acme.com" {
 		t.Fatalf("teams active_team=%q", teamState.ActiveTeam)
 	}
 
-	runLeave := exec.CommandContext(ctx, bin, "id", "team", "leave", "ops:acme.com", "--json")
+	runLeave := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "leave", "ops:acme.com", "--json")
 	runLeave.Env = testCommandEnv(tmp)
-	runLeave.Dir = tmp
+	runLeave.Dir = instanceHome
 	leaveOut, err := runLeave.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team leave failed: %v\n%s", err, string(leaveOut))
@@ -4291,6 +4300,9 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "ops:acme.com")); !os.IsNotExist(err) {
 		t.Fatalf("ops cert should be removed, stat err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("team operations leaked principal state into instance: %v", err)
 	}
 }
 
