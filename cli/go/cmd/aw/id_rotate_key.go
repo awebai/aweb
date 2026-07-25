@@ -53,6 +53,16 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	lockPath := pendingRotationStatePath(rotationDir, identity.StableID) + ".lock"
+	if err := preflightRotationFile(lockPath); err != nil {
+		return err
+	}
+	transactionLock, err := awconfig.LockExclusive(lockPath)
+	if err != nil {
+		return fmt.Errorf("lock identity key rotation: %w", err)
+	}
+	defer func() { _ = transactionLock.Close() }()
+
 	if pending, err := loadPendingRotationState(rotationDir, identity.StableID); err != nil {
 		return err
 	} else if pending != nil {

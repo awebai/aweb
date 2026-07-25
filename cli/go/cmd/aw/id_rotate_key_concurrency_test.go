@@ -105,6 +105,7 @@ func TestConcurrentRotationsClaimOnlyOneState(t *testing.T) {
 		select {
 		case <-currentArrivals():
 		case <-time.After(5 * time.Second):
+			openGate()
 			t.Fatal("neither rotation reached the registry")
 		}
 		time.Sleep(200 * time.Millisecond)
