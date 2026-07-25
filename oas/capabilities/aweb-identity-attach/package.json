@@ -1,5 +1,5 @@
 {
-  "name": "@awebai/oas-aweb",
+  "name": "@awebai/oas-identity-attach",
   "version": "0.1.0",
   "private": true,
   "type": "module"

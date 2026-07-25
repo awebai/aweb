@@ -15,10 +15,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, test } from "node:test";
 
-const CAPABILITY_SOURCE = resolve(new URL("../capabilities/oas-aweb", import.meta.url).pathname);
+const CAPABILITY_SOURCE = resolve(new URL("../capabilities/aweb-identity-attach", import.meta.url).pathname);
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -75,9 +75,11 @@ function fixture({ mode = "attach" } = {}) {
   write(join(soul, "AGENTS.md"), "# Developer\n");
   mkdirSync(join(agentsRoot, "developer", "instances"), { recursive: true });
 
-  cpSync(CAPABILITY_SOURCE, join(repo, ".agents", "capabilities", "owned", "oas-aweb"), { recursive: true });
-  write(join(repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: oas.aweb\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: 1\n            mode: ${mode}\n            principal: throwaway\n`);
-  write(join(repo, "oas", "agents", "developer", "principals", "throwaway.yaml"), [
+  const capability = join(repo, ".agents", "capabilities", "owned", "aweb-identity-attach");
+  cpSync(CAPABILITY_SOURCE, capability, { recursive: true });
+  write(join(repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: 1\n            mode: ${mode}\n            principal: throwaway\n`);
+  const declarationPath = join(repo, "oas", "agents", "developer", "principals", "throwaway.yaml");
+  write(declarationPath, [
     "schema_version: 1",
     "address: example.test/throwaway",
     "stable_id: did:aw:2ThrowawayStableId123",
@@ -107,7 +109,12 @@ function fixture({ mode = "attach" } = {}) {
     FAKE_AW_LOG: awLog,
     PI_AGENTS_TMUX_SESSION: "oas-attach-test-no-session",
   };
-  return { base, repo, agentsRoot, principalHome, principal, credentials, state, awLog, env };
+  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, awLog, awPath: join(bin, "aw"), env };
+}
+
+function pathIsWithinOrEqual(root, candidate) {
+  const fromRoot = relative(root, candidate);
+  return fromRoot === "" || (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot));
 }
 
 function allPaths(root) {
@@ -122,6 +129,47 @@ function allPaths(root) {
   return paths;
 }
 
+function assertNoInstanceIdentityMaterial(instanceHome, principal, credentialFile) {
+  assert.equal(existsSync(join(instanceHome, ".aw")), false);
+  const credentialStat = statSync(credentialFile);
+  const secret = readFileSync(credentialFile, "utf8").trim();
+  for (const path of allPaths(instanceHome)) {
+    assert.notEqual(basename(path), ".aw", `identity directory copied into instance at ${path}`);
+    const entry = lstatSync(path);
+    assert.equal(entry.isSymbolicLink() && pathIsWithinOrEqual(principal, realpathSync(path)), false, `principal symlink at ${path}`);
+    if (entry.isFile()) {
+      const instanceStat = statSync(path);
+      assert.notDeepEqual([instanceStat.dev, instanceStat.ino], [credentialStat.dev, credentialStat.ino], `credential hardlink at ${path}`);
+      assert.notEqual(secret && readFileSync(path).includes(secret), true, `credential copy at ${path}`);
+    }
+  }
+}
+
+test("attach capability identity is explicit and cannot collide with upstream destructive oas.aweb", () => {
+  const manifest = JSON.parse(readFileSync(join(CAPABILITY_SOURCE, "oas.json"), "utf8"));
+  assert.equal(manifest.capability, "aweb.identity-attach");
+  assert.notEqual(manifest.capability, "oas.aweb");
+  assert.equal(manifest.layer, "messaging");
+});
+
+test("instance link containment includes an exact renamed link to the principal root", () => {
+  const root = temporaryDirectory();
+  const principal = join(root, "principal");
+  const instance = join(root, "instance");
+  const credential = join(principal, "credentials", "signing.key");
+  write(credential, "exact-principal-link-secret\n");
+  mkdirSync(instance);
+  const renamedLink = join(instance, "ordinary-looking-directory");
+  symlinkSync(principal, renamedLink, "dir");
+  assert.equal(pathIsWithinOrEqual(principal, realpathSync(renamedLink)), true);
+  assert.equal(pathIsWithinOrEqual(principal, join(principal, "credentials")), true);
+  assert.equal(pathIsWithinOrEqual(principal, join(root, "principal-sibling")), false);
+  assert.throws(
+    () => assertNoInstanceIdentityMaterial(instance, principal, credential),
+    /principal symlink/,
+  );
+});
+
 test("real OAS attach spawn persists external ownership and ordinary retire preserves the principal", () => {
   const f = fixture();
   const cli = oasCli();
@@ -134,7 +182,7 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
   assert.deepEqual(spawned.warnings ?? [], []);
 
   const instanceMeta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-  const binding = instanceMeta.capabilityMeta?.["oas.aweb"]?.identity_binding;
+  const binding = instanceMeta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding;
   assert.deepEqual(binding, {
     schema_version: 1,
     mode: "attach",
@@ -154,18 +202,7 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
     },
   });
   assert.match(readFileSync(join(spawned.home, "TASK.md"), "utf8"), /external cleanup ownership/);
-  assert.equal(existsSync(join(spawned.home, ".aw")), false);
-  const credentialStat = statSync(join(f.credentials, "signing.key"));
-  for (const path of allPaths(spawned.home)) {
-    assert.notEqual(basename(path), ".aw", `identity directory copied into instance at ${path}`);
-    const entry = lstatSync(path);
-    assert.equal(entry.isSymbolicLink() && realpathSync(path).startsWith(`${f.principal}${process.platform === "win32" ? "\\" : "/"}`), false, `principal symlink at ${path}`);
-    if (entry.isFile()) {
-      const instanceStat = statSync(path);
-      assert.notDeepEqual([instanceStat.dev, instanceStat.ino], [credentialStat.dev, credentialStat.ino], `credential hardlink at ${path}`);
-      assert.notEqual(readFileSync(path).includes("principal-secret-that-must-never-enter-instance"), true, `credential copy at ${path}`);
-    }
-  }
+  assertNoInstanceIdentityMaterial(spawned.home, f.principal, join(f.credentials, "signing.key"));
 
   const invocationsAtSpawn = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
   assert.deepEqual(invocationsAtSpawn, [{
@@ -181,7 +218,7 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
   const retired = parseSuccess(retire);
   assert.equal(existsSync(spawned.home), false);
   assert.deepEqual(retired.warnings ?? [], []);
-  assert.deepEqual(retired.capabilityMeta?.["oas.aweb"], {
+  assert.deepEqual(retired.capabilityMeta?.["aweb.identity-attach"], {
     identity_binding: binding,
     retirement: { action: "preserve_principal", cleanup_owner: "external" },
   });
@@ -190,10 +227,39 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
   assert.equal(readFileSync(join(f.state, "state.json"), "utf8"), "{\"durable\":true}\n");
 });
 
+test("real OAS attach rejects a declaration for a different soul before invoking aw", () => {
+  const f = fixture();
+  writeFileSync(f.declarationPath, readFileSync(f.declarationPath, "utf8").replace("soul: developer", "soul: reviewer"));
+  const result = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "reject-soul", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  const spawned = parseSuccess(result);
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /declaration soul.*does not match OAS_AGENT/);
+  assert.equal(existsSync(f.awLog), false);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
+});
+
+test("real OAS attach fails visibly when aw reports a different address", () => {
+  const f = fixture();
+  writeFileSync(f.awPath, readFileSync(f.awPath, "utf8").replace(
+    'address: "example.test/throwaway"',
+    'address: "example.test/impostor"',
+  ));
+  const result = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "reject-address", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  const spawned = parseSuccess(result);
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /address.*does not match declaration/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
+});
+
 test("real OAS attach fails visibly when aw reports a different stable identity", () => {
   const f = fixture();
-  const awPath = join(f.base, "bin", "aw");
-  writeFileSync(awPath, readFileSync(awPath, "utf8").replace(
+  writeFileSync(f.awPath, readFileSync(f.awPath, "utf8").replace(
     'stable_id: "did:aw:2ThrowawayStableId123"',
     'stable_id: "did:aw:2DifferentStableId456"',
   ));
@@ -206,12 +272,36 @@ test("real OAS attach fails visibly when aw reports a different stable identity"
   assert.equal(spawned.warnings.length, 1);
   assert.match(spawned.warnings[0], /stable_id.*does not match declaration/);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-  assert.equal(meta.capabilityMeta?.["oas.aweb"], undefined);
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(join(spawned.home, ".aw")), false);
 });
 
-test("real OAS attach rechecks credential symlinks before invoking aw", () => {
+test("real OAS attach fails visibly when aw reports a different team", () => {
   const f = fixture();
+  writeFileSync(f.awPath, readFileSync(f.awPath, "utf8").replace(
+    'team_id: "test-team:example.test"',
+    'team_id: "other-team:example.test"',
+  ));
+  const result = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "reject-team", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  const spawned = parseSuccess(result);
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /team_id.*does not match declaration/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
+});
+
+test("real OAS attach reaches the point-of-use credential symlink recheck", () => {
+  const f = fixture();
+  const resolver = join(f.capability, "lib", "principals.mjs");
+  const resolverSource = readFileSync(resolver, "utf8");
+  const resolverGuard = "  assertPrincipalStoreSafe({ home, principal, credentials, state });\n\n  return { home, principal, credentials, state };";
+  assert.equal(resolverSource.includes(resolverGuard), true);
+  writeFileSync(resolver, resolverSource.replace(
+    resolverGuard,
+    "  return { home, principal, credentials, state };",
+  ));
   const target = join(f.base, "linked-credentials");
   mkdirSync(target);
   rmSync(f.credentials, { recursive: true });
@@ -226,8 +316,39 @@ test("real OAS attach rechecks credential symlinks before invoking aw", () => {
   assert.match(spawned.warnings[0], /symbolic link/);
   assert.equal(existsSync(f.awLog), false, "unsafe credential path must fail before aw invocation");
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-  assert.equal(meta.capabilityMeta?.["oas.aweb"], undefined);
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
 });
+
+for (const malformed of [
+  { name: "partial binding", change: () => ({ schema_version: 1, mode: "attach", cleanup_owner: "external" }) },
+  { name: "wrong schema", change: (binding) => ({ ...binding, schema_version: 2 }) },
+  { name: "wrong mode", change: (binding) => ({ ...binding, mode: "provision" }) },
+  { name: "wrong cleanup owner", change: (binding) => ({ ...binding, cleanup_owner: "instance" }) },
+]) {
+  test(`ordinary OAS retire grants no receipt to ${malformed.name}`, () => {
+    const f = fixture();
+    const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", `retire-${malformed.name.replaceAll(" ", "-")}`, "--no-launch", "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    });
+    const spawned = parseSuccess(spawn);
+    assert.deepEqual(spawned.warnings ?? [], []);
+    const metaPath = join(spawned.home, "instance.json");
+    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+    const capabilityMeta = meta.capabilityMeta["aweb.identity-attach"];
+    capabilityMeta.identity_binding = malformed.change(capabilityMeta.identity_binding);
+    writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+    mkdirSync(join(spawned.home, ".aw"));
+
+    const retire = spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    });
+    const retired = parseSuccess(retire);
+    assert.equal(retired.warnings.length, 1);
+    assert.match(retired.warnings[0], /no principal cleanup was attempted/);
+    assert.equal(retired.capabilityMeta?.["aweb.identity-attach"], undefined);
+    assert.equal(readFileSync(f.awLog, "utf8").trim().split("\n").length, 1, "retire must not invoke aw");
+  });
+}
 
 test("real OAS spawn rejects a non-attach binding without minting or cleanup authority", () => {
   const f = fixture({ mode: "provision" });
@@ -240,7 +361,7 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
   assert.equal(spawned.warnings.length, 1);
   assert.match(spawned.warnings[0], /only attach mode is supported/);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-  assert.equal(meta.capabilityMeta?.["oas.aweb"], undefined);
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(f.awLog), false);
   assert.equal(existsSync(join(spawned.home, ".aw")), false);
   mkdirSync(join(spawned.home, ".aw"));
@@ -254,6 +375,6 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
   assert.equal(existsSync(spawned.home), false);
   assert.equal(retired.warnings.length, 1);
   assert.match(retired.warnings[0], /no principal cleanup was attempted/);
-  assert.equal(retired.capabilityMeta?.["oas.aweb"], undefined);
+  assert.equal(retired.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(f.awLog), false, "missing binding metadata must grant no cleanup authority");
 });

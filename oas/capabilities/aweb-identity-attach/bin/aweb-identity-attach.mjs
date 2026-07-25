@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, normalize, resolve } from "node:path";
+import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 
 import {
+  assertPrincipalStoreContained,
   assertPrincipalStoreSafe,
   loadPrincipalDeclaration,
   resolvePrincipalStore,
+  validatePrincipalDeclaration,
 } from "../lib/principals.mjs";
 
 function output(value) {
@@ -15,7 +17,7 @@ function output(value) {
 
 function warning(error) {
   const message = error instanceof Error ? error.message : String(error);
-  output({ warning: `oas-aweb: ${message.slice(0, 400)}` });
+  output({ warning: `aweb-identity-attach: ${message.slice(0, 400)}` });
 }
 
 function requiredAbsoluteDirectory(value, name) {
@@ -44,6 +46,60 @@ function parseAttachSettings() {
   if (binding.mode !== "attach") throw new TypeError("only attach mode is supported by this capability");
   if (typeof binding.principal !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(binding.principal)) {
     throw new TypeError("identity_binding.principal must be a declaration basename");
+  }
+  return binding;
+}
+
+function exactFields(value, required, optional = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const allowed = [...required, ...optional];
+  return required.every((field) => Object.hasOwn(value, field))
+    && actual.every((field) => allowed.includes(field));
+}
+
+function canonicalAbsolutePath(value) {
+  return typeof value === "string" && isAbsolute(value) && normalize(resolve(value)) === value;
+}
+
+function validatePersistedAttachBinding(binding) {
+  const fields = [
+    "schema_version", "mode", "cleanup_owner", "principal", "declaration_path",
+    "address", "stable_id", "team_id", "soul", "store",
+  ];
+  if (!exactFields(binding, fields, ["soul_version"])) throw new TypeError("persisted external attach binding has invalid fields");
+  if (binding.schema_version !== 1 || binding.mode !== "attach" || binding.cleanup_owner !== "external") {
+    throw new TypeError("persisted external attach binding has invalid authority fields");
+  }
+  if (typeof binding.principal !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(binding.principal)) {
+    throw new TypeError("persisted external attach binding has an invalid principal name");
+  }
+  validatePrincipalDeclaration({
+    schema_version: binding.schema_version,
+    address: binding.address,
+    stable_id: binding.stable_id,
+    team_id: binding.team_id,
+    soul: binding.soul,
+    ...(binding.soul_version === undefined ? {} : { soul_version: binding.soul_version }),
+  });
+  if (!canonicalAbsolutePath(binding.declaration_path)) throw new TypeError("persisted declaration_path must be canonical and absolute");
+  const declarationSuffix = join("oas", "agents", binding.soul, "principals", `${binding.principal}.yaml`);
+  if (binding.declaration_path !== declarationSuffix && !binding.declaration_path.endsWith(`${sep}${declarationSuffix}`)) {
+    throw new TypeError("persisted declaration_path does not match the principal and soul");
+  }
+  if (!exactFields(binding.store, ["home", "principal", "credentials", "state"])) {
+    throw new TypeError("persisted external attach store has invalid fields");
+  }
+  for (const [field, path] of Object.entries(binding.store)) {
+    if (!canonicalAbsolutePath(path)) throw new TypeError(`persisted store.${field} must be canonical and absolute`);
+  }
+  assertPrincipalStoreContained(binding.store.home, binding.store);
+  const [teamName, teamNamespace] = binding.team_id.split(":");
+  const expectedPrincipal = join(binding.store.home, teamName, teamNamespace, binding.stable_id.slice("did:aw:".length));
+  if (binding.store.principal !== expectedPrincipal
+      || binding.store.credentials !== join(expectedPrincipal, "credentials")
+      || binding.store.state !== join(expectedPrincipal, "state")) {
+    throw new TypeError("persisted store paths do not match the principal declaration");
   }
   return binding;
 }
@@ -99,7 +155,7 @@ function attach() {
     throw new Error(`attached identity team_id ${JSON.stringify(whoami.team_id)} does not match declaration ${JSON.stringify(declaration.team_id)}`);
   }
 
-  const identityBinding = {
+  const identityBinding = validatePersistedAttachBinding({
     schema_version: 1,
     mode: "attach",
     cleanup_owner: "external",
@@ -111,7 +167,7 @@ function attach() {
     soul: declaration.soul,
     ...(declaration.soul_version === undefined ? {} : { soul_version: declaration.soul_version }),
     store,
-  };
+  });
   output({
     meta: { identity_binding: identityBinding },
     brief: `Identity: attached to ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
@@ -125,8 +181,10 @@ function retire() {
   } catch {
     throw new TypeError("persisted OAS_META is invalid; no principal cleanup was attempted");
   }
-  const binding = metadata?.identity_binding;
-  if (!binding || binding.schema_version !== 1 || binding.mode !== "attach" || binding.cleanup_owner !== "external") {
+  let binding;
+  try {
+    binding = validatePersistedAttachBinding(metadata?.identity_binding);
+  } catch {
     throw new Error("persisted external attach binding is missing or malformed; no principal cleanup was attempted");
   }
   output({
