@@ -334,13 +334,21 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(tmp, "instance")
+	identityHome := filepath.Join(tmp, "principal")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "Acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "create", "--name", "Alice", "--domain", "Acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
 	run.Env = idCreateCommandEnv(tmp)
-	run.Dir = tmp
+	run.Dir = instanceHome
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("id create failed: %v\n%s", err, string(out))
@@ -368,6 +376,15 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if got["encryption_key_id"] == "" {
 		t.Fatalf("encryption_key_id missing: %#v", got)
 	}
+	if got["identity_path"] != filepath.Join(identityHome, "identity.yaml") {
+		t.Fatalf("identity_path=%v", got["identity_path"])
+	}
+	if got["signing_key_path"] != filepath.Join(identityHome, "signing.key") {
+		t.Fatalf("signing_key_path=%v", got["signing_key_path"])
+	}
+	if path, _ := got["encryption_key_path"].(string); !strings.HasPrefix(path, identityHome+string(filepath.Separator)) {
+		t.Fatalf("encryption_key_path=%v", got["encryption_key_path"])
+	}
 	if namespaceAuthDID == "" {
 		t.Fatalf("missing namespace controller auth DID")
 	}
@@ -378,25 +395,28 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 		t.Fatalf("controller DID should differ from identity DID %q", createdDIDKey)
 	}
 
-	identityPath := filepath.Join(tmp, ".aw", "identity.yaml")
-	signingKeyPath := filepath.Join(tmp, ".aw", "signing.key")
+	identityPath := filepath.Join(identityHome, "identity.yaml")
+	signingKeyPath := filepath.Join(identityHome, "signing.key")
 	if _, err := os.Stat(identityPath); err != nil {
 		t.Fatalf("identity.yaml missing: %v", err)
 	}
 	if _, err := os.Stat(signingKeyPath); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(identityHome, "workspace.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("workspace.yaml should not exist, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.pub")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(identityHome, "signing.pub")); !os.IsNotExist(err) {
 		t.Fatalf("signing.pub should not exist, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(identityHome, "encryption.yaml")); err != nil {
 		t.Fatalf("encryption.yaml missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption-keys")); err != nil {
+	if _, err := os.Stat(filepath.Join(identityHome, "encryption-keys")); err != nil {
 		t.Fatalf("encryption-keys dir missing: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("identity material leaked into instance: %v", err)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
