@@ -113,6 +113,16 @@ describe("verifyMessage", () => {
     expect(status).toBe("failed");
   });
 
+  test("returns failed for a valid-base64 wrong-length signature", async () => {
+    const vec = vectors.vectors[0];
+    const envelope: MessageEnvelope = {
+      ...vec.envelope,
+      signature: `${vec.signature}A`,
+      signing_key_id: vec.envelope.from_did,
+    };
+    expect(await verifyMessage(envelope)).toBe("failed");
+  });
+
   test("returns failed when signing_key_id mismatches from_did", async () => {
     const vec = vectors.vectors[0];
     const envelope: MessageEnvelope = {
