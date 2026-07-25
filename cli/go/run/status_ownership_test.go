@@ -3,6 +3,8 @@ package run
 import (
 	"bytes"
 	"context"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +145,66 @@ func drainStatusDirty(l *Loop) {
 // state.ConnState and called refreshStatusLine directly — which also WRITES
 // st.RunPhase — so these two goroutines wrote the same loop state concurrently
 // and the detector fired. Now the bus only signals and the main loop renders.
+func TestProviderOutputAndControlRenderingHaveSingleOwner(t *testing.T) {
+	const iterations = 2000
+
+	cost := 0.01
+	ui := newRecordingUI()
+	started := make(chan struct{})
+	controlsQueued := make(chan struct{})
+	loop := NewLoop(&fakeProvider{event: &Event{Type: EventDone, CostUSD: &cost}}, io.Discard)
+	loop.Control = ui
+	emitted := 0
+	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
+		close(started)
+		for range iterations {
+			onLine("cost")
+			emitted++
+		}
+		<-controlsQueued
+		return nil
+	}
+
+	go func() {
+		<-started
+		defer close(controlsQueued)
+		for i := range iterations {
+			eventType := ControlAutofeedOff
+			if i%2 == 0 {
+				eventType = ControlAutofeedOn
+			}
+			ui.events <- ControlEvent{Type: eventType}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := loop.Run(ctx, LoopOptions{InitialPrompt: "exercise concurrent ownership", MaxRuns: 1}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if emitted != iterations {
+		t.Fatalf("provider output path emitted %d lines, want %d", emitted, iterations)
+	}
+	ui.statusMu.Lock()
+	defer ui.statusMu.Unlock()
+	controlRenders := 0
+	finalCostRendered := false
+	for _, status := range ui.statuses {
+		if status == "autofeed on" || status == "autofeed off" {
+			controlRenders++
+		}
+		if strings.Contains(status, "$20.00") {
+			finalCostRendered = true
+		}
+	}
+	if controlRenders != iterations {
+		t.Fatalf("main-loop control path rendered %d updates, want %d", controlRenders, iterations)
+	}
+	if !finalCostRendered {
+		t.Fatal("provider output path did not render the final cumulative cost")
+	}
+}
+
 func TestFlappingEventBusDoesNotRaceStatusLineRendering(t *testing.T) {
 	t.Parallel()
 
