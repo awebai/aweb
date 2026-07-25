@@ -37,11 +37,16 @@ func TestExternalIdentityHomeWhoamiCannotRegisterInstanceWorkspace(t *testing.T)
 	if err := os.MkdirAll(principalParent, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	instanceHome := filepath.Join(root, "disposable-instance")
+	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	type observedRequest struct {
-		Method string
-		URL    string
-		Body   string
+		Method        string
+		URL           string
+		Body          string
+		PathDisclosed bool
 	}
 	var requestMu sync.Mutex
 	var requests []observedRequest
@@ -51,8 +56,17 @@ func TestExternalIdentityHomeWhoamiCannotRegisterInstanceWorkspace(t *testing.T)
 			http.Error(w, readErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		pathDisclosed := strings.Contains(r.URL.RequestURI(), instanceHome) || strings.Contains(string(body), instanceHome)
+		for name, values := range r.Header {
+			pathDisclosed = pathDisclosed || strings.Contains(name, instanceHome)
+			for _, value := range values {
+				pathDisclosed = pathDisclosed || strings.Contains(value, instanceHome)
+			}
+		}
 		requestMu.Lock()
-		requests = append(requests, observedRequest{Method: r.Method, URL: r.URL.RequestURI(), Body: string(body)})
+		requests = append(requests, observedRequest{
+			Method: r.Method, URL: r.URL.RequestURI(), Body: string(body), PathDisclosed: pathDisclosed,
+		})
 		requestMu.Unlock()
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/agents/me/inbound-mode" {
 			http.Error(w, "unexpected request", http.StatusMethodNotAllowed)
@@ -75,11 +89,6 @@ func TestExternalIdentityHomeWhoamiCannotRegisterInstanceWorkspace(t *testing.T)
 		Lifetime: awid.LifetimePersistent, SigningKey: key,
 	})
 	identityHome := filepath.Join(principalParent, ".aw")
-	instanceHome := filepath.Join(root, "disposable-instance")
-	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
 	cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "whoami", "--json")
 	cmd.Dir = instanceHome
 	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")), "AWEB_IDENTITY_HOME=")
