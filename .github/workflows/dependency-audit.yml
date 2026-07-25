@@ -6,8 +6,9 @@ name: Dependency Audit
 # drift check against sources in the repository — it can turn red without any
 # change to this repo, which is the point.
 #
-# Scope: Node only. The Go toolchain advisories are default-aall; the Python
-# server/awid lock findings are routed to the teams owning those deploys.
+# Scope: shipped Node dependencies plus reachable Go findings under the exact
+# toolchain pinned by go.mod and the production gateway image. Python server/awid
+# lock findings are routed to the teams owning those deploys.
 
 on:
   push:
@@ -54,3 +55,31 @@ jobs:
 
       - name: Audit Node production dependencies
         run: bash scripts/check-node-audit.sh
+
+  go-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+
+      # Prove new reachable IDs, stale/expired exceptions, non-symbol scans,
+      # and source/container/scanner toolchain drift all turn the gate red.
+      - name: Prove the Go audit gate can fail
+        run: python3 scripts/test_check_go_vulnerability_audit.py
+
+      - name: Audit reachable Go vulnerabilities under the shipped toolchain
+        env:
+          AW_GO_VULN_OUTPUT: ${{ runner.temp }}/govulncheck.json
+        run: bash scripts/check-go-vulnerability-audit.sh
+
+      - name: Archive govulncheck output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: govulncheck-${{ github.sha }}
+          path: ${{ runner.temp }}/govulncheck.json
+          if-no-files-found: warn
