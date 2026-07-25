@@ -367,7 +367,11 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.did_key).toBe(newIdentity.did);
   });
 
-  test("replaces a stale address pin when registry verifies a new stable identity", async () => {
+  // A registry-verified DID log for a DIFFERENT stable identity is not authority
+  // to take over an address pinned to someone else: the log proves did:aw ->
+  // did:key, never address -> did:aw. Without a namespace-controller-signed
+  // replacement announcement the existing pin stands (default-aajc.8).
+  test("does not replace a stale address pin when registry verifies a different stable identity", async () => {
     const oldIdentity = await didFromSeed(13);
     const newIdentity = await didFromSeed(14);
     const oldStableID = "did:aw:oldAmy";
@@ -396,10 +400,10 @@ describe("SenderTrustManager", () => {
 
     const result = await trust.normalizeTrust(store, "verified", "acme.com/amy", newIdentity.did, newStableID, undefined);
 
-    expect(result.status).toBe("verified");
-    expect(store.pins.has(oldStableID)).toBe(false);
-    expect(store.addresses.get("acme.com/amy")).toBe(newStableID);
-    expect(store.pins.get(newStableID)?.did_key).toBe(newIdentity.did);
+    expect(result.status).toBe("identity_mismatch");
+    expect(store.addresses.get("acme.com/amy")).toBe(oldStableID);
+    expect(store.pins.get(oldStableID)?.did_key).toBe(oldIdentity.did);
+    expect(store.pins.has(newStableID)).toBe(false);
   });
 
   test("does not replace a stale address pin when registry verification degrades", async () => {

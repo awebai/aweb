@@ -718,18 +718,14 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		c.savePinStore()
 	case PinMismatch:
 		pinnedKey := c.pinStore.Addresses[trustAddress]
-		// A verified registry chain proves the address now belongs to this
-		// stable identity and did:key, so replace the stale address pin.
-		// Security assumption: awid enforces a did:aw belongs to one current
-		// address; the client does not independently prove that.
-		if registryConfirmedCurrentKey && fromStableID != "" {
-			c.pinStore.RemoveAddress(trustAddress)
-			c.pinStore.StorePin(pinKey, trustAddress, "", "")
-			c.pinStore.Pins[pinKey].StableID = fromStableID
-			c.pinStore.Pins[pinKey].DIDKey = fromDID
-			c.savePinStore()
-			return status
-		}
+		// A verified DID log proves did:aw -> did:key. It proves NOTHING about
+		// which address that identity may claim, so it is not authority to take
+		// over an address pinned to a different stable identity: an attacker who
+		// legitimately owns did:aw:attacker can have a wholly valid log. Only the
+		// address authority can authorize the transfer, via a replacement
+		// announcement signed by the namespace controller named in the address's
+		// _awid DNS TXT record. Absent that proof the pin stands and the mismatch
+		// is reported (default-aajc.8).
 		if fromStableID != "" && pinnedKey == fromStableID {
 			if pin, ok := c.pinStore.Pins[pinnedKey]; ok {
 				if strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey == fromDID {

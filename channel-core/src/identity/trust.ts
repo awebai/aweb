@@ -292,18 +292,14 @@ export class SenderTrustManager {
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";
-        // A verified registry chain proves the address now belongs to this
-        // stable identity and did:key, so replace the stale address pin.
-        // Security assumption: awid enforces a did:aw belongs to one current
-        // address; the client does not independently prove that.
-        if (registryConfirmedCurrentKey && fromStableID) {
-          store.removeAddress(trustAddress);
-          store.storePin(pinKey, trustAddress, "", "");
-          const pin = store.pins.get(pinKey)!;
-          pin.stable_id = fromStableID;
-          pin.did_key = fromDID;
-          return { status, stored: true };
-        }
+        // A verified DID log proves did:aw -> did:key. It proves NOTHING about
+        // which address that identity may claim, so it is not authority to take
+        // over an address pinned to a different stable identity: an attacker who
+        // legitimately owns did:aw:attacker can have a wholly valid log. Only the
+        // address authority can authorize the transfer, via a replacement
+        // announcement signed by the namespace controller named in the address's
+        // _awid DNS TXT record. Absent that proof the pin stands and the mismatch
+        // is reported (default-aajc.8).
         if (fromStableID && pinnedKey === fromStableID) {
           const pin = store.pins.get(pinnedKey);
           if (pin?.did_key === fromDID) {
