@@ -1574,14 +1574,12 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 		RegistryURL: registryServer.URL,
 		CreatedAt:   "2026-04-26T00:00:00Z",
 	})
+	// Build the pin the way production does, so the fixture cannot drift out of
+	// the shape the loader (and channel-core's validator) accepts.
 	pins := awid.NewPinStore()
-	pins.Pins[recipientStableID] = &awid.Pin{
-		Address:  recipientAddress,
-		StableID: recipientStableID,
-		DIDKey:   recipientDID,
-		Server:   registryServer.URL,
-	}
-	pins.Addresses[recipientAddress] = recipientStableID
+	pins.StorePin(recipientStableID, recipientAddress, "", registryServer.URL)
+	pins.Pins[recipientStableID].StableID = recipientStableID
+	pins.Pins[recipientStableID].DIDKey = recipientDID
 	if err := pins.Save(filepath.Join(tmp, ".config", "aw", "known_agents.yaml")); err != nil {
 		t.Fatalf("write known_agents: %v", err)
 	}
