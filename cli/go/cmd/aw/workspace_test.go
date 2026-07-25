@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2337,6 +2338,21 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed principal context: %v", err)
 	}
+	shadow := workspaceBinding(server.URL, teamID, "mallory", "shadow-workspace")
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &shadow); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(repo, &awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   teamID,
+			Alias:    "mallory",
+			CertPath: awconfig.TeamCertificateRelativePath(teamID),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
 
 	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
 	run.Env = testCommandEnv(tmp)
@@ -2359,8 +2375,14 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 
+	if shadowAfter := fileDigestsForTest(t, filepath.Join(repo, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
+		t.Fatal("hosted primary invite read or mutated the source instance shadow")
+	}
+	if err := os.RemoveAll(filepath.Join(repo, ".aw")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Lstat(filepath.Join(repo, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("hosted primary invite fell back to source instance state: %v", err)
+		t.Fatalf("hosted primary invite left source instance state: %v", err)
 	}
 	child := filepath.Join(canonicalTmp, "repo-alice")
 	childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
