@@ -22,7 +22,10 @@ const (
 // maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER. It bounds values that
 // cross the Go/TypeScript boundary, where a larger integer cannot be represented
 // exactly on the TypeScript side.
-const maxSafeInteger = 1<<53 - 1
+//
+// Typed int64 rather than untyped: as an untyped constant it does not fit in an
+// int on 32-bit targets and every comparison against one fails to compile there.
+const maxSafeInteger int64 = 1<<53 - 1
 
 type DidKeyEvidence struct {
 	Seq            int     `json:"seq"`
@@ -89,7 +92,10 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 	// reaches this: no DID log has 2^53 entries. Checked here rather than at each
 	// caller because VerifyDidLogEntries verifies every entry through this
 	// function, so this is the single point every seq passes (default-aamh).
-	if head.Seq > maxSafeInteger {
+	// Converted rather than compared directly, so this builds where int is 32
+	// bits — there head.Seq cannot represent an out-of-range value at all and the
+	// comparison is simply never true.
+	if int64(head.Seq) > maxSafeInteger {
 		return StableIdentityHardError, nil, fmt.Errorf("log_head seq %d is outside the safe integer range (max %d)", head.Seq, maxSafeInteger)
 	}
 	if head.Seq == 1 {

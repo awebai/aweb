@@ -99,6 +99,41 @@ jobs:
         working-directory: cli/go
         run: go test ./... -count=1
 
+  # Nothing cross-compiled, so a constant that does not fit in a 32-bit int
+  # compiled fine on amd64 and broke every 32-bit build. That is invisible to
+  # `go test ./...` on the runner and to the release build, which targets only
+  # amd64 and arm64 — so it would have reached anyone building from source on a
+  # 32-bit host with no gate catching it (default-aamh).
+  #
+  # Compiling the test binaries is the whole check: it type-checks production
+  # AND test code for the target without needing to execute it.
+  go-cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: "386"
+          - goos: windows
+            goarch: "386"
+          - goos: linux
+            goarch: arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - name: Compile for ${{ matrix.goos }}/${{ matrix.goarch }}
+        working-directory: cli/go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build ./...
+          go test ./... -run '^$' -count=1
+
   # Separate job because the race detector is the instrument that validates the
   # concurrency classes this audit found, and it must be able to fail on its own
   # rather than being masked by an unrelated failure in the plain run. Scoped to
