@@ -721,6 +721,18 @@ func copyBounded(dst io.Writer, src io.Reader, max int64, h hash.Hash) (int64, e
 	return n, nil
 }
 
+// readFileBounded opens path and reads at most max bytes, returning an error if
+// the file exceeds max, so an oversized local file is never buffered whole. It
+// never returns a truncated prefix.
+func readFileBounded(path string, max int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readAllBounded(f, max)
+}
+
 func pluginProvenancePath(dir, name string) string {
 	return filepath.Join(dir, pluginExecutableName(name)+".provenance.json")
 }
@@ -990,7 +1002,7 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return nil, false, nil
 	}
 	manifestPath := manifestPluginManifestPath(dir, name)
-	data, err := os.ReadFile(manifestPath)
+	data, err := readFileBounded(manifestPath, maxManifestBytes)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, false, nil
@@ -1156,12 +1168,7 @@ func readManifestBodyFile(path string) ([]byte, error) {
 	if path == "-" {
 		return readAllBounded(os.Stdin, maxBodyFileBytes)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return readAllBounded(f, maxBodyFileBytes)
+	return readFileBounded(path, maxBodyFileBytes)
 }
 
 func addManifestArgValue(out map[string]any, name, value string) {

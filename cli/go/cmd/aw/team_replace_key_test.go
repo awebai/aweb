@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,43 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+// A compromised or MITM'd aweb server must not be able to exhaust client memory
+// by returning an unbounded body to a signed key-rotation request. Because the
+// rotation may have been applied server-side, an oversize response is
+// outcome-unknown (recovery must be preserved, per aajc.1), not a hard failure.
+func TestPostLocalIdentityKeyReplacementRejectsOversizeResponseAsOutcomeUnknown(t *testing.T) {
+	prev := maxReplaceKeyResponseBytes
+	maxReplaceKeyResponseBytes = 1024
+	t.Cleanup(func() { maxReplaceKeyResponseBytes = prev })
+
+	oversize := strings.Repeat("a", int(maxReplaceKeyResponseBytes)+4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A JSON envelope padded far past the cap: the bounded read must reject
+		// it before buffering the whole body, regardless of its content.
+		_, _ = w.Write([]byte(`{"status":"replaced","junk":"` + oversize + `"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := localIdentityKeyReplacementRequest{TeamID: "backend:acme.com"}
+
+	_, err = postLocalIdentityKeyReplacementOnce(context.Background(), server.URL, "alice", payload, teamKey)
+	if err == nil {
+		t.Fatal("expected oversize replace-key response to be rejected")
+	}
+	var unknown *replacementRosterOutcomeUnknownError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("oversize response must be outcome-unknown to preserve recovery, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected a size-limit rejection before the body was buffered, got: %v", err)
+	}
+}
 
 func seedReplaceKeyWorkspace(t *testing.T, serverURL string) (root, agentHome, oldDID, newDID string, teamKey ed25519.PrivateKey, oldCert *awid.TeamCertificate) {
 	t.Helper()

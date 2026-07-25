@@ -781,8 +781,11 @@ process dies before the harness presents the message, the message is already
 read server-side, so an unread-only reconnect does NOT re-fetch it and it is
 absent from the unread inbox; its content is still on the server and reachable
 via `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
-(Whether that second sub-case should be surfaced automatically on reconnect is
-tracked as default-aaka.) Acking before presentation (the original defect) risks
+(Auto-surfacing that second sub-case on reconnect was considered and
+deliberately rejected: re-delivering already-read mail would reopen the
+replay/double-action hazard, and a crashed agent recovers procedurally on
+restart, so singling out one message would dress a general crash up as a
+delivery defect. See default-aaka.) Acking before presentation (the original defect) risks
 silent message loss; never acking (manual-only) leaves mail unread so the server
 re-delivers it on every reconnect — the replay burst regression (default-aajy).
 `aw mail ack` is a courtesy read-receipt for the sender, not the mechanism that

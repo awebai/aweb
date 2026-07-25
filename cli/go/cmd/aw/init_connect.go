@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -197,6 +196,12 @@ func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string
 }
 
 // postConnect sends POST /v1/connect with DIDKey auth + team certificate.
+// maxConnectResponseBytes bounds the /v1/connect response so an untrusted or
+// MITM'd aweb server cannot exhaust client memory during the pre-trust connect
+// handshake. Var, not const, only so tests can lower it without a multi-MiB
+// fixture; production keeps the shared response cap.
+var maxConnectResponseBytes int64 = awid.MaxResponseSize
+
 func postConnect(ctx context.Context, awebURL string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
@@ -234,13 +239,17 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	}
 	defer resp.Body.Close()
 
+	respBody, err := readAllBounded(resp.Body, maxConnectResponseBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read connect response: %w", err)
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("POST /v1/connect returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result connectResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("decode connect response: %w", err)
 	}
 	return &result, nil

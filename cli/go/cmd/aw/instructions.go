@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -234,13 +233,13 @@ func resolveInstructionsBody(stdin io.Reader, body, bodyFile string) (string, er
 	case bodyFile == "":
 		return "", usageError("missing required flag: --body or --body-file")
 	case bodyFile == "-":
-		data, err := io.ReadAll(stdin)
+		data, err := readAllBounded(stdin, maxBodyFileBytes)
 		if err != nil {
 			return "", err
 		}
 		return strings.TrimSpace(string(data)), nil
 	default:
-		data, err := os.ReadFile(bodyFile)
+		data, err := readFileBounded(bodyFile, maxBodyFileBytes)
 		if err != nil {
 			return "", err
 		}

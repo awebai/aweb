@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,6 +51,12 @@ type localIdentityKeyReplacementRequest struct {
 	OldCertificateID string `json:"old_certificate_id"`
 	NewCertificateID string `json:"new_certificate_id"`
 }
+
+// maxReplaceKeyResponseBytes bounds the replace-key response body so a
+// compromised or MITM'd server cannot exhaust client memory. It is a var, not a
+// const, only so tests can lower it without a multi-MiB fixture; production
+// keeps the shared response cap.
+var maxReplaceKeyResponseBytes int64 = awid.MaxResponseSize
 
 type replacementRosterOutcomeUnknownError struct {
 	err error
@@ -448,7 +453,7 @@ func postLocalIdentityKeyReplacementOnce(ctx context.Context, serviceURL, alias 
 		return nil, &replacementRosterOutcomeUnknownError{err: err}
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := readAllBounded(resp.Body, maxReplaceKeyResponseBytes)
 	if err != nil {
 		return nil, &replacementRosterOutcomeUnknownError{err: err}
 	}

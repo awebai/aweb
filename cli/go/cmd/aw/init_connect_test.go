@@ -410,3 +410,48 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 		t.Fatal("expected backend membership in teams.yaml")
 	}
 }
+
+// The /v1/connect handshake happens before the server is trusted, so an
+// untrusted or MITM'd server must not be able to exhaust client memory with an
+// unbounded response body.
+func TestPostConnectRejectsOversizeResponse(t *testing.T) {
+	prev := maxConnectResponseBytes
+	maxConnectResponseBytes = 1024
+	t.Cleanup(func() { maxConnectResponseBytes = prev })
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: awid.ComputeDIDKey(memberPub),
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = teamPub
+
+	oversize := strings.Repeat("a", int(maxConnectResponseBytes)+4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A JSON envelope padded past the cap: the bounded read must reject it
+		// before buffering the whole body.
+		_, _ = w.Write([]byte(`{"team_id":"backend:acme.com","junk":"` + oversize + `"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err = postConnect(context.Background(), server.URL, memberKey, cert, connectRequest{})
+	if err == nil {
+		t.Fatal("expected oversize connect response to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected a size-limit rejection before the body was buffered, got: %v", err)
+	}
+}
