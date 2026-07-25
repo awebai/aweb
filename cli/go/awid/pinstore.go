@@ -53,10 +53,13 @@ type Pin struct {
 	Server       string `yaml:"server"`
 
 	// unknown holds fields written by a client that knows more than this one.
-	// They are kept verbatim and re-emitted on Save. Dropping them would let an
-	// older binary silently delete a newer one's state — for something like an
-	// anti-rollback anchor that is the aajc.8 failure with no error anywhere.
-	unknown map[string]*yaml.Node
+	// They are decoded to plain values and re-emitted on Save. Dropping them
+	// would let an older binary silently delete a newer one's state — for
+	// something like an anti-rollback anchor that is the aajc.8 failure with no
+	// error anywhere. Plain values rather than raw nodes because a raw graph
+	// carries anchors and aliases whose validity depends on document order:
+	// re-emitting them in a different position yields an unloadable file.
+	unknown map[string]any
 }
 
 // PinStore manages TOFU identity pins for known agents.
@@ -74,7 +77,7 @@ type PinStore struct {
 	Addresses map[string]string `yaml:"addresses"`
 
 	// unknown preserves root-level fields from a newer client; see Pin.unknown.
-	unknown map[string]*yaml.Node
+	unknown map[string]any
 }
 
 // NewPinStore returns an empty pin store.
@@ -168,8 +171,20 @@ func parsePinStore(data []byte) (*PinStore, error) {
 
 	ps := NewPinStore()
 	var pinsNode, addressesNode *yaml.Node
+	seenRoot := map[string]bool{}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
 		key, value := doc.Content[i], doc.Content[i+1]
+		if err := requireKeyNode(key, "store"); err != nil {
+			return nil, err
+		}
+		// Raw-node parsing does not get yaml's duplicate-key rejection, so a
+		// second "pins" would silently replace the first — a populated store
+		// followed by an empty one loads as no pins at all, and every known
+		// identity becomes first contact again.
+		if seenRoot[key.Value] {
+			return nil, fmt.Errorf("duplicate field %q", key.Value)
+		}
+		seenRoot[key.Value] = true
 		switch key.Value {
 		case "pins":
 			pinsNode = value
@@ -181,16 +196,17 @@ func parsePinStore(data []byte) (*PinStore, error) {
 			// advisories. It is not part of this format.
 			return nil, errors.New("store must not use YAML merge keys")
 		default:
-			// Kept verbatim and re-emitted on Save, so a newer client's state
+			// Preserved and re-emitted on Save, so a newer client's state
 			// survives a round trip through this binary rather than being
 			// silently deleted.
+			decoded, err := decodeUnknown(value, fmt.Sprintf("field %q", key.Value))
+			if err != nil {
+				return nil, err
+			}
 			if ps.unknown == nil {
-				ps.unknown = map[string]*yaml.Node{}
+				ps.unknown = map[string]any{}
 			}
-			if _, dup := ps.unknown[key.Value]; dup {
-				return nil, fmt.Errorf("duplicate field %q", key.Value)
-			}
-			ps.unknown[key.Value] = value
+			ps.unknown[key.Value] = decoded
 		}
 	}
 
@@ -200,6 +216,9 @@ func parsePinStore(data []byte) (*PinStore, error) {
 		}
 		for i := 0; i+1 < len(pinsNode.Content); i += 2 {
 			key, value := pinsNode.Content[i], pinsNode.Content[i+1]
+			if err := requireKeyNode(key, "pins"); err != nil {
+				return nil, err
+			}
 			if key.Value == "" {
 				return nil, errors.New("store has an empty pin key")
 			}
@@ -220,6 +239,9 @@ func parsePinStore(data []byte) (*PinStore, error) {
 		}
 		for i := 0; i+1 < len(addressesNode.Content); i += 2 {
 			key, value := addressesNode.Content[i], addressesNode.Content[i+1]
+			if err := requireKeyNode(key, "addresses"); err != nil {
+				return nil, err
+			}
 			if key.Value == "" {
 				return nil, errors.New("store has an empty address key")
 			}
@@ -263,6 +285,107 @@ func parsePinStore(data []byte) (*PinStore, error) {
 	return ps, nil
 }
 
+// requireKeyNode enforces that a mapping key is a plain string. A custom or
+// explicit tag on a KEY (!evil pins:) would otherwise be accepted and silently
+// normalised away on the next Save, and Node's JSON_SCHEMA rejects it outright.
+func requireKeyNode(n *yaml.Node, what string) error {
+	// Checked before the tag, because a merge key carries !!merge and would
+	// otherwise be reported as a generic bad key.
+	if n.Value == mergeKey {
+		return fmt.Errorf("%s must not use YAML merge keys", what)
+	}
+	if err := requirePlainNode(n, what+" key"); err != nil {
+		return err
+	}
+	if n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
+		return fmt.Errorf("%s has a key that is not a plain string", what)
+	}
+	return nil
+}
+
+// maxUnknownDepth bounds recursion through a preserved subtree so a deeply
+// nested document cannot exhaust the stack.
+const maxUnknownDepth = 32
+
+// decodeUnknown validates a preserved subtree and returns it as plain values.
+//
+// Resolved values rather than the raw node are what make preservation safe: a
+// raw graph carries anchors and aliases whose validity depends on where they sit
+// in the document, so re-emitting them in another position yields a file that no
+// longer loads. Conversion is done here rather than through Node.Decode because
+// Decode silently discards a custom tag, and because it would turn a bare RFC3339
+// lexeme into a time.Time when Node's JSON_SCHEMA reads it as a string.
+func decodeUnknown(n *yaml.Node, what string) (any, error) {
+	return decodeUnknownNode(n, what, 0)
+}
+
+func decodeUnknownNode(n *yaml.Node, what string, depth int) (any, error) {
+	if depth > maxUnknownDepth {
+		return nil, fmt.Errorf("%s is nested too deeply", what)
+	}
+	if err := requirePlainNode(n, what); err != nil {
+		return nil, err
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		switch n.Tag {
+		// A timestamp-looking scalar is an ordinary string, as it is in Node.
+		case "!!str", "!!timestamp":
+			return n.Value, nil
+		case "!!bool":
+			var v bool
+			return v, n.Decode(&v)
+		case "!!int":
+			var v int64
+			return v, n.Decode(&v)
+		case "!!float":
+			var v float64
+			return v, n.Decode(&v)
+		case "!!null":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("%s has an unsupported value type", what)
+		}
+	case yaml.SequenceNode:
+		if n.Tag != "!!seq" {
+			return nil, fmt.Errorf("%s has an unsupported value type", what)
+		}
+		items := make([]any, 0, len(n.Content))
+		for i, item := range n.Content {
+			value, err := decodeUnknownNode(item, fmt.Sprintf("%s item %d", what, i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, value)
+		}
+		return items, nil
+	case yaml.MappingNode:
+		if n.Tag != "!!map" {
+			return nil, fmt.Errorf("%s has an unsupported value type", what)
+		}
+		// Raw-node parsing loses yaml's duplicate-key and merge-key rejection at
+		// nested levels too, so both are enforced here at every depth.
+		out := make(map[string]any, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key, value := n.Content[i], n.Content[i+1]
+			if err := requireKeyNode(key, what); err != nil {
+				return nil, err
+			}
+			if _, dup := out[key.Value]; dup {
+				return nil, fmt.Errorf("%s has duplicate key %q", what, key.Value)
+			}
+			decoded, err := decodeUnknownNode(value, fmt.Sprintf("%s key %q", what, key.Value), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[key.Value] = decoded
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("%s has an unsupported value type", what)
+	}
+}
+
 // mergeKey is YAML's merge indicator.
 const mergeKey = "<<"
 
@@ -281,6 +404,9 @@ func parsePin(key string, node *yaml.Node) (*Pin, error) {
 	pin := &Pin{}
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(node.Content); i += 2 {
+		if err := requireKeyNode(node.Content[i], fmt.Sprintf("pin %q", key)); err != nil {
+			return nil, err
+		}
 		name, value := node.Content[i].Value, node.Content[i+1]
 		if name == mergeKey {
 			return nil, fmt.Errorf("pin %q must not use YAML merge keys", key)
@@ -289,15 +415,19 @@ func parsePin(key string, node *yaml.Node) (*Pin, error) {
 			return nil, fmt.Errorf("pin %q has duplicate field %q", key, name)
 		}
 		seen[name] = true
+		where := fmt.Sprintf("pin %q field %q", key, name)
 		if !pinFields[name] {
-			if pin.unknown == nil {
-				pin.unknown = map[string]*yaml.Node{}
+			decoded, err := decodeUnknown(value, where)
+			if err != nil {
+				return nil, err
 			}
-			pin.unknown[name] = value
+			if pin.unknown == nil {
+				pin.unknown = map[string]any{}
+			}
+			pin.unknown[name] = decoded
 			continue
 		}
 
-		where := fmt.Sprintf("pin %q field %q", key, name)
 		if name == "log_seq" {
 			// The anti-rollback checkpoint. Checked on the raw node because an
 			// explicit 0 is indistinguishable from an absent field once decoded,
@@ -351,6 +481,9 @@ func present(n *yaml.Node) bool {
 }
 
 func requireMapping(n *yaml.Node, what string) error {
+	if err := requirePlainNode(n, what); err != nil {
+		return err
+	}
 	// The tag check refuses a custom-tagged mapping, which yaml.v3 would
 	// otherwise construct happily and js-yaml's JSON_SCHEMA would reject.
 	if n.Kind != yaml.MappingNode || n.Tag != "!!map" {
@@ -359,14 +492,41 @@ func requireMapping(n *yaml.Node, what string) error {
 	return nil
 }
 
-// requireString refuses type coercion and custom tags. !!timestamp is allowed
-// because YAML resolves an unquoted RFC3339 first_seen/last_seen to it, and
-// those are the values we ourselves write.
+// requireString refuses type coercion, custom tags and explicit tags.
+//
+// A bare RFC3339 lexeme resolves to !!timestamp in yaml.v3, but Node's
+// JSON_SCHEMA has no timestamp type and reads the same text as an ordinary
+// string. Matching that schema behaviour — rather than keeping a list of fields
+// allowed to be timestamps — is what keeps the two runtimes agreeing on a shared
+// file. An EXPLICIT !!timestamp tag is rejected, because Node rejects the tag.
 func requireString(n *yaml.Node, what string) (string, error) {
-	if n.Kind != yaml.ScalarNode || (n.Tag != "!!str" && n.Tag != "!!timestamp") {
+	if n.Kind != yaml.ScalarNode {
 		return "", fmt.Errorf("%s must be a string", what)
 	}
-	return n.Value, nil
+	if err := requirePlainNode(n, what); err != nil {
+		return "", err
+	}
+	if n.Tag == "!!str" || n.Tag == "!!timestamp" {
+		return n.Value, nil
+	}
+	return "", fmt.Errorf("%s must be a string", what)
+}
+
+// requirePlainNode rejects explicit tags, anchors and aliases. Anchors and
+// aliases are a document-order dependency: preserving one and re-emitting it
+// elsewhere produces a file that no longer loads, and nothing we write uses
+// them. They are refused everywhere, like merge keys.
+func requirePlainNode(n *yaml.Node, what string) error {
+	if n.Kind == yaml.AliasNode {
+		return fmt.Errorf("%s must not use YAML aliases", what)
+	}
+	if n.Anchor != "" {
+		return fmt.Errorf("%s must not define a YAML anchor", what)
+	}
+	if n.Style&yaml.TaggedStyle != 0 {
+		return fmt.Errorf("%s must not carry an explicit tag", what)
+	}
+	return nil
 }
 
 // MarshalYAML re-emits the known schema plus any fields this binary did not
@@ -377,7 +537,7 @@ func (p *Pin) MarshalYAML() (interface{}, error) {
 	if err := node.Encode(known(*p)); err != nil {
 		return nil, err
 	}
-	return appendUnknown(&node, p.unknown), nil
+	return appendUnknown(&node, p.unknown)
 }
 
 func (ps *PinStore) MarshalYAML() (interface{}, error) {
@@ -394,21 +554,25 @@ func (ps *PinStore) MarshalYAML() (interface{}, error) {
 		}
 		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: field.name}, &v)
 	}
-	return appendUnknown(node, ps.unknown), nil
+	return appendUnknown(node, ps.unknown)
 }
 
-// appendUnknown re-attaches preserved fields in a stable order, so a round trip
-// does not churn the file.
-func appendUnknown(node *yaml.Node, unknown map[string]*yaml.Node) *yaml.Node {
+// appendUnknown re-attaches preserved fields in a stable order. The values are
+// plain, so ordering them freely cannot dangle an alias.
+func appendUnknown(node *yaml.Node, unknown map[string]any) (*yaml.Node, error) {
 	names := make([]string, 0, len(unknown))
 	for name := range unknown {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}, unknown[name])
+		var value yaml.Node
+		if err := value.Encode(unknown[name]); err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}, &value)
 	}
-	return node
+	return node, nil
 }
 
 // Save writes the pin store to disk atomically. Creates parent

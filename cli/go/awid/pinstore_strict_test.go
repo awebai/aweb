@@ -207,14 +207,14 @@ func readFileForTest(t *testing.T, path string) []byte {
 }
 
 // A merge key would let one mapping pull in another's fields — a schema hole,
-// and the shape behind the js-yaml merge-key advisories.
+// and the shape behind the js-yaml merge-key advisories. Written inline here
+// because the usual anchor form is refused before the merge key is reached.
 func TestLoadPinStoreRejectsMergeKeys(t *testing.T) {
 	mustFailLoad(t,
-		"defaults: &d\n  address: a@b.c\npins:\n  did:key:zA:\n    <<: *d\n    first_seen: t\n    last_seen: t\naddresses: {}\n",
+		"pins:\n  did:key:zA:\n    <<: {address: a@b.c}\n    first_seen: t\n    last_seen: t\naddresses: {}\n",
 		"merge key")
-	mustFailLoad(t,
-		"defaults: &d\n  x: 1\n<<: *d\npins: {}\naddresses: {}\n",
-		"merge key")
+	mustFailLoad(t, "<<: {k: v}\npins: {}\naddresses: {}\n", "merge key")
+	mustFailLoad(t, "pins: {}\naddresses: {}\nfuture:\n  <<: {k: v}\n", "merge key")
 }
 
 // yaml.v3 coerces scalars and honours custom tags; channel-core's JSON_SCHEMA
@@ -226,10 +226,10 @@ func TestLoadPinStoreRejectsCoercedTypesAndCustomTags(t *testing.T) {
 	mustFailLoad(t, "pins:\n  did:key:zA:\n    address: 123\n"+tail, "must be a string")
 	mustFailLoad(t, "pins:\n  did:key:zA:\n    address: a@b.c\n    handle: 123\n"+tail, "must be a string")
 	mustFailLoad(t, "pins:\n  did:key:zA:\n    address: true\n"+tail, "must be a string")
-	// Custom tags are not part of the format.
-	mustFailLoad(t, "pins:\n  did:key:zA:\n    address: !evil x\n"+tail, "must be a string")
-	mustFailLoad(t, "pins:\n  did:key:zA: !evil\n    address: a@b.c\n"+tail, "must be a mapping")
-	mustFailLoad(t, "pins: !evil\n  did:key:zA:\n    address: a@b.c\n"+tail, "must be a mapping")
+	// Custom and explicit tags are not part of the format.
+	mustFailLoad(t, "pins:\n  did:key:zA:\n    address: !evil x\n"+tail, "explicit tag")
+	mustFailLoad(t, "pins:\n  did:key:zA: !evil\n    address: a@b.c\n"+tail, "explicit tag")
+	mustFailLoad(t, "pins: !evil\n  did:key:zA:\n    address: a@b.c\n"+tail, "explicit tag")
 }
 
 // An unquoted RFC3339 timestamp resolves to !!timestamp, not !!str, and those
@@ -324,4 +324,58 @@ func TestLoadPinStoreRejectsTrailingDocuments(t *testing.T) {
 			"pins:\n  did:key:zA:\n    address: alice@example.com\n    first_seen: t\n    last_seen: t\n"+
 			"addresses:\n  alice@example.com: did:key:zA\n",
 		"single document")
+}
+
+// Timestamp handling matches Node's JSON_SCHEMA rather than a list of fields
+// allowed to be timestamps: a bare RFC3339 lexeme is an ordinary STRING at every
+// field, and an EXPLICIT !!timestamp tag is rejected because Node rejects the tag.
+// A field-exception list would have made Go stricter than Node on a shared file,
+// which is the divergence class this epic keeps finding.
+func TestLoadPinStoreTreatsTimestampLexemesAsStrings(t *testing.T) {
+	ts := "2026-04-26T00:00:00Z"
+	ps, err := LoadPinStore(writeStore(t,
+		"pins:\n  did:key:zA:\n    address: a@b.c\n    first_seen: "+ts+"\n    last_seen: "+ts+"\naddresses:\n  a@b.c: did:key:zA\n"))
+	if err != nil {
+		t.Fatalf("unquoted RFC3339 must load: %v", err)
+	}
+	if ps.Pins["did:key:zA"].FirstSeen != ts {
+		t.Errorf("timestamp lexeme mangled: %q", ps.Pins["did:key:zA"].FirstSeen)
+	}
+	// Explicitly tagged is refused everywhere, including the seen fields.
+	mustFailLoad(t,
+		"pins:\n  did:key:zA:\n    address: a@b.c\n    first_seen: !!timestamp "+ts+"\n    last_seen: t\naddresses: {}\n",
+		"explicit tag")
+}
+
+// Anchors and aliases are refused outright. Preserving a raw alias and
+// re-emitting it elsewhere produced a store that no longer loaded; nothing we
+// write uses them, and rejecting removes the whole document-order dependency.
+func TestLoadPinStoreRejectsAnchorsAndAliases(t *testing.T) {
+	mustFailLoad(t,
+		"z_anchor: &x\n  nested: 1\na_alias: *x\npins: {}\naddresses: {}\n",
+		"anchor")
+	mustFailLoad(t,
+		"pins: &p {}\naddresses: {}\n",
+		"anchor")
+	mustFailLoad(t,
+		"pins:\n  did:key:zA:\n    address: &a a@b.c\n    first_seen: t\n    last_seen: t\naddresses: {}\n",
+		"anchor")
+}
+
+// Raw-node parsing does not get yaml's duplicate-key rejection, so a second
+// known root key would silently replace the first: a populated store followed by
+// an empty one loads as no pins, and every known identity becomes first contact.
+func TestLoadPinStoreRejectsDuplicateRootFields(t *testing.T) {
+	real := "pins:\n  did:key:zA:\n    address: alice@example.com\n    first_seen: t\n    last_seen: t\naddresses:\n  alice@example.com: did:key:zA\n"
+	mustFailLoad(t, real+"pins: {}\naddresses: {}\n", "duplicate field")
+	mustFailLoad(t, "future: 1\nfuture: 2\npins: {}\naddresses: {}\n", "duplicate field")
+}
+
+// Nested levels of a preserved subtree lose yaml's map decoder checks too.
+func TestLoadPinStoreRejectsBadNestedUnknownStructures(t *testing.T) {
+	base := "pins: {}\naddresses: {}\n"
+	mustFailLoad(t, base+"future:\n  dup: 1\n  dup: 2\n", "duplicate key")
+	mustFailLoad(t, base+"future:\n  inner: !evil x\n", "explicit tag")
+	mustFailLoad(t, base+"future:\n  - !evil x\n", "explicit tag")
+	mustFailLoad(t, base+"defaults: &d\n  k: v\n", "anchor")
 }
