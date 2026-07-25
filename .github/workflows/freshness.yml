@@ -130,9 +130,17 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+        # `go test -run '^$'` would COMPILE the test binary and then try to
+        # EXECUTE it: -run suppresses test selection, not execution, so a
+        # foreign-architecture binary dies with "exec format error" and the job
+        # is red no matter what the code says. `go test -c` builds it and stops,
+        # which is the whole check — it type-checks test files as well as
+        # production ones, which is where half of this defect lived.
         run: |
           go build ./...
-          go test ./... -run '^$' -count=1
+          for pkg in $(go list ./...); do
+            go test -c -o /dev/null "$pkg"
+          done
 
   # Separate job because the race detector is the instrument that validates the
   # concurrency classes this audit found, and it must be able to fail on its own
