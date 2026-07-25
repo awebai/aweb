@@ -103,10 +103,25 @@ type RegistryClient struct {
 	Resolver           *RegistryResolver
 	HTTPClient         *http.Client
 	RequestID          string
+	// Now supplies the timestamps this client signs. It is per-client so tests
+	// can pin a clock without mutating shared process state: a package-global
+	// clock swapped by one test is read by every parallel test through
+	// production code, which is a data race (default-aajc.15).
+	Now func() time.Time
+}
+
+// now returns the client's clock, defaulting to wall-clock UTC.
+func (c *RegistryClient) now() time.Time {
+	if c != nil && c.Now != nil {
+		return c.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 const registryTransientMaxRetries = 3
 
+// registryNow is the clock for package-level helpers that have no client to
+// carry one. Never reassign it: see RegistryClient.Now.
 var registryNow = func() time.Time { return time.Now().UTC() }
 
 type didUpdateRequest struct {
@@ -283,7 +298,7 @@ func (c *RegistryClient) RegisterIdentity(
 	}
 
 	stateHash := stableIdentityStateHash(stableID, did)
-	timestamp := registryNow().Format(time.RFC3339)
+	timestamp := c.now().Format(time.RFC3339)
 	proofPayload := CanonicalDidLogPayload(stableID, &DidKeyEvidence{
 		Seq:            1,
 		Operation:      "register_did",
@@ -365,7 +380,7 @@ func (c *RegistryClient) RotateDIDKey(
 	if resolution.LogHead == nil {
 		return nil, fmt.Errorf("DID registry response is missing log_head")
 	}
-	timestamp := registryNow().Format(time.RFC3339)
+	timestamp := c.now().Format(time.RFC3339)
 	prevEntryHash := strings.TrimSpace(resolution.LogHead.EntryHash)
 	stateHash := stableIdentityStateHash(didAW, newDID)
 	signaturePayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{

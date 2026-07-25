@@ -126,9 +126,6 @@ func TestClaimIdentityAddressAtPostsAtomicSignedPayload(t *testing.T) {
 	}
 
 	now := time.Date(2026, 6, 6, 9, 30, 0, 0, time.UTC)
-	oldNow := registryNow
-	registryNow = func() time.Time { return now }
-	t.Cleanup(func() { registryNow = oldNow })
 
 	var got atomicAddressClaimRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +212,9 @@ func TestClaimIdentityAddressAtPostsAtomicSignedPayload(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	// Pin the clock per-client; mutating a package global races every parallel
+	// test that reads it through production code (default-aajc.15).
+	client.Now = func() time.Time { return now }
 	result, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, AtomicAddressClaimParams{
 		Domain:                        "acme.com",
 		AddressName:                   "alice",

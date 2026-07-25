@@ -458,7 +458,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		namespaceCustody = string(AddressClaimCustodySelf)
 	}
 
-	timestamp := registryNow().UTC().Format(time.RFC3339)
+	timestamp := c.now().Format(time.RFC3339)
 	logProof, err := c.atomicAddressClaimDIDLogProof(ctx, registryURL, params.DIDAW, params.CurrentDIDKey, params.IdentitySigningKey, timestamp)
 	if err != nil {
 		return nil, err
