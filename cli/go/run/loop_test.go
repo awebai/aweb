@@ -2417,12 +2417,18 @@ func TestRealCommandRunnerPTYProvidesTTYAndAcceptsInput(t *testing.T) {
 		t.Skip("sh not available")
 	}
 
+	const prompt = "Allow? [y/N]"
 	partialSeen := make(chan string, 1)
+	promptReady := make(chan struct{})
 	lineSeen := make(chan string, 1)
 	done := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	go func() {
-		done <- RealCommandRunner(context.Background(), "", []string{
+		var streamedPrompt strings.Builder
+		promptSignaled := false
+		done <- RealCommandRunner(ctx, "", []string{
 			"sh", "-c", "test -t 0 || exit 42; printf 'Allow? [y/N]'; read answer; printf '\\n%s\\n' \"$answer\"",
 		}, func(line string) {
 			select {
@@ -2432,30 +2438,42 @@ func TestRealCommandRunnerPTYProvidesTTYAndAcceptsInput(t *testing.T) {
 		}, &commandOutputSinks{
 			usePTY: true,
 			ptyPartial: func(chunk string) {
-				select {
-				case partialSeen <- chunk:
-				default:
+				if !promptSignaled {
+					partialSeen <- chunk
+					streamedPrompt.WriteString(chunk)
+					if strings.Contains(streamedPrompt.String(), prompt) {
+						close(promptReady)
+						promptSignaled = true
+					}
 				}
 			},
 			stdinReady: func(w io.WriteCloser) {
 				go func() {
-					time.Sleep(100 * time.Millisecond)
-					_, _ = io.WriteString(w, "y\n")
+					select {
+					case <-promptReady:
+						_, _ = io.WriteString(w, "y\n")
+					case <-ctx.Done():
+					}
 				}()
 			},
 		})
 	}()
 
-	select {
-	case got := <-partialSeen:
-		if got != "Allow? [y/N]" {
-			t.Fatalf("unexpected PTY partial %q", got)
+	var gotPrompt strings.Builder
+	deadline := time.After(1 * time.Second)
+	for !strings.Contains(gotPrompt.String(), prompt) {
+		select {
+		case chunk := <-partialSeen:
+			gotPrompt.WriteString(chunk)
+		case <-deadline:
+			t.Fatalf("timed out waiting for PTY partial prompt; got %q", gotPrompt.String())
 		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timed out waiting for PTY partial prompt")
+	}
+	if gotPrompt.String() != prompt {
+		t.Fatalf("unexpected PTY partial %q", gotPrompt.String())
 	}
 
-	deadline := time.After(2 * time.Second)
+	deadline = time.After(2 * time.Second)
 	for {
 		select {
 		case got := <-lineSeen:
