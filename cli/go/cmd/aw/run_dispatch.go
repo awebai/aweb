@@ -15,6 +15,11 @@ import (
 	awrun "github.com/awebai/aw/run"
 )
 
+const (
+	maxChatMessagesPerWake = 20
+	maxChatHistoryFetch    = 2000
+)
+
 type runWakeResolution struct {
 	Skip          bool
 	CycleContext  string
@@ -133,12 +138,11 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil
 	}
 	messageID := strings.TrimSpace(evt.MessageID)
+	var incompleteHistoryErr error
 	if messageID != "" {
-		limit := evt.UnreadCount
-		if limit <= 0 {
-			limit = 20
-		} else if limit > 100 {
-			limit = 100
+		limit, err := unreadChatHistoryLimit(evt.UnreadCount)
+		if err != nil {
+			return runWakeResolution{}, err
 		}
 		history, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
 			SessionID:  sessionID,
@@ -146,39 +150,17 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			Limit:      limit,
 		})
 		if err == nil {
-			filtered := chat.FilterDeliveredMessages(history.Messages)
-			if ids := chat.DeliveredMessageIDs(history.Messages); len(ids) > 0 {
-				_ = chat.SaveDeliveredIDs(ids)
-			}
-			markChatHistoryRead(ctx, client, sessionID, history.Messages)
-			for _, msg := range filtered {
-				if strings.TrimSpace(msg.MessageID) != messageID {
-					continue
+			if completeErr := requireCompleteUnreadChatHistory(evt.UnreadCount, limit, len(history.Messages)); completeErr != nil {
+				incompleteHistoryErr = completeErr
+			} else {
+				filtered := chat.FilterDeliveredMessages(history.Messages)
+				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
+				if len(presented) > 0 {
+					return chatWakeResolution(client, sessionID, presented, evt), nil
 				}
-				if chatMessageFromSelf(msg, selfAlias, selfIdentityDIDs(client)...) {
+				if len(history.Messages) > 0 {
 					return runWakeResolution{Skip: true}, nil
 				}
-				return runWakeResolution{
-					CycleContext: formatIncomingChatContext(
-						preferredIdentityDisplayLabel(
-							strings.TrimSpace(msg.FromAgent),
-							strings.TrimSpace(msg.FromAddress),
-							strings.TrimSpace(msg.FromStableID),
-							strings.TrimSpace(msg.FromDID),
-							preferredIdentityDisplayLabel(
-								strings.TrimSpace(evt.FromAlias),
-								strings.TrimSpace(evt.FromAddress),
-								strings.TrimSpace(evt.FromStableID),
-								strings.TrimSpace(evt.FromDID),
-								"",
-							),
-						),
-						msg.Body,
-					),
-				}, nil
-			}
-			if len(history.Messages) > 0 && len(filtered) == 0 {
-				return runWakeResolution{Skip: true}, nil
 			}
 		}
 	}
@@ -194,41 +176,31 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if alias == "" {
 			alias = strings.TrimSpace(pending.LastFrom)
 		}
-		// Mark as read — fetch unread history to find the last message ID.
-		histResp, _ := client.ChatHistory(ctx, awid.ChatHistoryParams{
+		limit, err := unreadChatHistoryLimit(pending.UnreadCount)
+		if err != nil {
+			return runWakeResolution{}, err
+		}
+		histResp, historyErr := client.ChatHistory(ctx, awid.ChatHistoryParams{
 			SessionID:  sessionID,
 			UnreadOnly: true,
-			Limit:      100,
+			Limit:      limit,
 		})
-		if histResp != nil {
-			filtered := chat.FilterDeliveredMessages(histResp.Messages)
-			if ids := chat.DeliveredMessageIDs(histResp.Messages); len(ids) > 0 {
-				_ = chat.SaveDeliveredIDs(ids)
+		if historyErr == nil && histResp != nil {
+			if completeErr := requireCompleteUnreadChatHistory(pending.UnreadCount, limit, len(histResp.Messages)); completeErr != nil {
+				incompleteHistoryErr = completeErr
+			} else {
+				filtered := chat.FilterDeliveredMessages(histResp.Messages)
+				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
+				if len(presented) > 0 {
+					return chatWakeResolution(client, sessionID, presented, evt), nil
+				}
+				if len(histResp.Messages) > 0 {
+					return runWakeResolution{Skip: true}, nil
+				}
 			}
-			markChatHistoryRead(ctx, client, sessionID, histResp.Messages)
-			if latest := latestIncomingChatMessage(filtered, selfAlias, selfIdentityDIDs(client)...); latest != nil {
-				return runWakeResolution{
-					CycleContext: formatIncomingChatContext(
-						preferredIdentityDisplayLabel(
-							strings.TrimSpace(latest.FromAgent),
-							strings.TrimSpace(latest.FromAddress),
-							strings.TrimSpace(latest.FromStableID),
-							strings.TrimSpace(latest.FromDID),
-							preferredIdentityDisplayLabel(
-								strings.TrimSpace(evt.FromAlias),
-								strings.TrimSpace(evt.FromAddress),
-								strings.TrimSpace(evt.FromStableID),
-								strings.TrimSpace(evt.FromDID),
-								"",
-							),
-						),
-						latest.Body,
-					),
-				}, nil
-			}
-			if len(histResp.Messages) > 0 {
-				return runWakeResolution{Skip: true}, nil
-			}
+		}
+		if incompleteHistoryErr != nil {
+			return runWakeResolution{}, fmt.Errorf("load complete unread chat history for wake %s: %w", sessionID, incompleteHistoryErr)
 		}
 		displayFromAddress := strings.TrimSpace(pending.LastFromAddress)
 		if displayFromAddress == "" {
@@ -265,6 +237,9 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				pending.LastMessage,
 			),
 		}, nil
+	}
+	if incompleteHistoryErr != nil {
+		return runWakeResolution{}, fmt.Errorf("load complete unread chat history for wake %s: %w", sessionID, incompleteHistoryErr)
 	}
 	return runWakeResolution{Skip: true}, nil
 }
@@ -336,14 +311,79 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 	return strings.TrimSpace(selfAlias) != "" && strings.EqualFold(strings.TrimSpace(pending.LastFrom), strings.TrimSpace(selfAlias))
 }
 
-func latestIncomingChatMessage(messages []awid.ChatMessage, selfAlias string, selfDIDs ...string) *awid.ChatMessage {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if chatMessageFromSelf(messages[i], selfAlias, selfDIDs...) {
-			continue
-		}
-		return &messages[i]
+// The history API applies LIMIT to newest rows. Fetch the complete unread set
+// before selecting its oldest bounded prefix, or a watermark through the
+// selected suffix would silently acknowledge older messages never presented.
+func unreadChatHistoryLimit(unreadCount int) (int, error) {
+	if unreadCount > maxChatHistoryFetch {
+		return 0, fmt.Errorf("chat unread backlog %d exceeds safe history fetch limit %d", unreadCount, maxChatHistoryFetch)
+	}
+	// Always request the maximum: the event count can be stale if another
+	// message arrives before the history fetch.
+	return maxChatHistoryFetch, nil
+}
+
+func requireCompleteUnreadChatHistory(expectedCount, requestedLimit, fetchedCount int) error {
+	if expectedCount > fetchedCount {
+		return fmt.Errorf("chat history returned %d of %d unread messages; refusing to acknowledge an omitted prefix", fetchedCount, expectedCount)
+	}
+	if fetchedCount == requestedLimit {
+		return fmt.Errorf("chat history reached limit %d; refusing to acknowledge a potentially omitted prefix", requestedLimit)
 	}
 	return nil
+}
+
+func incomingChatMessages(messages []awid.ChatMessage, selfAlias string, selfDIDs ...string) []awid.ChatMessage {
+	incoming := make([]awid.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if chatMessageFromSelf(message, selfAlias, selfDIDs...) {
+			continue
+		}
+		incoming = append(incoming, message)
+		if len(incoming) == maxChatMessagesPerWake {
+			break
+		}
+	}
+	return incoming
+}
+
+func chatWakeResolution(client *aweb.Client, sessionID string, messages []awid.ChatMessage, evt awid.AgentEvent) runWakeResolution {
+	contexts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		contexts = append(contexts, formatIncomingChatContext(
+			preferredIdentityDisplayLabel(
+				strings.TrimSpace(message.FromAgent),
+				strings.TrimSpace(message.FromAddress),
+				strings.TrimSpace(message.FromStableID),
+				strings.TrimSpace(message.FromDID),
+				preferredIdentityDisplayLabel(
+					strings.TrimSpace(evt.FromAlias),
+					strings.TrimSpace(evt.FromAddress),
+					strings.TrimSpace(evt.FromStableID),
+					strings.TrimSpace(evt.FromDID),
+					"",
+				),
+			),
+			message.Body,
+		))
+	}
+
+	resolution := runWakeResolution{CycleContext: joinPromptSections(contexts...)}
+	presentedIDs := chat.DeliveredMessageIDs(messages)
+	if len(presentedIDs) == 0 {
+		return resolution
+	}
+	lastPresentedID := presentedIDs[len(presentedIDs)-1]
+	resolution.AfterDelivery = func(deliveryCtx context.Context) error {
+		// A failed server acknowledgement must leave local suppression untouched
+		// so the unread batch remains retryable. Reversing this order recreates
+		// the permanent-loss bug this transaction prevents.
+		if err := markChatMessageRead(deliveryCtx, client, sessionID, lastPresentedID); err != nil {
+			return err
+		}
+		return chat.SaveDeliveredIDs(presentedIDs)
+	}
+	return resolution
 }
 
 func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
@@ -506,25 +546,24 @@ func formatIncomingMailBlock(head string, subject string, body string) string {
 	return strings.Join(formatted, "\n")
 }
 
-func markChatHistoryRead(ctx context.Context, client *aweb.Client, sessionID string, messages []awid.ChatMessage) {
-	if len(messages) == 0 {
-		return
+func markChatMessageRead(ctx context.Context, client *aweb.Client, sessionID, messageID string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil
 	}
-	lastMsgID := messages[len(messages)-1].MessageID
-	if lastMsgID != "" {
-		req := &awid.ChatMarkReadRequest{UpToMessageID: lastMsgID}
-		if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
-			return
-		}
-		timer := time.NewTimer(100 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-		}
-		_, _ = client.ChatMarkRead(ctx, sessionID, req)
+	req := &awid.ChatMarkReadRequest{UpToMessageID: messageID}
+	if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
+		return nil
 	}
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	_, err := client.ChatMarkRead(ctx, sessionID, req)
+	return err
 }
 
 func commBodyLines(body string) []string {

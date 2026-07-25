@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/chat"
 	awrun "github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 )
@@ -724,7 +727,7 @@ func TestNewRunDispatcherBuildsIdleActionableChatPrompt(t *testing.T) {
 	}
 }
 
-func TestResolveChatWakeUsesExactUnreadMessageIDBeforePendingLastMessage(t *testing.T) {
+func TestResolveChatWakePresentsEveryUnreadMessageInTheBatch(t *testing.T) {
 	_ = deliveredIDsTestPath(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -758,8 +761,8 @@ func TestResolveChatWakeUsesExactUnreadMessageIDBeforePendingLastMessage(t *test
 	if !strings.Contains(resolved.CycleContext, "please review the retry path") {
 		t.Fatalf("expected exact unread message body, got %q", resolved.CycleContext)
 	}
-	if strings.Contains(resolved.CycleContext, "newer follow-up") {
-		t.Fatalf("expected resolver not to collapse to pending last_message, got %q", resolved.CycleContext)
+	if !strings.Contains(resolved.CycleContext, "newer follow-up") {
+		t.Fatalf("expected all unread messages in provider context, got %q", resolved.CycleContext)
 	}
 }
 
@@ -1076,6 +1079,305 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 	}
 	if !builds[1].ContinueSession || builds[1].SessionID != "sess-42" {
 		t.Fatalf("second run should continue session sess-42, got %+v", builds[1])
+	}
+}
+
+func TestNativeRunRetriesSameWakeAfterIncompleteChatHistory(t *testing.T) {
+	initRunCommandVars()
+	deliveredDir := deliveredIDsTestPath(t)
+
+	oldLoad := runLoadUserConfig
+	oldResolveSettings := runResolveSettings
+	oldNewProvider := runNewProvider
+	oldResolveClient := runResolveClientForDir
+	oldNewLoop := runNewLoop
+	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
+	t.Cleanup(func() {
+		runLoadUserConfig = oldLoad
+		runResolveSettings = oldResolveSettings
+		runNewProvider = oldNewProvider
+		runResolveClientForDir = oldResolveClient
+		runNewLoop = oldNewLoop
+		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
+		initRunCommandVars()
+	})
+
+	messages := make([]awid.ChatMessage, 121)
+	firstTimestamp := time.Date(2026, 3, 25, 0, 0, 0, 0, time.UTC)
+	for i := range messages {
+		messages[i] = awid.ChatMessage{
+			MessageID: fmt.Sprintf("retry-%03d", i),
+			FromAgent: "mia",
+			Body:      fmt.Sprintf("retry request %03d", i),
+			Timestamp: firstTimestamp.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+		}
+	}
+	var stateMu sync.Mutex
+	historyCalls := 0
+	streamedWakes := 0
+	markedReadUpTo := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
+			flusher.Flush()
+			stateMu.Lock()
+			streamedWakes++
+			stateMu.Unlock()
+			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"retry-120\",\"from_alias\":\"mia\",\"session_id\":\"s-retry\",\"wake_mode\":\"interrupt\",\"unread_count\":121,\"sender_waiting\":true}\n\n")
+			flusher.Flush()
+			<-r.Context().Done()
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
+				SessionID: "s-retry", LastFrom: "mia", LastMessage: "newest summary",
+				UnreadCount: len(messages), SenderWaiting: true,
+			}}})
+		case strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s-retry/messages"):
+			stateMu.Lock()
+			historyCalls++
+			call := historyCalls
+			stateMu.Unlock()
+			selected := messages
+			if call <= 2 {
+				selected = messages[len(messages)-100:]
+			}
+			_ = json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: selected})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read"):
+			var req awid.ChatMarkReadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			stateMu.Lock()
+			markedReadUpTo = req.UpToMessageID
+			stateMu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runLoadUserConfig = func(string) (awrun.UserConfig, error) { return awrun.UserConfig{}, nil }
+	runResolveSettings = func(awrun.UserConfig, awrun.SettingOverrides) (awrun.Settings, error) {
+		return awrun.Settings{BasePrompt: "persistent mission", WaitSeconds: 30, IdleWaitSeconds: 1}, nil
+	}
+	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
+		return client, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
+	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
+	runNewScreenController = func(io.Reader, io.Writer) *awrun.ScreenController { return nil }
+
+	provider := &recordingRunProvider{}
+	runNewProvider = func(string) (awrun.Provider, error) { return provider, nil }
+	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
+		loop := awrun.NewLoop(provider, out)
+		loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+			onLine("done")
+			return nil
+		}
+		return loop
+	}
+
+	cmd := &cobraCommandClone{Command: *runCmd}
+	cmd.ResetFlagsForTest()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd.Command.SetContext(ctx)
+	runMaxRuns = 2
+	var stdout, stderr bytes.Buffer
+	setRunCommandIO(&cmd.Command, strings.NewReader(""), &stdout, &stderr)
+	if err := runRun(&cmd.Command, []string{"claude"}); err != nil {
+		t.Fatalf("runRun returned error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	stateMu.Lock()
+	gotHistoryCalls := historyCalls
+	gotStreamedWakes := streamedWakes
+	gotMarkedReadUpTo := markedReadUpTo
+	stateMu.Unlock()
+	if gotStreamedWakes != 1 {
+		t.Fatalf("stream delivered %d wakes, want exactly one", gotStreamedWakes)
+	}
+	if gotHistoryCalls < 3 {
+		t.Fatalf("history calls=%d, want retry of the same wake after two incomplete fetches", gotHistoryCalls)
+	}
+	prompts, _ := provider.snapshot()
+	if len(prompts) != 2 || !strings.Contains(prompts[1], messages[0].Body) {
+		t.Fatalf("same wake was not retried with complete oldest batch: %#v", prompts)
+	}
+	if strings.Contains(prompts[1], messages[maxChatMessagesPerWake].Body) {
+		t.Fatalf("retried context exceeded bounded batch: %q", prompts[1])
+	}
+	if gotMarkedReadUpTo != messages[maxChatMessagesPerWake-1].MessageID {
+		t.Fatalf("marked through %q, want %q", gotMarkedReadUpTo, messages[maxChatMessagesPerWake-1].MessageID)
+	}
+	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != maxChatMessagesPerWake {
+		t.Fatalf("delivered count=%d, want %d", len(delivered), maxChatMessagesPerWake)
+	}
+}
+
+func TestNativeRunChatProviderFailureLeavesBatchForRestart(t *testing.T) {
+	initRunCommandVars()
+	deliveredDir := deliveredIDsTestPath(t)
+
+	oldLoad := runLoadUserConfig
+	oldResolveSettings := runResolveSettings
+	oldNewProvider := runNewProvider
+	oldResolveClient := runResolveClientForDir
+	oldNewLoop := runNewLoop
+	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
+	t.Cleanup(func() {
+		runLoadUserConfig = oldLoad
+		runResolveSettings = oldResolveSettings
+		runNewProvider = oldNewProvider
+		runResolveClientForDir = oldResolveClient
+		runNewLoop = oldNewLoop
+		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
+		initRunCommandVars()
+	})
+
+	var stateMu sync.Mutex
+	markedRead := false
+	markReadCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
+			flusher.Flush()
+			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"restart-2\",\"from_alias\":\"mia\",\"session_id\":\"s-restart\",\"wake_mode\":\"interrupt\",\"unread_count\":2,\"sender_waiting\":true}\n\n")
+			flusher.Flush()
+			<-r.Context().Done()
+		case strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s-restart/messages"):
+			stateMu.Lock()
+			read := markedRead
+			stateMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if read {
+				_, _ = io.WriteString(w, `{"messages":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"messages":[{"message_id":"restart-1","from_agent":"mia","body":"first survives","timestamp":"2026-03-25T00:00:00Z"},{"message_id":"restart-2","from_agent":"mia","body":"second survives","timestamp":"2026-03-25T00:01:00Z"}]}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read"):
+			stateMu.Lock()
+			markedRead = true
+			markReadCalls++
+			stateMu.Unlock()
+			_, _ = io.WriteString(w, `{"success":true,"messages_marked":2}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runLoadUserConfig = func(string) (awrun.UserConfig, error) { return awrun.UserConfig{}, nil }
+	runResolveSettings = func(awrun.UserConfig, awrun.SettingOverrides) (awrun.Settings, error) {
+		return awrun.Settings{BasePrompt: "persistent mission", WaitSeconds: 30, IdleWaitSeconds: 1}, nil
+	}
+	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
+		return client, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
+	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
+	runNewScreenController = func(io.Reader, io.Writer) *awrun.ScreenController { return nil }
+
+	lastRunnerCalls := 0
+	lastRunnerPrompt := ""
+	runNative := func(failWake bool) ([]string, error) {
+		provider := &recordingRunProvider{}
+		runNewProvider = func(string) (awrun.Provider, error) { return provider, nil }
+		runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
+			loop := awrun.NewLoop(provider, out)
+			recording := provider.(*recordingRunProvider)
+			loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+				lastRunnerCalls++
+				prompts, _ := recording.snapshot()
+				if len(prompts) > 0 {
+					lastRunnerPrompt = prompts[len(prompts)-1]
+				}
+				if failWake && strings.Contains(lastRunnerPrompt, "first survives") {
+					return errors.New("provider failed before accepting chat")
+				}
+				onLine("done")
+				return nil
+			}
+			return loop
+		}
+
+		cmd := &cobraCommandClone{Command: *runCmd}
+		cmd.ResetFlagsForTest()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd.Command.SetContext(ctx)
+		runMaxRuns = 2
+		var stdout, stderr bytes.Buffer
+		setRunCommandIO(&cmd.Command, strings.NewReader(""), &stdout, &stderr)
+		err := runRun(&cmd.Command, []string{"claude"})
+		prompts, _ := provider.snapshot()
+		return prompts, err
+	}
+
+	firstPrompts, err := runNative(true)
+	if err == nil || !strings.Contains(err.Error(), "provider failed before accepting chat") {
+		t.Fatalf("first run error=%v prompts=%#v runner_calls=%d last_runner_prompt=%q", err, firstPrompts, lastRunnerCalls, lastRunnerPrompt)
+	}
+	stateMu.Lock()
+	firstMarked, firstCalls := markedRead, markReadCalls
+	stateMu.Unlock()
+	if firstMarked || firstCalls != 0 {
+		t.Fatalf("failed provider suppressed chat: marked=%v calls=%d", firstMarked, firstCalls)
+	}
+	if delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir); err != nil {
+		t.Fatal(err)
+	} else if len(delivered) != 0 {
+		t.Fatalf("failed provider persisted delivered IDs: %#v", delivered)
+	}
+
+	prompts, err := runNative(false)
+	if err != nil {
+		t.Fatalf("restart run: %v", err)
+	}
+	if len(prompts) != 2 || !strings.Contains(prompts[1], "first survives") || !strings.Contains(prompts[1], "second survives") {
+		t.Fatalf("restart did not present pending batch: %#v", prompts)
+	}
+	stateMu.Lock()
+	finalMarked, finalCalls := markedRead, markReadCalls
+	stateMu.Unlock()
+	if !finalMarked || finalCalls != 1 {
+		t.Fatalf("successful restart acknowledgement: marked=%v calls=%d", finalMarked, finalCalls)
+	}
+	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"restart-1", "restart-2"} {
+		if _, ok := delivered[id]; !ok {
+			t.Fatalf("restart did not persist %s: %#v", id, delivered)
+		}
 	}
 }
 
