@@ -13,6 +13,19 @@ import {
   type DidKeyResolution,
 } from "../src/identity/registry.js";
 
+// Delegate to the real verifier while observing whether malformed input reaches it.
+const verifyCalls = vi.hoisted(() => vi.fn());
+vi.mock("@noble/ed25519", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@noble/ed25519")>();
+  return {
+    ...actual,
+    verify: (...args: Parameters<typeof actual.verify>) => {
+      verifyCalls();
+      return actual.verify(...args);
+    },
+  };
+});
+
 const testDir = dirname(fileURLToPath(import.meta.url));
 const dnsVectors = JSON.parse(
   readFileSync(join(testDir, "..", "..", "docs", "vectors", "dns-txt-v1.json"), "utf-8"),
@@ -159,6 +172,23 @@ describe("registry verification", () => {
     const result = verifyDidKeyResolution(resolution, undefined, Date.now());
     expect(result.outcome).toBe("OK_VERIFIED");
     expect(result.nextHead?.entryHash).toBe(register!.entry_hash);
+  });
+
+  test("rejects malformed log-head signatures before invoking the verifier", () => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
+    const resolution: DidKeyResolution = {
+      did_aw: identityLogVectors.mapping.did_aw,
+      current_did_key: identityLogVectors.mapping.initial_did_key,
+      log_head: {
+        ...register.entry_payload,
+        entry_hash: register.entry_hash,
+        signature: "YWJj=",
+      },
+    };
+
+    verifyCalls.mockClear();
+    expect(verifyDidKeyResolution(resolution, undefined, Date.now()).outcome).toBe("HARD_ERROR");
+    expect(verifyCalls).not.toHaveBeenCalled();
   });
 
   test("degrades when log_head is missing", () => {

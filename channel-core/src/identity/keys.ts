@@ -11,6 +11,9 @@ export async function loadSigningKey(path: string): Promise<Uint8Array> {
     throw new Error(`no ED25519 PRIVATE KEY PEM block in ${path}`);
   }
 
+  // Local key material follows the PEM file format, which is padded and
+  // line-wrapped by definition. Do not route this through the remote-signature
+  // raw-base64 decoder; the exact 32-byte seed check below remains fail-closed.
   const b64 = match[1].replace(/\s/g, "");
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);

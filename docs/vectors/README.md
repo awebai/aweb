@@ -79,6 +79,22 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
 - **Canonical JSON:** lexicographic key sort, compact separators, literal UTF-8 (no `\uXXXX` escapes).
 - **Signatures:** Ed25519 signature bytes encoded as base64 (RFC 4648), no `=` padding.
 
+### Base64 decoder-site classification
+
+Decoder strictness follows the producer and field format; it is not a global
+consistency sweep.
+
+| Class | Production sites | Required behavior and reason |
+| --- | --- | --- |
+| Remote signatures | TypeScript `identity/signing.ts` (message envelopes), `identity/trust.ts` (rotation/replacement announcements), and `identity/registry.ts` (DID-log heads); Go `awid/{signing,rotate,a2a_publication,certificate,e2ee_keys,e2ee_messages,atomic_address_claim,stable_identity}.go` signature decodes | Use raw standard base64 without padding, with Go/TypeScript acceptance parity. TypeScript throws on malformed input before calling Ed25519 verification, so rejection does not depend on the verifier's treatment of an empty signature. Aligning mechanisms within this class is required. |
+| E2EE binary protocol fields | Go `awid/e2ee_keys.go`, `awid/e2ee_messages.go`, and `cmd/aw/id_encryption_key.go` public-key, ciphertext, nonce, encapsulated-key, and wrapped-key decodes | Use raw standard base64 because the E2EE wire contract defines those fields that way. These are protocol bytes, not signature-verdict sites. |
+| Team-certificate transport envelope | TypeScript `identity/certificate.ts` encoder and Go `awid/certificate.go` header encoder/decoder | Use padded standard base64. TypeScript emits padding and has no header decoder; changing Go to raw decoding would reject every TypeScript-produced certificate header and break authentication. |
+| Local private-key material | TypeScript `identity/keys.ts` PEM loader and Go `cmd/aw/init_apikey.go` partial-init state | Follow the file format: PEM is padded and line-wrapped, while the Go partial-init state is written and read with padded standard base64. Both paths validate the decoded key size and identity binding. Remote-signature strictness does not apply to local key files. |
+
+The important boundary is the class: make remote-signature decoders agree with
+one another, but do not flatten transport envelopes or local key formats into
+that rule.
+
 ## Validation
 
 The backend test suite validates these vectors:
