@@ -613,7 +613,7 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	resp, err := DoNoRedirect(r.HTTPClient, req)
+	resp, err := DoNoRedirectWithTimeout(r.HTTPClient, req, APITimeout())
 	if err != nil {
 		return err
 	}

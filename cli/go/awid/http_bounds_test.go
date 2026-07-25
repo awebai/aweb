@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClientResponseLimitRejectsOversizeWithoutRejectingExactLimit(t *testing.T) {
@@ -102,6 +103,24 @@ func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 				t.Fatal("oversize response was accepted")
 			}
 		})
+	}
+}
+
+func TestInjectedNormalHTTPClientCannotRemoveOverallDeadline(t *testing.T) {
+	t.Setenv(APITimeoutEnvVar, "10ms")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetHTTPClient(&http.Client{})
+	var out map[string]any
+	if err := client.Get(context.Background(), "/v1/trust", &out); err == nil {
+		t.Fatal("injected zero-timeout client removed the trust request deadline")
 	}
 }
 

@@ -73,10 +73,24 @@ func SanitizeErrorText(text string) string {
 // transport, timeout, and other policy without mutating a client that may be
 // shared by concurrent requests.
 func DoNoRedirect(client *http.Client, req *http.Request) (*http.Response, error) {
+	return doNoRedirect(client, req, 0)
+}
+
+// DoNoRedirectWithTimeout also supplies the overall deadline when an injected
+// client has no Timeout. Callers may customize transport policy, but cannot
+// remove the trust-path deadline by passing a zero-value client.
+func DoNoRedirectWithTimeout(client *http.Client, req *http.Request, timeout time.Duration) (*http.Response, error) {
+	return doNoRedirect(client, req, timeout)
+}
+
+func doNoRedirect(client *http.Client, req *http.Request, defaultTimeout time.Duration) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	noRedirectClient := *client
+	if defaultTimeout > 0 && (noRedirectClient.Timeout <= 0 || noRedirectClient.Timeout > defaultTimeout) {
+		noRedirectClient.Timeout = defaultTimeout
+	}
 	noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
