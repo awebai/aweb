@@ -159,21 +159,18 @@ export async function verifyMessage(
     return "failed";
   }
 
-  let sigBytes: Uint8Array;
   try {
-    sigBytes = b64Decode(env.signature);
+    const sigBytes = b64Decode(env.signature);
+    const payload = canonicalJSON(env);
+    const valid = ed.verify(
+      sigBytes,
+      new TextEncoder().encode(payload),
+      publicKey,
+    );
+    return valid ? "verified" : "failed";
   } catch {
     return "failed";
   }
-
-  const payload = canonicalJSON(env);
-  const valid = ed.verify(
-    sigBytes,
-    new TextEncoder().encode(payload),
-    publicKey,
-  );
-
-  return valid ? "verified" : "failed";
 }
 
 /**
@@ -205,20 +202,17 @@ export async function verifySignedPayload(
     return "failed";
   }
 
-  let sigBytes: Uint8Array;
   try {
-    sigBytes = b64Decode(signatureB64);
+    const sigBytes = b64Decode(signatureB64);
+    const valid = ed.verify(
+      sigBytes,
+      new TextEncoder().encode(signedPayload),
+      publicKey,
+    );
+    return valid ? "verified" : "failed";
   } catch {
     return "failed";
   }
-
-  const valid = ed.verify(
-    sigBytes,
-    new TextEncoder().encode(signedPayload),
-    publicKey,
-  );
-
-  return valid ? "verified" : "failed";
 }
 
 export function signedPayloadConversationStatus(

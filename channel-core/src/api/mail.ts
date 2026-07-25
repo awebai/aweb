@@ -36,6 +36,8 @@ export interface InboxMessage {
   replacement_announcement?: ReplacementAnnouncement;
   is_contact?: boolean;
   verification_status?: VerificationStatus;
+  /** Verification threw, so channel dispatch must leave this record unread. */
+  verification_error?: boolean;
 }
 
 export async function fetchInbox(
@@ -43,6 +45,7 @@ export async function fetchInbox(
   unreadOnly: boolean = true,
   limit: number = 50,
   messageID?: string,
+  log: (message: string) => void = (message) => console.error(message),
 ): Promise<InboxMessage[]> {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
@@ -53,10 +56,25 @@ export async function fetchInbox(
     `/v1/messages/inbox?${params}`,
   );
 
-  // Verify signatures on received messages
+  // Verify signatures on received messages without letting one malformed
+  // record prevent the rest of the inbox from being delivered.
+  let verificationErrors = 0;
   for (const msg of resp.messages) {
-    hydrateAddressesFromSignedPayload(msg);
-    msg.verification_status = await verifyInboxMessage(msg);
+    try {
+      msg.verification_error = false;
+      hydrateAddressesFromSignedPayload(msg);
+      msg.verification_status = await verifyInboxMessage(msg);
+    } catch {
+      msg.verification_status = "failed";
+      msg.verification_error = true;
+      verificationErrors++;
+      log(`aweb: could not verify inbox message ${JSON.stringify(msg.message_id || "(missing id)")}; it remains unread`);
+    }
+  }
+  if (verificationErrors > 0) {
+    const noun = verificationErrors === 1 ? "message" : "messages";
+    const verb = verificationErrors === 1 ? "it remains" : "they remain";
+    log(`aweb: skipped verification for ${verificationErrors} inbox ${noun}; ${verb} unread`);
   }
 
   return resp.messages;

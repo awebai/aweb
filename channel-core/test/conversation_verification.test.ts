@@ -157,6 +157,54 @@ describe("conversation-bound verification", () => {
     expect(messages[2].verification_status).toBe("verified_legacy");
   });
 
+  test("continues verifying the inbox after a wrong-length signature", async () => {
+    const goodBefore = mailEnvelope({ message_id: "mail-good-before", conversation_id: "conv-1" });
+    const poison = mailEnvelope({ message_id: "mail-poison", conversation_id: "conv-1" });
+    const goodAfter = mailEnvelope({ message_id: "mail-good-after", conversation_id: "conv-1" });
+    const seed = b64ToBytes(vectors.seed);
+
+    async function inboxMessage(env: MessageEnvelope, corruptSignature = false) {
+      const signature = await signMessage(seed, env);
+      return {
+        message_id: env.message_id!,
+        conversation_id: env.conversation_id,
+        from_agent_id: "agent-alice",
+        from_alias: "alice",
+        from_address: env.from,
+        to_alias: "bob",
+        to_address: env.to,
+        subject: env.subject,
+        body: env.body,
+        priority: "normal",
+        created_at: env.timestamp,
+        from_did: env.from_did,
+        to_did: env.to_did,
+        from_stable_id: env.from_stable_id,
+        signature: corruptSignature ? `${signature}A` : signature,
+        signing_key_id: env.from_did,
+        signed_payload: canonicalJSON(env),
+      };
+    }
+
+    const client = {
+      get: async () => ({
+        messages: [
+          await inboxMessage(goodBefore),
+          await inboxMessage(poison, true),
+          await inboxMessage(goodAfter),
+        ],
+      }),
+    };
+
+    const messages = await fetchInbox(client as never);
+
+    expect(messages.map((message) => message.verification_status)).toEqual([
+      "verified",
+      "failed",
+      "verified",
+    ]);
+  });
+
   test("downgrades legacy chat signatures that do not bind the conversation id", async () => {
     const env = chatEnvelope();
     const signature = await signMessage(b64ToBytes(vectors.seed), env);
