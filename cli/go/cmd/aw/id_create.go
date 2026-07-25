@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -230,9 +229,9 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		return nil, err
 	}
 
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
-	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	workspacePath := awconfig.WorktreeWorkspacePath(workingDir)
 	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
 		return nil, err
 	}

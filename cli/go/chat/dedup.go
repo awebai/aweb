@@ -20,11 +20,10 @@ const (
 type deliveredIDsFile map[string]string
 
 func deliveredIDsRoot(startDir string) string {
-	if path, err := awconfig.FindWorktreeContextPath(startDir); err == nil {
-		return filepath.Dir(filepath.Dir(path))
-	}
-	if path, err := awconfig.FindWorktreeWorkspacePath(startDir); err == nil {
-		return filepath.Dir(filepath.Dir(path))
+	for _, name := range []string{"context", "workspace.yaml"} {
+		if path := filepath.Join(filepath.Clean(startDir), ".aw", name); fileExists(path) {
+			return filepath.Clean(startDir)
+		}
 	}
 	if root := findGitRoot(startDir); root != "" {
 		return root
@@ -220,6 +219,11 @@ func writeDeliveredIDs(path string, entries map[string]time.Time) error {
 		return err
 	}
 	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func findGitRoot(startDir string) string {

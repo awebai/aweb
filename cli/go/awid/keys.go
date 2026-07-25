@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/internal/pathpreflight"
 )
 
 // GenerateKeypair creates a new Ed25519 keypair using crypto/rand.
@@ -38,6 +40,9 @@ func SaveKeypairAt(keyPath, pubPath string, pub ed25519.PublicKey, priv ed25519.
 
 // SaveSigningKey writes only the private signing key PEM to the given path.
 func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
+	if err := preflightSigningKeyPath(path); err != nil {
+		return err
+	}
 	return writePrivateKey(path, priv)
 }
 
@@ -45,6 +50,9 @@ func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 // already exist. It is used by recovery flows that must never overwrite
 // recoverable identity material.
 func SaveSigningKeyExclusive(path string, priv ed25519.PrivateKey) error {
+	if err := preflightSigningKeyPath(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create signing key directory: %w", err)
 	}
@@ -70,6 +78,9 @@ func SaveSigningKeyExclusive(path string, priv ed25519.PrivateKey) error {
 
 // LoadSigningKey reads an Ed25519 private key from a PEM file.
 func LoadSigningKey(path string) (ed25519.PrivateKey, error) {
+	if err := preflightSigningKeyPath(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -85,6 +96,10 @@ func LoadSigningKey(path string) (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("invalid seed size %d in %s", len(block.Bytes), path)
 	}
 	return ed25519.NewKeyFromSeed(block.Bytes), nil
+}
+
+func preflightSigningKeyPath(path string) error {
+	return pathpreflight.PreflightFile(path, "signing key", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 // LoadPublicKey reads an Ed25519 public key from a PEM file.

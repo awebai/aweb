@@ -38,12 +38,15 @@ var rootCmd = &cobra.Command{
 			_ = os.Setenv("AW_TRACE", "1")
 		}
 		identityHomeEnv, hadIdentityHomeEnv := os.LookupEnv(awconfig.IdentityHomeEnv)
+		previousActiveIdentityHome := activeIdentityHome
 		home, err := awconfig.ResolveIdentityHome("", identityHomeFlag)
 		if err != nil {
 			return err
 		}
 		loadDotenvBestEffort()
-		if hadIdentityHomeEnv {
+		if home.External() {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
+		} else if hadIdentityHomeEnv {
 			_ = os.Setenv(awconfig.IdentityHomeEnv, identityHomeEnv)
 		} else {
 			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
@@ -52,6 +55,7 @@ var rootCmd = &cobra.Command{
 		if home.External() {
 			activeIdentityHome = home
 		}
+		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
 		maybeCheckLatestVersion(cmd)
 		return nil
 	},
@@ -149,6 +153,36 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(upgradeCmd)
 	rootCmd.AddCommand(a2aCmd)
+}
+
+func restoreIdentityHomeAfterCommand(cmd *cobra.Command, previousEnv string, hadPreviousEnv bool, previousActive awconfig.IdentityHome) {
+	restore := func() {
+		if hadPreviousEnv {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, previousEnv)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+		activeIdentityHome = previousActive
+	}
+	if runE := cmd.RunE; runE != nil {
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			defer func() {
+				restore()
+				cmd.RunE = runE
+			}()
+			return runE(cmd, args)
+		}
+		return
+	}
+	if run := cmd.Run; run != nil {
+		cmd.Run = func(cmd *cobra.Command, args []string) {
+			defer func() {
+				restore()
+				cmd.Run = run
+			}()
+			run(cmd, args)
+		}
+	}
 }
 
 func bindTeamSelector(cmd *cobra.Command) {

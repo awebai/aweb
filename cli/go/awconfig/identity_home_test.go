@@ -62,6 +62,35 @@ func TestResolveIdentityHomeRejectsRelativeAndSymlinkedRoots(t *testing.T) {
 	}
 }
 
+func TestPrincipalPathAPIsRedirectTogetherWhileHostAndInstancePathsDoNot(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := filepath.Join(root, "instance")
+	principal := filepath.Join(root, "principal")
+	t.Setenv(IdentityHomeEnv, principal)
+	paths := map[string]string{
+		"identity":    WorktreeIdentityPath(instance),
+		"signing":     WorktreeSigningKeyPath(instance),
+		"workspace":   WorktreeWorkspacePath(instance),
+		"teams":       TeamStatePath(instance),
+		"certificate": TeamCertificatePath(instance, "team:example.test"),
+		"encryption":  WorktreeEncryptionStatePath(instance),
+		"keys":        WorktreeEncryptionKeysDir(instance),
+		"context":     WorktreeContextPath(instance),
+	}
+	for name, path := range paths {
+		rel, err := filepath.Rel(principal, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("%s path %q is outside principal %q", name, path, principal)
+		}
+	}
+	if got := filepath.Join(instance, ".aw", "a2a-credentials.yaml"); strings.HasPrefix(got, principal) {
+		t.Fatalf("instance A2A path redirected: %s", got)
+	}
+}
+
 func TestIdentityHomeStoredPathSupportsKnownLegacyPrefixAndRejectsEscapes(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

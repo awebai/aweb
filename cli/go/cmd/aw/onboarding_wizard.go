@@ -796,7 +796,7 @@ func persistGuidedHostedState(
 	if !persistent {
 		return nil
 	}
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
 		DID:            didKey,
 		StableID:       didAW,

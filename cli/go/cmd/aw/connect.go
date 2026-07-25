@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -144,9 +143,9 @@ func ensureConnectTargetClean(workingDir string) error {
 	}
 	paths := []string{
 		awconfig.WorktreeSigningKeyPath(workingDir),
-		filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
+		awconfig.WorktreeIdentityPath(workingDir),
 		awconfig.TeamCertificatesDir(workingDir),
-		filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+		awconfig.WorktreeWorkspacePath(workingDir),
 	}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err == nil {
@@ -257,7 +256,7 @@ func persistBootstrapConnectState(
 		return nil
 	}
 
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
 		DID:            didKey,
 		StableID:       stableID,

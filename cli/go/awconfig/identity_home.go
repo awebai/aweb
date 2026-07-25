@@ -59,8 +59,10 @@ func ResolveIdentityHome(workingDir, explicit string) (IdentityHome, error) {
 		return IdentityHome{}, fmt.Errorf("%s must be an absolute path", identityHomeSourceName(source))
 	}
 	root = filepath.Clean(root)
-	if err := pathpreflight.PreflightDir(root, "identity home", pathpreflight.Options{}); err != nil {
-		return IdentityHome{}, err
+	if source != IdentityHomeDefault {
+		if err := pathpreflight.PreflightDir(root, "identity home", pathpreflight.Options{}); err != nil {
+			return IdentityHome{}, err
+		}
 	}
 	return IdentityHome{Root: root, Source: source}, nil
 }
@@ -74,6 +76,43 @@ func identityHomeSourceName(source IdentityHomeSource) string {
 	default:
 		return "identity home"
 	}
+}
+
+func preflightIdentityFile(path, label string) error {
+	if strings.TrimSpace(os.Getenv(IdentityHomeEnv)) == "" {
+		return nil
+	}
+	return pathpreflight.PreflightFile(path, label, pathpreflight.AllowTempAmbientSymlinkPrefix())
+}
+
+func preflightIdentityDir(path, label string) error {
+	if strings.TrimSpace(os.Getenv(IdentityHomeEnv)) == "" {
+		return nil
+	}
+	return pathpreflight.PreflightDir(path, label, pathpreflight.AllowTempAmbientSymlinkPrefix())
+}
+
+func WorktreeIdentityHome(worktreeDir string) string {
+	if root := strings.TrimSpace(os.Getenv(IdentityHomeEnv)); root != "" {
+		return filepath.Clean(root)
+	}
+	return filepath.Join(filepath.Clean(worktreeDir), ".aw")
+}
+
+func WorktreeIdentityPath(worktreeDir string) string {
+	return filepath.Join(WorktreeIdentityHome(worktreeDir), "identity.yaml")
+}
+
+func WorktreeWorkspacePath(worktreeDir string) string {
+	return filepath.Join(WorktreeIdentityHome(worktreeDir), "workspace.yaml")
+}
+
+func WorktreeContextPath(worktreeDir string) string {
+	return filepath.Join(WorktreeIdentityHome(worktreeDir), "context")
+}
+
+func WorktreeStoredIdentityPath(worktreeDir, storedPath string) (string, error) {
+	return IdentityHomeStoredPath(IdentityHome{Root: WorktreeIdentityHome(worktreeDir)}, storedPath)
 }
 
 func IdentityHomeStoredPath(home IdentityHome, storedPath string) (string, error) {
@@ -96,7 +135,11 @@ func IdentityHomePath(home IdentityHome, relativePath string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("identity path escapes identity home: %q", relativePath)
 	}
-	if err := pathpreflight.PreflightFile(path, "identity file", pathpreflight.Options{}); err != nil {
+	options := pathpreflight.Options{}
+	if home.Source == "" || home.Source == IdentityHomeDefault {
+		options = pathpreflight.AllowTempAmbientSymlinkPrefix()
+	}
+	if err := pathpreflight.PreflightFile(path, "identity file", options); err != nil {
 		return "", err
 	}
 	return path, nil

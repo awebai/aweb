@@ -35,11 +35,11 @@ func DefaultWorktreeEncryptionKeysRelativeDir() string {
 }
 
 func WorktreeEncryptionStatePath(root string) string {
-	return filepath.Join(filepath.Clean(root), DefaultWorktreeEncryptionStateRelativePath())
+	return filepath.Join(WorktreeIdentityHome(root), "encryption.yaml")
 }
 
 func WorktreeEncryptionKeysDir(root string) string {
-	return filepath.Join(filepath.Clean(root), DefaultWorktreeEncryptionKeysRelativeDir())
+	return filepath.Join(WorktreeIdentityHome(root), "encryption-keys")
 }
 
 func WorktreeEncryptionPrivateKeyRelativePath(keyID string) string {
@@ -51,6 +51,9 @@ func WorktreeEncryptionAssertionRelativePath(keyID string) string {
 }
 
 func LoadEncryptionKeyStateFrom(path string) (*EncryptionKeyState, error) {
+	if err := preflightIdentityFile(path, "encryption state file"); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -64,6 +67,9 @@ func LoadEncryptionKeyStateFrom(path string) (*EncryptionKeyState, error) {
 }
 
 func SaveEncryptionKeyStateTo(path string, state *EncryptionKeyState) error {
+	if err := preflightIdentityFile(path, "encryption state file"); err != nil {
+		return err
+	}
 	if state == nil {
 		return errors.New("nil encryption key state")
 	}

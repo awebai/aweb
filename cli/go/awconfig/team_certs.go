@@ -17,7 +17,7 @@ type StoredTeamCertificate struct {
 }
 
 func TeamCertificatesDir(worktreeDir string) string {
-	return filepath.Join(filepath.Clean(worktreeDir), ".aw", "team-certs")
+	return filepath.Join(WorktreeIdentityHome(worktreeDir), "team-certs")
 }
 
 func EncodeTeamIDForCertificatePath(teamID string) string {
@@ -32,7 +32,7 @@ func TeamCertificateRelativePath(teamID string) string {
 }
 
 func TeamCertificatePath(worktreeDir, teamID string) string {
-	return filepath.Join(filepath.Clean(worktreeDir), ".aw", filepath.FromSlash(TeamCertificateRelativePath(teamID)))
+	return filepath.Join(WorktreeIdentityHome(worktreeDir), filepath.FromSlash(TeamCertificateRelativePath(teamID)))
 }
 
 func SaveTeamCertificateForTeam(worktreeDir, teamID string, cert *awid.TeamCertificate) (string, error) {
@@ -47,6 +47,9 @@ func SaveTeamCertificateForTeam(worktreeDir, teamID string, cert *awid.TeamCerti
 		return "", fmt.Errorf("certificate team_id %q does not match %q", cert.Team, teamID)
 	}
 	certPath := TeamCertificatePath(worktreeDir, teamID)
+	if err := preflightIdentityFile(certPath, "team certificate"); err != nil {
+		return "", err
+	}
 	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
 		return "", err
 	}
@@ -54,11 +57,18 @@ func SaveTeamCertificateForTeam(worktreeDir, teamID string, cert *awid.TeamCerti
 }
 
 func LoadTeamCertificateForTeam(worktreeDir, teamID string) (*awid.TeamCertificate, error) {
-	return awid.LoadTeamCertificate(TeamCertificatePath(worktreeDir, teamID))
+	path := TeamCertificatePath(worktreeDir, teamID)
+	if err := preflightIdentityFile(path, "team certificate"); err != nil {
+		return nil, err
+	}
+	return awid.LoadTeamCertificate(path)
 }
 
 func ListTeamCertificates(worktreeDir string) ([]StoredTeamCertificate, error) {
 	dir := TeamCertificatesDir(worktreeDir)
+	if err := preflightIdentityDir(dir, "team certificate directory"); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -75,6 +85,9 @@ func ListTeamCertificates(worktreeDir string) ([]StoredTeamCertificate, error) {
 			continue
 		}
 		absPath := filepath.Join(dir, entry.Name())
+		if err := preflightIdentityFile(absPath, "team certificate"); err != nil {
+			return nil, err
+		}
 		cert, err := awid.LoadTeamCertificate(absPath)
 		if err != nil {
 			return nil, err

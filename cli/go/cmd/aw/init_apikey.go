@@ -248,7 +248,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 // later failure can remove exactly what the current run created. A nil map
 // means .aw itself did not exist.
 func snapshotAwTree(workingDir string) (map[string]bool, error) {
-	awDir := filepath.Join(workingDir, ".aw")
+	awDir := awconfig.WorktreeIdentityHome(workingDir)
 	if _, err := os.Stat(awDir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -274,7 +274,7 @@ func snapshotAwTree(workingDir string) (map[string]bool, error) {
 // partial-init state). If .aw did not exist at snapshot time and nothing of
 // it remains, the directory itself is removed.
 func rollbackAwTree(workingDir string, snapshot map[string]bool) {
-	awDir := filepath.Join(workingDir, ".aw")
+	awDir := awconfig.WorktreeIdentityHome(workingDir)
 	if _, err := os.Stat(awDir); err != nil {
 		return
 	}
@@ -301,7 +301,7 @@ func rollbackAwTree(workingDir string, snapshot map[string]bool) {
 
 // pruneEmptyAwDir removes .aw when it exists and is empty.
 func pruneEmptyAwDir(workingDir string) {
-	awDir := filepath.Join(workingDir, ".aw")
+	awDir := awconfig.WorktreeIdentityHome(workingDir)
 	if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
 		_ = os.Remove(awDir)
 	}
@@ -374,7 +374,7 @@ func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) 
 }
 
 func apiKeyPartialInitPath(workingDir string) string {
-	return filepath.Join(workingDir, ".aw", "partial-init.yaml")
+	return filepath.Join(awconfig.WorktreeIdentityHome(workingDir), "partial-init.yaml")
 }
 
 func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
@@ -673,7 +673,7 @@ func persistAPIKeyBootstrapState(
 	if !persistent {
 		return nil
 	}
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
 		DID:            strings.TrimSpace(didKey),
 		StableID:       strings.TrimSpace(stableID),

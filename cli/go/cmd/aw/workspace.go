@@ -606,7 +606,7 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
-	legacyCertPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	legacyCertPath := filepath.Join(awconfig.WorktreeIdentityHome(workingDir), "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(legacyCertPath)
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)

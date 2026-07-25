@@ -9,6 +9,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,7 +25,11 @@ func rotationStateDirForIdentity(identity *awconfig.ResolvedIdentity) (string, e
 	if identity == nil || strings.TrimSpace(identity.IdentityHome) == "" {
 		return "", fmt.Errorf("identity home is required for rotation recovery")
 	}
-	return filepath.Join(identity.IdentityHome, "rotation"), nil
+	rotationDir := filepath.Join(identity.IdentityHome, "rotation")
+	if err := pathpreflight.PreflightDir(rotationDir, "identity rotation directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return "", err
+	}
+	return rotationDir, nil
 }
 
 func pendingRotationStatePath(rotationDir, stableID string) string {
@@ -43,6 +48,9 @@ func pendingFileBase(value string) string {
 
 func loadPendingRotationState(rotationDir, stableID string) (*pendingRotationState, error) {
 	path := pendingRotationStatePath(rotationDir, stableID)
+	if err := preflightRotationFile(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -65,11 +73,18 @@ func savePendingRotationState(rotationDir string, state *pendingRotationState) e
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(pendingRotationStatePath(rotationDir, state.StableID), data)
+	path := pendingRotationStatePath(rotationDir, state.StableID)
+	if err := preflightRotationFile(path); err != nil {
+		return err
+	}
+	return awid.AtomicWriteFile(path, data)
 }
 
 func removePendingRotationState(rotationDir, stableID string) error {
 	path := pendingRotationStatePath(rotationDir, stableID)
+	if err := preflightRotationFile(path); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -78,10 +93,20 @@ func removePendingRotationState(rotationDir, stableID string) error {
 
 func savePendingRotationKeypair(rotationDir, did string, pub ed25519.PublicKey, priv ed25519.PrivateKey) (string, error) {
 	keyPath, pubPath := pendingRotationKeyPaths(rotationDir, did)
+	if err := preflightRotationFile(keyPath); err != nil {
+		return "", err
+	}
+	if err := preflightRotationFile(pubPath); err != nil {
+		return "", err
+	}
 	if err := awid.SaveKeypairAt(keyPath, pubPath, pub, priv); err != nil {
 		return "", err
 	}
 	return keyPath, nil
+}
+
+func preflightRotationFile(path string) error {
+	return pathpreflight.PreflightFile(path, "rotation recovery file", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func cleanupPendingRotationKeypair(keyPath string) error {

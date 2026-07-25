@@ -56,8 +56,8 @@ func FindLocalConfigPath(startDir string) (string, error) {
 		}
 		startDir = wd
 	}
-	ctxPath, err := awconfig.FindWorktreeContextPath(startDir)
-	if err != nil {
+	ctxPath := filepath.Join(filepath.Clean(startDir), ".aw", "context")
+	if _, err := os.Stat(ctxPath); err != nil {
 		return "", err
 	}
 	return filepath.Join(filepath.Dir(ctxPath), "run.json"), nil

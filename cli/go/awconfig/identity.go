@@ -60,11 +60,14 @@ func DefaultWorktreeSigningKeyRelativePath() string {
 }
 
 func WorktreeSigningKeyPath(root string) string {
-	return filepath.Join(filepath.Clean(root), DefaultWorktreeSigningKeyRelativePath())
+	return filepath.Join(WorktreeIdentityHome(root), "signing.key")
 }
 
 func FindWorktreeIdentityPath(startDir string) (string, error) {
-	p := filepath.Join(filepath.Clean(startDir), DefaultWorktreeIdentityRelativePath())
+	p := WorktreeIdentityPath(startDir)
+	if err := preflightIdentityFile(p, "identity file"); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(p); err == nil {
 		return p, nil
 	}
@@ -72,6 +75,9 @@ func FindWorktreeIdentityPath(startDir string) (string, error) {
 }
 
 func LoadWorktreeIdentityFrom(path string) (*WorktreeIdentity, error) {
+	if err := preflightIdentityFile(path, "identity file"); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -99,6 +105,9 @@ func LoadWorktreeIdentityFromDir(startDir string) (*WorktreeIdentity, string, er
 }
 
 func SaveWorktreeIdentityTo(path string, state *WorktreeIdentity) error {
+	if err := preflightIdentityFile(path, "identity file"); err != nil {
+		return err
+	}
 	if state == nil {
 		return errors.New("nil identity state")
 	}

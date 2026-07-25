@@ -102,7 +102,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		return connectOutput{}, err
 	}
 
-	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	workspacePath := awconfig.WorktreeWorkspacePath(workingDir)
 	workspaceState, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	if existingErr != nil && !os.IsNotExist(existingErr) {
 		return connectOutput{}, existingErr
@@ -174,7 +174,10 @@ func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string
 		if activeMembership == nil {
 			return nil, "", fmt.Errorf("teams state is missing active_team membership")
 		}
-		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
+		certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, activeMembership.CertPath)
+		if err != nil {
+			return nil, "", err
+		}
 		cert, err := awid.LoadTeamCertificate(certPath)
 		if err != nil {
 			return nil, "", err

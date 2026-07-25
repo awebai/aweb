@@ -35,9 +35,16 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.WriteHeader(http.StatusOK)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_roles_id": "roles-1", "roles": map[string]any{"attached-role": map[string]any{"title": "Attached"}}})
+		case "/v1/agents/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"role_name": "attached-role"})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
 	}))
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {
@@ -86,6 +93,24 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 			if err := json.Unmarshal(extractJSON(t, out), &identity); err != nil || identity.Address != "aweb.ai/attached" {
 				t.Fatalf("whoami did not use attached principal: address=%q err=%v\n%s", identity.Address, err, string(out))
 			}
+
+			// Exercise a principal write through the real command path. The workspace
+			// mutation must land in the identity home, never the empty instance.
+			roleArgs := []string{"role-name", "set", "attached-role"}
+			if tc.name == "flag" {
+				roleArgs = append([]string{"--identity-home", identityHome}, roleArgs...)
+			}
+			role := exec.CommandContext(ctx, bin, roleArgs...)
+			role.Dir = instanceHome
+			role.Env = cmd.Env
+			if roleOut, roleErr := role.CombinedOutput(); roleErr != nil {
+				t.Fatalf("attached role-name write failed: %v\n%s", roleErr, roleOut)
+			}
+			workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(identityHome, "workspace.yaml"))
+			if err != nil || workspace.Membership("backend:aweb.ai").RoleName != "attached-role" {
+				t.Fatalf("principal workspace did not receive role mutation: err=%v workspace=%#v", err, workspace)
+			}
+			principalMaterial = principalMaterialForTest(t, identityHome)
 			assertNoIdentityMaterialForTest(t, instanceHome, identityHome, principalMaterial)
 
 			beforeReset := fileDigestsForTest(t, identityHome)
@@ -151,6 +176,46 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 	guardOut, guardErr := guarded.CombinedOutput()
 	if guardErr == nil || !strings.Contains(string(guardOut), "symlink") {
 		t.Fatalf("symlinked certificate must fail at use: err=%v\n%s", guardErr, string(guardOut))
+	}
+}
+
+func TestExternalIdentityHomeRoutesMailAndRegistrySigningAuthority(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalParent := filepath.Join(root, "principal")
+	instance := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	writeSelectionFixtureForTest(t, principalParent, testSelectionFixture{
+		AwebURL: "https://team.example", TeamID: "backend:aweb.ai", Alias: "attached",
+		WorkspaceID: "workspace-attached", DID: did, StableID: awid.ComputeStableID(pub),
+		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent, SigningKey: key,
+	})
+	identityHome := filepath.Join(principalParent, ".aw")
+	t.Setenv(awconfig.IdentityHomeEnv, identityHome)
+
+	_, selection, err := resolveIdentityMessagingClientSelectionForDir(instance)
+	if err != nil {
+		t.Fatalf("mail identity resolution from empty instance failed: %v", err)
+	}
+	if selection.Address != "aweb.ai/attached" {
+		t.Fatalf("mail selection address=%q", selection.Address)
+	}
+	authority, err := resolveRegistryReadAuthority(instance, "aweb.ai", "did")
+	if err != nil {
+		t.Fatalf("registry DID authority from empty instance failed: %v", err)
+	}
+	if authority.SubjectDID != did {
+		t.Fatalf("registry authority DID=%q want %q", authority.SubjectDID, did)
 	}
 }
 

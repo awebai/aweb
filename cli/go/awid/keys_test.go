@@ -4,8 +4,28 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestLoadSigningKeyRejectsSymlinkAtPointOfUse(t *testing.T) {
+	root := t.TempDir()
+	_, priv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target.key")
+	if err := writePrivateKey(target, priv); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSigningKey(link); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlink load error=%v", err)
+	}
+}
 
 func TestGenerateKeypair(t *testing.T) {
 	t.Parallel()

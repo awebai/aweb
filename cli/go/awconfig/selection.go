@@ -91,7 +91,7 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 
 	identityHome := strings.TrimSpace(opts.IdentityHome)
 	workspace, teamState, rootDir, err := LoadWorkspaceAndTeamState(workingDir)
-	if identityHome != "" {
+	if identityHome != "" && opts.ExternalIdentityHome {
 		workspace, teamState, rootDir, err = LoadWorkspaceAndTeamStateFromIdentityHome(identityHome)
 	}
 	if err != nil {
@@ -110,7 +110,7 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 				identity, _, identityErr = LoadWorktreeIdentityFromDir(workingDir)
 			}
 			if identityErr == nil {
-				return finalizeStandaloneIdentitySelection(workingDir, identityHome, opts.ExternalIdentityHome, identity), nil
+				return finalizeStandaloneIdentitySelection(workingDir, identityHome, opts.ExternalIdentityHome, identity)
 			}
 			return nil, errors.New("current directory is not initialized for aw; run `aw init` here or start with `aw run <provider>` in a TTY")
 		}
@@ -299,7 +299,7 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 	}, nil
 }
 
-func finalizeStandaloneIdentitySelection(workingDir, identityHome string, externalIdentityHome bool, identity *WorktreeIdentity) *Selection {
+func finalizeStandaloneIdentitySelection(workingDir, identityHome string, externalIdentityHome bool, identity *WorktreeIdentity) (*Selection, error) {
 	did := strings.TrimSpace(identity.DID)
 	stableID := strings.TrimSpace(identity.StableID)
 	address := strings.TrimSpace(identity.Address)
@@ -313,9 +313,11 @@ func finalizeStandaloneIdentitySelection(workingDir, identityHome string, extern
 	if strings.EqualFold(custody, "self") {
 		signingKey = WorktreeSigningKeyPath(workingDir)
 		if identityHome != "" {
-			if path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "signing.key"); err == nil {
-				signingKey = path
+			path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "signing.key")
+			if err != nil {
+				return nil, err
 			}
+			signingKey = path
 		}
 	}
 	handle := ""
@@ -338,7 +340,7 @@ func finalizeStandaloneIdentitySelection(workingDir, identityHome string, extern
 		IdentityScope:        identityScope,
 		Lifetime:             lifetime,
 		RegistryURL:          strings.TrimSpace(identity.RegistryURL),
-	}
+	}, nil
 }
 
 func domainFromAddress(address string) string {

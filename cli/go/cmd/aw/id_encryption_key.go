@@ -651,11 +651,7 @@ func resolveIdentityStoredPath(workingDir, identityHome, storedPath string) (str
 	if strings.TrimSpace(identityHome) != "" {
 		return awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identityHome}, storedPath)
 	}
-	root := workingDir
-	if canonical, err := filepath.EvalSymlinks(workingDir); err == nil {
-		root = canonical
-	}
-	return awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: filepath.Join(root, ".aw")}, storedPath)
+	return awconfig.WorktreeStoredIdentityPath(workingDir, storedPath)
 }
 
 func resolveWorktreeRelativePath(root, path string) string {

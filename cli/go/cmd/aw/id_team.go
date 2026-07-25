@@ -1597,8 +1597,8 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	markerPath := hostedAcceptPendingMarkerPath(workingDir)
 	if _, err := os.Stat(keyPath); err == nil {
 		completedPaths := []string{
-			filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-			filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+			awconfig.WorktreeIdentityPath(workingDir),
+			awconfig.WorktreeWorkspacePath(workingDir),
 		}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
@@ -2817,7 +2817,10 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 		if selectedMembership == nil {
 			return nil, "", fmt.Errorf("teams state is missing selected team membership")
 		}
-		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+		certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, selectedMembership.CertPath)
+		if err != nil {
+			return nil, "", err
+		}
 		cert, err := awid.LoadTeamCertificate(certPath)
 		if err != nil {
 			return nil, "", fmt.Errorf("load active team certificate %s: %w", certPath, err)
@@ -2835,7 +2838,11 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 	if len(stored) > 1 {
 		return nil, "", fmt.Errorf("multiple team certificates found under %s; set an active team first", awconfig.TeamCertificatesDir(workingDir))
 	}
-	return stored[0].Certificate, filepath.Join(workingDir, ".aw", filepath.FromSlash(stored[0].CertPath)), nil
+	certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, stored[0].CertPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return stored[0].Certificate, certPath, nil
 }
 
 func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, error) {
@@ -2852,7 +2859,9 @@ func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, erro
 func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvite, cause error) error {
 	revokeErr := revokeAcceptedTeamCertificate(accepted)
 	if accepted != nil && accepted.Output != nil && strings.TrimSpace(accepted.Output.CertPath) != "" {
-		_ = os.Remove(filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(accepted.Output.CertPath))))
+		if certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, accepted.Output.CertPath); err == nil {
+			_ = os.Remove(certPath)
+		}
 	}
 	if revokeErr != nil {
 		return fmt.Errorf("%w (rollback revoke failed: %v)", cause, revokeErr)
@@ -3330,7 +3339,7 @@ func validateMemberAddressForCertificate(
 
 func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
 	// Try to load existing identity
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err == nil && strings.TrimSpace(identity.DID) != "" {
 		return strings.TrimSpace(identity.DID), nil
@@ -3364,7 +3373,7 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 // resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
 // Returns empty strings for local agents that have no identity.yaml.
 func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
 		return "", ""
@@ -3373,7 +3382,7 @@ func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 }
 
 func resolveAliasFromIdentity(workingDir string) string {
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil || strings.TrimSpace(identity.Address) == "" {
 		return ""

@@ -1250,7 +1250,7 @@ func handleFromAddress(address string) string {
 }
 
 func ensureWorktreeContextAt(workingDir string) error {
-	ctxPath := filepath.Join(workingDir, awconfig.DefaultWorktreeContextRelativePath())
+	ctxPath := awconfig.WorktreeContextPath(workingDir)
 	if _, err := os.Stat(ctxPath); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
