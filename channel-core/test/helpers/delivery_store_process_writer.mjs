@@ -1,5 +1,5 @@
 import { open, stat } from "node:fs/promises";
-import { DeliveryStore } from "../../src/channel.js";
+import { DeliveryStore } from "../../dist/channel.js";
 
 const [storePath, readyPath, releasePath, ...messageIDs] = process.argv.slice(2);
 if (!storePath || !readyPath || !releasePath || messageIDs.length === 0) {
@@ -16,7 +16,7 @@ for (;;) {
     await stat(releasePath);
     break;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (error?.code !== "ENOENT") throw error;
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
 }

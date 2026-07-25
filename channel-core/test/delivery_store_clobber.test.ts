@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { access, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DeliveryStore } from "../src/channel.js";
 
@@ -85,6 +85,39 @@ describe("DeliveryStore concurrent writers", () => {
     }
   });
 
+  test("malformed content is visible and remains byte-identical after a refused save", async () => {
+    const store = await DeliveryStore.load(path);
+    const malformed = "{not valid delivery JSON\n";
+    await writeFile(path, malformed, "utf8");
+    store.mark("must-not-overwrite-corruption");
+
+    await expect(DeliveryStore.load(path)).rejects.toThrow(/delivery store.*malformed/i);
+    await expect(store.save()).rejects.toThrow(/delivery store.*malformed/i);
+    await expect(readFile(path, "utf8")).resolves.toBe(malformed);
+  });
+
+  test("invalid mark timestamps are visible and remain byte-identical after a refused save", async () => {
+    const store = await DeliveryStore.load(path);
+    const malformed = "{\"existing-mark\":\"not-a-timestamp\"}\n";
+    await writeFile(path, malformed, "utf8");
+    store.mark("must-not-drop-invalid-mark");
+
+    await expect(DeliveryStore.load(path)).rejects.toThrow(/invalid timestamp/i);
+    await expect(store.save()).rejects.toThrow(/invalid timestamp/i);
+    await expect(readFile(path, "utf8")).resolves.toBe(malformed);
+  });
+
+  test("unreadable content is visible and is not replaced by a save", async () => {
+    const store = await DeliveryStore.load(path);
+    await rm(path);
+    await mkdir(path);
+    store.mark("must-not-replace-unreadable-state");
+
+    await expect(DeliveryStore.load(path)).rejects.toThrow(/cannot read delivery store/i);
+    await expect(store.save()).rejects.toThrow(/cannot read delivery store/i);
+    expect((await stat(path)).isDirectory()).toBe(true);
+  });
+
   test("reports failure instead of silently exhausting lock retries", { timeout: 15_000 }, async () => {
     const store = await DeliveryStore.load(path);
     store.mark("must-not-report-success");
@@ -110,13 +143,13 @@ describe("DeliveryStore concurrent writers", () => {
 
   test("barrier-released Node processes keep repeated and distinct marks", { timeout: 45_000 }, async () => {
     const releasePath = join(dir, "release");
-    const helperPath = fileURLToPath(new URL("./helpers/delivery_store_process_writer.ts", import.meta.url));
-    const processes = Array.from({ length: 3 }, (_, index) => {
+    const helperPath = fileURLToPath(new URL("./helpers/delivery_store_process_writer.mjs", import.meta.url));
+    const processes = Array.from({ length: 16 }, (_, index) => {
       const readyPath = join(dir, `ready-${index}`);
       const child = spawn(
         process.execPath,
-        ["--import", "tsx", helperPath, path, readyPath, releasePath, "shared-msg", `process-msg-${index}`],
-        { cwd: dirname(fileURLToPath(import.meta.url)), stdio: ["ignore", "ignore", "pipe"] },
+        [helperPath, path, readyPath, releasePath, "shared-msg", `process-msg-${index}`],
+        { stdio: ["ignore", "ignore", "pipe"] },
       );
       let stderr = "";
       child.stderr?.setEncoding("utf8");

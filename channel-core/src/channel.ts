@@ -111,21 +111,45 @@ export class DeliveryStore {
     return new DeliveryStore(path, await DeliveryStore.readEntries(path));
   }
 
-  // Read the on-disk marks, dropping expired ones. Absent, unreadable, or
-  // malformed content reads as no marks.
+  // Read the on-disk marks, dropping expired ones. Only an absent file is a
+  // fresh empty store; unreadable or malformed state must remain visible so a
+  // later save cannot silently overwrite every durable delivery mark.
   private static async readEntries(path: string): Promise<Map<string, number>> {
-    const entries = new Map<string, number>();
+    let content: string;
     try {
-      const raw = JSON.parse(await readFile(path, "utf-8")) as Record<string, string | number>;
-      const now = Date.now();
-      for (const [key, value] of Object.entries(raw)) {
-        const timestamp = typeof value === "number" ? value : Date.parse(value);
-        if (Number.isFinite(timestamp) && now - timestamp <= DELIVERED_IDS_TTL_MS) {
-          entries.set(key, timestamp);
-        }
+      content = await readFile(path, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+      throw new Error(
+        `cannot read delivery store at ${path} (${(error as NodeJS.ErrnoException).code ?? "read error"}); refusing to treat it as empty`,
+        { cause: error },
+      );
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(content);
+    } catch (error) {
+      throw new Error(
+        `delivery store at ${path} is malformed: ${(error as Error).message}; refusing to treat it as empty`,
+        { cause: error },
+      );
+    }
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`delivery store at ${path} is malformed: expected a JSON object; refusing to treat it as empty`);
+    }
+
+    const entries = new Map<string, number>();
+    const now = Date.now();
+    for (const [key, value] of Object.entries(raw)) {
+      if (typeof value !== "string" && typeof value !== "number") {
+        throw new Error(`delivery store at ${path} is malformed: mark ${JSON.stringify(key)} has an invalid timestamp`);
       }
-    } catch {
-      // No readable/parseable store yet.
+      const timestamp = typeof value === "number" ? value : Date.parse(value);
+      if (!Number.isFinite(timestamp)) {
+        throw new Error(`delivery store at ${path} is malformed: mark ${JSON.stringify(key)} has an invalid timestamp`);
+      }
+      if (now - timestamp <= DELIVERED_IDS_TTL_MS) entries.set(key, timestamp);
     }
     return entries;
   }
@@ -154,9 +178,10 @@ export class DeliveryStore {
     const own = new Map(this.entries);
     // Node has no portable flock, so use a maintained atomic-directory lock
     // rather than a bespoke stale-lock protocol. A healthy owner heartbeats at
-    // 10s and is never reclaimed; after SIGKILL, delivery marking may block for
-    // the 30s stale ceiling before recovery. Acquisition retry is bounded, and
-    // a false reclaim can cause redelivery but cannot cross a trust boundary.
+    // 10s and remains live beyond the 30s stale threshold. Each competing save,
+    // including immediately after SIGKILL, gives up with ELOCKED after about 5s;
+    // only a later call made after the lock age exceeds 30s can reclaim it. A
+    // false reclaim can cause redelivery but cannot cross a trust boundary.
     let compromised: Error | undefined;
     const release = await lock(this.path, {
       realpath: false,

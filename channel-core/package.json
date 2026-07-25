@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
+    "pretest": "npm run build",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
@@ -27,7 +28,6 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.5.2",
     "@types/proper-lockfile": "^4.1.4",
-    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   },
