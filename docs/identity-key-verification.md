@@ -205,11 +205,25 @@ verified head) yields `OK_VERIFIED`.
   - The head is anchored to genesis — either it *is* genesis, or it continues an
     unbroken `seq`/`prev_entry_hash`/`previous_did_key` chain from a previously
     verified head (or, via `/log`, from genesis directly).
-  - This client’s observed history is append-only (no regressions) for this `did_aw`.
-  - Monotonicity is **per-client only** — each client tracks its own cache and can detect regressions or split views against its own history.
+  - This client’s observed history is append-only (no regressions) for this `did_aw`,
+    **across restarts**: the highest verified `seq` and its `entry_hash` are
+    persisted with the pin (`log_seq`, `log_entry_hash`) and restored before
+    verification. A served log that is behind that checkpoint, or that does not
+    *contain* the checkpoint entry, is refused — so neither a truncated prefix
+    nor a fork that dropped the entry can roll the identity back to a retired
+    key. The checkpoint only ever advances.
+  - Monotonicity is **per-client only** — each client tracks its own checkpoint and can detect regressions or split views against its own history.
 - `OK_VERIFIED` does **not** prove:
   - That the server is globally consistent (other clients may see a different
     head without witnesses/checkpoints).
+  - **Anything about which address this identity may claim.** The log proves
+    `did:aw → did:key`; it never proves `address → did:aw`. An attacker who
+    legitimately owns their own `did:aw` has a wholly valid log, so
+    `OK_VERIFIED` is not authority to take over an address pinned to a
+    different stable identity. Moving an address between stable identities
+    requires a replacement announcement signed by the namespace controller
+    named in the address's `_awid` DNS TXT record; absent that proof the
+    existing pin stands and the result is `identity_mismatch`.
 - `OK_DEGRADED` means verification could **not** be completed (missing
   `log_head`, or an unanchored `seq>1` head, or a seq gap). It is **not** a
   trusted result: it MUST NOT replace or overwrite a pinned key. It may prompt a

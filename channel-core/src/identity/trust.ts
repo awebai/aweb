@@ -3,8 +3,9 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
-import { RegistryResolver } from "./registry.js";
+import { RegistryResolver, type VerifiedLogHead } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
+import { decodeRawStdBase64OrEmpty } from "./base64.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -104,6 +105,7 @@ export class SenderTrustManager {
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(
+      store,
       status,
       (verificationAddress || rawAddress).trim(),
       fromDID,
@@ -122,6 +124,7 @@ export class SenderTrustManager {
       meta,
       registryCheck.confirmedCurrentKey,
     );
+    this.persistVerifiedHeadCheckpoint(store, fromStableID, registryCheck.verifiedHead);
     if (
       pinResult.status === "identity_mismatch"
       && !recipientBindingMismatch
@@ -167,15 +170,26 @@ export class SenderTrustManager {
   }
 
   private async checkStableIdentityRegistry(
+    store: PinStore,
     status: VerificationStatus | undefined,
     trustAddress: string,
     fromDID: string | undefined,
     fromStableID: string | undefined,
-  ): Promise<{ status: VerificationStatus | undefined; confirmedCurrentKey: boolean }> {
+  ): Promise<{
+    status: VerificationStatus | undefined;
+    confirmedCurrentKey: boolean;
+    verifiedHead?: VerifiedLogHead;
+  }> {
     if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
       return { status, confirmedCurrentKey: false };
     }
 
+    // Restore the anti-rollback anchor from the checkpoint persisted with the
+    // pin. The registry's in-memory head cache is what refuses a sequence
+    // regression or a split view, but it is forgotten on restart — so without
+    // this a registry can serve a valid truncated prefix and roll a rotated
+    // identity back to a retired key (default-aajc.8).
+    this.seedVerifiedHeadFromPin(store, fromStableID);
     const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
     if (registryResult.outcome === "STALE_CACHE") {
       return { status: "verification_stale", confirmedCurrentKey: false };
@@ -193,7 +207,41 @@ export class SenderTrustManager {
     return {
       status,
       confirmedCurrentKey: registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey === fromDID,
+      verifiedHead: registryResult.verifiedHead,
     };
+  }
+
+  private seedVerifiedHeadFromPin(store: PinStore, stableID: string): void {
+    const seed = (this.registry as { seedVerifiedHead?: (id: string, head: VerifiedLogHead) => void })
+      .seedVerifiedHead;
+    if (typeof seed !== "function") return;
+    const pin = store.pins.get(stableID);
+    if (!pin?.log_seq || !pin.log_entry_hash) return;
+    seed.call(this.registry, stableID, {
+      seq: pin.log_seq,
+      entryHash: pin.log_entry_hash,
+      stateHash: "",
+      currentDidKey: pin.did_key ?? "",
+      fetchedAt: 0,
+    });
+  }
+
+  /**
+   * Record the verified head with the pin so the anchor survives a restart. Only
+   * ever advances, so a stale response cannot weaken the checkpoint. Called
+   * after the pin check because on first contact the pin does not exist until
+   * that check runs.
+   */
+  private persistVerifiedHeadCheckpoint(
+    store: PinStore,
+    stableID: string | undefined,
+    head: VerifiedLogHead | undefined,
+  ): void {
+    if (!stableID || !head || head.seq < 1 || !head.entryHash.trim()) return;
+    const pin = store.pins.get(stableID);
+    if (!pin || head.seq <= (pin.log_seq ?? 0)) return;
+    pin.log_seq = head.seq;
+    pin.log_entry_hash = head.entryHash;
   }
 
   private checkTOFUPinWithMeta(
@@ -292,18 +340,14 @@ export class SenderTrustManager {
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";
-        // A verified registry chain proves the address now belongs to this
-        // stable identity and did:key, so replace the stale address pin.
-        // Security assumption: awid enforces a did:aw belongs to one current
-        // address; the client does not independently prove that.
-        if (registryConfirmedCurrentKey && fromStableID) {
-          store.removeAddress(trustAddress);
-          store.storePin(pinKey, trustAddress, "", "");
-          const pin = store.pins.get(pinKey)!;
-          pin.stable_id = fromStableID;
-          pin.did_key = fromDID;
-          return { status, stored: true };
-        }
+        // A verified DID log proves did:aw -> did:key. It proves NOTHING about
+        // which address that identity may claim, so it is not authority to take
+        // over an address pinned to a different stable identity: an attacker who
+        // legitimately owns did:aw:attacker can have a wholly valid log. Only the
+        // address authority can authorize the transfer, via a replacement
+        // announcement signed by the namespace controller named in the address's
+        // _awid DNS TXT record. Absent that proof the pin stands and the mismatch
+        // is reported (default-aajc.8).
         if (fromStableID && pinnedKey === fromStableID) {
           const pin = store.pins.get(pinnedKey);
           if (pin?.did_key === fromDID) {
@@ -559,7 +603,9 @@ function canonicalObject(fields: Array<[string, string]>): string {
 }
 
 function b64Decode(value: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(value, "base64"));
+  // Strict, matching Go's RawStdEncoding: a signature the Go verifier refuses
+  // must not decode here (default-aajc.8).
+  return decodeRawStdBase64OrEmpty(value);
 }
 
 function escapeJSON(s: string): string {

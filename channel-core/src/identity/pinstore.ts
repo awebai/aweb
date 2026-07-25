@@ -10,6 +10,14 @@ export interface Pin {
   handle: string;
   stable_id?: string;
   did_key?: string;
+  /**
+   * The anti-rollback checkpoint: the highest DID-log sequence verified for this
+   * identity and that entry's hash. Persisted with the pin so a restart cannot
+   * forget what was already verified; a served log that is behind them, or that
+   * does not contain this entry, is refused (default-aajc.8).
+   */
+  log_seq?: number;
+  log_entry_hash?: string;
   first_seen: string;
   last_seen: string;
   server: string;
@@ -220,5 +228,14 @@ function validatePin(key: string, value: unknown): Pin {
   if (stableId !== undefined) pin.stable_id = stableId;
   const didKey = optionalString("did_key");
   if (didKey !== undefined) pin.did_key = didKey;
+  const logSeq = raw["log_seq"];
+  if (logSeq !== undefined && logSeq !== null) {
+    if (typeof logSeq !== "number" || !Number.isInteger(logSeq) || logSeq < 1) {
+      throw new Error(`pin '${key}' field 'log_seq' must be a positive integer`);
+    }
+    pin.log_seq = logSeq;
+  }
+  const logEntryHash = optionalString("log_entry_hash");
+  if (logEntryHash !== undefined) pin.log_entry_hash = logEntryHash;
   return pin;
 }

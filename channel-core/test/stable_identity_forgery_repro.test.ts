@@ -59,9 +59,11 @@ describe("forged rotation spoofing (aajc.3 repro)", () => {
       signature: "",
     });
     const entryHash = bytesToHex(sha256(new TextEncoder().encode(payload)));
+    // Unpadded standard base64, matching Go's RawStdEncoding — the wire contract.
+    // A padded signature is rejected by both runtimes (default-aajc.8).
     const signature = Buffer.from(
       ed.sign(new TextEncoder().encode(payload), attackerPrevPriv),
-    ).toString("base64");
+    ).toString("base64url").replace(/-/g, "+").replace(/_/g, "/");
 
     const resolution: DidKeyResolution = {
       did_aw: victimStableID,

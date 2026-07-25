@@ -347,7 +347,27 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 	return &StableIdentityVerification{
 		Outcome:       outcome,
 		CurrentDIDKey: keyRes.CurrentDIDKey,
+		VerifiedHead:  nextHead,
 	}
+}
+
+// SeedVerifiedHead installs a previously verified log head as the anti-rollback
+// anchor for stableID. Callers restore it from the checkpoint persisted with the
+// pin so a restart does not forget which sequence was already verified — without
+// it a registry can serve a valid truncated prefix and roll a rotated identity
+// back to a retired key (default-aajc.8). Seeding never moves the anchor
+// backwards: a lower or equal sequence is ignored.
+func (r *RegistryResolver) SeedVerifiedHead(stableID string, head *VerifiedLogHead) {
+	stableID = strings.TrimSpace(stableID)
+	if stableID == "" || head == nil || head.Seq < 1 || !isLowerHex(strings.TrimSpace(head.EntryHash)) {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing := r.headCache[stableID]; existing != nil && existing.Seq >= head.Seq {
+		return
+	}
+	r.headCache[stableID] = head
 }
 
 func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, registryURL, stableID, currentDIDKey string) *StableIdentityVerification {
@@ -381,12 +401,37 @@ func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, r
 			Error:         "audit log current did:key mismatch",
 		}
 	}
+	// A log that verifies from genesis is still not acceptable if it contradicts
+	// what we already verified: it must CONTAIN our checkpoint entry and extend
+	// it. Otherwise a registry can serve a valid truncated prefix (rollback to a
+	// retired key) or a valid fork that never included our entry
+	// (default-aajc.8).
+	r.mu.Lock()
+	checkpoint := r.headCache[stableID]
+	r.mu.Unlock()
+	if checkpoint != nil {
+		if head.Seq < checkpoint.Seq {
+			return &StableIdentityVerification{
+				Outcome:       StableIdentityHardError,
+				CurrentDIDKey: currentDIDKey,
+				Error:         "audit log behind verified checkpoint",
+			}
+		}
+		if !didLogContainsEntry(entries, checkpoint.Seq, checkpoint.EntryHash) {
+			return &StableIdentityVerification{
+				Outcome:       StableIdentityHardError,
+				CurrentDIDKey: currentDIDKey,
+				Error:         "audit log does not extend verified checkpoint",
+			}
+		}
+	}
 	r.mu.Lock()
 	r.headCache[stableID] = head
 	r.mu.Unlock()
 	return &StableIdentityVerification{
 		Outcome:       StableIdentityVerified,
 		CurrentDIDKey: currentDIDKey,
+		VerifiedHead:  head,
 	}
 }
 
@@ -700,4 +745,20 @@ func (r *RegistryResolver) storeKeyCache(didAW string, value *DidKeyResolution, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.keyCache[didAW] = cachedValue[*DidKeyResolution]{value: value, expiresAt: r.now().Add(ttl)}
+}
+
+// didLogContainsEntry reports whether the served log carries the exact entry we
+// previously verified at seq, identifying a truncated prefix or a forked log
+// that dropped it.
+func didLogContainsEntry(entries []DidKeyEvidence, seq int, entryHash string) bool {
+	entryHash = strings.TrimSpace(entryHash)
+	if entryHash == "" {
+		return false
+	}
+	for i := range entries {
+		if entries[i].Seq == seq {
+			return strings.TrimSpace(entries[i].EntryHash) == entryHash
+		}
+	}
+	return false
 }

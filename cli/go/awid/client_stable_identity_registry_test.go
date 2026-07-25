@@ -185,7 +185,13 @@ func TestNormalizeSenderTrustRegistryVerifiedUpdatesStablePinDIDKey(t *testing.T
 	}
 }
 
-func TestNormalizeSenderTrustRegistryVerifiedReplacesStaleAddressPin(t *testing.T) {
+// A registry-verified DID log for a DIFFERENT stable identity is not authority
+// to take over an address pinned to someone else: the log proves did:aw ->
+// did:key, never address -> did:aw. Only a namespace-controller-signed
+// replacement announcement can move an address between stable identities, so
+// without one the existing pin stands and the mismatch is reported
+// (default-aajc.8).
+func TestNormalizeSenderTrustRegistryVerifiedDoesNotReplaceStaleAddressPin(t *testing.T) {
 	t.Parallel()
 
 	c, err := New("http://example")
@@ -212,17 +218,17 @@ func TestNormalizeSenderTrustRegistryVerifiedReplacesStaleAddressPin(t *testing.
 	})
 
 	status, _ := c.NormalizeSenderTrust(context.Background(), Verified, address, newDID, newStableID, nil, nil, nil)
-	if status != Verified {
-		t.Fatalf("status=%q, want %q", status, Verified)
+	if status != IdentityMismatch {
+		t.Fatalf("status=%q, want %q", status, IdentityMismatch)
 	}
-	if _, ok := ps.Pins[oldStableID]; ok {
-		t.Fatalf("old stable_id pin %q still present", oldStableID)
+	if got := ps.Addresses[address]; got != oldStableID {
+		t.Fatalf("address pin=%q, want the existing binding %q", got, oldStableID)
 	}
-	if got := ps.Addresses[address]; got != newStableID {
-		t.Fatalf("address pin=%q, want %q", got, newStableID)
+	if got := ps.Pins[oldStableID].DIDKey; got != oldDID {
+		t.Fatalf("pinned did:key=%q, want %q", got, oldDID)
 	}
-	if got := ps.Pins[newStableID].DIDKey; got != newDID {
-		t.Fatalf("pin DIDKey=%q, want %q", got, newDID)
+	if _, ok := ps.Pins[newStableID]; ok {
+		t.Fatalf("unauthorized stable_id %q was persisted", newStableID)
 	}
 }
 

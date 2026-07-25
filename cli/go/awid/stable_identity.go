@@ -43,6 +43,10 @@ type StableIdentityVerification struct {
 	Outcome       StableIdentityOutcome
 	CurrentDIDKey string
 	Error         string
+	// VerifiedHead is the log head this verification established, carried out so
+	// the caller can persist it as an anti-rollback checkpoint alongside the pin
+	// (default-aajc.8). Set only when Outcome is StableIdentityVerified.
+	VerifiedHead *VerifiedLogHead
 }
 
 type VerifiedLogHead struct {
