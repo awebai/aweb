@@ -196,10 +196,16 @@ func Execute() {
 	if argsContainTraceFlag(os.Args[1:]) {
 		_ = os.Setenv("AW_TRACE", "1")
 	}
+	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitCode(err))
+	}
+	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
 		os.Exit(code)
 	}
-	err := rootCmd.Execute()
+	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	if err != nil {
 		msg := err.Error()
@@ -209,6 +215,38 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(exitCode(err))
 	}
+}
+
+func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
+	explicit := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if strings.HasPrefix(arg, "--identity-home=") {
+			explicit = strings.TrimSpace(strings.TrimPrefix(arg, "--identity-home="))
+			continue
+		}
+		if arg == "--identity-home" && i+1 < len(args) {
+			explicit = strings.TrimSpace(args[i+1])
+			i++
+		}
+	}
+	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
+	home, err := awconfig.ResolveIdentityHome("", explicit)
+	if err != nil {
+		return func() {}, err
+	}
+	if home.External() {
+		if err := os.Setenv(awconfig.IdentityHomeEnv, home.Root); err != nil {
+			return func() {}, err
+		}
+	}
+	return func() {
+		if existed {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, previous)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+	}, nil
 }
 
 func argsContainTraceFlag(args []string) bool {
