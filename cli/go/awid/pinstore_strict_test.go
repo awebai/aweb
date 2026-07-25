@@ -303,10 +303,15 @@ func TestLoadPinStoreRejectsMissingReverseEntry(t *testing.T) {
 }
 
 func TestLoadPinStoreRejectsWrongReverseAddress(t *testing.T) {
+	pin := "pins:\n  did:key:zA:\n    address: alice@example.com\n    first_seen: t\n    last_seen: t\n"
+	mustFailLoad(t, pin+"addresses:\n  mallory@example.com: did:key:zA\n", "reverse")
+
+	// The pin's own address IS correctly indexed here, so the pin->reverse
+	// direction is satisfied. Only the reverse->pin direction catches the extra
+	// entry, which would otherwise let mallory resolve to alice's pin.
 	mustFailLoad(t,
-		"pins:\n  did:key:zA:\n    address: alice@example.com\n    first_seen: t\n    last_seen: t\n"+
-			"addresses:\n  mallory@example.com: did:key:zA\n",
-		"reverse")
+		pin+"addresses:\n  alice@example.com: did:key:zA\n  mallory@example.com: did:key:zA\n",
+		"reverse index for")
 }
 
 // Reviewer finding (aajc.9a): decoding one document and ignoring the rest lets a
