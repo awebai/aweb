@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -712,9 +713,11 @@ func TestLoopBasePromptDoesNotAutoRerunWithoutWake(t *testing.T) {
 	loop := NewLoop(ClaudeProvider{}, &bytes.Buffer{})
 	loop.EventBus = bus
 	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
-	runCount := 0
+	// Atomic: Runner executes on the goroutine running loop.Run below, while the
+	// assertion reads this on the test goroutine (default-aajc.15).
+	var runCount atomic.Int64
 	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
-		runCount++
+		runCount.Add(1)
 		onLine(`{"type":"result","duration_ms":1000,"session_id":"sess-42"}`)
 		return nil
 	}
@@ -736,8 +739,8 @@ func TestLoopBasePromptDoesNotAutoRerunWithoutWake(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	if runCount != 1 {
-		t.Fatalf("expected exactly one run without wake events, got %d", runCount)
+	if got := runCount.Load(); got != 1 {
+		t.Fatalf("expected exactly one run without wake events, got %d", got)
 	}
 
 	cancel()
@@ -1274,9 +1277,11 @@ func TestLoopEventBusBasePromptWaitsForEvents(t *testing.T) {
 	loop := NewLoop(ClaudeProvider{}, &bytes.Buffer{})
 	loop.EventBus = bus
 	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
-	runCount := 0
+	// Atomic: Runner executes on the goroutine running loop.Run below, while the
+	// assertion reads this on the test goroutine (default-aajc.15).
+	var runCount atomic.Int64
 	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
-		runCount++
+		runCount.Add(1)
 		onLine(`{"type":"result","duration_ms":1000,"session_id":"sess-42"}`)
 		return nil
 	}
@@ -1298,8 +1303,8 @@ func TestLoopEventBusBasePromptWaitsForEvents(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 
-	if runCount != 1 {
-		t.Fatalf("expected exactly one run without wake events, got %d", runCount)
+	if got := runCount.Load(); got != 1 {
+		t.Fatalf("expected exactly one run without wake events, got %d", got)
 	}
 
 	cancel()

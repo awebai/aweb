@@ -18,6 +18,8 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+const a2aSupportCardPath = "/a2a/agents/r_support/agent-card.json"
+
 func TestA2ACardReportsUnsignedInteropWithoutAWIDClaim(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -97,41 +99,44 @@ func TestA2ACardVerifiesAWIDPublicationDigest(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	var cardURL string
-	var server *httptest.Server
 	card := testA2ACard("")
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/a2a/agents/r_support/agent-card.json":
-			_ = json.NewEncoder(w).Encode(card)
-		case "/v1/namespaces/acme.com/addresses/help/a2a":
-			digest, err := a2a.CardDigest(card)
-			if err != nil {
-				t.Fatal(err)
+	// The handler serves its own card_url, so it is built with the final server
+	// URL already known rather than having it assigned in afterwards.
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		cardURL := baseURL + a2aSupportCardPath
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case a2aSupportCardPath:
+				_ = json.NewEncoder(w).Encode(card)
+			case "/v1/namespaces/acme.com/addresses/help/a2a":
+				digest, err := a2a.CardDigest(card)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"address": "acme.com/help",
+					"did_aw":  "did:aw:test",
+					"a2a": map[string]any{
+						"status":                   "active",
+						"card_url":                 cardURL,
+						"rpc_url":                  baseURL + "/a2a/agents/r_support/rpc",
+						"route_id":                 "r_support",
+						"gateway_identity":         "did:aw:gateway",
+						"card_digest_alg":          "sha256",
+						"card_digest":              digest.Value,
+						"card_revision":            "1",
+						"publication_assertion_id": "pub-1",
+						"published_at":             "2026-06-07T00:00:00Z",
+						"expires_at":               "2026-07-07T00:00:00Z",
+						"verification":             "awid_publication_available",
+					},
+				})
+			default:
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address": "acme.com/help",
-				"did_aw":  "did:aw:test",
-				"a2a": map[string]any{
-					"status":                   "active",
-					"card_url":                 cardURL,
-					"rpc_url":                  server.URL + "/a2a/agents/r_support/rpc",
-					"route_id":                 "r_support",
-					"gateway_identity":         "did:aw:gateway",
-					"card_digest_alg":          "sha256",
-					"card_digest":              digest.Value,
-					"card_revision":            "1",
-					"publication_assertion_id": "pub-1",
-					"published_at":             "2026-06-07T00:00:00Z",
-					"expires_at":               "2026-07-07T00:00:00Z",
-					"verification":             "awid_publication_available",
-				},
-			})
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	cardURL = server.URL + "/a2a/agents/r_support/agent-card.json"
+		})
+	})
+	cardURL := server.URL + a2aSupportCardPath
 
 	run := exec.CommandContext(ctx, bin, "--json", "a2a", "card", cardURL, "--address", "acme.com/help", "--registry-url", server.URL)
 	run.Dir = tmp
@@ -157,43 +162,47 @@ func TestA2ACardReportsDelegatedAWIDPublication(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	var cardURL string
-	var server *httptest.Server
 	card := testA2ACard("")
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/a2a/agents/r_support/agent-card.json":
-			_ = json.NewEncoder(w).Encode(card)
-		case "/v1/namespaces/acme.com/addresses/help/a2a":
-			digest, err := a2a.CardDigest(card)
-			if err != nil {
-				t.Fatal(err)
+	// The handler serves its own card_url, so it is built with the final
+	// server URL already known rather than having it assigned in afterwards.
+	const cardPath = "/a2a/agents/r_support/agent-card.json"
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		cardURL := baseURL + cardPath
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case cardPath:
+				_ = json.NewEncoder(w).Encode(card)
+			case "/v1/namespaces/acme.com/addresses/help/a2a":
+				digest, err := a2a.CardDigest(card)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"address": "acme.com/help",
+					"did_aw":  "did:aw:test",
+					"a2a": map[string]any{
+						"status":                   "active",
+						"card_url":                 cardURL,
+						"rpc_url":                  baseURL + "/a2a/agents/r_support/rpc",
+						"route_id":                 "r_support",
+						"gateway_identity":         "did:aw:gateway",
+						"card_digest_alg":          "sha256",
+						"card_digest":              digest.Value,
+						"card_revision":            "1",
+						"publication_assertion_id": "pub-1",
+						"delegation_id":            "deleg-1",
+						"delegation_digest":        "sha256:deleg",
+						"published_at":             "2026-06-07T00:00:00Z",
+						"expires_at":               "2026-07-07T00:00:00Z",
+						"verification":             "awid_publication_available",
+					},
+				})
+			default:
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address": "acme.com/help",
-				"did_aw":  "did:aw:test",
-				"a2a": map[string]any{
-					"status":                   "active",
-					"card_url":                 cardURL,
-					"rpc_url":                  server.URL + "/a2a/agents/r_support/rpc",
-					"route_id":                 "r_support",
-					"gateway_identity":         "did:aw:gateway",
-					"card_digest_alg":          "sha256",
-					"card_digest":              digest.Value,
-					"card_revision":            "1",
-					"publication_assertion_id": "pub-1",
-					"delegation_id":            "deleg-1",
-					"delegation_digest":        "sha256:deleg",
-					"published_at":             "2026-06-07T00:00:00Z",
-					"expires_at":               "2026-07-07T00:00:00Z",
-					"verification":             "awid_publication_available",
-				},
-			})
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	cardURL = server.URL + "/a2a/agents/r_support/agent-card.json"
+		})
+	})
+	cardURL := server.URL + cardPath
 
 	run := exec.CommandContext(ctx, bin, "--json", "a2a", "card", cardURL, "--address", "acme.com/help", "--registry-url", server.URL)
 	run.Dir = tmp
@@ -219,35 +228,40 @@ func TestA2ACardRejectsAWIDDigestMismatch(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	cardURL := ""
 	card := testA2ACard("")
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/a2a/agents/r_support/agent-card.json":
-			_ = json.NewEncoder(w).Encode(card)
-		case "/v1/namespaces/acme.com/addresses/help/a2a":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address": "acme.com/help",
-				"did_aw":  "did:aw:test",
-				"a2a": map[string]any{
-					"status":                   "active",
-					"card_url":                 cardURL,
-					"route_id":                 "r_support",
-					"gateway_identity":         "did:aw:gateway",
-					"card_digest_alg":          "sha256",
-					"card_digest":              "sha256:deadbeef",
-					"card_revision":            "1",
-					"publication_assertion_id": "pub-1",
-					"published_at":             "2026-06-07T00:00:00Z",
-					"expires_at":               "2026-07-07T00:00:00Z",
-					"verification":             "awid_publication_available",
-				},
-			})
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	cardURL = server.URL + "/a2a/agents/r_support/agent-card.json"
+	// The handler serves its own card_url, so it is built with the final
+	// server URL already known rather than having it assigned in afterwards.
+	const cardPath = "/a2a/agents/r_support/agent-card.json"
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		cardURL := baseURL + cardPath
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case cardPath:
+				_ = json.NewEncoder(w).Encode(card)
+			case "/v1/namespaces/acme.com/addresses/help/a2a":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"address": "acme.com/help",
+					"did_aw":  "did:aw:test",
+					"a2a": map[string]any{
+						"status":                   "active",
+						"card_url":                 cardURL,
+						"route_id":                 "r_support",
+						"gateway_identity":         "did:aw:gateway",
+						"card_digest_alg":          "sha256",
+						"card_digest":              "sha256:deadbeef",
+						"card_revision":            "1",
+						"publication_assertion_id": "pub-1",
+						"published_at":             "2026-06-07T00:00:00Z",
+						"expires_at":               "2026-07-07T00:00:00Z",
+						"verification":             "awid_publication_available",
+					},
+				})
+			default:
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			}
+		})
+	})
+	cardURL := server.URL + cardPath
 
 	run := exec.CommandContext(ctx, bin, "--json", "a2a", "card", cardURL, "--address", "acme.com/help", "--registry-url", server.URL)
 	run.Dir = tmp

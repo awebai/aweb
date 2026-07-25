@@ -471,6 +471,9 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
+	// Appended on the handler goroutine, read here after each CLI invocation.
+	var publishedAssertions guarded[[]*awid.EncryptionKeyAssertion]
+	// Snapshot for assertions; only ever touched on the test goroutine.
 	var published []*awid.EncryptionKeyAssertion
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +486,9 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 			if err := awid.VerifyEncryptionKeyAssertion(&assertion, did, stableID, time.Now().UTC()); err != nil {
 				t.Fatalf("invalid assertion: %v", err)
 			}
-			published = append(published, &assertion)
+			publishedAssertions.appendTo(func(cur []*awid.EncryptionKeyAssertion) []*awid.EncryptionKeyAssertion {
+				return append(cur, &assertion)
+			})
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -531,6 +536,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	if firstKeyID == "" {
 		t.Fatalf("setup missing key_id: %#v", setup)
 	}
+	published = publishedAssertions.get()
 	if len(published) != 1 || published[0].EncryptionKeyID != firstKeyID {
 		t.Fatalf("published=%#v want first key %s", published, firstKeyID)
 	}
@@ -546,6 +552,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	if secondKeyID == "" || secondKeyID == firstKeyID {
 		t.Fatalf("rotate key_id=%q first=%q", secondKeyID, firstKeyID)
 	}
+	published = publishedAssertions.get()
 	if len(published) != 2 || published[1].EncryptionKeyID != secondKeyID {
 		t.Fatalf("published=%#v want second key %s", published, secondKeyID)
 	}
@@ -583,6 +590,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	if !strings.Contains(string(out), "assertion does not match the active private key") {
 		t.Fatalf("missing assertion/private-key mismatch guidance:\n%s", string(out))
 	}
+	published = publishedAssertions.get()
 	if len(published) != 2 {
 		t.Fatalf("mismatched assertion must not republish; published=%d", len(published))
 	}
@@ -604,6 +612,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	if !strings.Contains(string(out), "restore it from backup before publishing") {
 		t.Fatalf("missing backup guidance:\n%s", string(out))
 	}
+	published = publishedAssertions.get()
 	if len(published) != 2 {
 		t.Fatalf("missing private key must not republish; published=%d", len(published))
 	}
