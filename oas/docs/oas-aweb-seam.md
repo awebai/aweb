@@ -101,6 +101,10 @@ Two defences are required regardless of encoding:
   must each lie inside the resolved home root. Keep this permanently. It is the
   defence that survives the *next* encoding change rather than the current one.
 
+These resolver-time checks are point-in-time diagnostics, not durable proof:
+the filesystem can change after resolution. The consumer must repeat the
+symlink and containment checks at the credential point of use.
+
 OAS-owned and disposable:
 
 ```

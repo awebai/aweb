@@ -4,10 +4,13 @@ import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node
 
 const REQUIRED_FIELDS = ["schema_version", "address", "stable_id", "team_id", "soul"];
 const ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, "soul_version"]);
+const TEAM_NAME_PATTERN = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const DOMAIN_LABEL_PATTERN = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const TEAM_NAMESPACE_PATTERN = `${DOMAIN_LABEL_PATTERN}(?:\\.${DOMAIN_LABEL_PATTERN})*`;
 const FIELD_PATTERNS = Object.freeze({
-  address: "^[^\\s/]+/[^\\s/]+$",
+  address: "^[^\\s/\\\\]+/[^\\s/\\\\]+$",
   stable_id: "^did:aw:[A-Za-z0-9]+$",
-  team_id: "^[^:\\s/]+:[^:\\s/]+$",
+  team_id: `^${TEAM_NAME_PATTERN}:${TEAM_NAMESPACE_PATTERN}$`,
   soul: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
 });
 const FIELD_REGEXPS = Object.fromEntries(
@@ -120,16 +123,30 @@ function assertNoExistingSymlink(path) {
   }
 }
 
-/** Resolve, but never create, the paths belonging to one validated principal. */
+function assertContained(home, path) {
+  const fromHome = relative(home, path);
+  if (!fromHome || fromHome === ".." || fromHome.startsWith(`..${sep}`) || isAbsolute(fromHome)) {
+    throw new Error(`resolved path escapes principal home: ${path}`);
+  }
+}
+
+/**
+ * Resolve, but never create, the paths belonging to one validated principal.
+ *
+ * Symlink and containment checks are point-in-time diagnostics, not durable
+ * proof. A consumer must repeat both checks at the credential point of use;
+ * the filesystem may change after this function returns.
+ */
 export function resolvePrincipalStore(declaration, options = {}) {
   validatePrincipalDeclaration(declaration);
   const home = resolvePrincipalHome(options);
-  const teamDirectory = declaration.team_id.replaceAll(":", "__");
+  const [teamName, teamNamespace] = declaration.team_id.split(":");
   const principalId = declaration.stable_id.slice("did:aw:".length);
-  const principal = join(home, teamDirectory, principalId);
+  const principal = join(home, teamName, teamNamespace, principalId);
   const credentials = join(principal, "credentials");
   const state = join(principal, "state");
 
+  for (const path of [principal, credentials, state]) assertContained(home, path);
   assertNoExistingSymlink(credentials);
   assertNoExistingSymlink(state);
 

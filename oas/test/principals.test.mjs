@@ -53,7 +53,10 @@ test("declarations require exactly the public identity contract", () => {
 
   assert.throws(() => validatePrincipalDeclaration(declaration({ schema_version: 2 })), /schema_version must be 1/);
   assert.throws(() => validatePrincipalDeclaration(declaration({ address: "not-an-address" })), /address/);
-  assert.throws(() => validatePrincipalDeclaration(declaration({ team_id: "not-a-team-id" })), /team_id/);
+  assert.throws(() => validatePrincipalDeclaration(declaration({ address: "example.test\\..\\escape/name" })), /address/);
+  for (const teamId of ["not-a-team-id", "a__b:c", "a:b__c", "team:..", "team:example.test\\..\\escape"]) {
+    assert.throws(() => validatePrincipalDeclaration(declaration({ team_id: teamId })), /team_id/);
+  }
   assert.throws(() => validatePrincipalDeclaration(declaration({ soul: "" })), /soul/);
   assert.throws(() => validatePrincipalDeclaration({ ...declaration(), signing_key: "secret" }), /unknown field: signing_key/);
 
@@ -107,15 +110,15 @@ test("principal home resolution never derives a relative path from cwd", () => {
   );
 });
 
-test("store paths use stable identifiers and keep credentials and state as siblings", () => {
+test("store paths use structural team identifiers and keep credentials and state as siblings", () => {
   const base = join(temporaryDirectory(), "not-created");
   const paths = resolvePrincipalStore(declaration(), { explicitHome: base, env: {} });
 
   assert.deepEqual(paths, {
     home: base,
-    principal: join(base, "test-team__example.test", "2ThrowawayStableId123"),
-    credentials: join(base, "test-team__example.test", "2ThrowawayStableId123", "credentials"),
-    state: join(base, "test-team__example.test", "2ThrowawayStableId123", "state"),
+    principal: join(base, "test-team", "example.test", "2ThrowawayStableId123"),
+    credentials: join(base, "test-team", "example.test", "2ThrowawayStableId123", "credentials"),
+    state: join(base, "test-team", "example.test", "2ThrowawayStableId123", "state"),
   });
   assert.equal(existsSync(base), false, "pure resolution must not create the principal store");
 });
@@ -137,7 +140,7 @@ test("store resolution rejects a symlink in any existing path component", () => 
 
   const home = join(root, "principals");
   mkdirSync(home);
-  symlinkSync(target, join(home, "test-team__example.test"), "dir");
+  symlinkSync(target, join(home, "test-team"), "dir");
   assert.throws(
     () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
     /symbolic link/,
@@ -149,7 +152,7 @@ test("store resolution rejects links at principal, credentials, and state bounda
     const root = temporaryDirectory();
     const target = temporaryDirectory();
     const home = join(root, "principals");
-    const principal = join(home, "test-team__example.test", "2ThrowawayStableId123");
+    const principal = join(home, "test-team", "example.test", "2ThrowawayStableId123");
     const linkedPath = component === "principal" ? principal : join(principal, component);
     mkdirSync(dirname(linkedPath), { recursive: true });
     symlinkSync(target, linkedPath, "dir");
@@ -165,12 +168,28 @@ test("store resolution rejects links at principal, credentials, and state bounda
 test("store resolution rejects a dangling link rather than treating it as a missing path", () => {
   const root = temporaryDirectory();
   const home = join(root, "principals");
-  const principal = join(home, "test-team__example.test", "2ThrowawayStableId123");
+  const principal = join(home, "test-team", "example.test", "2ThrowawayStableId123");
   mkdirSync(principal, { recursive: true });
   symlinkSync(join(root, "missing-target"), join(principal, "credentials"), "dir");
 
   assert.throws(
     () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
     /symbolic link/,
+  );
+});
+
+test("store resolution enforces containment after validation", () => {
+  let teamIdReads = 0;
+  const changingDeclaration = {
+    ...declaration(),
+    get team_id() {
+      teamIdReads += 1;
+      return teamIdReads <= 2 ? "test-team:example.test" : "test-team:../../../escape";
+    },
+  };
+
+  assert.throws(
+    () => resolvePrincipalStore(changingDeclaration, { explicitHome: join(temporaryDirectory(), "principals"), env: {} }),
+    /escapes principal home/,
   );
 });
