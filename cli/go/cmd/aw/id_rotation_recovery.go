@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,7 +179,7 @@ func validatePendingRotationState(rotationDir, stableID string, state *pendingRo
 		return err
 	}
 	priv, err := awid.LoadSigningKey(state.PendingKey)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil // Promotion may have moved the private key before state cleanup.
 	}
 	if err != nil {
@@ -189,7 +190,7 @@ func validatePendingRotationState(rotationDir, stableID string, state *pendingRo
 		return fmt.Errorf("pending rotation key belongs to %s, not %s", got, state.NewDID)
 	}
 	storedPublic, err := awid.LoadPublicKey(awid.PublicKeyPath(state.PendingKey))
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("load pending rotation public key: %w", err)
 	}
 	if err == nil && !derivedPublic.Equal(storedPublic) {
@@ -227,7 +228,7 @@ func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, 
 			return "", err
 		}
 		return activeKeyPath, nil
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
@@ -267,7 +268,7 @@ func loadRotationSigningKey(activeKeyPath string, pending *pendingRotationState)
 	if err == nil {
 		return newPriv, false, nil
 	}
-	if !os.IsNotExist(err) {
+	if !errors.Is(err, os.ErrNotExist) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
 	}
 	activePriv, activeErr := awid.LoadSigningKey(activeKeyPath)

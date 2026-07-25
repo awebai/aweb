@@ -209,6 +209,10 @@ func recoverPendingRotation(ctx context.Context, identity *awconfig.ResolvedIden
 		out.Status = "finalized"
 		out.Detail = "registry uses the replacement key; local identity was finalized"
 	case strings.TrimSpace(state.OldDID):
+		if safe, detail := localRotationMatchesDID(identity, state.OldDID); !safe {
+			out.Detail = "registry uses the old key, but " + detail + "; replacement key and state preserved"
+			return out, nil
+		}
 		if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
 			return idRotationRecoveryOutput{}, fmt.Errorf("discard unapplied replacement key for operation %s: %w", state.OperationID, err)
 		}
@@ -254,6 +258,9 @@ func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir st
 	if strings.TrimSpace(local.StableID) != strings.TrimSpace(state.StableID) {
 		return fmt.Errorf("local identity stable_id changed while finalizing operation %s", state.OperationID)
 	}
+	if localDID := strings.TrimSpace(local.DID); localDID != strings.TrimSpace(state.OldDID) && localDID != strings.TrimSpace(state.NewDID) {
+		return fmt.Errorf("local identity did:key %s is neither the old nor replacement key", localDID)
+	}
 	local.DID = state.NewDID
 	local.RegistryStatus = "registered"
 	if strings.TrimSpace(state.RegistryURL) != "" {
@@ -269,6 +276,25 @@ func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir st
 		return fmt.Errorf("remove finalized rotation state: %w", err)
 	}
 	return nil
+}
+
+func localRotationMatchesDID(identity *awconfig.ResolvedIdentity, expectedDID string) (bool, string) {
+	active, err := awid.LoadSigningKey(identity.SigningKeyPath)
+	if err != nil {
+		return false, fmt.Sprintf("the active signing key cannot be read: %v", err)
+	}
+	activeDID := awid.ComputeDIDKey(active.Public().(ed25519.PublicKey))
+	if strings.TrimSpace(activeDID) != strings.TrimSpace(expectedDID) {
+		return false, fmt.Sprintf("the active signing key is %s, not %s", activeDID, expectedDID)
+	}
+	local, err := awconfig.LoadWorktreeIdentityFrom(identity.IdentityPath)
+	if err != nil {
+		return false, fmt.Sprintf("the local identity cannot be read: %v", err)
+	}
+	if strings.TrimSpace(local.DID) != strings.TrimSpace(expectedDID) {
+		return false, fmt.Sprintf("the local identity records %s, not %s", local.DID, expectedDID)
+	}
+	return true, ""
 }
 
 func rotationRecoveryOutput(status, rotationDir string, state *pendingRotationState) idRotationRecoveryOutput {

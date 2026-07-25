@@ -14,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"gopkg.in/yaml.v3"
 )
 
 func TestPendingRotationStateCannotBeOverwrittenOrRemovedByAnotherOperation(t *testing.T) {
@@ -45,6 +46,38 @@ func TestPendingRotationStateCannotBeOverwrittenOrRemovedByAnotherOperation(t *t
 	}
 }
 
+func TestLegacyPendingRotationStateGetsStableOwnershipForRecovery(t *testing.T) {
+	rotationDir := filepath.Join(t.TempDir(), "rotation")
+	legacy := &pendingRotationState{
+		StableID: "did:aw:legacy", OldDID: "did:key:old", NewDID: "did:key:new",
+		PendingKey: filepath.Join(rotationDir, "pending", pendingFileBase("did:key:new")+".signing.key"),
+	}
+	data, err := yaml.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := pendingRotationStatePath(rotationDir, legacy.StableID)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadPendingRotationState(rotationDir, legacy.StableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded == nil || !loaded.legacy || !strings.HasPrefix(loaded.OperationID, "legacy-") {
+		t.Fatalf("legacy ownership was not derived: %+v", loaded)
+	}
+	if err := removePendingRotationStateOwned(rotationDir, legacy.StableID, loaded.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("legacy state still exists after owned removal: %v", err)
+	}
+}
+
 func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -58,9 +91,11 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 		wantStatus    string
 		wantPending   bool
 		wantActiveNew bool
+		localPromoted bool
 	}{
 		{name: "applied", registryState: "new", wantStatus: "finalized", wantActiveNew: true},
 		{name: "not applied", registryState: "old", wantStatus: "rolled_back"},
+		{name: "old registry with promoted local key", registryState: "old", wantStatus: "unknown_preserved", wantPending: true, wantActiveNew: true, localPromoted: true},
 		{name: "unexpected key", registryState: "third", wantStatus: "unknown_preserved", wantPending: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,6 +138,16 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 				RegistryURL: fixture.server.URL, PendingKey: pendingKey,
 			}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.localPromoted {
+				if _, err := promotePendingRotationKeypair(awconfig.WorktreeSigningKeyPath(dir), pendingKey, newDID); err != nil {
+					t.Fatal(err)
+				}
+				local := loadIdentityForTest(t, dir)
+				local.DID = newDID
+				if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(dir, ".aw", "identity.yaml"), local); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			out := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
