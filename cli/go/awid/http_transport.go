@@ -1,13 +1,16 @@
 package awid
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // HTTP transport tuning for hostile venue networks (conference WiFi, NAT
@@ -19,7 +22,80 @@ import (
 // It accepts Go duration strings such as "30s" or "1m".
 const APITimeoutEnvVar = "AWEB_HTTP_TIMEOUT"
 
+const MaxErrorResponseSize = 64 * 1024
+
 var apiTimeoutWarnOnce sync.Once
+
+var ErrResponseTooLarge = errors.New("HTTP response exceeds maximum size")
+
+// ReadAllBounded reads at most max+1 bytes so an exactly-at-limit response is
+// accepted while any trailing byte is rejected.
+func ReadAllBounded(reader io.Reader, max int64) ([]byte, error) {
+	if max < 0 {
+		return nil, fmt.Errorf("maximum response size must not be negative")
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, ErrResponseTooLarge
+	}
+	return data, nil
+}
+
+// ReadErrorExcerpt returns a bounded single-line diagnostic. Error bodies are
+// attacker-controlled and must not inject terminal control sequences or force
+// the client to retain an arbitrarily large response.
+func ReadErrorExcerpt(reader io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(reader, MaxErrorResponseSize+1))
+	if err != nil {
+		return ""
+	}
+	if len(data) > MaxErrorResponseSize {
+		data = data[:MaxErrorResponseSize]
+	}
+	return SanitizeErrorText(string(data))
+}
+
+func SanitizeErrorText(text string) string {
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// DoNoRedirect sends req without allowing an HTTP redirect to cross the
+// request's original trust boundary. The shallow copy preserves the caller's
+// transport, timeout, and other policy without mutating a client that may be
+// shared by concurrent requests.
+func DoNoRedirect(client *http.Client, req *http.Request) (*http.Response, error) {
+	return doNoRedirect(client, req, 0)
+}
+
+// DoNoRedirectWithTimeout also supplies the overall deadline when an injected
+// client has no Timeout. Callers may customize transport policy, but cannot
+// remove the trust-path deadline by passing a zero-value client.
+func DoNoRedirectWithTimeout(client *http.Client, req *http.Request, timeout time.Duration) (*http.Response, error) {
+	return doNoRedirect(client, req, timeout)
+}
+
+func doNoRedirect(client *http.Client, req *http.Request, defaultTimeout time.Duration) (*http.Response, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	noRedirectClient := *client
+	if defaultTimeout > 0 && (noRedirectClient.Timeout <= 0 || noRedirectClient.Timeout > defaultTimeout) {
+		noRedirectClient.Timeout = defaultTimeout
+	}
+	noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return noRedirectClient.Do(req)
+}
 
 // APITimeout returns the overall timeout for normal API requests:
 // AWEB_HTTP_TIMEOUT when set to a valid positive Go duration, otherwise

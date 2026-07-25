@@ -87,6 +87,13 @@ deprecated input so mixed-version public/global federation does not fail at
 schema validation. They must not affect routing, lookup, authorization, policy,
 recipient selection, or signed-payload validation.
 
+Federated delivery responses must be uncompressed. Senders must request
+`Accept-Encoding: identity` and reject any non-identity `Content-Encoding`.
+Federation peers are untrusted by construction; decompression before enforcing
+the response-size bound is a memory-exhaustion primitive on the trust path. A
+peer or intermediary that compresses despite the identity request is therefore
+incompatible with the federation v1 transport contract.
+
 ## Forbidden Shortcuts
 
 - Do not route global direct-address mail or chat solely because a matching local

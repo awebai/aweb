@@ -459,7 +459,7 @@ func isAmbiguousDIDRotationSubmitError(err error) bool {
 	if errors.As(err, &registryErr) {
 		return registryErr.StatusCode >= http.StatusInternalServerError
 	}
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, ErrResponseTooLarge) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	var netErr net.Error
@@ -472,7 +472,7 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 		if err != nil {
 			return err
 		}
-		resp, err := c.httpClient().Do(req)
+		resp, err := DoNoRedirectWithTimeout(c.httpClient(), req, APITimeout())
 		if err != nil {
 			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
@@ -483,7 +483,7 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 			return err
 		}
 		if shouldRetryRegistryResponse(ctx, method, path, attempt, resp) {
-			_, _ = io.Copy(io.Discard, resp.Body)
+			_, _ = ReadAllBounded(resp.Body, MaxErrorResponseSize)
 			_ = resp.Body.Close()
 			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
 				return waitErr
@@ -508,10 +508,10 @@ func decodeRegistryResponse(resp *http.Response, out any) error {
 		return parseRegistryError(resp)
 	}
 	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
+		_, err := ReadAllBounded(resp.Body, MaxResponseSize)
+		return err
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return err
 	}
@@ -655,10 +655,10 @@ func parseRegistryError(resp *http.Response) error {
 	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
 		if detail, ok := parsed.Detail.(map[string]any); ok {
 			if code, ok := detail["code"].(string); ok {
-				regErr.Code = strings.TrimSpace(code)
+				regErr.Code = SanitizeErrorText(code)
 			}
 			if message, ok := detail["message"].(string); ok {
-				regErr.Message = strings.TrimSpace(message)
+				regErr.Message = SanitizeErrorText(message)
 			}
 		}
 	}

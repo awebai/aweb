@@ -448,7 +448,7 @@ func postLocalIdentityKeyReplacementOnce(ctx context.Context, serviceURL, alias 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "DIDKey "+awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))+" "+signature)
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	resp, err := (&http.Client{Timeout: awid.APITimeout()}).Do(req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: awid.APITimeout()}, req)
 	if err != nil {
 		return nil, &replacementRosterOutcomeUnknownError{err: err}
 	}

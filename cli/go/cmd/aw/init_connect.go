@@ -261,7 +261,7 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()}
-	resp, err := client.Do(req)
+	resp, err := awid.DoNoRedirect(client, req)
 	if err != nil {
 		return nil, err
 	}
