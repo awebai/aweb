@@ -3,14 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -151,6 +155,12 @@ func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T)
 
 	arrived := make(chan struct{}, 1)
 	gate := make(chan struct{})
+	type secondTransactionState struct {
+		winnerDID string
+		oldDID    string
+	}
+	secondState := make(chan secondTransactionState, 1)
+	rotationDir := ""
 	fixture := newCLIRotationRegistryFixture(t, stableID, oldDID, func(f *cliRotationRegistryFixture, w http.ResponseWriter, _ map[string]any) {
 		if f.putCalls == 1 {
 			arrived <- struct{}{}
@@ -159,6 +169,16 @@ func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		state := secondTransactionState{winnerDID: f.currentDID}
+		pending, err := loadPendingRotationState(rotationDir, stableID)
+		if err != nil {
+			f.t.Error(err)
+		} else if pending == nil {
+			f.t.Error("second registry PUT has no pending rotation state")
+		} else {
+			state.oldDID = pending.OldDID
+		}
+		secondState <- state
 		http.Error(w, "rotation rejected", http.StatusConflict)
 	})
 
@@ -168,30 +188,14 @@ func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T)
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	dir := filepath.Join(tmp, "wt")
+	rotationDir = filepath.Join(dir, ".aw", "rotation")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
 
-	type runningCommand struct {
-		done   <-chan error
-		output *bytes.Buffer
-	}
-	start := func() runningCommand {
-		cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-		cmd.Env = testCommandEnv(dir)
-		cmd.Dir = dir
-		output := new(bytes.Buffer)
-		cmd.Stdout = output
-		cmd.Stderr = output
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-		return runningCommand{done: done, output: output}
-	}
-	first, second := start(), start()
+	first := startRotationCommand(t, ctx, bin, dir)
+	second := startRotationCommand(t, ctx, bin, dir)
 
 	select {
 	case <-arrived:
@@ -218,8 +222,15 @@ func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T)
 	if putCalls != 2 {
 		t.Errorf("registry rotation calls=%d, want 2 after the waiter reloads the winner state", putCalls)
 	}
+	select {
+	case state := <-secondState:
+		if state.oldDID != state.winnerDID {
+			t.Errorf("second transaction old_did=%q, want winner did %q", state.oldDID, state.winnerDID)
+		}
+	case <-time.After(time.Second):
+		t.Error("second transaction did not reach the registry with pending state")
+	}
 
-	rotationDir := filepath.Join(dir, ".aw", "rotation")
 	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
 		t.Fatal(err)
 	} else if pending != nil {
@@ -228,6 +239,147 @@ func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T)
 	if keys := pendingRotationKeyCount(t, filepath.Join(rotationDir, "pending")); keys != 0 {
 		t.Errorf("pending replacement keys=%d, want 0 after serialized cleanup", keys)
 	}
+}
+
+func TestConcurrentRotationRefusesIdentityChangedWhileWaiting(t *testing.T) {
+	oldPublic, oldPrivate, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPublic)
+	stableID := awid.ComputeStableID(oldPublic)
+	otherPublic, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherStableID := awid.ComputeStableID(otherPublic)
+
+	arrived := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	var serverMu sync.Mutex
+	oldPutCalls := 0
+	otherIdentityRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": stableID, "current_did_key": oldDID,
+				"created_at": "2026-07-24T00:00:00Z", "updated_at": "2026-07-24T00:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": stableID, "current_did_key": oldDID,
+				"log_head": map[string]any{
+					"seq": 1, "operation": "register_did", "new_did_key": oldDID,
+					"entry_hash": strings.Repeat("a", 64), "state_hash": strings.Repeat("b", 64),
+					"authorized_by": oldDID, "signature": "test", "timestamp": "2026-07-24T00:00:00Z",
+				},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/did/"+stableID:
+			serverMu.Lock()
+			oldPutCalls++
+			serverMu.Unlock()
+			arrived <- struct{}{}
+			<-gate
+			http.Error(w, "rotation rejected", http.StatusConflict)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/"+otherStableID):
+			serverMu.Lock()
+			otherIdentityRequests++
+			serverMu.Unlock()
+			http.Error(w, "changed identity unavailable", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	dir := filepath.Join(tmp, "wt")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, server.URL, oldPrivate)
+
+	first := startRotationCommand(t, ctx, bin, dir)
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		close(gate)
+		t.Fatal("first rotation did not reach the registry")
+	}
+	waiter := startRotationCommand(t, ctx, bin, dir)
+	time.Sleep(200 * time.Millisecond)
+	firstFinished := rotationCommandFinished(t, "first", first.done)
+	waiterFinished := rotationCommandFinished(t, "waiting", waiter.done)
+
+	identity := loadIdentityForTest(t, dir)
+	identity.StableID = otherStableID
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(dir, ".aw", "identity.yaml"), identity); err != nil {
+		close(gate)
+		t.Fatal(err)
+	}
+	close(gate)
+
+	var firstErr, waiterErr error
+	if !firstFinished {
+		firstErr = <-first.done
+	}
+	if !waiterFinished {
+		waiterErr = <-waiter.done
+	}
+	if firstErr == nil || waiterErr == nil {
+		t.Fatalf("rotation errors=(%v, %v), want both commands to refuse\nfirst:\n%s\nwaiter:\n%s", firstErr, waiterErr, first.output, waiter.output)
+	}
+	if !strings.Contains(waiter.output.String(), "active identity changed while waiting for the rotation lock") {
+		t.Errorf("waiter did not report changed lock scope:\n%s", waiter.output)
+	}
+	serverMu.Lock()
+	gotOldPutCalls, gotOtherRequests := oldPutCalls, otherIdentityRequests
+	serverMu.Unlock()
+	if gotOldPutCalls != 1 {
+		t.Errorf("old identity rotation calls=%d, want 1", gotOldPutCalls)
+	}
+	if gotOtherRequests != 0 {
+		t.Errorf("changed identity registry requests=%d, want 0 outside its lock", gotOtherRequests)
+	}
+
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	for _, id := range []string{stableID, otherStableID} {
+		if pending, err := loadPendingRotationState(rotationDir, id); err != nil {
+			t.Fatal(err)
+		} else if pending != nil {
+			t.Errorf("pending state retained for %s: %+v", id, pending)
+		}
+	}
+	if keys := pendingRotationKeyCount(t, filepath.Join(rotationDir, "pending")); keys != 0 {
+		t.Errorf("pending replacement keys=%d, want 0 after scope refusal", keys)
+	}
+}
+
+type runningRotationCommand struct {
+	done   <-chan error
+	output *bytes.Buffer
+}
+
+func startRotationCommand(t *testing.T, ctx context.Context, bin, dir string) runningRotationCommand {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	cmd.Env = testCommandEnv(dir)
+	cmd.Dir = dir
+	output := new(bytes.Buffer)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	return runningRotationCommand{done: done, output: output}
 }
 
 func rotationCommandFinished(t *testing.T, name string, done <-chan error) bool {
