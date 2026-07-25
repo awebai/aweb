@@ -40,3 +40,42 @@ jobs:
 
       - name: Freshness gate
         run: bash scripts/check-freshness.sh
+
+  # The freshness gate proves a clean bundle still carries the security surface,
+  # but it does not exercise the verifier or pin store behaviorally. This job
+  # runs the TypeScript/JS suites so a regression in the DID-log verifier, the
+  # fail-closed pin store, or the mail presentation-ack path fails CI directly
+  # (default-aajc.5 follow-up) — the security fixes now have a running gate, not
+  # only a static marker check.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install channel-core deps
+        working-directory: channel-core
+        run: npm ci
+
+      - name: Install channel deps
+        working-directory: channel
+        run: npm ci
+
+      - name: Install pi-extension deps
+        working-directory: pi-extension
+        run: npm ci
+
+      - name: channel-core suite
+        working-directory: channel-core
+        run: npm test
+
+      - name: channel suite
+        working-directory: channel
+        run: npm test
+
+      - name: pi-extension suite
+        working-directory: pi-extension
+        run: npm test

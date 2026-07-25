@@ -34,11 +34,35 @@ if (!dist.includes(appEventConsumer) || !dist.includes(appAwakeningKind)) {
 
 // Freshness gate: the plugin bundle inlines channel-core via the file: symlink,
 // so a stale channel-core/dist would silently ship the plugin WITHOUT the
-// hardened security surface. Assert the channel-core security-contract sentinel
-// (a stable exported constant, re-exported by channel/src/index.ts so it is
-// bundled) is present. Unlike matching error-message text, the sentinel changes
-// only on an intentional contract revision, so this gate cannot silently weaken
-// when unrelated error wording changes.
+// hardened security surface. Two independent checks guard this:
+//
+//  1. Fix-specific code markers below assert that the actual hardened code is
+//     bundled. Each string exists only while its fix is present, so a revert of
+//     the verifier or pin store (even one that keeps contract.ts) removes the
+//     string and fails the gate. These prove code presence, not a declared
+//     version.
+//  2. The security-contract sentinel is a stable exported constant re-exported
+//     by channel/src/index.ts. It changes only on an intentional contract
+//     revision, so it flags an unbuilt/stale bundle without churning on
+//     unrelated error-wording edits. It declares the contract version; it does
+//     not by itself prove the code is present — that is what the markers do.
+const securityCodeMarkers = [
+  // aajc.3 DID-log verifier: genesis/rotation state_hash binding.
+  "stableIdentityStateHash",
+  // aajc.3 DID-log verifier: rotation-operation authorization enforcement.
+  "seq>1 requires rotate_key operation",
+  // aajc.2 fail-closed trust pin store: present-but-empty rejects instead of
+  // silently starting with a discarded store.
+  "pin store is empty or has no document",
+];
+for (const marker of securityCodeMarkers) {
+  if (!dist.includes(marker)) {
+    throw new Error(
+      `channel dist is missing hardened security code (marker: ${JSON.stringify(marker)}) — channel-core was bundled stale or a security fix was reverted. Rebuild channel-core from source; if the code intentionally changed, update this marker.`,
+    );
+  }
+}
+
 const securityContractSentinel =
   "aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1";
 if (!dist.includes(securityContractSentinel)) {
