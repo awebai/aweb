@@ -27,9 +27,7 @@ team-architecture flows:
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		loadDotenvBestEffort()
-		maybeCheckLatestVersion(cmd)
-		// No heartbeat for init — no credentials yet.
+		// Root initialization runs first with hook traversal enabled.
 	},
 	RunE: runInit,
 }

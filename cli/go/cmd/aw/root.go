@@ -31,6 +31,9 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd == versionCmd || cmd == upgradeCmd {
+			return nil
+		}
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 			debugFlag = true
 		}
@@ -85,6 +88,9 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
+	// Cobra normally runs only the nearest persistent hook. Traversal makes the
+	// root identity-home policy unshadowable by commands with their own hooks.
+	cobra.EnableTraverseRunHooks = true
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},
 		&cobra.Group{ID: groupIdentity, Title: "Identity"},

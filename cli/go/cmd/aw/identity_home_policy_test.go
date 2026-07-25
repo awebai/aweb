@@ -29,6 +29,12 @@ func TestExternalIdentityHomePolicyDefaultsToDeny(t *testing.T) {
 	if err := requireIdentityHomeAwareCommand(introspectCmd, true); err != nil {
 		t.Fatalf("explicitly aware command denied: %v", err)
 	}
+	if initCmd.PersistentPreRun == nil {
+		t.Fatal("init must retain its descendant persistent hook for the production shadowing regression")
+	}
+	if _, allowed := identityHomeAwareCommandPaths[initCmd.CommandPath()]; allowed {
+		t.Fatal("init unexpectedly allowlisted")
+	}
 }
 
 func TestIdentityHomeAwareAllowlistNamesExistingRunnableCommands(t *testing.T) {
@@ -64,6 +70,8 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 		}{
 			{name: "identity-create", args: []string{"id", "create", "--name", "unsafe", "--domain", "example.test"}},
 			{name: "team-list", args: []string{"id", "team", "list", "--json"}},
+			{name: "workspace-status", args: []string{"workspace", "status", "--json"}},
+			{name: "init-shadow-hook", args: []string{"init"}},
 		} {
 			t.Run(source+"/"+command.name, func(t *testing.T) {
 				instance := filepath.Join(root, "instances", source, command.name)
@@ -75,7 +83,7 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 					t.Fatal(err)
 				}
 				args := append([]string(nil), command.args...)
-				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AWID_REGISTRY_URL="+registry.URL)
+				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AWID_REGISTRY_URL="+registry.URL, "AWEB_URL="+registry.URL)
 				if source == "flag" {
 					args = append([]string{"--identity-home", identityHome}, args...)
 				} else {
