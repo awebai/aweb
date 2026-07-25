@@ -600,7 +600,10 @@ interface RawWireVectorFile {
     resolution_json: string;
     cached_json: string;
     expected_outcome: "HARD_ERROR";
-    known_runtime_gap: string | null;
+    // Positive per-runtime expectations. The corpus previously carried a
+    // nullable known_runtime_gap note that doubled as a branch selector in the
+    // Go consumer, so the metadata could change WHICH assertion ran.
+    expected_error_substrings: { typescript: string[] };
   }>;
 }
 
@@ -624,6 +627,12 @@ describe("identity-log-raw-wire-v1 shared vectors", () => {
 
       expect(result.outcome).toBe(testCase.expected_outcome);
       expect(result.nextHead).toBeUndefined();
+      // Assert the rejection is the one the corpus names, not merely that some
+      // rejection happened — the failure has to be for the right reason.
+      expect(testCase.expected_error_substrings.typescript.length).toBeGreaterThan(0);
+      for (const substring of testCase.expected_error_substrings.typescript) {
+        expect(result.error ?? "").toContain(substring);
+      }
     });
   }
 });
