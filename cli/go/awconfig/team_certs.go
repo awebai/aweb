@@ -35,6 +35,10 @@ func TeamCertificatePath(worktreeDir, teamID string) string {
 	return filepath.Join(WorktreeIdentityHome(worktreeDir), filepath.FromSlash(TeamCertificateRelativePath(teamID)))
 }
 
+func TeamCertificatePathFromIdentityHome(identityHome, teamID string) (string, error) {
+	return IdentityHomePath(IdentityHome{Root: identityHome}, TeamCertificateRelativePath(teamID))
+}
+
 func SaveTeamCertificateForTeam(worktreeDir, teamID string, cert *awid.TeamCertificate) (string, error) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID == "" {
@@ -59,6 +63,29 @@ func SaveTeamCertificateForTeam(worktreeDir, teamID string, cert *awid.TeamCerti
 func LoadTeamCertificateForTeam(worktreeDir, teamID string) (*awid.TeamCertificate, error) {
 	path := TeamCertificatePath(worktreeDir, teamID)
 	if err := preflightIdentityFile(path, "team certificate"); err != nil {
+		return nil, err
+	}
+	return awid.LoadTeamCertificate(path)
+}
+
+func SaveTeamCertificateForTeamToIdentityHome(identityHome, teamID string, cert *awid.TeamCertificate) (string, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" || cert == nil || strings.TrimSpace(cert.Team) != teamID {
+		return "", fmt.Errorf("certificate team_id does not match %q", teamID)
+	}
+	path, err := TeamCertificatePathFromIdentityHome(identityHome, teamID)
+	if err != nil {
+		return "", err
+	}
+	if err := awid.SaveTeamCertificate(path, cert); err != nil {
+		return "", err
+	}
+	return TeamCertificateRelativePath(teamID), nil
+}
+
+func LoadTeamCertificateForTeamFromIdentityHome(identityHome, teamID string) (*awid.TeamCertificate, error) {
+	path, err := TeamCertificatePathFromIdentityHome(identityHome, teamID)
+	if err != nil {
 		return nil, err
 	}
 	return awid.LoadTeamCertificate(path)

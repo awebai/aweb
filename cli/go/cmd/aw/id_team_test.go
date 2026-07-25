@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -4099,6 +4100,7 @@ memberships:
 }
 
 func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
+	var registeredCertMu sync.Mutex
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
@@ -4115,6 +4117,8 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 				"created_at":      "2026-04-09T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			registeredCertMu.Lock()
+			defer registeredCertMu.Unlock()
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
 			}
@@ -4176,14 +4180,47 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "ops", teamKey)
-	_, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
+	inviteID, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	runAdd := exec.CommandContext(ctx, bin, "id", "team", "add", token, "--json")
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceHome := filepath.Join(canonicalTmp, "empty-instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(canonicalTmp, ".aw")
+	emptyIdentityHome := filepath.Join(canonicalTmp, "empty-principal")
+	localAccept := exec.CommandContext(ctx, bin, "--identity-home", emptyIdentityHome, "id", "team", "accept-invite", "--name", "alice", token, "--json")
+	localAccept.Env = testCommandEnv(tmp)
+	localAccept.Dir = instanceHome
+	localOut, localErr := localAccept.CombinedOutput()
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external local accept mutated instance: %v", err)
+	}
+	if _, err := os.Lstat(emptyIdentityHome); !os.IsNotExist(err) {
+		t.Fatalf("external local accept mutated empty principal: %v", err)
+	}
+	registeredCertMu.Lock()
+	if registeredCert != nil {
+		registeredCertMu.Unlock()
+		t.Fatalf("external local accept mutated remote certificate state: %+v", registeredCert)
+	}
+	registeredCertMu.Unlock()
+	if _, err := awconfig.LoadTeamInvite(inviteID); err != nil {
+		t.Fatalf("external local accept consumed invite token: %v", err)
+	}
+	if localErr == nil || !strings.Contains(string(localOut), "external identity home requires --global") {
+		t.Fatalf("external local accept did not fail closed: err=%v\n%s", localErr, localOut)
+	}
+
+	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--address", "acme.com/alice", token, "--json")
 	runAdd.Env = testCommandEnv(tmp)
-	runAdd.Dir = tmp
+	runAdd.Dir = instanceHome
 	addOut, err := runAdd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team add failed: %v\n%s", err, string(addOut))
@@ -4196,8 +4233,11 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if addGot["team_id"] != "ops:acme.com" {
 		t.Fatalf("team_id=%v", addGot["team_id"])
 	}
-	if registeredCert["member_did_key"] != memberDIDKey {
-		t.Fatalf("registered cert member_did_key=%v", registeredCert["member_did_key"])
+	registeredCertMu.Lock()
+	registeredMemberDIDKey := registeredCert["member_did_key"]
+	registeredCertMu.Unlock()
+	if registeredMemberDIDKey != memberDIDKey {
+		t.Fatalf("registered cert member_did_key=%v", registeredMemberDIDKey)
 	}
 	keyAfter, err := os.ReadFile(filepath.Join(tmp, ".aw", "signing.key"))
 	if err != nil {
@@ -4218,19 +4258,26 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if teamState.ActiveTeam != "backend:acme.com" {
+	if teamState.ActiveTeam != "ops:acme.com" {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
 	}
+	acceptedCert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, "ops:acme.com")
+	if err != nil {
+		t.Fatalf("accepted certificate missing from principal: %v", err)
+	}
+	if acceptedCert.Team != "ops:acme.com" || acceptedCert.MemberDIDKey != memberDIDKey || strings.TrimSpace(acceptedCert.IssuedAt) == "" {
+		t.Fatalf("accepted certificate mismatch: %+v", acceptedCert)
+	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
 	}
 
-	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
+	runList := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "list", "--json")
 	runList.Env = testCommandEnv(tmp)
-	runList.Dir = tmp
+	runList.Dir = instanceHome
 	listOut, err := runList.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team list failed: %v\n%s", err, string(listOut))
@@ -4242,13 +4289,22 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, listOut), &listGot); err != nil {
 		t.Fatalf("invalid list json: %v\n%s", err, string(listOut))
 	}
-	if listGot.ActiveTeam != "backend:acme.com" || len(listGot.Memberships) != 2 {
+	if listGot.ActiveTeam != "ops:acme.com" || len(listGot.Memberships) != 2 {
 		t.Fatalf("list=%+v", listGot)
 	}
+	var listedOps *teamListItem
+	for i := range listGot.Memberships {
+		if listGot.Memberships[i].TeamID == "ops:acme.com" {
+			listedOps = &listGot.Memberships[i]
+		}
+	}
+	if listedOps == nil || listedOps.IdentityScope != awid.IdentityModeGlobal || strings.TrimSpace(listedOps.IssuedAt) == "" {
+		t.Fatalf("list omitted external certificate metadata: %+v", listedOps)
+	}
 
-	runSwitch := exec.CommandContext(ctx, bin, "id", "team", "switch", "ops:acme.com", "--json")
+	runSwitch := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "switch", "backend:acme.com", "--json")
 	runSwitch.Env = testCommandEnv(tmp)
-	runSwitch.Dir = tmp
+	runSwitch.Dir = instanceHome
 	switchOut, err := runSwitch.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team switch failed: %v\n%s", err, string(switchOut))
@@ -4257,20 +4313,20 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, switchOut), &switchGot); err != nil {
 		t.Fatalf("invalid switch json: %v\n%s", err, string(switchOut))
 	}
-	if switchGot["active_team"] != "ops:acme.com" {
+	if switchGot["active_team"] != "backend:acme.com" {
 		t.Fatalf("active_team=%v", switchGot["active_team"])
 	}
 	teamState, err = awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if teamState.ActiveTeam != "ops:acme.com" {
+	if teamState.ActiveTeam != "backend:acme.com" {
 		t.Fatalf("teams active_team=%q", teamState.ActiveTeam)
 	}
 
-	runLeave := exec.CommandContext(ctx, bin, "id", "team", "leave", "ops:acme.com", "--json")
+	runLeave := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "leave", "ops:acme.com", "--json")
 	runLeave.Env = testCommandEnv(tmp)
-	runLeave.Dir = tmp
+	runLeave.Dir = instanceHome
 	leaveOut, err := runLeave.CombinedOutput()
 	if err != nil {
 		t.Fatalf("team leave failed: %v\n%s", err, string(leaveOut))
@@ -4291,6 +4347,9 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "ops:acme.com")); !os.IsNotExist(err) {
 		t.Fatalf("ops cert should be removed, stat err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("team operations leaked principal state into instance: %v", err)
 	}
 }
 
