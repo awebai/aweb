@@ -550,16 +550,21 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			apiAlias = ""
 			apiName = alias
 		}
+		identityHome, err := identityHomeForDir(wd)
+		if err != nil {
+			return err
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			WorkingDir:  wd,
-			AwebURL:     apiKeyAwebURL,
-			RegistryURL: registryURL,
-			APIKey:      apiKey,
-			Name:        apiName,
-			Alias:       apiAlias,
-			Persistent:  firstAgentGlobal,
-			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			WorkingDir:   wd,
+			IdentityHome: identityHome.Root,
+			AwebURL:      apiKeyAwebURL,
+			RegistryURL:  registryURL,
+			APIKey:       apiKey,
+			Name:         apiName,
+			Alias:        apiAlias,
+			Persistent:   firstAgentGlobal,
+			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
 		if err != nil {
 			return err
@@ -1211,12 +1216,13 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 	}
 	global := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
 	request := apiKeyInitRequest{
-		WorkingDir:  homeDir,
-		AwebURL:     awebURL,
-		RegistryURL: registryURL,
-		APIKey:      apiKey,
-		Role:        teamHumanAddRoleForPlan(plan),
-		Persistent:  global,
+		WorkingDir:   homeDir,
+		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
+		AwebURL:      awebURL,
+		RegistryURL:  registryURL,
+		APIKey:       apiKey,
+		Role:         teamHumanAddRoleForPlan(plan),
+		Persistent:   global,
 	}
 	if global {
 		request.Name = strings.TrimSpace(plan.Name)
@@ -1387,7 +1393,8 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		createdProfileIdentity := false
 		var acceptedProfileIdentity *acceptedTeamInvite
 		if plans[i].Profile != nil {
-			if sel, err := resolveSelectionForDir(plans[i].HomeDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {
+			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
+			if sel, err := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); err == nil && strings.TrimSpace(sel.TeamID) != "" {
 				plans[i].Alias = strings.TrimSpace(sel.Alias)
 				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
 			} else {
@@ -1450,15 +1457,18 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 				return rollbackOnErr(err)
 			}
 			if !plans[i].Connected {
-				if sel, selErr := resolveSelectionForDir(plans[i].HomeDir); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
+				targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
+				if sel, selErr := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
 					if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
-						Role: strings.TrimSpace(plans[i].Profile.ProfileRef),
+						Role:         strings.TrimSpace(plans[i].Profile.ProfileRef),
+						IdentityHome: targetIdentityHome.Root,
 					}); err != nil {
 						return rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err))
 					}
 				}
 			}
-			if err := configureMaterializedAgentHome(plans[i].HomeDir); err != nil {
+			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
+			if err := configureMaterializedAgentHome(plans[i].HomeDir, targetIdentityHome); err != nil {
 				return rollbackOnErr(err)
 			}
 		}

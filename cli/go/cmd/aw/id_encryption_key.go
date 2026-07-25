@@ -88,7 +88,10 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	statePath, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return err
+	}
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -104,9 +107,9 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 		Status:        "present",
 		KeyID:         record.KeyID,
 		PublicKey:     record.PublicKey,
-		PrivateKey:    resolveWorktreeRelativePath(identity.WorkingDir, record.PrivateKeyPath),
+		PrivateKey:    identityRecordPathBestEffort(identity, record.PrivateKeyPath),
 		StatePath:     statePath,
-		AssertionPath: resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath),
+		AssertionPath: identityRecordPathBestEffort(identity, record.AssertionPath),
 		Warning:       encryptionKeyBackupWarning(),
 	}, formatIDEncryptionKey)
 	return nil
@@ -117,8 +120,8 @@ func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEnc
 	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate)
 }
 
-func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool) (idEncryptionKeyOutput, error) {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
+func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHomes ...string) (idEncryptionKeyOutput, error) {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
 	}
@@ -133,7 +136,10 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 		return idEncryptionKeyOutput{}, usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), got)
 	}
 
-	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	statePath, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return idEncryptionKeyOutput{}, err
+	}
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -169,11 +175,11 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 			status = "rotated"
 		}
 	} else {
-		material, err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record)
+		material, err := validateEncryptionRecordPrivateKeyAt(identity.WorkingDir, identity.IdentityHome, record)
 		if err != nil {
 			return idEncryptionKeyOutput{}, err
 		}
-		assertion, err = loadEncryptionAssertion(identity.WorkingDir, record.AssertionPath)
+		assertion, err = loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
 		if err != nil {
 			return idEncryptionKeyOutput{}, err
 		}
@@ -208,17 +214,17 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 		Status:         status,
 		KeyID:          record.KeyID,
 		PublicKey:      record.PublicKey,
-		PrivateKey:     resolveWorktreeRelativePath(identity.WorkingDir, record.PrivateKeyPath),
+		PrivateKey:     identityRecordPathBestEffort(identity, record.PrivateKeyPath),
 		StatePath:      statePath,
-		AssertionPath:  resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath),
+		AssertionPath:  identityRecordPathBestEffort(identity, record.AssertionPath),
 		Published:      published,
 		PublishSkipped: skipped,
 		Warning:        encryptionKeyBackupWarning(),
 	}, nil
 }
 
-func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
+func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHomes ...string) error {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
 	if err != nil {
 		return err
 	}
@@ -233,7 +239,10 @@ func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
 		return usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), got)
 	}
 
-	statePath := awconfig.WorktreeEncryptionStatePath(identity.WorkingDir)
+	statePath, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return err
+	}
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -243,11 +252,11 @@ func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
 		}
 	}
 	if record := state.ActiveRecord(); record != nil {
-		material, err := validateEncryptionRecordPrivateKey(identity.WorkingDir, record)
+		material, err := validateEncryptionRecordPrivateKeyAt(identity.WorkingDir, identity.IdentityHome, record)
 		if err != nil {
 			return err
 		}
-		assertion, err := loadEncryptionAssertion(identity.WorkingDir, record.AssertionPath)
+		assertion, err := loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
 		if err != nil {
 			return err
 		}
@@ -284,7 +293,21 @@ func shouldRefreshEncryptionKeyForIdentityBinding(err error) bool {
 		strings.Contains(msg, "identity_did does not match current did:key")
 }
 
-func resolveIdentityForEncryptionKeyForDir(workingDir string) (*awconfig.ResolvedIdentity, error) {
+func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHomes ...string) (*awconfig.ResolvedIdentity, error) {
+	explicitIdentityHome := len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != ""
+	if explicitIdentityHome {
+		identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHomes[0])
+		if err == nil {
+			return identity, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	} else if home, err := identityHomeForDir(workingDir); err != nil {
+		return nil, err
+	} else if home.External() {
+		return resolveIdentityForDir(workingDir)
+	}
 	if certIdentity, err := resolveActiveCertificateIdentityForEncryptionKey(workingDir); err != nil {
 		return nil, err
 	} else if certIdentity != nil {
@@ -375,8 +398,12 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 			registryURL = strings.TrimSpace(identity.RegistryURL)
 		}
 	}
+	identityRoot := strings.TrimSpace(workingDir)
+	if canonical, canonicalErr := filepath.EvalSymlinks(identityRoot); canonicalErr == nil {
+		identityRoot = canonical
+	}
 	resolved := &awconfig.ResolvedIdentity{
-		WorkingDir:     strings.TrimSpace(workingDir),
+		WorkingDir:     identityRoot,
 		SigningKeyPath: signingKeyPath,
 		DID:            didKey,
 		StableID:       strings.TrimSpace(cert.MemberDIDAW),
@@ -406,12 +433,24 @@ func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signing
 		return nil, nil, err
 	}
 	privateRel := awconfig.WorktreeEncryptionPrivateKeyRelativePath(assertion.EncryptionKeyID)
-	privatePath := filepath.Join(identity.WorkingDir, privateRel)
+	if identity.ExternalIdentityHome {
+		privateRel = strings.TrimPrefix(filepath.ToSlash(privateRel), ".aw/")
+	}
+	privatePath, err := resolveIdentityStoredPath(identity.WorkingDir, identity.IdentityHome, privateRel)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := awid.SaveX25519PrivateKey(privatePath, priv); err != nil {
 		return nil, nil, err
 	}
 	assertionRel := awconfig.WorktreeEncryptionAssertionRelativePath(assertion.EncryptionKeyID)
-	assertionPath := filepath.Join(identity.WorkingDir, assertionRel)
+	if identity.ExternalIdentityHome {
+		assertionRel = strings.TrimPrefix(filepath.ToSlash(assertionRel), ".aw/")
+	}
+	assertionPath, err := resolveIdentityStoredPath(identity.WorkingDir, identity.IdentityHome, assertionRel)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := saveEncryptionAssertion(assertionPath, assertion); err != nil {
 		return nil, nil, err
 	}
@@ -445,7 +484,10 @@ func rebindLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signing
 	if assertion.EncryptionKeyID != strings.TrimSpace(record.KeyID) {
 		return nil, nil, errors.New("re-signed E2E assertion changed the active encryption key id")
 	}
-	assertionPath := resolveWorktreeRelativePath(identity.WorkingDir, record.AssertionPath)
+	assertionPath, err := resolveIdentityStoredPath(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := saveEncryptionAssertion(assertionPath, assertion); err != nil {
 		return nil, nil, err
 	}
@@ -462,11 +504,36 @@ type encryptionRecordKeyMaterial struct {
 	PublicKey string
 }
 
+func identityRecordPathBestEffort(identity *awconfig.ResolvedIdentity, storedPath string) string {
+	if identity == nil {
+		return ""
+	}
+	path, _ := resolveIdentityStoredPath(identity.WorkingDir, identity.IdentityHome, storedPath)
+	return path
+}
+
+func encryptionStatePathForIdentity(identity *awconfig.ResolvedIdentity) (string, error) {
+	if identity == nil {
+		return "", fmt.Errorf("identity is required")
+	}
+	if strings.TrimSpace(identity.IdentityHome) != "" {
+		return awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identity.IdentityHome}, "encryption.yaml")
+	}
+	return awconfig.WorktreeEncryptionStatePath(identity.WorkingDir), nil
+}
+
 func validateEncryptionRecordPrivateKey(root string, record *awconfig.EncryptionKeyRecord) (*encryptionRecordKeyMaterial, error) {
+	return validateEncryptionRecordPrivateKeyAt(root, "", record)
+}
+
+func validateEncryptionRecordPrivateKeyAt(workingDir, identityHome string, record *awconfig.EncryptionKeyRecord) (*encryptionRecordKeyMaterial, error) {
 	if record == nil {
 		return nil, usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
 	}
-	privatePath := resolveWorktreeRelativePath(root, record.PrivateKeyPath)
+	privatePath, pathErr := resolveIdentityStoredPath(workingDir, identityHome, record.PrivateKeyPath)
+	if pathErr != nil {
+		return nil, pathErr
+	}
 	priv, err := awid.LoadX25519PrivateKey(privatePath)
 	if err != nil {
 		return nil, usageError("local E2E encryption private key is missing or unreadable at %s; restore it from backup before publishing this key, or run `aw id encryption-key rotate` to publish a new key", privatePath)
@@ -527,7 +594,7 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 		skipped = append(skipped, "awid: local identity has no did:aw")
 	}
 
-	if hasWorkspaceBinding(identity.WorkingDir) {
+	if hasWorkspaceBinding(identity) {
 		client, _, err := resolveClientSelectionForDir(identity.WorkingDir)
 		if err != nil {
 			return nil, nil, err
@@ -546,8 +613,14 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 	return published, skipped, nil
 }
 
-func hasWorkspaceBinding(workingDir string) bool {
-	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+func hasWorkspaceBinding(identity *awconfig.ResolvedIdentity) bool {
+	if identity == nil {
+		return false
+	}
+	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(identity.WorkingDir)
+	if strings.TrimSpace(identity.IdentityHome) != "" {
+		workspace, teamState, _, err = awconfig.LoadWorkspaceAndTeamStateFromIdentityHome(identity.IdentityHome)
+	}
 	if err != nil || workspace == nil {
 		return false
 	}
@@ -564,7 +637,14 @@ func saveEncryptionAssertion(path string, assertion *awid.EncryptionKeyAssertion
 }
 
 func loadEncryptionAssertion(root, relPath string) (*awid.EncryptionKeyAssertion, error) {
-	path := resolveWorktreeRelativePath(root, relPath)
+	return loadEncryptionAssertionAt(root, "", relPath)
+}
+
+func loadEncryptionAssertionAt(workingDir, identityHome, relPath string) (*awid.EncryptionKeyAssertion, error) {
+	path, err := resolveIdentityStoredPath(workingDir, identityHome, relPath)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read encryption key assertion %s: %w", path, err)
@@ -576,15 +656,19 @@ func loadEncryptionAssertion(root, relPath string) (*awid.EncryptionKeyAssertion
 	return &assertion, nil
 }
 
+func resolveIdentityStoredPath(workingDir, identityHome, storedPath string) (string, error) {
+	if strings.TrimSpace(identityHome) != "" {
+		return awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identityHome}, storedPath)
+	}
+	return awconfig.WorktreeStoredIdentityPath(workingDir, storedPath)
+}
+
 func resolveWorktreeRelativePath(root, path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	resolved, err := resolveIdentityStoredPath(root, "", path)
+	if err != nil {
 		return ""
 	}
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(root, filepath.FromSlash(path))
+	return resolved
 }
 
 func encryptionKeyBackupWarning() string {

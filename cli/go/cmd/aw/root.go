@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,8 @@ var teamFlag string
 var debugFlag bool
 var jsonFlag bool
 var traceFlag bool
+var identityHomeFlag string
+var activeIdentityHome awconfig.IdentityHome
 
 const (
 	groupWorkspace    = "workspace"
@@ -27,15 +30,40 @@ var rootCmd = &cobra.Command{
 	Use:   "aw",
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if isIdentityHomeNeutralCommand(cmd) {
+			return nil
+		}
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 			debugFlag = true
 		}
 		if traceFlag {
 			_ = os.Setenv("AW_TRACE", "1")
 		}
+		identityHomeEnv, hadIdentityHomeEnv := os.LookupEnv(awconfig.IdentityHomeEnv)
+		previousActiveIdentityHome := activeIdentityHome
+		home, err := awconfig.ResolveIdentityHome("", identityHomeFlag)
+		if err != nil {
+			return err
+		}
+		if err := requireIdentityHomeAwareCommand(cmd, home.External()); err != nil {
+			return err
+		}
 		loadDotenvBestEffort()
+		if home.External() {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
+		} else if hadIdentityHomeEnv {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, identityHomeEnv)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+		activeIdentityHome = awconfig.IdentityHome{}
+		if home.External() {
+			activeIdentityHome = home
+		}
+		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
 		maybeCheckLatestVersion(cmd)
+		return nil
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -60,6 +88,9 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
+	// Cobra normally runs only the nearest persistent hook. Traversal makes the
+	// root identity-home policy unshadowable by commands with their own hooks.
+	cobra.EnableTraverseRunHooks = true
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},
 		&cobra.Group{ID: groupIdentity, Title: "Identity"},
@@ -103,6 +134,7 @@ func init() {
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
+	rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use identity authority from this absolute credential root")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")
 	rootCmd.PersistentFlags().BoolVar(&traceFlag, "trace", false, "Trace redacted HTTP requests and responses to stderr")
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output as JSON")
@@ -132,6 +164,36 @@ func init() {
 	rootCmd.AddCommand(a2aCmd)
 }
 
+func restoreIdentityHomeAfterCommand(cmd *cobra.Command, previousEnv string, hadPreviousEnv bool, previousActive awconfig.IdentityHome) {
+	restore := func() {
+		if hadPreviousEnv {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, previousEnv)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+		activeIdentityHome = previousActive
+	}
+	if runE := cmd.RunE; runE != nil {
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			defer func() {
+				restore()
+				cmd.RunE = runE
+			}()
+			return runE(cmd, args)
+		}
+		return
+	}
+	if run := cmd.Run; run != nil {
+		cmd.Run = func(cmd *cobra.Command, args []string) {
+			defer func() {
+				restore()
+				cmd.Run = run
+			}()
+			run(cmd, args)
+		}
+	}
+}
+
 func bindTeamSelector(cmd *cobra.Command) {
 	if cmd == nil {
 		return
@@ -143,10 +205,16 @@ func Execute() {
 	if argsContainTraceFlag(os.Args[1:]) {
 		_ = os.Setenv("AW_TRACE", "1")
 	}
+	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitCode(err))
+	}
+	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
 		os.Exit(code)
 	}
-	err := rootCmd.Execute()
+	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	if err != nil {
 		msg := err.Error()
@@ -156,6 +224,38 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(exitCode(err))
 	}
+}
+
+func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
+	explicit := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if strings.HasPrefix(arg, "--identity-home=") {
+			explicit = strings.TrimSpace(strings.TrimPrefix(arg, "--identity-home="))
+			continue
+		}
+		if arg == "--identity-home" && i+1 < len(args) {
+			explicit = strings.TrimSpace(args[i+1])
+			i++
+		}
+	}
+	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
+	home, err := awconfig.ResolveIdentityHome("", explicit)
+	if err != nil {
+		return func() {}, err
+	}
+	if home.External() {
+		if err := os.Setenv(awconfig.IdentityHomeEnv, home.Root); err != nil {
+			return func() {}, err
+		}
+	}
+	return func() {
+		if existed {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, previous)
+		} else {
+			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		}
+	}, nil
 }
 
 func argsContainTraceFlag(args []string) bool {

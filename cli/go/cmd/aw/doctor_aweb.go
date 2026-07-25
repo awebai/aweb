@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -144,7 +143,7 @@ func (s *doctorAwebState) hasNoWorkspaceContext() bool {
 func collectDoctorAwebState(workingDir string) *doctorAwebState {
 	state := &doctorAwebState{
 		workingDir:    strings.TrimSpace(workingDir),
-		workspacePath: filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+		workspacePath: awconfig.WorktreeWorkspacePath(workingDir),
 		certPath:      "",
 		signingKeyDID: "",
 		signingKeyErr: nil,

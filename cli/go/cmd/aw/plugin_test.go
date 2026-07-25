@@ -242,6 +242,33 @@ printf 'AW_DID=%s\n' "$AW_DID"
 		}
 	}
 
+	principalParent := filepath.Join(tmp, "principal")
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	writeSelectionFixtureForTest(t, principalParent, testSelectionFixture{
+		AwebURL: "https://team.example", TeamID: "backend:aweb.ai", Alias: "attached",
+		WorkspaceID: "workspace-attached", DID: did, StableID: awid.ComputeStableID(pub),
+		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent, SigningKey: key,
+	})
+	identityHome, err := filepath.EvalSymlinks(filepath.Join(principalParent, ".aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runAttached := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "hello", "attached")
+	runAttached.Dir = tmp
+	runAttached.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+	attachedOut, err := runAttached.CombinedOutput()
+	if err != nil {
+		t.Fatalf("flag-attached plugin dispatch failed: %v\n%s", err, attachedOut)
+	}
+	if !strings.Contains(string(attachedOut), "AW_DID="+did) {
+		t.Fatalf("flag-attached plugin missing principal DID:\n%s", attachedOut)
+	}
+
 	runPathOnly := exec.CommandContext(ctx, bin, "pathonly")
 	runPathOnly.Dir = tmp
 	runPathOnly.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1")
@@ -518,14 +545,17 @@ func serverOriginForTest(r *http.Request) string {
 }
 
 func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
+	instance := filepath.Join(tmp, "instance")
+	principal := filepath.Join(tmp, "principal")
+	if err := os.MkdirAll(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	_, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -565,17 +595,25 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
+	writeSelectionFixtureForTest(t, principal, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "default:acme.com", Alias: "alice", WorkspaceID: "workspace-1",
+		DID: did, StableID: awid.ComputeStableID(priv.Public().(ed25519.PublicKey)), Address: "acme.com/alice",
+		Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, SigningKey: priv,
+	})
+	identityHome, err := filepath.EvalSymlinks(filepath.Join(principal, ".aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
-	install.Dir = tmp
+	install.Dir = instance
 	install.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
 	if out, err := install.CombinedOutput(); err != nil {
 		t.Fatalf("plugin install failed: %v\n%s", err, string(out))
 	}
 
-	run := exec.CommandContext(ctx, bin, "folio", "present", "--slug", "pitch", "--ttl_seconds", "3600", "--editable", "true")
-	run.Dir = tmp
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "folio", "present", "--slug", "pitch", "--ttl_seconds", "3600", "--editable", "true")
+	run.Dir = instance
 	run.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -1560,16 +1561,22 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err != nil {
 		return nil, err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
 	if scope == awid.IdentityModeGlobal {
-		if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
 			return nil, err
 		}
-	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false); err != nil {
+	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false, home.Root); err != nil {
 		return nil, err
 	}
 	// Accept completed: clear the pending marker so the home is no longer in
 	// pending-accept state. (The completed-identity guard already protects it.)
-	_ = os.Remove(hostedAcceptPendingMarkerPath(workingDir))
+	if err := removeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+		return nil, err
+	}
 
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
@@ -1593,13 +1600,25 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
 		return nil, nil, err
 	}
-	keyPath := awconfig.WorktreeSigningKeyPath(workingDir)
-	markerPath := hostedAcceptPendingMarkerPath(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPath, err := awconfig.IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return nil, nil, err
+	}
+	markerPath := hostedAcceptPendingMarkerPath(workingDir, home.Root)
 	if _, err := os.Stat(keyPath); err == nil {
-		completedPaths := []string{
-			filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-			filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+		identityPath, pathErr := awconfig.IdentityHomePath(home, "identity.yaml")
+		if pathErr != nil {
+			return nil, nil, pathErr
 		}
+		workspacePath, pathErr := awconfig.IdentityHomePath(home, "workspace.yaml")
+		if pathErr != nil {
+			return nil, nil, pathErr
+		}
+		completedPaths := []string{identityPath, workspacePath}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
 				return nil, nil, usageError("refusing to overwrite existing %s", path)
@@ -1611,7 +1630,10 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 		if markerErr != nil {
 			return nil, nil, markerErr
 		}
-		certsPath := awconfig.TeamCertificatesDir(workingDir)
+		certsPath := filepath.Join(home.Root, "team-certs")
+		if err := pathpreflight.PreflightDir(certsPath, "team certificate directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return nil, nil, err
+		}
 		if _, err := os.Stat(certsPath); err == nil {
 			// A previous hosted accept can fail after writing the certificate but
 			// before writing identity.yaml. The pending marker proves this is the
@@ -1642,8 +1664,8 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
 		return nil, nil, fmt.Errorf("save pending hosted accept signing key: %w", err)
 	}
-	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
-		return nil, nil, fmt.Errorf("write pending hosted accept marker: %w", err)
+	if err := writeHostedAcceptPendingMarker(markerPath); err != nil {
+		return nil, nil, err
 	}
 	return pub, signingKey, nil
 }
@@ -1651,8 +1673,12 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 // hostedAcceptPendingMarkerPath is the marker written next to the signing key
 // while a hosted accept is pending, so a retry reuses the key while a stray
 // leftover key (no marker) is refused.
-func hostedAcceptPendingMarkerPath(workingDir string) string {
-	return filepath.Join(filepath.Dir(awconfig.WorktreeSigningKeyPath(workingDir)), "pending-hosted-accept")
+func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) string {
+	root := filepath.Join(filepath.Clean(workingDir), ".aw")
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		root = filepath.Clean(identityHomes[0])
+	}
+	return filepath.Join(root, "pending-hosted-accept")
 }
 
 func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress, expectedScope string, expectedNoAddress bool) (*awid.TeamCertificate, string, error) {
@@ -1757,7 +1783,34 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	return nil
 }
 
+func preflightHostedAcceptPendingMarker(markerPath string) error {
+	return pathpreflight.PreflightFile(markerPath, "hosted accept recovery marker", pathpreflight.AllowTempAmbientSymlinkPrefix())
+}
+
+func writeHostedAcceptPendingMarker(markerPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
+	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
+		return fmt.Errorf("write pending hosted accept marker: %w", err)
+	}
+	return nil
+}
+
+func removeHostedAcceptPendingMarker(markerPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func statHostedAcceptPendingMarker(markerPath, keyPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
 	if _, err := os.Stat(markerPath); err != nil {
 		if os.IsNotExist(err) {
 			return usageError(
@@ -2817,7 +2870,10 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 		if selectedMembership == nil {
 			return nil, "", fmt.Errorf("teams state is missing selected team membership")
 		}
-		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+		certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, selectedMembership.CertPath)
+		if err != nil {
+			return nil, "", err
+		}
 		cert, err := awid.LoadTeamCertificate(certPath)
 		if err != nil {
 			return nil, "", fmt.Errorf("load active team certificate %s: %w", certPath, err)
@@ -2835,7 +2891,11 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 	if len(stored) > 1 {
 		return nil, "", fmt.Errorf("multiple team certificates found under %s; set an active team first", awconfig.TeamCertificatesDir(workingDir))
 	}
-	return stored[0].Certificate, filepath.Join(workingDir, ".aw", filepath.FromSlash(stored[0].CertPath)), nil
+	certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, stored[0].CertPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return stored[0].Certificate, certPath, nil
 }
 
 func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, error) {
@@ -2852,7 +2912,9 @@ func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, erro
 func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvite, cause error) error {
 	revokeErr := revokeAcceptedTeamCertificate(accepted)
 	if accepted != nil && accepted.Output != nil && strings.TrimSpace(accepted.Output.CertPath) != "" {
-		_ = os.Remove(filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(accepted.Output.CertPath))))
+		if certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, accepted.Output.CertPath); err == nil {
+			_ = os.Remove(certPath)
+		}
 	}
 	if revokeErr != nil {
 		return fmt.Errorf("%w (rollback revoke failed: %v)", cause, revokeErr)
@@ -2888,11 +2950,11 @@ func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOut
 	return ensureLocalIdentityEncryptionKeyForDir(workingDir)
 }
 
-func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool) error {
+func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {
 	if output == nil || cert == nil {
 		return fmt.Errorf("accepted team membership is required")
 	}
-	teamState, err := loadOptionalTeamState(workingDir)
+	teamState, err := loadOptionalTeamState(workingDir, identityHomes...)
 	if err != nil {
 		return err
 	}
@@ -2924,11 +2986,20 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 	if setActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)
 	}
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		return awconfig.SaveTeamStateToIdentityHome(identityHomes[0], teamState)
+	}
 	return awconfig.SaveTeamState(workingDir, teamState)
 }
 
-func loadOptionalTeamState(workingDir string) (*awconfig.TeamState, error) {
-	teamState, err := awconfig.LoadTeamState(workingDir)
+func loadOptionalTeamState(workingDir string, identityHomes ...string) (*awconfig.TeamState, error) {
+	var teamState *awconfig.TeamState
+	var err error
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHomes[0])
+	} else {
+		teamState, err = awconfig.LoadTeamState(workingDir)
+	}
 	if err == nil {
 		return teamState, nil
 	}
@@ -3330,7 +3401,7 @@ func validateMemberAddressForCertificate(
 
 func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
 	// Try to load existing identity
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err == nil && strings.TrimSpace(identity.DID) != "" {
 		return strings.TrimSpace(identity.DID), nil
@@ -3364,7 +3435,7 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 // resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
 // Returns empty strings for local agents that have no identity.yaml.
 func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
 		return "", ""
@@ -3373,7 +3444,7 @@ func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 }
 
 func resolveAliasFromIdentity(workingDir string) string {
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil || strings.TrimSpace(identity.Address) == "" {
 		return ""

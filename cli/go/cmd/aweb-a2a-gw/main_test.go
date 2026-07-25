@@ -988,6 +988,36 @@ func TestGatewayBaseURLPrefersWorkspaceOverTeamMembership(t *testing.T) {
 	}
 }
 
+func TestGatewayWorkspaceRootIgnoresAwIdentityHome(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayRoot := filepath.Join(root, "gateway")
+	externalIdentityHome := filepath.Join(root, "aw-principal")
+	if err := os.MkdirAll(externalIdentityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(awconfig.IdentityHomeEnv, externalIdentityHome)
+	writeGatewayWorkspace(t, gatewayRoot, "https://gateway.example")
+	for _, path := range []string{
+		filepath.Join(gatewayRoot, ".aw", "workspace.yaml"),
+		filepath.Join(gatewayRoot, ".aw", "teams.yaml"),
+		filepath.Join(gatewayRoot, ".aw", "signing.key"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("gateway root missing %s: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(externalIdentityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("gateway contaminated aw principal root: %v", entries)
+	}
+}
+
 func writeGatewayWorkspace(t *testing.T, dir, awebURL string) {
 	t.Helper()
 	_, teamPriv, err := awid.GenerateKeypair()

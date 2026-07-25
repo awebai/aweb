@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/awebai/aw/awconfig"
 	awrun "github.com/awebai/aw/run"
 )
 
@@ -38,13 +37,19 @@ type InteractionEntry struct {
 }
 
 func interactionLogRoot(startDir string) string {
-	if path, err := awconfig.FindWorktreeContextPath(startDir); err == nil {
-		return filepath.Dir(filepath.Dir(path))
+	dir := filepath.Clean(startDir)
+	for {
+		for _, marker := range []string{filepath.Join(".aw", "context"), filepath.Join(".aw", "workspace.yaml"), ".git"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Clean(startDir)
+		}
+		dir = parent
 	}
-	if path, err := awconfig.FindWorktreeWorkspacePath(startDir); err == nil {
-		return filepath.Dir(filepath.Dir(path))
-	}
-	return filepath.Clean(startDir)
 }
 
 func interactionLogPath(startDir string) string {

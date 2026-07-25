@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -144,7 +143,7 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 			}
 		}
 	}
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	if identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil && identity != nil {
 		meta.IdentityYAMLPresent = true
 		if scope := strings.TrimSpace(identity.IdentityScope); scope != "" {
@@ -220,7 +219,7 @@ func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
 			}
 		}
 	}
-	if identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err == nil && identity != nil {
+	if identity, err := awconfig.LoadWorktreeIdentityFrom(awconfig.WorktreeIdentityPath(workingDir)); err == nil && identity != nil {
 		addURLSecrets(identity.RegistryURL)
 	}
 	addURLSecrets(os.Getenv("AWID_REGISTRY_URL"))

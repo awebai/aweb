@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestAppendInteractionLogForDirDedupesByMessageID(t *testing.T) {
@@ -29,6 +31,23 @@ func TestAppendInteractionLogForDirDedupesByMessageID(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+}
+
+func TestInteractionLogUsesInstanceRootFromSubdirectoryDespiteIdentityHome(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "nested", "work")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	externalIdentityHome := filepath.Join(t.TempDir(), "identity")
+	t.Setenv(awconfig.IdentityHomeEnv, externalIdentityHome)
+	want := filepath.Join(root, ".aw", interactionLogFileName)
+	if got := interactionLogPath(subdir); got != want {
+		t.Fatalf("interaction log path=%q want instance root %q", got, want)
 	}
 }
 

@@ -25,6 +25,9 @@ func runReset(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseExternalIdentityCleanup(wd, "aw reset"); err != nil {
+		return err
+	}
 
 	removed := make([]string, 0, 2)
 	ctxPath, ctxErr := awconfig.FindWorktreeContextPath(wd)

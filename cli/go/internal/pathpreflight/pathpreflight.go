@@ -96,6 +96,10 @@ func RejectSymlinkedExistingComponents(path, label string, opts Options) error {
 }
 
 func isAllowedAmbientSymlinkPrefix(path string) bool {
+	clean := filepath.Clean(path)
+	if clean == filepath.Clean(string(filepath.Separator)+"tmp") || clean == filepath.Clean(string(filepath.Separator)+"var") {
+		return true
+	}
 	tempDir := filepath.Clean(os.TempDir())
 	rel, err := filepath.Rel(filepath.Clean(path), tempDir)
 	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))

@@ -509,6 +509,10 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 }
 
 func persistLocalSigningKeyAndCertificate(workingDir string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate) error {
+	return persistLocalSigningKeyAndCertificateAt(workingDir, filepath.Join(filepath.Clean(workingDir), ".aw"), signingKey, cert)
+}
+
+func persistLocalSigningKeyAndCertificateAt(workingDir, identityHome string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate) error {
 	if strings.TrimSpace(workingDir) == "" {
 		return fmt.Errorf("working directory is required")
 	}
@@ -521,10 +525,18 @@ func persistLocalSigningKeyAndCertificate(workingDir string, signingKey ed25519.
 	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
 		return err
 	}
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), signingKey); err != nil {
+	signingKeyPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
+	if err != nil {
 		return err
 	}
-	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
+	if err := awid.SaveSigningKey(signingKeyPath, signingKey); err != nil {
+		return err
+	}
+	certPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, awconfig.TeamCertificateRelativePath(cert.Team))
+	if err != nil {
+		return err
+	}
+	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
 		return err
 	}
 	return nil
@@ -789,14 +801,22 @@ func persistGuidedHostedState(
 	cert *awid.TeamCertificate,
 	didKey, didAW, memberAddress string,
 	persistent bool,
+	identityHomes ...string,
 ) error {
-	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+	identityHome := filepath.Join(filepath.Clean(workingDir), ".aw")
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		identityHome = filepath.Clean(identityHomes[0])
+	}
+	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, signingKey, cert); err != nil {
 		return err
 	}
 	if !persistent {
 		return nil
 	}
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
+	if err != nil {
+		return err
+	}
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
 		DID:            didKey,
 		StableID:       didAW,

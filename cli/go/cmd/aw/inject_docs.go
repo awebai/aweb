@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 const (
@@ -26,6 +28,20 @@ func InjectAgentDocs(repoRoot string) *injectDocsResult {
 		return &injectDocsResult{Errors: []string{err.Error()}}
 	}
 	return InjectProvidedAgentDocs(repoRoot, body)
+}
+
+func InjectAgentDocsAtIdentityHome(repoRoot string, identityHome awconfig.IdentityHome) *injectDocsResult {
+	client, _, err := resolveClientSelectionAtIdentityHome(repoRoot, identityHome)
+	if err != nil {
+		return &injectDocsResult{Errors: []string{err.Error()}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	resp, err := client.ActiveTeamInstructions(ctx)
+	if err != nil {
+		return &injectDocsResult{Errors: []string{err.Error()}}
+	}
+	return InjectProvidedAgentDocs(repoRoot, strings.TrimSpace(resp.Document.BodyMD))
 }
 
 func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {

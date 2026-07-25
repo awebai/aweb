@@ -398,7 +398,10 @@ func DefaultWorktreeWorkspaceRelativePath() string {
 }
 
 func FindWorktreeWorkspacePath(startDir string) (string, error) {
-	p := filepath.Join(filepath.Clean(startDir), DefaultWorktreeWorkspaceRelativePath())
+	p := WorktreeWorkspacePath(startDir)
+	if err := preflightIdentityFile(p, "workspace file"); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(p); err == nil {
 		return p, nil
 	}
@@ -406,6 +409,9 @@ func FindWorktreeWorkspacePath(startDir string) (string, error) {
 }
 
 func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
+	if err := preflightIdentityFile(path, "workspace file"); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -418,6 +424,9 @@ func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
 }
 
 func LoadLegacySingleTeamWorkspaceFrom(path string) (*LegacySingleTeamWorkspace, error) {
+	if err := preflightIdentityFile(path, "workspace file"); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -457,6 +466,9 @@ func LoadWorktreeWorkspaceFromDir(startDir string) (*WorktreeWorkspace, string, 
 }
 
 func SaveWorktreeWorkspaceTo(path string, state *WorktreeWorkspace) error {
+	if err := preflightIdentityFile(path, "workspace file"); err != nil {
+		return err
+	}
 	if state == nil {
 		return errors.New("nil workspace state")
 	}

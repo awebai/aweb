@@ -39,6 +39,7 @@ type localSigningIdentity struct {
 	SigningKey     ed25519.PrivateKey
 	SigningKeyPath string
 	WorkingDir     string
+	IdentityHome   string
 	TeamID         string
 	Custody        string
 	Lifetime       string
@@ -280,6 +281,7 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 		SigningKey:     signingKey,
 		SigningKeyPath: signingKeyPath,
 		WorkingDir:     strings.TrimSpace(sel.WorkingDir),
+		IdentityHome:   strings.TrimSpace(sel.IdentityHome),
 		TeamID:         strings.TrimSpace(sel.TeamID),
 		Custody:        strings.TrimSpace(sel.Custody),
 		Lifetime:       awid.LegacyLifetimeForIdentityScope(sel.IdentityScope),
@@ -300,7 +302,17 @@ func teamSignedRequestPayload(identity *localSigningIdentity, target *url.URL, m
 	if strings.TrimSpace(identity.WorkingDir) == "" || strings.TrimSpace(identity.TeamID) == "" {
 		return nil, nil, usageError("--team-auth requires an aw workspace with an active team")
 	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(identity.WorkingDir, identity.TeamID)
+	var cert *awid.TeamCertificate
+	var err error
+	if strings.TrimSpace(identity.IdentityHome) != "" {
+		certPath, pathErr := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identity.IdentityHome}, awconfig.TeamCertificateRelativePath(identity.TeamID))
+		if pathErr != nil {
+			return nil, nil, pathErr
+		}
+		cert, err = awid.LoadTeamCertificate(certPath)
+	} else {
+		cert, err = awconfig.LoadTeamCertificateForTeam(identity.WorkingDir, identity.TeamID)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("load active team certificate: %w", err)
 	}

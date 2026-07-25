@@ -104,9 +104,9 @@ type doctorTeamMembershipYAML struct {
 func (r *doctorRunner) runLocalChecks() {
 	state := doctorLocalState{
 		workingDir:     r.workingDir,
-		workspacePath:  filepath.Join(r.workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
+		workspacePath:  awconfig.WorktreeWorkspacePath(r.workingDir),
 		signingKeyPath: awconfig.WorktreeSigningKeyPath(r.workingDir),
-		identityPath:   filepath.Join(r.workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
+		identityPath:   awconfig.WorktreeIdentityPath(r.workingDir),
 	}
 
 	workspace, workspacePath, err := loadDoctorWorkspaceFromDir(r.workingDir)
@@ -273,7 +273,11 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		))
 		return
 	}
-	state.certPath = resolveWorkspaceCertificatePath(state.workingDir, certPathValue)
+	state.certPath, err = awconfig.WorktreeStoredIdentityPath(state.workingDir, certPathValue)
+	if err != nil {
+		r.add(localCheck(doctorCheckWorkspaceCertPath, doctorStatusFail, localPathTarget(certPathValue), "Active membership cert_path is unsafe.", "Restore a contained, non-symlinked team certificate path.", map[string]any{"error": err.Error()}))
+		return
+	}
 	r.add(localPathCheck(
 		doctorCheckWorkspaceCertPath,
 		doctorStatusOK,
@@ -920,14 +924,11 @@ func localPathTarget(path string) *doctorTarget {
 }
 
 func resolveWorkspaceCertificatePath(workingDir, certPath string) string {
-	certPath = filepath.FromSlash(strings.TrimSpace(certPath))
-	if certPath == "" {
+	path, err := awconfig.WorktreeStoredIdentityPath(workingDir, certPath)
+	if err != nil {
 		return ""
 	}
-	if filepath.IsAbs(certPath) {
-		return filepath.Clean(certPath)
-	}
-	return filepath.Join(workingDir, ".aw", certPath)
+	return path
 }
 
 func sanitizeLocalURLForOutput(raw string) (string, error) {

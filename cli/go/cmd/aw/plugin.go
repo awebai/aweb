@@ -828,13 +828,13 @@ func firstNonFlagArg(args []string) (string, int) {
 			}
 			return "", -1
 		}
-		if strings.HasPrefix(arg, "--server-name=") {
+		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") {
 			continue
 		}
 		switch arg {
 		case "--json", "--debug", "--trace":
 			continue
-		case "--server-name":
+		case "--server-name", "--identity-home":
 			i++
 			continue
 		}

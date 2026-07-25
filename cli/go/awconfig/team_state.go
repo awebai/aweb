@@ -251,16 +251,33 @@ func DefaultTeamStateRelativePath() string {
 }
 
 func TeamStatePath(root string) string {
-	return filepath.Join(filepath.Clean(root), DefaultTeamStateRelativePath())
+	return filepath.Join(WorktreeIdentityHome(root), "teams.yaml")
 }
 
 func LoadTeamState(workingDir string) (*TeamState, error) {
-	data, err := os.ReadFile(TeamStatePath(workingDir))
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
+	path := TeamStatePath(workingDir)
+	state, err := loadTeamStateFrom(path)
+	if os.IsNotExist(err) {
 		return migrateTeamStateFromWorkspace(workingDir)
+	}
+	return state, err
+}
+
+func LoadTeamStateFromIdentityHome(identityHome string) (*TeamState, error) {
+	path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "teams.yaml")
+	if err != nil {
+		return nil, err
+	}
+	return loadTeamStateFrom(path)
+}
+
+func loadTeamStateFrom(path string) (*TeamState, error) {
+	if err := preflightIdentityFile(path, "team state file"); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	var state TeamState
 	if err := yaml.Unmarshal(data, &state); err != nil {
@@ -272,6 +289,32 @@ func LoadTeamState(workingDir string) (*TeamState, error) {
 // LoadWorkspaceAndTeamState loads workspace.yaml and teams.yaml from the same
 // worktree root. teams.yaml is authoritative for active-team selection after
 // LoadTeamState has applied any one-time legacy workspace migration.
+func LoadWorkspaceAndTeamStateFromIdentityHome(identityHome string) (*WorktreeWorkspace, *TeamState, string, error) {
+	identityHome = filepath.Clean(identityHome)
+	home := IdentityHome{Root: identityHome}
+	workspacePath, err := IdentityHomePath(home, "workspace.yaml")
+	if err != nil {
+		return nil, nil, "", err
+	}
+	workspace, err := LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	teamStatePath, err := IdentityHomePath(home, "teams.yaml")
+	if err != nil {
+		return workspace, nil, identityHome, err
+	}
+	data, err := os.ReadFile(teamStatePath)
+	if err != nil {
+		return workspace, nil, identityHome, err
+	}
+	var teamState TeamState
+	if err := yaml.Unmarshal(data, &teamState); err != nil {
+		return workspace, nil, identityHome, err
+	}
+	return workspace, &teamState, identityHome, nil
+}
+
 func LoadWorkspaceAndTeamState(startDir string) (*WorktreeWorkspace, *TeamState, string, error) {
 	workspace, workspacePath, err := LoadWorktreeWorkspaceFromDir(startDir)
 	if err != nil {
@@ -289,6 +332,21 @@ func LoadWorkspaceAndTeamState(startDir string) (*WorktreeWorkspace, *TeamState,
 }
 
 func SaveTeamState(workingDir string, state *TeamState) error {
+	return saveTeamStateTo(TeamStatePath(workingDir), state)
+}
+
+func SaveTeamStateToIdentityHome(identityHome string, state *TeamState) error {
+	path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "teams.yaml")
+	if err != nil {
+		return err
+	}
+	return saveTeamStateTo(path, state)
+}
+
+func saveTeamStateTo(path string, state *TeamState) error {
+	if err := preflightIdentityFile(path, "team state file"); err != nil {
+		return err
+	}
 	if state == nil {
 		return errors.New("nil team state")
 	}
@@ -296,11 +354,11 @@ func SaveTeamState(workingDir string, state *TeamState) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(TeamStatePath(workingDir), append(bytesTrimRightNewlines(data), '\n'))
+	return atomicWriteFile(path, append(bytesTrimRightNewlines(data), '\n'))
 }
 
 func migrateTeamStateFromWorkspace(workingDir string) (*TeamState, error) {
-	workspacePath := filepath.Join(filepath.Clean(workingDir), DefaultWorktreeWorkspaceRelativePath())
+	workspacePath := WorktreeWorkspacePath(workingDir)
 	workspace, err := LoadWorktreeWorkspaceFrom(workspacePath)
 	if err != nil {
 		if os.IsNotExist(err) {

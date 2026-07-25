@@ -181,13 +181,36 @@ For the full schema and resolution rules see
 | Variable            | Purpose                                          |
 |---------------------|--------------------------------------------------|
 | `AWEB_URL`          | Base URL override                                |
+| `AWEB_IDENTITY_HOME` | Absolute credential root used for identity authority |
 | `AW_DEBUG`          | Enable debug logging to stderr                   |
 
 ### Resolution order
 
-CLI flags (`--server-name`, or `aw init --url`) > environment variables > local
-active team certificate in `.aw/team-certs/` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
-(for global identity fields) > local `.aw/context`.
+CLI flags (`--server-name`, `--identity-home`, or `aw init --url`) > environment
+variables > local active team certificate in `.aw/team-certs/` > local
+`.aw/workspace.yaml` > local `.aw/identity.yaml` (for global identity fields) >
+local `.aw/context`.
+
+`--identity-home` and `AWEB_IDENTITY_HOME` name the current principal's
+credential root directly. Principal state lives immediately beneath it:
+`identity.yaml`, `signing.key`, `workspace.yaml`, `teams.yaml`, `team-certs/`,
+`encryption.yaml`, `encryption-keys/`, `context`, rotation and bootstrap
+recovery markers, and static A2A endpoint credentials (entries without
+`task_id`). The path must be absolute and must not contain existing symlink
+components. Commands that provision another agent or the A2A gateway continue
+to use the explicit target root passed to them; the current-principal override
+does not redefine those paths.
+
+Identity selection does not change the process working directory, so relative
+message body and task paths remain instance-local. Profile, plugin, runtime,
+interaction-log, A2A task-token entries (entries with `task_id`), and
+chat-delivery-cache state also remain in the instance home. Namespace/team
+controller keys under `~/.awid` and host TOFU state are never redirected.
+
+An external identity home grants use authority, not cleanup authority. `aw
+reset` and `aw workspace delete` refuse while the flag or environment override
+is active. `aw run` passes the canonical resolved `AWEB_IDENTITY_HOME` to its
+provider and service children so nested `aw` commands keep the same identity.
 
 ## CLI Reference
 

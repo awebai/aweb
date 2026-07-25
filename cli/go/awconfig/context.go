@@ -18,7 +18,10 @@ func DefaultWorktreeContextRelativePath() string {
 }
 
 func FindWorktreeContextPath(startDir string) (string, error) {
-	p := filepath.Join(filepath.Clean(startDir), DefaultWorktreeContextRelativePath())
+	p := WorktreeContextPath(startDir)
+	if err := preflightIdentityFile(p, "identity context file"); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(p); err == nil {
 		return p, nil
 	}
@@ -26,6 +29,9 @@ func FindWorktreeContextPath(startDir string) (string, error) {
 }
 
 func LoadWorktreeContextFrom(path string) (*WorktreeContext, error) {
+	if err := preflightIdentityFile(path, "identity context file"); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -50,6 +56,9 @@ func LoadWorktreeContextFromDir(startDir string) (*WorktreeContext, string, erro
 }
 
 func SaveWorktreeContextTo(path string, ctx *WorktreeContext) error {
+	if err := preflightIdentityFile(path, "identity context file"); err != nil {
+		return err
+	}
 	if ctx == nil {
 		return errors.New("nil context")
 	}

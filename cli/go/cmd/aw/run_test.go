@@ -75,6 +75,13 @@ func TestRunInitUsesRunConfigWorkflow(t *testing.T) {
 
 func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	initRunCommandVars()
+	identityHome, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(awconfig.IdentityHomeEnv, "")
+	activeIdentityHome = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+	t.Cleanup(func() { activeIdentityHome = awconfig.IdentityHome{} })
 
 	oldLoad := runLoadUserConfig
 	oldResolveSettings := runResolveSettings
@@ -123,6 +130,9 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	runNewProvider = func(name string) (awrun.Provider, error) {
 		if name != "claude" {
 			t.Fatalf("provider=%q", name)
+		}
+		if got := os.Getenv(awconfig.IdentityHomeEnv); got != identityHome {
+			t.Fatalf("provider child %s=%q want %q", awconfig.IdentityHomeEnv, got, identityHome)
 		}
 		return awrun.ClaudeProvider{}, nil
 	}

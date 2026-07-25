@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -111,7 +110,7 @@ func (r *doctorRunner) runRegistryDoctorChecks() {
 func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
 	state := &doctorIdentityState{
 		workingDir:          strings.TrimSpace(workingDir),
-		identityPath:        filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
+		identityPath:        awconfig.WorktreeIdentityPath(workingDir),
 		signingKeyPath:      awconfig.WorktreeSigningKeyPath(workingDir),
 		encryptionStatePath: awconfig.WorktreeEncryptionStatePath(workingDir),
 	}

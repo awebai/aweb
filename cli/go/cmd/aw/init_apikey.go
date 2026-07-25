@@ -20,6 +20,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,16 +29,17 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	WorkingDir  string
-	AwebURL     string
-	RegistryURL string
-	APIKey      string
-	Name        string
-	Alias       string
-	Role        string
-	HumanName   string
-	AgentType   string
-	Persistent  bool
+	WorkingDir   string
+	IdentityHome string
+	AwebURL      string
+	RegistryURL  string
+	APIKey       string
+	Name         string
+	Alias        string
+	Role         string
+	HumanName    string
+	AgentType    string
+	Persistent   bool
 	// InboundMode is "open" or "team_and_contacts" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -114,6 +116,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return connectOutput{}, usageError("AWEB_API_KEY is required for API key bootstrap")
 	}
+	if strings.TrimSpace(req.IdentityHome) == "" {
+		req.IdentityHome = filepath.Join(filepath.Clean(req.WorkingDir), ".aw")
+	}
 	req.AwebURL = awebURLOrDefault(req.AwebURL)
 	if err := ensureConnectTargetClean(req.WorkingDir); err != nil {
 		return connectOutput{}, err
@@ -182,10 +187,10 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 
 	if req.Persistent {
 		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
-			if removeErr := removeAPIKeyPartialInit(req.WorkingDir); removeErr != nil {
+			if removeErr := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove partial init state: %v\n", removeErr)
 			}
-			pruneEmptyAwDir(req.WorkingDir)
+			pruneEmptyAwDir(req.WorkingDir, req.IdentityHome)
 			return connectOutput{}, fmt.Errorf(
 				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nTo use this name you need its original signing key (restore the original .aw directory), or ask an operator to remove the server-side identity record, then rerun.\nNo signing key was written; stale partial-init state was cleaned up.",
 				name,
@@ -214,30 +219,31 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
 	}
 
-	snapshot, err := snapshotAwTree(req.WorkingDir)
+	snapshot, err := snapshotAwTree(req.WorkingDir, req.IdentityHome)
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
-		rollbackAwTree(req.WorkingDir, snapshot)
+	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
+		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, err
 	}
 
 	out, err := initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
-		Role:      strings.TrimSpace(req.Role),
-		HumanName: strings.TrimSpace(req.HumanName),
-		AgentType: strings.TrimSpace(req.AgentType),
-		APIKey:    strings.TrimSpace(resp.APIKey),
+		Role:         strings.TrimSpace(req.Role),
+		HumanName:    strings.TrimSpace(req.HumanName),
+		AgentType:    strings.TrimSpace(req.AgentType),
+		APIKey:       strings.TrimSpace(resp.APIKey),
+		IdentityHome: strings.TrimSpace(req.IdentityHome),
 	})
 	if err != nil {
 		// Roll back everything this run created. The partial-init state (when
 		// present) survives via the snapshot, so a retry resumes with the same
 		// signing key the server already has on record.
-		rollbackAwTree(req.WorkingDir, snapshot)
+		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
 	if persistent {
-		if err := removeAPIKeyPartialInit(req.WorkingDir); err != nil {
+		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
 		}
 	}
@@ -247,8 +253,8 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 // snapshotAwTree records the set of paths currently present under .aw so a
 // later failure can remove exactly what the current run created. A nil map
 // means .aw itself did not exist.
-func snapshotAwTree(workingDir string) (map[string]bool, error) {
-	awDir := filepath.Join(workingDir, ".aw")
+func snapshotAwTree(workingDir string, identityHomes ...string) (map[string]bool, error) {
+	awDir := identityHomeForOperation(workingDir, identityHomes...)
 	if _, err := os.Stat(awDir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -273,8 +279,8 @@ func snapshotAwTree(workingDir string) (map[string]bool, error) {
 // preserving everything that existed before (including resumable
 // partial-init state). If .aw did not exist at snapshot time and nothing of
 // it remains, the directory itself is removed.
-func rollbackAwTree(workingDir string, snapshot map[string]bool) {
-	awDir := filepath.Join(workingDir, ".aw")
+func rollbackAwTree(workingDir string, snapshot map[string]bool, identityHomes ...string) {
+	awDir := identityHomeForOperation(workingDir, identityHomes...)
 	if _, err := os.Stat(awDir); err != nil {
 		return
 	}
@@ -295,13 +301,20 @@ func rollbackAwTree(workingDir string, snapshot map[string]bool) {
 		}
 	}
 	if snapshot == nil {
-		pruneEmptyAwDir(workingDir)
+		pruneEmptyAwDir(workingDir, identityHomes...)
 	}
 }
 
+func identityHomeForOperation(workingDir string, identityHomes ...string) string {
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		return filepath.Clean(identityHomes[0])
+	}
+	return filepath.Join(filepath.Clean(workingDir), ".aw")
+}
+
 // pruneEmptyAwDir removes .aw when it exists and is empty.
-func pruneEmptyAwDir(workingDir string) {
-	awDir := filepath.Join(workingDir, ".aw")
+func pruneEmptyAwDir(workingDir string, identityHomes ...string) {
+	awDir := identityHomeForOperation(workingDir, identityHomes...)
 	if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
 		_ = os.Remove(awDir)
 	}
@@ -320,10 +333,14 @@ func prepareAPIKeyBootstrapIdentity(
 	registry *awid.RegistryClient,
 ) (apiKeyBootstrapIdentityMaterial, error) {
 	if !req.Persistent {
-		if _, err := os.Stat(apiKeyPartialInitPath(req.WorkingDir)); err == nil {
+		partialPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
+		if err := preflightAPIKeyPartialInit(partialPath); err != nil {
+			return apiKeyBootstrapIdentityMaterial{}, err
+		}
+		if _, err := os.Stat(partialPath); err == nil {
 			return apiKeyBootstrapIdentityMaterial{}, usageError(
 				"found partial global API-key init state at %s; retry the global init or remove the file explicitly",
-				apiKeyPartialInitPath(req.WorkingDir),
+				partialPath,
 			)
 		} else if !os.IsNotExist(err) {
 			return apiKeyBootstrapIdentityMaterial{}, err
@@ -334,7 +351,7 @@ func prepareAPIKeyBootstrapIdentity(
 		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("identity registry client is required for global API-key bootstrap")
 	}
 
-	path := apiKeyPartialInitPath(req.WorkingDir)
+	path := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
 	state, err := loadAPIKeyPartialInit(path)
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
@@ -354,7 +371,7 @@ func prepareAPIKeyBootstrapIdentity(
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
-	if err := saveAPIKeyPartialInit(req.WorkingDir, state); err != nil {
+	if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("write partial API-key init state: %w", err)
 	}
 	return material, nil
@@ -373,11 +390,22 @@ func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) 
 	}, nil
 }
 
-func apiKeyPartialInitPath(workingDir string) string {
-	return filepath.Join(workingDir, ".aw", "partial-init.yaml")
+func apiKeyPartialInitPath(workingDir string, identityHomes ...string) string {
+	root := filepath.Join(filepath.Clean(workingDir), ".aw")
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		root = filepath.Clean(identityHomes[0])
+	}
+	return filepath.Join(root, "partial-init.yaml")
+}
+
+func preflightAPIKeyPartialInit(path string) error {
+	return pathpreflight.PreflightFile(path, "API-key recovery state", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
+	if err := preflightAPIKeyPartialInit(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -399,7 +427,7 @@ func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
 	return &state, nil
 }
 
-func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState) error {
+func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, identityHomes ...string) error {
 	if state == nil {
 		return fmt.Errorf("nil partial API-key init state")
 	}
@@ -407,11 +435,19 @@ func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState) err
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(apiKeyPartialInitPath(workingDir), data)
+	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+	if err := preflightAPIKeyPartialInit(path); err != nil {
+		return err
+	}
+	return awid.AtomicWriteFile(path, data)
 }
 
-func removeAPIKeyPartialInit(workingDir string) error {
-	if err := os.Remove(apiKeyPartialInitPath(workingDir)); err != nil && !os.IsNotExist(err) {
+func removeAPIKeyPartialInit(workingDir string, identityHomes ...string) error {
+	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+	if err := preflightAPIKeyPartialInit(path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -660,20 +696,23 @@ func verifyAPIKeyBootstrapCertificate(cert *awid.TeamCertificate) error {
 }
 
 func persistAPIKeyBootstrapState(
-	workingDir, registryURL string,
+	workingDir, identityHome, registryURL string,
 	signingKey ed25519.PrivateKey,
 	didKey string,
 	stableID string,
 	cert *awid.TeamCertificate,
 	persistent bool,
 ) error {
-	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, signingKey, cert); err != nil {
 		return err
 	}
 	if !persistent {
 		return nil
 	}
-	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
+	if err != nil {
+		return err
+	}
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
 		DID:            strings.TrimSpace(didKey),
 		StableID:       strings.TrimSpace(stableID),

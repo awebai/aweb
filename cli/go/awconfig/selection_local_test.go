@@ -63,6 +63,35 @@ func TestResolveWorkspaceWithMissingTeamsYAMLDoesNotFallbackToIdentity(t *testin
 	}
 }
 
+func TestResolveStandaloneExternalIdentityRejectsSigningKeySymlink(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(root, "identity")
+	instance := filepath.Join(root, "instance")
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorktreeIdentityTo(filepath.Join(identityHome, "identity.yaml"), &WorktreeIdentity{
+		DID: "did:key:z6MkAlice", StableID: "did:aw:alice", Address: "acme.com/alice",
+		Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside.key")
+	if err := os.WriteFile(outside, []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(identityHome, "signing.key")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolveWorkspace(ResolveOptions{WorkingDir: instance, IdentityHome: identityHome, ExternalIdentityHome: true})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("standalone signing symlink error=%v", err)
+	}
+}
+
 func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
 	t.Parallel()
 

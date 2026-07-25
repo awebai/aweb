@@ -54,27 +54,41 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
-	Role      string
-	HumanName string
-	AgentType string
-	APIKey    string
+	Role         string
+	HumanName    string
+	AgentType    string
+	APIKey       string
+	IdentityHome string
 }
 
 // initCertificateConnect implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
 func initCertificateConnect(workingDir, awebURL, role string) (connectOutput, error) {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return connectOutput{}, err
+	}
 	return initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		Role: strings.TrimSpace(role),
+		Role:         strings.TrimSpace(role),
+		IdentityHome: home.Root,
 	})
 }
 
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
-	cert, certPath, err := loadCertificateForConnect(workingDir)
+	identityHome := strings.TrimSpace(opts.IdentityHome)
+	if identityHome == "" {
+		identityHome = filepath.Join(filepath.Clean(workingDir), ".aw")
+	}
+	cert, certPath, err := loadCertificateForConnectAt(workingDir, identityHome)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("load team certificate: %w\n(run `aw id team fetch-cert` after controller approval to install a certificate under %s)", err, filepath.Join(workingDir, ".aw", "team-certs"))
 	}
 
-	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
+	signingKeyPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
+	if err != nil {
+		return connectOutput{}, err
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("load signing key: %w", err)
 	}
@@ -102,7 +116,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		return connectOutput{}, err
 	}
 
-	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	workspacePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
+	if err != nil {
+		return connectOutput{}, err
+	}
 	workspaceState, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	if existingErr != nil && !os.IsNotExist(existingErr) {
 		return connectOutput{}, existingErr
@@ -118,7 +135,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		TeamID:   resp.TeamID,
 		Alias:    resp.Alias,
 		CertPath: filepath.ToSlash(certPath),
-	}, cert, "", "", true); err != nil {
+	}, cert, "", "", true, identityHome); err != nil {
 		return connectOutput{}, err
 	}
 	workspaceState.AwebURL = awebURL
@@ -145,13 +162,13 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	}
 
 	// Ensure .aw/context exists
-	if err := ensureWorktreeContextAt(workingDir); err != nil {
+	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
 		return connectOutput{}, err
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, identityHome); err != nil {
 		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
 	}
-	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false); err != nil {
+	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, identityHome); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not publish E2E encryption key automatically: %v\n", err)
 	}
 
@@ -169,12 +186,23 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 }
 
 func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string, error) {
-	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, "", err
+	}
+	return loadCertificateForConnectAt(workingDir, home.Root)
+}
+
+func loadCertificateForConnectAt(workingDir, identityHome string) (*awid.TeamCertificate, string, error) {
+	if teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome); err == nil && teamState != nil {
 		activeMembership := teamState.ActiveMembership()
 		if activeMembership == nil {
 			return nil, "", fmt.Errorf("teams state is missing active_team membership")
 		}
-		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
+		certPath, err := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identityHome}, activeMembership.CertPath)
+		if err != nil {
+			return nil, "", err
+		}
 		cert, err := awid.LoadTeamCertificate(certPath)
 		if err != nil {
 			return nil, "", err
@@ -182,7 +210,7 @@ func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string
 		return cert, strings.TrimSpace(activeMembership.CertPath), nil
 	}
 
-	stored, err := awconfig.ListTeamCertificates(workingDir)
+	stored, err := awconfig.ListTeamCertificatesFromIdentityHome(identityHome)
 	if err != nil {
 		return nil, "", err
 	}

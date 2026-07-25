@@ -240,6 +240,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
+	if err := refuseExternalIdentityCleanup(workingDir, "aw workspace delete"); err != nil {
+		return err
+	}
 	client, _, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err
@@ -537,14 +540,15 @@ func addWorktreeViaCloudBootstrap(
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir: worktreePath,
-		AwebURL:    awebURL,
-		APIKey:     apiKey,
-		Alias:      alias,
-		Role:       role,
-		HumanName:  strings.TrimSpace(state.HumanName),
-		AgentType:  strings.TrimSpace(state.AgentType),
-		Persistent: false,
+		WorkingDir:   worktreePath,
+		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
+		AwebURL:      awebURL,
+		APIKey:       apiKey,
+		Alias:        alias,
+		Role:         role,
+		HumanName:    strings.TrimSpace(state.HumanName),
+		AgentType:    strings.TrimSpace(state.AgentType),
+		Persistent:   false,
 	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -603,7 +607,7 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
-	legacyCertPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	legacyCertPath := filepath.Join(awconfig.WorktreeIdentityHome(workingDir), "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(legacyCertPath)
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)
