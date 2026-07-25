@@ -19,15 +19,16 @@ import (
 )
 
 type cliRotationRegistryFixture struct {
-	t           *testing.T
-	server      *httptest.Server
-	stableID    string
-	oldDID      string
-	mu          sync.Mutex
-	currentDID  string
-	proposedDID string
-	putCalls    int
-	onPut       func(*cliRotationRegistryFixture, http.ResponseWriter, map[string]any)
+	t             *testing.T
+	server        *httptest.Server
+	stableID      string
+	oldDID        string
+	mu            sync.Mutex
+	currentDID    string
+	responseDIDAW *string
+	proposedDID   string
+	putCalls      int
+	onPut         func(*cliRotationRegistryFixture, http.ResponseWriter, map[string]any)
 }
 
 func newCLIRotationRegistryFixture(
@@ -37,7 +38,8 @@ func newCLIRotationRegistryFixture(
 	onPut func(*cliRotationRegistryFixture, http.ResponseWriter, map[string]any),
 ) *cliRotationRegistryFixture {
 	t.Helper()
-	fixture := &cliRotationRegistryFixture{t: t, stableID: stableID, oldDID: oldDID, currentDID: oldDID, onPut: onPut}
+	responseDIDAW := stableID
+	fixture := &cliRotationRegistryFixture{t: t, stableID: stableID, oldDID: oldDID, currentDID: oldDID, responseDIDAW: &responseDIDAW, onPut: onPut}
 	fixture.server = httptest.NewServer(http.HandlerFunc(fixture.handle))
 	t.Cleanup(fixture.server.Close)
 	return fixture
@@ -49,15 +51,17 @@ func (f *cliRotationRegistryFixture) handle(w http.ResponseWriter, r *http.Reque
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+f.stableID+"/full":
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"did_aw":          f.stableID,
+		response := map[string]any{
 			"current_did_key": f.currentDID,
 			"created_at":      "2026-07-24T00:00:00Z",
 			"updated_at":      "2026-07-24T00:00:00Z",
-		})
+		}
+		if f.responseDIDAW != nil {
+			response["did_aw"] = *f.responseDIDAW
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+f.stableID+"/key":
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"did_aw":          f.stableID,
+		response := map[string]any{
 			"current_did_key": f.currentDID,
 			"log_head": map[string]any{
 				"seq":           1,
@@ -69,7 +73,11 @@ func (f *cliRotationRegistryFixture) handle(w http.ResponseWriter, r *http.Reque
 				"signature":     "test",
 				"timestamp":     "2026-07-24T00:00:00Z",
 			},
-		})
+		}
+		if f.responseDIDAW != nil {
+			response["did_aw"] = *f.responseDIDAW
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	case r.Method == http.MethodPut && r.URL.Path == "/v1/did/"+f.stableID:
 		f.putCalls++
 		var request map[string]any
@@ -164,15 +172,24 @@ func TestAwIDRotateKeyDiscardsPendingKeyOnlyWhenRegistryProvesNotApplied(t *test
 	}
 	oldDID := awid.ComputeDIDKey(oldPublic)
 	stableID := awid.ComputeStableID(oldPublic)
-	fixture := newCLIRotationRegistryFixture(t, stableID, oldDID, func(_ *cliRotationRegistryFixture, w http.ResponseWriter, _ map[string]any) {
-		http.Error(w, "rotation rejected", http.StatusConflict)
-	})
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
+	rotationDir := filepath.Join(tmp, ".aw", "rotation")
+	claimedKeyPath := make(chan string, 1)
+	fixture := newCLIRotationRegistryFixture(t, stableID, oldDID, func(_ *cliRotationRegistryFixture, w http.ResponseWriter, _ map[string]any) {
+		pending, loadErr := loadPendingRotationState(rotationDir, stableID)
+		if loadErr != nil {
+			t.Error(loadErr)
+		} else if pending == nil {
+			t.Error("rotation PUT has no pending operation state")
+		} else {
+			claimedKeyPath <- pending.PendingKey
+		}
+		http.Error(w, "rotation rejected", http.StatusConflict)
+	})
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
 
 	out, err := runRotateKeyCommand(ctx, bin, tmp)
@@ -182,17 +199,29 @@ func TestAwIDRotateKeyDiscardsPendingKeyOnlyWhenRegistryProvesNotApplied(t *test
 	if !strings.Contains(string(out), "definitely not applied") {
 		t.Fatalf("unexpected error output:\n%s", out)
 	}
-	rotationDir := filepath.Join(tmp, ".aw", "rotation")
 	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
 		t.Fatal(err)
 	} else if pending != nil {
 		t.Fatalf("pending state retained after definitely-not-applied outcome: %+v", pending)
 	}
-	proposedDID, _ := fixture.snapshot()
-	privatePath, publicPath := pendingRotationKeyPaths(rotationDir, proposedDID)
-	for _, path := range []string{privatePath, publicPath} {
+	var operationKeyPath string
+	select {
+	case operationKeyPath = <-claimedKeyPath:
+	default:
+		t.Fatal("registry fixture did not capture the operation-owned pending key path")
+	}
+	for _, path := range []string{operationKeyPath, awid.PublicKeyPath(operationKeyPath)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("unused pending key material was not discarded at %s: %v", path, err)
+		}
+	}
+	for _, pattern := range []string{"*.signing.key", "*.signing.pub"} {
+		matches, err := filepath.Glob(filepath.Join(rotationDir, "pending", pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("unused pending key material remains after definitely-not-applied outcome: %v", matches)
 		}
 	}
 }
@@ -256,13 +285,21 @@ func TestAwIDRotateKeyPreservesPendingKeyWhenRegistryOutcomeIsUnknown(t *testing
 		t.Fatalf("active key changed to %q after unknown outcome, want old key %q", got, oldDID)
 	}
 
-	// A fresh process must see the same recovery state and must not submit a new rotation.
+	// A fresh process reconciles the preserved operation, reports the result,
+	// and exits without chaining a new key rotation into the same invocation.
 	restartOut, restartErr := runRotateKeyCommand(ctx, bin, tmp)
-	if restartErr == nil {
-		t.Fatalf("expected pending-rotation refusal after restart\n%s", restartOut)
+	if restartErr != nil {
+		t.Fatalf("pending rotation recovery failed: %v\n%s", restartErr, restartOut)
 	}
-	if !strings.Contains(string(restartOut), statePath) {
-		t.Fatalf("restart error missing recovery state path:\n%s", restartOut)
+	for _, want := range []string{"rolled_back", "rerun_required", statePath} {
+		if !strings.Contains(string(restartOut), want) {
+			t.Fatalf("restart recovery output missing %q:\n%s", want, restartOut)
+		}
+	}
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
+		t.Fatal(err)
+	} else if pending != nil {
+		t.Fatalf("rolled-back pending state still present: %+v", pending)
 	}
 	_, putCalls := fixture.snapshot()
 	if putCalls != 2 {

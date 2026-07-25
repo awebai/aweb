@@ -539,8 +539,30 @@ Flags:
 
 Rotate the current global identity signing key at the registry
 
+Subcommands:
+- `recover` Reconcile and safely finish a pending identity key rotation
+- `status` Inspect pending identity key rotation state without changing it
+
 Flags:
 - `-h, --help help for rotate-key`
+
+## `id rotate-key recover`
+
+### `id rotate-key recover`
+
+Reconcile and safely finish a pending identity key rotation
+
+Flags:
+- `-h, --help help for recover`
+
+## `id rotate-key status`
+
+### `id rotate-key status`
+
+Inspect pending identity key rotation state without changing it
+
+Flags:
+- `-h, --help help for status`
 
 ## `id show`
 
