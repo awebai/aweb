@@ -93,7 +93,9 @@ and the two sub-cases recover differently:
   server-side. An unread-only reconnect does NOT re-fetch it and it is absent
   from the unread inbox. Its content is still on the server, reachable via
   `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
-  (Auto-surfacing this case on reconnect is tracked as default-aaka.)
+  (Auto-surfacing this case on reconnect was considered and deliberately
+  rejected: re-delivering already-read mail would reopen the replay/double-action
+  hazard, and a crashed agent recovers procedurally on restart. See default-aaka.)
 
 The per-agent local delivery store is belt-and-suspenders against duplicate
 presentation, not a recovery mechanism for either sub-case. The correct fix for
