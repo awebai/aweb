@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +50,12 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 	}
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
+	var requests atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "guard must run before registry", http.StatusInternalServerError)
+	}))
+	defer registry.Close()
 
 	for _, source := range []string{"flag", "environment"} {
 		for _, command := range []struct {
@@ -66,7 +75,7 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 					t.Fatal(err)
 				}
 				args := append([]string(nil), command.args...)
-				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=")
+				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AWID_REGISTRY_URL="+registry.URL)
 				if source == "flag" {
 					args = append([]string{"--identity-home", identityHome}, args...)
 				} else {
@@ -75,9 +84,13 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 				cmd := exec.CommandContext(ctx, bin, args...)
 				cmd.Dir = instance
 				cmd.Env = env
+				beforeRequests := requests.Load()
 				out, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(out), "not yet identity-home-aware") {
 					t.Fatalf("unthreaded command did not fail closed: err=%v\n%s", err, out)
+				}
+				if got := requests.Load(); got != beforeRequests {
+					t.Fatalf("refusal happened after registry request: before=%d after=%d", beforeRequests, got)
 				}
 				if _, err := os.Lstat(filepath.Join(instance, ".aw")); !os.IsNotExist(err) {
 					t.Fatalf("command mutated instance identity state: %v", err)
