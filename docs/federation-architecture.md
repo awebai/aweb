@@ -182,6 +182,23 @@ known, before accepting the continued message.
 The sender's local aweb server may keep a local conversation projection, but
 the authoritative recipient inbox lives on the recipient delivery server.
 
+### Delivery Response Encoding
+
+Federated delivery responses **must be uncompressed**. The sending server sends
+`Accept-Encoding: identity` and rejects any response carrying a non-identity
+`Content-Encoding`. Federation peers are untrusted by construction; decoding a
+compressed response before enforcing the response-size bound would give a peer
+a memory-exhaustion primitive on the trust path.
+
+A peer or intermediary that compresses despite the identity request is not
+compatible with the federation v1 transport contract. The resulting delivery
+failure is deliberate and visible rather than a reason to weaken the bound.
+
+The AWID registry client and federation delivery client enforce this policy in
+separate helpers. A future design prompted by a real peer-interoperability need
+can evolve federation response handling without weakening registry response
+handling.
+
 ## Recipient Server Verification
 
 The recipient server must verify:

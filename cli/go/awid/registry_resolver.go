@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -614,7 +613,7 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	resp, err := r.HTTPClient.Do(req)
+	resp, err := DoNoRedirectWithTimeout(r.HTTPClient, req, APITimeout())
 	if err != nil {
 		return err
 	}
@@ -622,21 +621,22 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &APIError{StatusCode: resp.StatusCode, Body: readBodyString(resp)}
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func readBodyString(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ""
-	}
+	data := []byte(ReadErrorExcerpt(resp.Body))
 	var body map[string]any
 	if err := json.Unmarshal(data, &body); err == nil {
 		if detail, ok := body["detail"].(string); ok && strings.TrimSpace(detail) != "" {
-			return detail
+			return SanitizeErrorText(detail)
 		}
 	}
 	return strings.TrimSpace(string(data))

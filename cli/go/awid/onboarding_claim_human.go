@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -76,7 +75,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
 	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := DoNoRedirectWithTimeout(c.httpClient, httpReq, APITimeout())
 	if err != nil {
 		return nil, err
 	}
@@ -86,13 +85,12 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 		c.latestClientVersion.Store(v)
 	}
 
-	limited := io.LimitReader(resp.Body, MaxResponseSize)
-	data, err := io.ReadAll(limited)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body)}
+	}
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(data)}
 	}
 
 	var out ClaimHumanResponse

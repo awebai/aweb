@@ -1013,13 +1013,12 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any,
 	}
 	defer resp.Body.Close()
 
-	limited := io.LimitReader(resp.Body, MaxResponseSize)
-	data, err := io.ReadAll(limited)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body), RequestID: resp.Header.Get("X-Request-ID")}
+	}
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: string(data), RequestID: resp.Header.Get("X-Request-ID")}
 	}
 	if out == nil {
 		return nil
@@ -1098,7 +1097,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, err
 		}
 		traceHTTPClientRequest(req, bodyBytes)
-		resp, err := c.httpClient.Do(req)
+		resp, err := DoNoRedirectWithTimeout(c.httpClient, req, APITimeout())
 		if err != nil {
 			decorated := decorateTimeoutError(method, err)
 			if shouldRetryAPITransportError(ctx, method, path, bodyBytes, attempt, err) {
@@ -1110,6 +1109,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, decorated
 		}
 		if err := traceHTTPClientResponse(resp); err != nil {
+			_ = resp.Body.Close()
 			return nil, err
 		}
 		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
@@ -1242,9 +1242,14 @@ func traceHTTPClientResponse(resp *http.Response) error {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
 		return nil
 	}
-	data, err := io.ReadAll(resp.Body)
+	originalBody := resp.Body
+	data, err := ReadAllBounded(originalBody, MaxResponseSize)
 	if err != nil {
 		return err
+	}
+	if err := originalBody.Close(); err != nil {
+		resp.Body = http.NoBody
+		return fmt.Errorf("close traced HTTP response body: %w", err)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(data))
 	fmt.Fprintf(os.Stderr, "AW TRACE response body: %s\n", string(data))
