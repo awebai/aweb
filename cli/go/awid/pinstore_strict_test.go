@@ -367,8 +367,8 @@ func TestLoadPinStoreRejectsAnchorsAndAliases(t *testing.T) {
 // an empty one loads as no pins, and every known identity becomes first contact.
 func TestLoadPinStoreRejectsDuplicateRootFields(t *testing.T) {
 	real := "pins:\n  did:key:zA:\n    address: alice@example.com\n    first_seen: t\n    last_seen: t\naddresses:\n  alice@example.com: did:key:zA\n"
-	mustFailLoad(t, real+"pins: {}\naddresses: {}\n", "duplicate field")
-	mustFailLoad(t, "future: 1\nfuture: 2\npins: {}\naddresses: {}\n", "duplicate field")
+	mustFailLoad(t, real+"pins: {}\naddresses: {}\n", "duplicate key")
+	mustFailLoad(t, "future: 1\nfuture: 2\npins: {}\naddresses: {}\n", "duplicate key")
 }
 
 // Nested levels of a preserved subtree lose yaml's map decoder checks too.
@@ -393,4 +393,40 @@ func TestLoadPinStoreRejectsTaggedKeys(t *testing.T) {
 		"pins: {}\naddresses:\n  !evil a@b.c: did:key:zA\n",
 		"explicit tag")
 	mustFailLoad(t, "pins: {}\naddresses: {}\nfuture:\n  !evil k: v\n", "explicit tag")
+}
+
+// A key that is not a string at all. Distinct from a TAGGED key, which the
+// explicit-tag rule catches: these carry no tag of their own, so only the
+// plain-string-key rule rejects them.
+func TestLoadPinStoreRejectsNonStringKeys(t *testing.T) {
+	mustFailLoad(t, "pins: {}\naddresses: {}\n1: x\n", "not a plain string")
+	mustFailLoad(t, "pins: {}\naddresses: {}\ntrue: x\n", "not a plain string")
+	mustFailLoad(t, "pins:\n  did:key:zA:\n    1: x\n    address: a@b.c\n    first_seen: t\n    last_seen: t\naddresses: {}\n", "not a plain string")
+	// A complex (mapping) key.
+	mustFailLoad(t, "pins: {}\naddresses: {}\n? {a: 1}\n: v\n", "not a plain string")
+}
+
+// Anchors and explicit tags are refused everywhere, so the paths that do their
+// own type checking must not skip that rule. Two did: the log_seq branch
+// validated Kind and Tag itself, and a null top-level section was treated as
+// empty before its node was ever examined.
+func TestLoadPinStoreRejectsAnchorsAndTagsOnSelfCheckedPaths(t *testing.T) {
+	pin := func(logSeq string) string {
+		return "pins:\n  did:key:zA:\n    address: a@b.c\n    first_seen: t\n    last_seen: t\n    log_seq: " +
+			logSeq + "\naddresses:\n  a@b.c: did:key:zA\n"
+	}
+	mustFailLoad(t, pin("&x 1"), "anchor")
+	mustFailLoad(t, pin("!!int 1"), "explicit tag")
+
+	// A null section is still a node: its anchor or tag must be rejected before
+	// it is treated as an empty section.
+	mustFailLoad(t, "pins: &x null\naddresses: {}\n", "anchor")
+	mustFailLoad(t, "pins: !!null null\naddresses: {}\n", "explicit tag")
+	mustFailLoad(t, "pins: {}\naddresses: &x null\n", "anchor")
+	mustFailLoad(t, "pins: {}\naddresses: !!null null\n", "explicit tag")
+
+	// A plain null section remains a legitimate empty section.
+	if _, err := LoadPinStore(writeStore(t, "pins:\naddresses:\n")); err != nil {
+		t.Errorf("a plain empty section must still load: %v", err)
+	}
 }

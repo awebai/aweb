@@ -165,36 +165,24 @@ func parsePinStore(data []byte) (*PinStore, error) {
 	if doc.Kind == 0 || doc.Tag == "!!null" {
 		return nil, errors.New("store is empty or has no document (truncated?)")
 	}
+	// One pass for the properties that hold everywhere, before any branch-specific
+	// parsing gets the chance to forget one.
+	if err := validateDocument(doc, "store", 0); err != nil {
+		return nil, err
+	}
 	if err := requireMapping(doc, "store root"); err != nil {
 		return nil, err
 	}
 
 	ps := NewPinStore()
 	var pinsNode, addressesNode *yaml.Node
-	seenRoot := map[string]bool{}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
 		key, value := doc.Content[i], doc.Content[i+1]
-		if err := requireKeyNode(key, "store"); err != nil {
-			return nil, err
-		}
-		// Raw-node parsing does not get yaml's duplicate-key rejection, so a
-		// second "pins" would silently replace the first — a populated store
-		// followed by an empty one loads as no pins at all, and every known
-		// identity becomes first contact again.
-		if seenRoot[key.Value] {
-			return nil, fmt.Errorf("duplicate field %q", key.Value)
-		}
-		seenRoot[key.Value] = true
 		switch key.Value {
 		case "pins":
 			pinsNode = value
 		case "addresses":
 			addressesNode = value
-		case mergeKey:
-			// A merge key would let one mapping pull in another's fields, which
-			// is both a schema hole and the shape behind the js-yaml merge-key
-			// advisories. It is not part of this format.
-			return nil, errors.New("store must not use YAML merge keys")
 		default:
 			// Preserved and re-emitted on Save, so a newer client's state
 			// survives a round trip through this binary rather than being
@@ -216,14 +204,8 @@ func parsePinStore(data []byte) (*PinStore, error) {
 		}
 		for i := 0; i+1 < len(pinsNode.Content); i += 2 {
 			key, value := pinsNode.Content[i], pinsNode.Content[i+1]
-			if err := requireKeyNode(key, "pins"); err != nil {
-				return nil, err
-			}
 			if key.Value == "" {
 				return nil, errors.New("store has an empty pin key")
-			}
-			if _, dup := ps.Pins[key.Value]; dup {
-				return nil, fmt.Errorf("duplicate pin key %q", key.Value)
 			}
 			pin, err := parsePin(key.Value, value)
 			if err != nil {
@@ -239,14 +221,8 @@ func parsePinStore(data []byte) (*PinStore, error) {
 		}
 		for i := 0; i+1 < len(addressesNode.Content); i += 2 {
 			key, value := addressesNode.Content[i], addressesNode.Content[i+1]
-			if err := requireKeyNode(key, "addresses"); err != nil {
-				return nil, err
-			}
 			if key.Value == "" {
 				return nil, errors.New("store has an empty address key")
-			}
-			if _, dup := ps.Addresses[key.Value]; dup {
-				return nil, fmt.Errorf("duplicate address key %q", key.Value)
 			}
 			pinKey, err := requireString(value, fmt.Sprintf("address %q", key.Value))
 			if err != nil {
@@ -285,20 +261,63 @@ func parsePinStore(data []byte) (*PinStore, error) {
 	return ps, nil
 }
 
-// requireKeyNode enforces that a mapping key is a plain string. A custom or
-// explicit tag on a KEY (!evil pins:) would otherwise be accepted and silently
-// normalised away on the next Save, and Node's JSON_SCHEMA rejects it outright.
-func requireKeyNode(n *yaml.Node, what string) error {
-	// Checked before the tag, because a merge key carries !!merge and would
-	// otherwise be reported as a generic bad key.
-	if n.Value == mergeKey {
-		return fmt.Errorf("%s must not use YAML merge keys", what)
+// maxDocumentDepth bounds the walk so a deeply nested document cannot exhaust
+// the stack before anything is validated.
+const maxDocumentDepth = 64
+
+// validateDocument enforces, in one pass over the whole document, the properties
+// that hold EVERYWHERE: no explicit tags, no anchors (and so no aliases), no
+// merge keys, plain string mapping keys, and no duplicate keys in any mapping.
+//
+// It runs before any branch-specific parsing, so a branch cannot opt out of these
+// by forgetting to ask. Two already had: the log_seq case did its own Kind and
+// Tag test and so skipped the shared rule, and a null section was treated as an
+// empty section before its node was ever examined. Checking here makes the rules
+// true by construction rather than by every branch remembering them, and it is
+// why the branches below do not repeat them.
+func validateDocument(n *yaml.Node, where string, depth int) error {
+	if depth > maxDocumentDepth {
+		return fmt.Errorf("%s is nested too deeply", where)
 	}
-	if err := requirePlainNode(n, what+" key"); err != nil {
-		return err
+	// Anchors are refused, which covers aliases too: an alias can only refer to
+	// an anchor, YAML requires the anchor to be defined before use, and this walk
+	// visits the document in order — so the anchor is always rejected first. A
+	// separate alias branch here would be unreachable.
+	if n.Anchor != "" {
+		return fmt.Errorf("%s must not define a YAML anchor", where)
 	}
-	if n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
-		return fmt.Errorf("%s has a key that is not a plain string", what)
+	if n.Style&yaml.TaggedStyle != 0 {
+		return fmt.Errorf("%s must not carry an explicit tag", where)
+	}
+
+	switch n.Kind {
+	case yaml.MappingNode:
+		seen := make(map[string]bool, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key, value := n.Content[i], n.Content[i+1]
+			if key.Value == mergeKey {
+				return fmt.Errorf("%s must not use YAML merge keys", where)
+			}
+			if err := validateDocument(key, where+" key", depth+1); err != nil {
+				return err
+			}
+			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
+				return fmt.Errorf("%s has a key that is not a plain string", where)
+			}
+			if seen[key.Value] {
+				return fmt.Errorf("%s has duplicate key %q", where, key.Value)
+			}
+			seen[key.Value] = true
+			if err := validateDocument(value, fmt.Sprintf("%s key %q", where, key.Value), depth+1); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		for i, item := range n.Content {
+			if err := validateDocument(item, fmt.Sprintf("%s item %d", where, i), depth+1); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -322,9 +341,6 @@ func decodeUnknown(n *yaml.Node, what string) (any, error) {
 func decodeUnknownNode(n *yaml.Node, what string, depth int) (any, error) {
 	if depth > maxUnknownDepth {
 		return nil, fmt.Errorf("%s is nested too deeply", what)
-	}
-	if err := requirePlainNode(n, what); err != nil {
-		return nil, err
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
@@ -363,14 +379,9 @@ func decodeUnknownNode(n *yaml.Node, what string, depth int) (any, error) {
 		if n.Tag != "!!map" {
 			return nil, fmt.Errorf("%s has an unsupported value type", what)
 		}
-		// Raw-node parsing loses yaml's duplicate-key and merge-key rejection at
-		// nested levels too, so both are enforced here at every depth.
 		out := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			key, value := n.Content[i], n.Content[i+1]
-			if err := requireKeyNode(key, what); err != nil {
-				return nil, err
-			}
 			if _, dup := out[key.Value]; dup {
 				return nil, fmt.Errorf("%s has duplicate key %q", what, key.Value)
 			}
@@ -402,19 +413,8 @@ func parsePin(key string, node *yaml.Node) (*Pin, error) {
 		return nil, err
 	}
 	pin := &Pin{}
-	seen := map[string]bool{}
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		if err := requireKeyNode(node.Content[i], fmt.Sprintf("pin %q", key)); err != nil {
-			return nil, err
-		}
 		name, value := node.Content[i].Value, node.Content[i+1]
-		if name == mergeKey {
-			return nil, fmt.Errorf("pin %q must not use YAML merge keys", key)
-		}
-		if seen[name] {
-			return nil, fmt.Errorf("pin %q has duplicate field %q", key, name)
-		}
-		seen[name] = true
 		where := fmt.Sprintf("pin %q field %q", key, name)
 		if !pinFields[name] {
 			decoded, err := decodeUnknown(value, where)
@@ -481,9 +481,6 @@ func present(n *yaml.Node) bool {
 }
 
 func requireMapping(n *yaml.Node, what string) error {
-	if err := requirePlainNode(n, what); err != nil {
-		return err
-	}
 	// The tag check refuses a custom-tagged mapping, which yaml.v3 would
 	// otherwise construct happily and js-yaml's JSON_SCHEMA would reject.
 	if n.Kind != yaml.MappingNode || n.Tag != "!!map" {
@@ -503,30 +500,10 @@ func requireString(n *yaml.Node, what string) (string, error) {
 	if n.Kind != yaml.ScalarNode {
 		return "", fmt.Errorf("%s must be a string", what)
 	}
-	if err := requirePlainNode(n, what); err != nil {
-		return "", err
-	}
 	if n.Tag == "!!str" || n.Tag == "!!timestamp" {
 		return n.Value, nil
 	}
 	return "", fmt.Errorf("%s must be a string", what)
-}
-
-// requirePlainNode rejects explicit tags, anchors and aliases. Anchors and
-// aliases are a document-order dependency: preserving one and re-emitting it
-// elsewhere produces a file that no longer loads, and nothing we write uses
-// them. They are refused everywhere, like merge keys.
-func requirePlainNode(n *yaml.Node, what string) error {
-	if n.Kind == yaml.AliasNode {
-		return fmt.Errorf("%s must not use YAML aliases", what)
-	}
-	if n.Anchor != "" {
-		return fmt.Errorf("%s must not define a YAML anchor", what)
-	}
-	if n.Style&yaml.TaggedStyle != 0 {
-		return fmt.Errorf("%s must not carry an explicit tag", what)
-	}
-	return nil
 }
 
 // MarshalYAML re-emits the known schema plus any fields this binary did not
