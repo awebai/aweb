@@ -75,10 +75,31 @@ Committed, in the one owning repo — public, reviewed, no keys:
 Host-local, gitignored, resolved explicitly and never inferred from cwd:
 
 ```
-<host-data-root>/aweb/principals/<team-id>/<principal-id>/
+<host-data-root>/aweb/principals/<team-name>/<team-namespace>/<principal-id>/
   credentials/     # .aw material — protected, separate backup and security class
   state/           # durable mutable state — a different security class from credentials
 ```
+
+`<principal-id>` is the method-specific segment of the `did:aw` — the only
+identifier that survives key rotation.
+
+The team id is carried **structurally, as two directory levels**, rather than
+encoded into one. An earlier revision mapped the colon to `__`, matching the
+team-certificate filename convention (`aweb-oas__aweb.ai.pem`). That encoding is
+lossy: `a__b:c` and `a:b__c` both produce `a__b__c`, so two distinct teams would
+share one credential store. Consistency with an existing convention was the
+wrong criterion when the convention is lossy and the new use — a credential path
+rather than a filename — is more dangerous. Splitting on the colon makes the
+collision unrepresentable, because the validator already forbids `:` and `/`
+inside each half.
+
+Two defences are required regardless of encoding:
+
+- reject **backslash** in `team_id` and `address`; a pattern excluding `/` but
+  not `\` permits traversal outside the principal root on Windows;
+- assert **containment** — the resolved principal, credentials, and state paths
+  must each lie inside the resolved home root. Keep this permanently. It is the
+  defence that survives the *next* encoding change rather than the current one.
 
 OAS-owned and disposable:
 
