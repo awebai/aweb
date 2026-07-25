@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
+  assertPrincipalStoreContained,
   principalDeclarationSchema,
   resolvePrincipalHome,
   resolvePrincipalStore,
@@ -54,8 +55,19 @@ test("declarations require exactly the public identity contract", () => {
   assert.throws(() => validatePrincipalDeclaration(declaration({ schema_version: 2 })), /schema_version must be 1/);
   assert.throws(() => validatePrincipalDeclaration(declaration({ address: "not-an-address" })), /address/);
   assert.throws(() => validatePrincipalDeclaration(declaration({ address: "example.test\\..\\escape/name" })), /address/);
-  for (const teamId of ["not-a-team-id", "a__b:c", "a:b__c", "team:..", "team:example.test\\..\\escape"]) {
-    assert.throws(() => validatePrincipalDeclaration(declaration({ team_id: teamId })), /team_id/);
+  for (const teamId of [
+    "not-a-team-id",
+    "a__b:c",
+    "a:b__c",
+    "team:..",
+    "team:example.test\\..\\escape",
+    "Test-Team:Example.Test",
+    "test-team:example.test.",
+  ]) {
+    assert.throws(
+      () => validatePrincipalDeclaration(declaration({ team_id: teamId })),
+      /canonical lowercase DNS-style team-name:namespace/,
+    );
   }
   assert.throws(() => validatePrincipalDeclaration(declaration({ soul: "" })), /soul/);
   assert.throws(() => validatePrincipalDeclaration({ ...declaration(), signing_key: "secret" }), /unknown field: signing_key/);
@@ -176,6 +188,23 @@ test("store resolution rejects a dangling link rather than treating it as a miss
     () => resolvePrincipalStore(declaration(), { explicitHome: home, env: {} }),
     /symbolic link/,
   );
+});
+
+test("containment rejects principal, credentials, and state independently", () => {
+  const home = join(temporaryDirectory(), "principals");
+  const principal = join(home, "test-team", "example.test", "2ThrowawayStableId123");
+  const paths = {
+    principal,
+    credentials: join(principal, "credentials"),
+    state: join(principal, "state"),
+  };
+
+  for (const field of ["principal", "credentials", "state"]) {
+    assert.throws(
+      () => assertPrincipalStoreContained(home, { ...paths, [field]: join(home, "..", `${field}-escape`) }),
+      new RegExp(`${field} path escapes principal home`),
+    );
+  }
 });
 
 test("store resolution enforces containment after validation", () => {

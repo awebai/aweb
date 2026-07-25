@@ -34,7 +34,12 @@ export const principalDeclarationSchema = Object.freeze({
   },
 });
 
-/** Validate an already-parsed principal declaration without loading its YAML source. */
+/**
+ * Validate an already-parsed declaration without loading its YAML source.
+ * Team IDs must already be canonical lowercase DNS-style
+ * `team-name:namespace`; this trust anchor does not apply parser normalization
+ * or accept the legacy underscore form.
+ */
 export function validatePrincipalDeclaration(declaration) {
   if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) {
     throw new TypeError("principal declaration must be an object");
@@ -55,7 +60,7 @@ export function validatePrincipalDeclaration(declaration) {
     throw new TypeError("stable_id must be a did:aw stable identity");
   }
   if (typeof declaration.team_id !== "string" || !FIELD_REGEXPS.team_id.test(declaration.team_id)) {
-    throw new TypeError("team_id must be a non-empty team:namespace identifier");
+    throw new TypeError("team_id must use canonical lowercase DNS-style team-name:namespace form (no normalization or legacy underscores)");
   }
   if (typeof declaration.soul !== "string" || !FIELD_REGEXPS.soul.test(declaration.soul)) {
     throw new TypeError("soul must be a non-empty filesystem-safe reference");
@@ -123,11 +128,18 @@ function assertNoExistingSymlink(path) {
   }
 }
 
-function assertContained(home, path) {
+function assertContained(home, path, label) {
   const fromHome = relative(home, path);
   if (!fromHome || fromHome === ".." || fromHome.startsWith(`..${sep}`) || isAbsolute(fromHome)) {
-    throw new Error(`resolved path escapes principal home: ${path}`);
+    throw new Error(`${label} path escapes principal home: ${path}`);
   }
+}
+
+/** Assert each security-sensitive store path is strictly within its home. */
+export function assertPrincipalStoreContained(home, { principal, credentials, state }) {
+  assertContained(home, principal, "principal");
+  assertContained(home, credentials, "credentials");
+  assertContained(home, state, "state");
 }
 
 /**
@@ -146,7 +158,7 @@ export function resolvePrincipalStore(declaration, options = {}) {
   const credentials = join(principal, "credentials");
   const state = join(principal, "state");
 
-  for (const path of [principal, credentials, state]) assertContained(home, path);
+  assertPrincipalStoreContained(home, { principal, credentials, state });
   assertNoExistingSymlink(credentials);
   assertNoExistingSymlink(state);
 
