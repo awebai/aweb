@@ -4176,7 +4176,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "ops", teamKey)
-	_, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
+	inviteID, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4190,15 +4190,25 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	identityHome := filepath.Join(canonicalTmp, ".aw")
-	localAccept := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", token, "--json")
+	emptyIdentityHome := filepath.Join(canonicalTmp, "empty-principal")
+	localAccept := exec.CommandContext(ctx, bin, "--identity-home", emptyIdentityHome, "id", "team", "accept-invite", "--name", "alice", token, "--json")
 	localAccept.Env = testCommandEnv(tmp)
 	localAccept.Dir = instanceHome
 	localOut, localErr := localAccept.CombinedOutput()
-	if localErr == nil || !strings.Contains(string(localOut), "external identity home requires --global") {
-		t.Fatalf("external local accept did not fail before mutation: err=%v\n%s", localErr, localOut)
-	}
 	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("external local accept mutated instance: %v", err)
+	}
+	if _, err := os.Lstat(emptyIdentityHome); !os.IsNotExist(err) {
+		t.Fatalf("external local accept mutated empty principal: %v", err)
+	}
+	if registeredCert != nil {
+		t.Fatalf("external local accept mutated remote certificate state: %+v", registeredCert)
+	}
+	if _, err := awconfig.LoadTeamInvite(inviteID); err != nil {
+		t.Fatalf("external local accept consumed invite token: %v", err)
+	}
+	if localErr == nil || !strings.Contains(string(localOut), "external identity home requires --global") {
+		t.Fatalf("external local accept did not fail closed: err=%v\n%s", localErr, localOut)
 	}
 
 	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--address", "acme.com/alice", token, "--json")
