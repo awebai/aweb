@@ -265,7 +265,7 @@ export async function consumeAgentEvents(
     const previous = lane ? lanes.get(lane) : undefined;
     const job = (previous || Promise.resolve())
       .then(async () => {
-        await dispatchAgentEvent(options, dispatched, event);
+        await dispatchAgentEvent(options, dispatched, event, log);
         pruneDispatched(dispatched);
       })
       .catch(() => {
@@ -297,10 +297,11 @@ export async function dispatchAgentEvent(
   options: Omit<ChannelLoopOptions, "signal" | "log">,
   dispatched: Set<string>,
   event: AgentEvent,
+  log: (message: string) => void = (message) => console.error(message),
 ): Promise<void> {
   switch (event.type) {
     case "mail_message":
-      await dispatchMailEvent(options, dispatched, event);
+      await dispatchMailEvent(options, dispatched, event, log);
       break;
     case "chat_message":
       await dispatchChatEvent(options, dispatched, event);
@@ -397,10 +398,12 @@ async function dispatchMailEvent(
   options: Omit<ChannelLoopOptions, "signal" | "log">,
   dispatched: Set<string>,
   event: AgentEvent,
+  log: (message: string) => void,
 ): Promise<void> {
-  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id);
+  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
   let pinsDirty = false;
   for (const msg of messages) {
+    if (msg.verification_error) continue;
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
