@@ -403,6 +403,63 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
 
+  test("stable-id migration refuses an occupied target without losing either pin", async () => {
+    const identity = await didFromSeed(36);
+    const stableID = "did:aw:stableCollision";
+    const address = "acme.com/alice";
+    const store = PinStore.fromYAML([
+      "pins:",
+      `  ${identity.did}:`,
+      `    address: ${address}`,
+      "    first_seen: 2026-02-22T10:00:00Z",
+      "    last_seen: 2026-02-22T11:00:00Z",
+      "    future_old: {seq: 1}",
+      `  ${stableID}:`,
+      `    address: ${address}`,
+      "    first_seen: 2026-02-22T09:00:00Z",
+      "    last_seen: 2026-02-22T09:30:00Z",
+      "    future_stable: {seq: 9}",
+      "addresses:",
+      `  ${address}: ${identity.did}`,
+      "",
+    ].join("\n"));
+    const trust = new SenderTrustManager(
+      { get: async () => ({}) } as never,
+      {
+        resolveIdentity: async () => ({
+          did: identity.did,
+          stableID,
+          address,
+          controllerDid: identity.did,
+          custody: "self",
+          identityScope: "global",
+        }),
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      store,
+      "verified",
+      address,
+      identity.did,
+      stableID,
+      undefined,
+      undefined,
+    );
+
+    expect(result).toEqual({ status: "pin_conflict", stored: false });
+    expect(new Set(store.pins.keys())).toEqual(new Set([identity.did, stableID]));
+    expect(store.addresses.get(address)).toBe(identity.did);
+    const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
+      pins: Record<string, Record<string, unknown>>;
+    };
+    expect(emitted.pins[identity.did].future_old).toEqual({ seq: 1 });
+    expect(emitted.pins[stableID].future_stable).toEqual({ seq: 9 });
+  });
+
   test("stable-id migration preserves unknown per-pin fields", async () => {
     const identity = await didFromSeed(35);
     const stableID = "did:aw:stableAlice";

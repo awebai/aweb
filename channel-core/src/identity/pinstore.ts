@@ -6,6 +6,9 @@ export type PinResult = "ok" | "new" | "mismatch" | "skipped";
 export type IdentityScope = "global" | "local";
 
 type UnknownFields = Map<string, unknown>;
+type RekeyPinResult =
+  | { status: "rekeyed" | "unchanged"; pin: Pin }
+  | { status: "missing" | "conflict" };
 
 const ROOT_FIELDS = new Set(["pins", "addresses"]);
 const PIN_FIELDS = new Set([
@@ -93,16 +96,19 @@ export class PinStore {
     this.addresses.set(address, did);
   }
 
-  rekeyPin(currentKey: string, nextKey: string): Pin | undefined {
+  rekeyPin(currentKey: string, nextKey: string): RekeyPinResult {
     const pin = this.mutablePins.get(currentKey);
-    if (!pin || currentKey === nextKey) return pin;
+    if (!pin) return { status: "missing" };
+    if (currentKey === nextKey) return { status: "unchanged", pin };
+    const occupied = this.mutablePins.get(nextKey);
+    if (occupied && occupied !== pin) return { status: "conflict" };
 
     this.mutablePins.delete(currentKey);
     this.mutablePins.set(nextKey, pin); // Preserve object identity for unknownPinFields.
     for (const [address, pinKey] of this.addresses) {
       if (pinKey === currentKey) this.addresses.set(address, nextKey);
     }
-    return pin;
+    return { status: "rekeyed", pin };
   }
 
   deletePin(key: string): boolean {

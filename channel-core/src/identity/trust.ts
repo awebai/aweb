@@ -295,8 +295,11 @@ export class SenderTrustManager {
       pinKey = fromStableID;
       const existingDID = store.addresses.get(trustAddress);
       if (existingDID === fromDID) {
-        const existingPin = store.rekeyPin(fromDID, fromStableID);
-        if (existingPin) existingPin.stable_id = fromStableID;
+        const rekey = store.rekeyPin(fromDID, fromStableID);
+        if (rekey.status === "conflict") {
+          return { status: "pin_conflict", stored: false };
+        }
+        if ("pin" in rekey) rekey.pin.stable_id = fromStableID;
       }
     }
 
