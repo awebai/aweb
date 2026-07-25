@@ -193,6 +193,9 @@ func ResolveIdentityFromHome(workingDir, identityHome string) (*ResolvedIdentity
 
 func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 	workingDir = strings.TrimSpace(workingDir)
+	if identityHome := strings.TrimSpace(os.Getenv(IdentityHomeEnv)); identityHome != "" {
+		return ResolveIdentityFromHome(workingDir, identityHome)
+	}
 	if workingDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
