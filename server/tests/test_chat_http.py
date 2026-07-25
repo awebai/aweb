@@ -2545,7 +2545,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     message_id = str(uuid4())
-    timestamp = "2026-04-17T12:00:00Z"
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     signed_payload = json.dumps(
         {
             "type": "chat",
@@ -3270,9 +3270,137 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
     assert "Recipient address not found" in resp.text
 
 
+async def _signed_local_chat_app(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:timestamp.example', 'timestamp.example', 'backend', 'did:key:team-timestamp')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES
+            ('backend:timestamp.example', $1, 'did:aw:alice-timestamp', 'timestamp.example/alice', 'alice', 'global', 'developer', 'open'),
+            ('backend:timestamp.example', 'did:key:bob-timestamp', 'did:aw:bob-timestamp', 'timestamp.example/bob', 'bob', 'global', 'developer', 'open')
+        """,
+        alice_did_key,
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice-timestamp",
+            address="timestamp.example/alice",
+            team_id="backend:timestamp.example",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    return app, alice_sk, alice_did_key
+
+
+def _signed_local_chat_payload(alice_sk, alice_did_key, *, timestamp, include_signed_payload=True):
+    session_id = str(uuid4())
+    message_id = str(uuid4())
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "timestamp body",
+            "conversation_id": session_id,
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "session_id": session_id,
+        "to_aliases": ["bob"],
+        "message": "timestamp body",
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+    }
+    if include_signed_payload:
+        payload["signed_payload"] = signed_payload.decode()
+    return message_id, payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset_seconds", [-360, 360])
+async def test_signed_plaintext_chat_rejects_timestamp_outside_federation_window(
+    aweb_cloud_db, offset_seconds
+):
+    app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
+    timestamp = (
+        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds)
+    ).isoformat().replace("+00:00", "Z")
+    _, payload = _signed_local_chat_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/sessions", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "timestamp outside accepted skew"
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_chat_stores_server_time_and_preserves_attestation(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
+    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=4)
+    message_id, payload = _signed_local_chat_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=attested_at.isoformat().replace("+00:00", "Z"),
+    )
+
+    before = datetime.now(timezone.utc)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/sessions", json=payload)
+    after = datetime.now(timezone.utc)
+
+    assert response.status_code == 200, response.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT created_at, signed_payload FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert before <= row["created_at"] <= after
+    assert row["created_at"] != attested_at
+    assert json.loads(row["signed_payload"])["timestamp"] == payload["timestamp"]
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_chat_requires_signed_payload(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    _, payload = _signed_local_chat_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+        include_signed_payload=False,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/sessions", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "signed_payload is required when signature is provided"
+
+
 @pytest.mark.asyncio
 async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(aweb_cloud_db):
-    _, _, alice_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -3303,13 +3431,29 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
+    message_id = "11111111-1111-4111-8111-111111111111"
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello bob",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "",
+            "type": "chat",
+        }
+    )
     payload = {
         "to_aliases": ["bob"],
         "message": "hello bob",
         "from_did": alice_did_key,
-        "signature": "sig",
-        "message_id": "11111111-1111-4111-8111-111111111111",
-        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
@@ -3775,7 +3919,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
 
 @pytest.mark.asyncio
 async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aweb_cloud_db):
-    _, _, alice_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -3812,12 +3956,29 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aw
 
     app.dependency_overrides[get_messaging_auth] = _team_auth_override
 
+    message_id = "22222222-2222-4222-8222-222222222222"
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "follow-up",
+            "conversation_id": str(session_id),
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "",
+            "type": "chat",
+        }
+    )
     payload = {
         "body": "follow-up",
         "from_did": alice_did_key,
-        "signature": "sig",
-        "message_id": "22222222-2222-4222-8222-222222222222",
-        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)

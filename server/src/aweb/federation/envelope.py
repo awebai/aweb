@@ -142,7 +142,12 @@ def verify_federation_envelope(
         if isinstance(envelope, FederationEnvelope)
         else FederationEnvelope.model_validate(envelope)
     )
-    _enforce_timestamp_skew(model.timestamp, now=now, max_skew_seconds=max_skew_seconds)
+    enforce_message_timestamp_skew(
+        _parse_timestamp(model.timestamp),
+        now=now,
+        max_skew_seconds=max_skew_seconds,
+        label="Federation envelope timestamp",
+    )
     _enforce_expected_fields(model, expected or {})
     if _is_encrypted_v2(model):
         _enforce_encrypted_payload_binding(model, signature, now=now)
@@ -181,11 +186,16 @@ def _parse_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _enforce_timestamp_skew(value: str, *, now: datetime | None, max_skew_seconds: int) -> None:
+def enforce_message_timestamp_skew(
+    timestamp: datetime,
+    *,
+    now: datetime | None = None,
+    max_skew_seconds: int = FEDERATION_TIMESTAMP_SKEW_SECONDS,
+    label: str = "timestamp",
+) -> None:
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    timestamp = _parse_timestamp(value)
     if abs((current - timestamp).total_seconds()) > max_skew_seconds:
-        raise FederationEnvelopeError("Federation envelope timestamp outside accepted skew")
+        raise FederationEnvelopeError(f"{label} outside accepted skew")
 
 
 def _enforce_expected_fields(model: FederationEnvelope, expected: Mapping[str, Any | None]) -> None:

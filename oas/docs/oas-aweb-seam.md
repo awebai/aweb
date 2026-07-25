@@ -194,7 +194,7 @@ That inference is the bug class that destroys durable identities.
 
 The attach-only walking skeleton is implemented by the
 `aweb.identity-attach` messaging capability under
-`oas/capabilities/aweb-identity-attach`. Its ID is deliberately distinct from
+`oas/.agents/capabilities/owned/aweb-identity-attach`. Its ID is deliberately distinct from
 upstream OAS's destructive per-instance `oas.aweb` lifecycle. The messaging
 layer must select this capability explicitly, so capability discovery order
 cannot substitute one retire policy for the other:
@@ -370,6 +370,32 @@ liveness from process state.
 
 A slice is not done because its components merged. It is done when its scenario
 passes with attached evidence.
+
+### What is NOT yet proven, stated here rather than in a footnote
+
+**The attached identity does not reach the launched runtime.** The spawn hook
+verifies the principal and persists the binding in capability metadata, but it
+contributes no launch environment — no `AW_IDENTITY_HOME`, no binding of any
+kind. A launched model would therefore *not* act as the principal.
+
+Both proofs below use `oas spawn --no-launch`. That is a legitimate production
+entry point for what they claim — the kernel, hook dispatch, instance lifecycle
+and retire path are all real, and only session launch is skipped. But it means
+no path in which a model actually runs has been exercised.
+
+So the established results are **safety** results: this mechanism cannot harm a
+principal. That it can *use* one is unproven, and until an `env` seam carries
+`AW_IDENTITY_HOME` into the launched process, it is not merely untested — it
+does not happen.
+
+Two related limits, for the same reason of not overstating by omission:
+
+- binding is **config-scoped**, so a declared principal applies to every
+  instance of that soul; there is no per-instance selection yet;
+- the deployment configuration in this repo is deliberately **not committed**,
+  because it would activate the capability with no binding and resolve the
+  declaration under a doubled path. Fixing those alone would produce a config
+  that resolves correctly and still attaches nothing.
 
 The architecture rests on one claim, and if it fails everything else was wasted:
 

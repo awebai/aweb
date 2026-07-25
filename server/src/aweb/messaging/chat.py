@@ -377,7 +377,6 @@ async def send_in_session(
     message_version: int = 1,
     encrypted_envelope: dict[str, Any] | None = None,
     encrypted_metadata: dict[str, Any] | None = None,
-    created_at: datetime | None = None,
     message_id: UUID | None = None,
 ) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
@@ -393,7 +392,10 @@ async def send_in_session(
     if not participant:
         return None
 
-    effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
+    # The sender-attested time remains in signed_payload or encrypted_envelope.
+    # created_at is when this server received the message for ordering, so the
+    # two values intentionally use different clocks and may disagree.
+    effective_created_at = datetime.now(timezone.utc)
     effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
     sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
     encrypted_metadata = encrypted_metadata or {}

@@ -57,3 +57,6 @@ pi-extension/skills/
 /agents/instances/oas-seam-dev/
 /agents/instances/oas-seam-rev/
 /cli/agents/instances/aw-sec-dev-2/
+
+# OAS instance homes are disposable runtime state; souls and the deployment config are not.
+/oas/agents/*/instances/

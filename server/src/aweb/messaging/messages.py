@@ -261,7 +261,6 @@ async def deliver_message(
     message_version: int = 1,
     encrypted_envelope: dict | None = None,
     encrypted_metadata: dict | None = None,
-    created_at: datetime | None = None,
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
@@ -290,8 +289,10 @@ async def deliver_message(
             stored_route_continuation=stored_route_continuation,
         )
 
-    if created_at is None:
-        created_at = datetime.now(timezone.utc)
+    # The sender-attested time remains in signed_payload or encrypted_envelope.
+    # created_at is when this server received the message for ordering, so the
+    # two values intentionally use different clocks and may disagree.
+    created_at = datetime.now(timezone.utc)
     if message_id is None:
         message_id = uuid_mod.uuid4()
 

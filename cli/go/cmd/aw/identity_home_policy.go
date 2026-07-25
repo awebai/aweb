@@ -24,14 +24,18 @@ func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
 // and an empty instance. A newly added command is denied until equivalent
 // evidence is added; plausible-looking code is not sufficient evidence.
 var identityHomeAwareCommandPaths = map[string]struct{}{
-	"aw a2a status":       {},
-	"aw id create":        {},
-	"aw mail inbox":       {},
-	"aw reset":            {},
-	"aw role-name set":    {},
-	"aw run":              {},
-	"aw whoami":           {},
-	"aw workspace delete": {},
+	"aw a2a status":            {},
+	"aw id create":             {},
+	"aw id team accept-invite": {},
+	"aw id team leave":         {},
+	"aw id team list":          {},
+	"aw id team switch":        {},
+	"aw mail inbox":            {},
+	"aw reset":                 {},
+	"aw role-name set":         {},
+	"aw run":                   {},
+	"aw whoami":                {},
+	"aw workspace delete":      {},
 }
 
 func requireIdentityHomeAwareCommand(cmd *cobra.Command, external bool) error {
