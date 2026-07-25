@@ -169,6 +169,50 @@ describe("registry verification", () => {
     expect(result.outcome).toBe("OK_DEGRADED");
   });
 
+  test.each([
+    ["zero", 0],
+    ["fractional", 1.5],
+    ["NaN", Number.NaN],
+    ["infinity", Number.POSITIVE_INFINITY],
+    ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("rejects %s log-head seq before branch selection", (_name, seq) => {
+    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
+    const result = verifyDidKeyResolution({
+      did_aw: identityLogVectors.mapping.did_aw,
+      current_did_key: identityLogVectors.mapping.initial_did_key,
+      log_head: {
+        ...register.entry_payload,
+        seq,
+        entry_hash: register.entry_hash,
+        signature: register.signature_b64,
+      },
+    }, undefined, Date.now());
+
+    expect(result).toEqual({
+      outcome: "HARD_ERROR",
+      error: "log_head seq must be a positive safe integer",
+    });
+  });
+
+  test.each([
+    ["fractional", 1.5],
+    ["NaN", Number.NaN],
+    ["infinity", Number.POSITIVE_INFINITY],
+    ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("refuses %s verified-head checkpoint seeds", (_name, seq) => {
+    const resolver = new RegistryResolver();
+    resolver.seedVerifiedHead(identityLogVectors.mapping.did_aw, {
+      seq,
+      entryHash: "a".repeat(64),
+      stateHash: "b".repeat(64),
+      currentDidKey: identityLogVectors.mapping.initial_did_key,
+      fetchedAt: 0,
+    });
+
+    const cache = (resolver as unknown as { headCache: Map<string, unknown> }).headCache;
+    expect(cache.has(identityLogVectors.mapping.did_aw)).toBe(false);
+  });
+
   test("fails hard when log_head current key disagrees with body", () => {
     const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
     const result = verifyDidKeyResolution({
@@ -547,6 +591,41 @@ describe("registry resolver", () => {
       expect.anything(),
     );
   });
+});
+
+interface RawWireVectorFile {
+  schema: string;
+  cases: Array<{
+    name: string;
+    resolution_json: string;
+    cached_json: string;
+    expected_outcome: "HARD_ERROR";
+    known_runtime_gap: string | null;
+  }>;
+}
+
+const rawWireVectors = JSON.parse(
+  readFileSync(join(testDir, "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json"), "utf-8"),
+) as RawWireVectorFile;
+
+describe("identity-log-raw-wire-v1 shared vectors", () => {
+  test("uses the raw-wire schema required for decoder-level cases", () => {
+    expect(rawWireVectors.schema).toBe("aweb.identity-log.raw-wire.v1");
+  });
+
+  for (const testCase of rawWireVectors.cases) {
+    test(testCase.name, () => {
+      const resolution = JSON.parse(testCase.resolution_json) as DidKeyResolution;
+      const cached = JSON.parse(testCase.cached_json) as NonNullable<
+        Parameters<typeof verifyDidKeyResolution>[1]
+      >;
+
+      const result = verifyDidKeyResolution(resolution, cached, Date.now());
+
+      expect(result.outcome).toBe(testCase.expected_outcome);
+      expect(result.nextHead).toBeUndefined();
+    });
+  }
 });
 
 interface NegativeVectorFile {

@@ -3,7 +3,7 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
-import { RegistryResolver, type VerifiedLogHead } from "./registry.js";
+import { RegistryResolver, isValidDidLogSequence, type VerifiedLogHead } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64OrEmpty } from "./base64.js";
 
@@ -244,7 +244,7 @@ export class SenderTrustManager {
     stableID: string | undefined,
     head: VerifiedLogHead | undefined,
   ): boolean {
-    if (!stableID || !head || head.seq < 1 || !head.entryHash.trim()) return false;
+    if (!stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
     const pin = store.pins.get(stableID);
     if (!pin || head.seq <= (pin.log_seq ?? 0)) return false;
     pin.log_seq = head.seq;
