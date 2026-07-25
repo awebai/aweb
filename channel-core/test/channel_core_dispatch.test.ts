@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,81 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "world",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
+  });
+
+  test("delivery-store lock failure rejects without creating an in-memory acknowledgment path", { timeout: 15_000 }, async () => {
+    const storePath = join(await mkdtemp(join(tmpdir(), "aweb-channel-lock-fail-")), "delivered.json");
+    const deliveryStore = await DeliveryStore.load(storePath);
+    await mkdir(`${storePath}.lock`);
+    const dispatched = new Set<string>();
+    const onAwakening = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-lock-fail",
+          conversation_id: "conv-lock-fail",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "must remain pending",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(dispatchAgentEvent(
+      { client: client as never, pinStore: new PinStore(), trust, self, deliveryStore, onAwakening },
+      dispatched,
+      { type: "mail_message", message_id: "mail-lock-fail" } satisfies AgentEvent,
+    )).rejects.toMatchObject({ code: "ELOCKED" });
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(dispatched).toHaveLength(0);
+    expect(deliveryStore.has("mail:conv-lock-fail:mail-lock-fail")).toBe(false);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("event-loop logs name the quarantined store and leave upstream acknowledgment pending", async () => {
+    const storePath = join(await mkdtemp(join(tmpdir(), "aweb-channel-corrupt-")), "delivered.json");
+    const deliveryStore = await DeliveryStore.load(storePath);
+    await writeFile(storePath, "{corrupt delivery state\n", "utf8");
+    const onAwakening = vi.fn();
+    const log = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-corrupt-store",
+          conversation_id: "conv-corrupt-store",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "must remain pending",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield { type: "mail_message", message_id: "mail-corrupt-store" };
+    }
+
+    await consumeAgentEvents(
+      { client: client as never, pinStore: new PinStore(), trust, self, deliveryStore, onAwakening },
+      new Set(),
+      events(),
+      log,
+    );
+
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/quarantined at .*\.corrupt-/i));
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("skips and leaves unread only the inbox message whose verification throws", async () => {
