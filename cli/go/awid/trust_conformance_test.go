@@ -213,7 +213,7 @@ func TestRegistryConformanceVectors(t *testing.T) {
 			client := &Client{}
 			client.SetResolver(&conformanceRegistryResolver{state: vector.RegistryState})
 
-			gotStatus, gotConfirmed := client.checkStableIdentityRegistry(
+			gotStatus, gotConfirmed, _ := client.checkStableIdentityRegistry(
 				context.Background(),
 				VerificationStatus(vector.InitialStatus),
 				vector.TrustAddress,

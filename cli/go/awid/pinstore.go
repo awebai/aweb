@@ -35,10 +35,17 @@ type Pin struct {
 	// DIDKey is the last did:key observed for this identity when the pin key is
 	// a stable_id. It allows key-rotation checks without treating stable_id as a
 	// blind trust anchor.
-	DIDKey    string `yaml:"did_key,omitempty"`
-	FirstSeen string `yaml:"first_seen"`
-	LastSeen  string `yaml:"last_seen"`
-	Server    string `yaml:"server"`
+	DIDKey string `yaml:"did_key,omitempty"`
+	// LogSeq and LogEntryHash are the anti-rollback checkpoint: the highest
+	// DID-log sequence verified for this identity and that entry's hash. They
+	// are persisted with the pin so a restart cannot forget what was already
+	// verified; a served log that is behind them, or that does not contain this
+	// entry, is refused (default-aajc.8).
+	LogSeq       int    `yaml:"log_seq,omitempty"`
+	LogEntryHash string `yaml:"log_entry_hash,omitempty"`
+	FirstSeen    string `yaml:"first_seen"`
+	LastSeen     string `yaml:"last_seen"`
+	Server       string `yaml:"server"`
 }
 
 // PinStore manages TOFU identity pins for known agents.

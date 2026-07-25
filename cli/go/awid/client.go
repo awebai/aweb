@@ -529,8 +529,12 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		isContact = nil
 	}
 	var registryConfirmedCurrentKey bool
-	status, registryConfirmedCurrentKey = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
+	var verifiedHead *VerifiedLogHead
+	status, registryConfirmedCurrentKey, verifiedHead = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
 	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryConfirmedCurrentKey)
+	// Persist after the pin exists: on first contact the pin is created by the
+	// check above, so recording the checkpoint earlier would be dropped.
+	c.persistVerifiedHeadCheckpoint(fromStableID, verifiedHead)
 	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
 		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
@@ -575,17 +579,23 @@ func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID stri
 	return c.checkRecipientBinding(status, toDID, toStableID)
 }
 
-func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) (VerificationStatus, bool) {
+func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) (VerificationStatus, bool, *VerifiedLogHead) {
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
-		return status, false
+		return status, false, nil
 	}
 	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		return status, false
+		return status, false, nil
 	}
 	verifier, ok := c.resolver.(StableIdentityVerifier)
 	if !ok {
-		return status, false
+		return status, false, nil
 	}
+	// Restore the anti-rollback anchor from the checkpoint persisted with the
+	// pin. The resolver's in-memory head cache is what refuses a sequence
+	// regression or a split view, but it is forgotten on restart — so without
+	// this a registry can serve a valid truncated prefix and roll a rotated
+	// identity back to a retired key (default-aajc.8).
+	c.seedVerifiedHeadFromPin(fromStableID)
 	var result *StableIdentityVerification
 	if currentVerifier, ok := c.resolver.(CurrentStableIdentityVerifier); ok {
 		result = currentVerifier.VerifyStableIdentityCurrent(ctx, trustAddress, fromStableID, fromDID)
@@ -593,21 +603,21 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 		result = verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
 	}
 	if result == nil {
-		return status, false
+		return status, false, nil
 	}
 	switch result.Outcome {
 	case StableIdentityStaleCache:
-		return VerificationStale, false
+		return VerificationStale, false, nil
 	case StableIdentityVerified:
 		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
 		if currentDIDKey != "" && currentDIDKey != fromDID {
-			return IdentityMismatch, false
+			return IdentityMismatch, false, nil
 		}
-		return status, currentDIDKey == fromDID
+		return status, currentDIDKey == fromDID, result.VerifiedHead
 	case StableIdentityHardError:
-		return IdentityMismatch, false
+		return IdentityMismatch, false, nil
 	}
-	return status, false
+	return status, false, nil
 }
 
 // CheckTOFUPin checks a verified message against the TOFU pin store.
@@ -1263,4 +1273,57 @@ func identityAuthSignPayload(didAW, timestamp string, body []byte) []byte {
 		panic(fmt.Sprintf("identityAuthSignPayload: %v", err))
 	}
 	return []byte(payload)
+}
+
+// verifiedHeadSeeder is implemented by resolvers that keep an anti-rollback
+// anchor, so the client can restore it from the persisted pin checkpoint.
+type verifiedHeadSeeder interface {
+	SeedVerifiedHead(stableID string, head *VerifiedLogHead)
+}
+
+func (c *Client) seedVerifiedHeadFromPin(stableID string) {
+	seeder, ok := c.resolver.(verifiedHeadSeeder)
+	if !ok || c.pinStore == nil {
+		return
+	}
+	c.pinStore.mu.Lock()
+	pin, hasPin := c.pinStore.Pins[stableID]
+	var seq int
+	var entryHash, didKey string
+	if hasPin && pin != nil {
+		seq, entryHash, didKey = pin.LogSeq, pin.LogEntryHash, pin.DIDKey
+	}
+	c.pinStore.mu.Unlock()
+	if seq < 1 || entryHash == "" {
+		return
+	}
+	seeder.SeedVerifiedHead(stableID, &VerifiedLogHead{
+		Seq:           seq,
+		EntryHash:     entryHash,
+		CurrentDIDKey: didKey,
+	})
+}
+
+// persistVerifiedHeadCheckpoint records the verified head with the pin so the
+// anchor survives a restart. It only ever advances: a lower sequence is ignored,
+// so a stale response cannot weaken the checkpoint.
+func (c *Client) persistVerifiedHeadCheckpoint(stableID string, head *VerifiedLogHead) {
+	if c.pinStore == nil {
+		return
+	}
+	if head == nil || head.Seq < 1 || strings.TrimSpace(head.EntryHash) == "" {
+		return
+	}
+	c.pinStore.mu.Lock()
+	pin, ok := c.pinStore.Pins[stableID]
+	changed := false
+	if ok && pin != nil && head.Seq > pin.LogSeq {
+		pin.LogSeq = head.Seq
+		pin.LogEntryHash = head.EntryHash
+		changed = true
+	}
+	c.pinStore.mu.Unlock()
+	if changed {
+		c.savePinStore()
+	}
 }
