@@ -373,20 +373,38 @@ passes with attached evidence.
 
 ### What is NOT yet proven, stated here rather than in a footnote
 
-**The attached identity does not reach the launched runtime.** The spawn hook
-verifies the principal and persists the binding in capability metadata, but it
-contributes no launch environment — no `AW_IDENTITY_HOME`, no binding of any
-kind. A launched model would therefore *not* act as the principal.
+**Nothing binds the launched runtime to the declared principal.** The spawn
+hook verifies the principal and persists the binding in capability metadata
+(`aweb-identity-attach.mjs`, spawn path), but contributes nothing to the launch.
+OAS accepts a hook `launch` map of runtime → extra **command arguments**
+(`lib/core.mjs:1452`); it has no hook **environment** map, and the authority
+variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`) is never
+set for the session.
 
-Both proofs below use `oas spawn --no-launch`. That is a legitimate production
-entry point for what they claim — the kernel, hook dispatch, instance lifecycle
-and retire path are all real, and only session launch is skipped. But it means
-no path in which a model actually runs has been exercised.
+The precise claim is **no deterministic binding**, not "the model cannot act as
+the principal". The launch command does not scrub ambient identity state, so a
+session could still resolve *some* identity from the environment or working
+directory it inherits. That is arguably worse than none, because it can appear
+to work. What does not exist is any mechanism that makes it the *declared*
+principal.
 
-So the established results are **safety** results: this mechanism cannot harm a
-principal. That it can *use* one is unproven, and until an `env` seam carries
-`AW_IDENTITY_HOME` into the launched process, it is not merely untested — it
-does not happen.
+`.17` exercises the real spawn/retire lifecycle through
+`oas spawn --no-launch`: kernel, hook dispatch, instance lifecycle and retire
+path are all real, and only session launch is skipped. `.24` is a different
+shape — it traces the attach path's complete HTTP request surface, and does not
+depend on `--no-launch` at all.
+
+So the established results are bounded **safety** results, and are exactly two:
+
+- ordinary `oas retire` of an attached instance neither altered nor deleted the
+  principal, and leaked no material into the instance (`.17`);
+- the attach path cannot register the disposable instance path, so the
+  gone-workspace destruction route is unreachable by construction (`.24`).
+
+Neither establishes the absence of *every* harm — not provision-mode paths, not
+future code, not a route nobody has tested. Do not restate these as "cannot harm
+a principal". That it can *use* one is unproven, and requires an upstream
+environment seam that does not exist today.
 
 Two related limits, for the same reason of not overstating by omission:
 
