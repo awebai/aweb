@@ -749,7 +749,7 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		detail := strings.TrimSpace(string(respBody))
+		detail := awid.SanitizeErrorText(string(respBody))
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			if detail != "" {

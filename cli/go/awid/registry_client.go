@@ -483,7 +483,7 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 			return err
 		}
 		if shouldRetryRegistryResponse(ctx, method, path, attempt, resp) {
-			_, _ = ReadAllBounded(resp.Body, MaxResponseSize)
+			_, _ = ReadAllBounded(resp.Body, MaxErrorResponseSize)
 			_ = resp.Body.Close()
 			if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {
 				return waitErr

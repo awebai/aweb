@@ -2277,7 +2277,11 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	responseLimit := int64(awid.MaxResponseSize)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseLimit = awid.MaxErrorResponseSize
+	}
+	responseBody, err := awid.ReadAllBounded(resp.Body, responseLimit)
 	if err != nil {
 		return nil, fmt.Errorf("read hosted remove-member response: %w", err)
 	}
@@ -2591,7 +2595,11 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		return err
 	}
 	defer resp.Body.Close()
-	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	responseLimit := int64(awid.MaxResponseSize)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseLimit = awid.MaxErrorResponseSize
+	}
+	responseBody, err := awid.ReadAllBounded(resp.Body, responseLimit)
 	if err != nil {
 		return fmt.Errorf("read service register response: %w", err)
 	}
@@ -2818,7 +2826,11 @@ func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]a
 		return err
 	}
 	defer resp.Body.Close()
-	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	responseLimit := int64(awid.MaxResponseSize)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseLimit = awid.MaxErrorResponseSize
+	}
+	responseBody, err := awid.ReadAllBounded(resp.Body, responseLimit)
 	if err != nil {
 		return fmt.Errorf("read cloud cleanup response: %w", err)
 	}

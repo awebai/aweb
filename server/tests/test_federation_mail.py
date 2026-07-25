@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -26,6 +27,46 @@ def _envelope() -> FederationEnvelope:
         timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         signed_payload="{}",
     )
+
+
+@pytest.mark.asyncio
+async def test_federation_redirect_target_receives_no_request():
+    target_hits = 0
+
+    def handler(request):
+        nonlocal target_hits
+        if request.url.host == "target.test":
+            target_hits += 1
+            return Response(200, json={})
+        return Response(307, headers={"Location": "https://target.test/final"})
+
+    with pytest.raises(Exception):
+        await deliver_federated_message(
+            delivery_origin="https://source.test",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(handler),
+        )
+    assert target_hits == 0
+
+
+class SlowResponseStream(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        while True:
+            await asyncio.sleep(0.02)
+            yield b" "
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_enforces_overall_deadline_on_slow_body():
+    with pytest.raises(Exception, match="failed"):
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(lambda _request: Response(200, stream=SlowResponseStream())),
+            timeout=0.01,
+        )
 
 
 @pytest.mark.asyncio

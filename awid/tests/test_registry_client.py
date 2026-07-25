@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -9,6 +10,50 @@ from httpx import MockTransport, Response
 import awid.registry as registry_module
 from awid.did import generate_keypair
 from awid.registry import MAX_REGISTRY_RESPONSE_BYTES, CachedRegistryClient, RegistryClient
+
+
+@pytest.mark.asyncio
+async def test_registry_client_redirect_target_receives_no_request():
+    target_hits = 0
+
+    def handler(request):
+        nonlocal target_hits
+        if request.url.host == "target.test":
+            target_hits += 1
+            return Response(200, json={})
+        return Response(307, headers={"Location": "http://target.test/final"})
+
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(handler),
+    )
+    try:
+        with pytest.raises(Exception):
+            await registry.health()
+    finally:
+        await registry.aclose()
+    assert target_hits == 0
+
+
+class SlowResponseStream(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        while True:
+            await asyncio.sleep(0.02)
+            yield b" "
+
+
+@pytest.mark.asyncio
+async def test_registry_client_enforces_overall_deadline_on_slow_body():
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        timeout_seconds=0.01,
+        transport=MockTransport(lambda _request: Response(200, stream=SlowResponseStream())),
+    )
+    try:
+        with pytest.raises(TimeoutError):
+            await registry.health()
+    finally:
+        await registry.aclose()
 
 
 @pytest.mark.asyncio

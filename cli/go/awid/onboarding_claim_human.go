@@ -85,12 +85,12 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 		c.latestClientVersion.Store(v)
 	}
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body)}
+	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(data)}
 	}
 
 	var out ClaimHumanResponse

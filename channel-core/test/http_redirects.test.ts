@@ -1,10 +1,11 @@
 import { createServer, type RequestListener } from "node:http";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { APIClient, RegistryResolver } from "../src/index.js";
 
 const openServers: Array<ReturnType<typeof createServer>> = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(openServers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   })));
@@ -94,6 +95,26 @@ describe("trust response bounds", () => {
 
     await expect(client.get("/exact")).resolves.toEqual({});
     await expect(client.get("/oversize")).rejects.toThrow(/maximum|size|large|limit/i);
+  });
+
+  test("SSE errors stop reading at the diagnostic limit", async () => {
+    const chunkSize = 8192;
+    let bytesProduced = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (bytesProduced >= 1024 * 1024) {
+          controller.close();
+          return;
+        }
+        bytesProduced += chunkSize;
+        controller.enqueue(new Uint8Array(chunkSize).fill(120));
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 500 })));
+    const client = new APIClient("https://app.example", auth);
+
+    await expect(client.openSSE("/v1/events/stream", new AbortController().signal)).rejects.toThrow();
+    expect(bytesProduced).toBeLessThanOrEqual(64 * 1024 + 2 * chunkSize);
   });
 
   test("registry resolver rejects the first oversize trust response", async () => {

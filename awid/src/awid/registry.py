@@ -296,7 +296,9 @@ class RegistryClient:
             try:
                 parsed_error = json_loads(content)
                 if isinstance(parsed_error, dict):
-                    detail = parsed_error.get("detail")
+                    raw_detail = parsed_error.get("detail")
+                    if raw_detail is not None:
+                        detail = _safe_error_text(str(raw_detail).encode("utf-8"))
             except Exception:
                 detail = None
             response_text = _safe_error_text(content)

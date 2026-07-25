@@ -87,12 +87,12 @@ func (c *Client) BootstrapRedeem(ctx context.Context, req *BootstrapRedeemReques
 		c.latestClientVersion.Store(v)
 	}
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body)}
+	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(data)}
 	}
 
 	var out BootstrapRedeemResponse

@@ -55,12 +55,16 @@ func ReadErrorExcerpt(reader io.Reader) string {
 	if len(data) > MaxErrorResponseSize {
 		data = data[:MaxErrorResponseSize]
 	}
-	text := strings.Map(func(r rune) rune {
+	return SanitizeErrorText(string(data))
+}
+
+func SanitizeErrorText(text string) string {
+	text = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
 		}
 		return r
-	}, string(data))
+	}, text)
 	return strings.Join(strings.Fields(text), " ")
 }
 
