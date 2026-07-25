@@ -25,7 +25,7 @@ principal, but it never owns one it did not provision, and cleanup authority is
 
 | Entity | Owner | Lifetime | Holds |
 |---|---|---|---|
-| **Principal** | aweb | Durable; exists while offline | Address, `did:aw` stable id, credentials, durable mutable state, policy |
+| **Principal** | aweb | Durable; exists while offline | Address, `did:aw` stable id, credentials, durable mutable state |
 | **Instance** | OAS | Until explicit retire | Home, worktree, task context |
 | **Session** | OAS | One model process | Nothing durable |
 
