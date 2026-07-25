@@ -99,6 +99,49 @@ jobs:
         working-directory: cli/go
         run: go test ./... -count=1
 
+  # Nothing cross-compiled, so a constant that does not fit in a 32-bit int
+  # compiled fine on amd64 and broke every 32-bit build. That is invisible to
+  # `go test ./...` on the runner and to the release build, which targets only
+  # amd64 and arm64 — so it would have reached anyone building from source on a
+  # 32-bit host with no gate catching it (default-aamh).
+  #
+  # Compiling the test binaries is the whole check: it type-checks production
+  # AND test code for the target without needing to execute it.
+  go-cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: "386"
+          - goos: windows
+            goarch: "386"
+          - goos: linux
+            goarch: arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - name: Compile for ${{ matrix.goos }}/${{ matrix.goarch }}
+        working-directory: cli/go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        # `go test -run '^$'` would COMPILE the test binary and then try to
+        # EXECUTE it: -run suppresses test selection, not execution, so a
+        # foreign-architecture binary dies with "exec format error" and the job
+        # is red no matter what the code says. `go test -c` builds it and stops,
+        # which is the whole check — it type-checks test files as well as
+        # production ones, which is where half of this defect lived.
+        run: |
+          go build ./...
+          for pkg in $(go list ./...); do
+            go test -c -o /dev/null "$pkg"
+          done
+
   # Separate job because the race detector is the instrument that validates the
   # concurrency classes this audit found, and it must be able to fail on its own
   # rather than being masked by an unrelated failure in the plain run.
