@@ -2,6 +2,7 @@ package awid
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -103,6 +104,24 @@ func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 				t.Fatal("oversize response was accepted")
 			}
 		})
+	}
+}
+
+func TestClientRejectsDecompressedResponseOverLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		compressed := gzip.NewWriter(w)
+		_, _ = io.WriteString(compressed, `{}`+strings.Repeat(" ", MaxResponseSize-1))
+		_ = compressed.Close()
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := client.Get(context.Background(), "/v1/trust", &out); err == nil {
+		t.Fatal("oversize decompressed response was accepted")
 	}
 }
 

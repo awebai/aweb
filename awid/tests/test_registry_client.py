@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 
 import httpx
@@ -10,6 +11,22 @@ from httpx import MockTransport, Response
 import awid.registry as registry_module
 from awid.did import generate_keypair
 from awid.registry import MAX_REGISTRY_RESPONSE_BYTES, CachedRegistryClient, RegistryClient
+
+
+@pytest.mark.asyncio
+async def test_registry_client_rejects_decompressed_response_over_limit():
+    content = gzip.compress(b"{}" + b" " * (MAX_REGISTRY_RESPONSE_BYTES - 1))
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(
+            lambda _request: Response(200, content=content, headers={"Content-Encoding": "gzip"})
+        ),
+    )
+    try:
+        with pytest.raises(ValueError, match="maximum|size|large|limit"):
+            await registry.health()
+    finally:
+        await registry.aclose()
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 import { createServer, type RequestListener } from "node:http";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { APIClient, RegistryResolver } from "../src/index.js";
 
@@ -95,6 +96,21 @@ describe("trust response bounds", () => {
 
     await expect(client.get("/exact")).resolves.toEqual({});
     await expect(client.get("/oversize")).rejects.toThrow(/maximum|size|large|limit/i);
+  });
+
+  test("standard API rejects a decompressed response over the limit", async () => {
+    const content = gzipSync(`{}${" ".repeat(MAX_RESPONSE_BYTES - 1)}`);
+    const serverURL = await listen((_request, response) => {
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+        "Content-Length": String(content.byteLength),
+      });
+      response.end(content);
+    });
+    const client = new APIClient(serverURL, auth);
+
+    await expect(client.get("/gzip-bomb")).rejects.toThrow(/maximum|size|large|limit/i);
   });
 
   test("SSE errors stop reading at the diagnostic limit", async () => {

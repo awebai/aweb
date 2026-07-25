@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -27,6 +28,20 @@ def _envelope() -> FederationEnvelope:
         timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         signed_payload="{}",
     )
+
+
+@pytest.mark.asyncio
+async def test_federation_rejects_decompressed_response_over_limit():
+    content = gzip.compress(b"{}" + b" " * (MAX_FEDERATION_RESPONSE_BYTES - 1))
+    with pytest.raises(Exception, match="maximum|size|large|limit"):
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(
+                lambda _request: Response(200, content=content, headers={"Content-Encoding": "gzip"})
+            ),
+        )
 
 
 @pytest.mark.asyncio
