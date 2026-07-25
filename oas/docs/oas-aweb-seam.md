@@ -462,24 +462,31 @@ The **ordinary provisioned worker is the mainstream path**; the durable resident
 is the extension. An earlier revision of this document led with the resident,
 which is the exception — we built it first, and that ordering is corrected here.
 
-1. **Prompt separator.** Delimit the task prompt after capability-contributed
-   launch arguments. Done; open upstream as OAS-Framework PR 37.
-2. **Lifecycle policy in the capability.** The three binding modes; created
-   resource, lifecycle and cleanup owner recorded at binding time; retire
-   deleting only identities that are both disposable and OAS-owned.
-3. **Clean external customer proof.** A fresh workspace, two developers,
-   duplicate local instance names — the ordinary provision-and-retire journey
-   end to end.
-4. **A deterministic propagation mechanism** carrying the resolved identity
-   home into the launched process, plus the adapter output that uses it. A
-   validated hook environment map upstream is the *proposed* solution and the
-   smallest one we have found; the requirement is the deterministic propagation,
-   not that particular shape. Without some such mechanism there is no
-   attachment, only verification.
-5. **Throwaway Pi attach proof** — positive wake, reply, ordinary retire.
+1. **Prompt separator** (`aaaa.1`). Delimit the task prompt after
+   capability-contributed launch arguments. Done; open upstream as
+   OAS-Framework PR 37.
+2. **Lifecycle policy in the capability** (`aaaa.4`). The three binding modes;
+   created resource, lifecycle and cleanup owner recorded at binding time;
+   retire deleting only identities that are both disposable and OAS-owned.
+3. **Clean external customer proof** (`aaaa.28`). A fresh workspace, two
+   developers, duplicate local instance names — the ordinary
+   provision-and-retire journey end to end.
+4. **A deterministic propagation mechanism** (`aaaa.29`) carrying the resolved
+   identity home into the launched process, plus the adapter output that uses
+   it. A validated hook environment map upstream is the *proposed* solution and
+   the smallest one we have found; the requirement is the deterministic
+   propagation, not that particular shape. Without some such mechanism there is
+   no attachment, only verification.
+5. **Throwaway Pi attach proof** (`aaaa.30`) — positive wake, reply, ordinary
+   retire.
 6. **Explicit per-instance capability settings** and required-hook fatal
    outcome with rollback.
-7. **Migrate the first durable resident**, and not before.
+7. **Migrate the first durable resident** (`aaaa.19`), and not before.
+
+Each step above is a board task, and the dependency edges are recorded there:
+`.28` waits on `.4`, `.30` waits on `.29`, and `.19` waits on `.30`. The order
+in this document and the order on the board are the same order, so a step
+cannot be picked up early by reading only one of them.
 
 **What is already delivered:** non-destruction in full, with no upstream change
 required — see *Proofs*.
