@@ -59,7 +59,7 @@ run_audits() {
 # would drift from the real packages, this pins a dependency to a version with a
 # known published advisory and asserts the gate rejects it.
 self_test() {
-  local tmp status
+  local tmp status out
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   cat > "$tmp/package.json" <<'JSON'
@@ -72,12 +72,29 @@ self_test() {
 JSON
   # js-yaml 4.1.1 carries GHSA-52cp-r559-cp3m (high) and GHSA-h67p-54hq-rp68,
   # both fixed in 4.3.0 — the exact advisories default-aajc.14 patched.
-  (cd "$tmp" && npm install --package-lock-only --silent >/dev/null 2>&1)
-  (cd "$tmp" && npm audit --omit=dev --audit-level="$AUDIT_LEVEL" >/dev/null 2>&1)
+  #
+  # A non-zero exit is NOT sufficient evidence that the gate works: an
+  # unreachable registry also exits non-zero, and treating that as "the gate
+  # rejected the bad dependency" would make this self-test report PASS exactly
+  # when it is least able to detect anything. So the install must succeed, and
+  # the failure must be FOR THE RIGHT REASON — the advisory output has to name
+  # the vulnerable package.
+  if ! (cd "$tmp" && npm install --package-lock-only --silent >/dev/null 2>&1); then
+    echo "SELF-TEST INCONCLUSIVE: could not resolve the fixture against the npm"
+    echo "registry. This is an environment failure, NOT evidence about the gate."
+    return 1
+  fi
+  out="$(cd "$tmp" && npm audit --omit=dev --audit-level="$AUDIT_LEVEL" 2>&1)"
   status=$?
   if [ "$status" -eq 0 ]; then
     echo "SELF-TEST FAIL: the gate accepted js-yaml 4.1.1, which has published"
     echo "advisories. It cannot detect the class of defect it exists to catch."
+    return 1
+  fi
+  if ! printf '%s' "$out" | grep -qi 'js-yaml'; then
+    echo "SELF-TEST FAIL: the audit exited non-zero but did not report js-yaml,"
+    echo "so the failure was not the advisory this fixture exists to trigger:"
+    printf '%s\n' "$out" | tail -10
     return 1
   fi
   echo "self-test passed: the gate rejects a dependency with a known advisory"
