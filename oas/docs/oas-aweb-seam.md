@@ -147,7 +147,9 @@ trusting the index.
 signing key and rotates legitimately (`aw id rotate-key`), so pinning it would
 break on every rotation and train people to ignore mismatches. The `did:aw`
 survives rotation, while an address re-minted after a delete receives a *new*
-`did:aw` — so pinning the stable id detects re-mint and tolerates rotation.
+`did:aw` — so pinning the stable id is what makes re-mint detectable at all,
+and tolerates rotation. Detectable is not detected: see below for what actually
+performs the comparison.
 
 ### What the pin affords, and what v1 attach actually checks
 
