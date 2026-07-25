@@ -74,7 +74,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			initAuthHeader = strings.TrimSpace(r.Header.Get("Authorization"))
@@ -104,7 +104,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL + "/api",
+				"server_url":     serverURL + "/api",
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "backend:acme.com",
@@ -135,7 +135,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -234,7 +234,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	var requestOrder []string
 	var registeredDIDKey string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			requestOrder = append(requestOrder, "register_identity")
@@ -284,7 +284,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "default:alice.aweb.ai",
@@ -314,7 +314,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -426,7 +426,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 	var workspaceInitDIDKeys []string
 	var workspaceInitCalls int
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -488,7 +488,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "default:alice.aweb.ai",
@@ -518,7 +518,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	req := apiKeyInitRequest{
@@ -706,7 +706,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 	_ = awid.ComputeDIDKey(teamPub)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -728,7 +728,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "backend:acme.com",
@@ -741,7 +741,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -764,7 +764,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T
 	_ = awid.ComputeDIDKey(teamPub)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -788,7 +788,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "default:alice.aweb.ai",
@@ -801,7 +801,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -823,7 +823,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 	}
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -847,7 +847,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "backend:acme.com",
@@ -860,7 +860,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -891,7 +891,7 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 			}
 
 			var server *httptest.Server
-			server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/workspaces/init":
 					var body map[string]any
@@ -913,7 +913,7 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 						t.Fatal(err)
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"server_url":     server.URL,
+						"server_url":     serverURL,
 						"team_cert":      encoded,
 						"alias":          "alice",
 						"team_id":        "backend:acme.com",
@@ -926,7 +926,7 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 				default:
 					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 				}
-			}))
+			})
 
 			tmp := t.TempDir()
 			_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -950,7 +950,7 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 	}
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -972,7 +972,7 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "backend:acme.com",
@@ -986,7 +986,7 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -1056,7 +1056,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 	var connectBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -1098,7 +1098,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "ama",
 				"team_id":        "default:ama.aweb.ai",
@@ -1131,7 +1131,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	runGitForTest(t, tmp, "init")
@@ -1168,7 +1168,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 	var workspaceInitDIDKeys []string
 	var connectCalls int
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -1221,7 +1221,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "ama",
 				"team_id":        "default:ama.aweb.ai",
@@ -1256,7 +1256,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	preExisting := filepath.Join(tmp, ".aw", "pre-existing.txt")
@@ -1334,7 +1334,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	existingStableID := awid.ComputeStableID(existingPub)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
@@ -1365,7 +1365,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "ama",
 				"team_id":        "default:ama.aweb.ai",
@@ -1379,7 +1379,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
