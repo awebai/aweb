@@ -655,7 +655,7 @@ func parseRegistryError(resp *http.Response) error {
 	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
 		if detail, ok := parsed.Detail.(map[string]any); ok {
 			if code, ok := detail["code"].(string); ok {
-				regErr.Code = strings.TrimSpace(code)
+				regErr.Code = SanitizeErrorText(code)
 			}
 			if message, ok := detail["message"].(string); ok {
 				regErr.Message = SanitizeErrorText(message)

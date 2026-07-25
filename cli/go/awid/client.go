@@ -1242,9 +1242,14 @@ func traceHTTPClientResponse(resp *http.Response) error {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
 		return nil
 	}
-	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	originalBody := resp.Body
+	data, err := ReadAllBounded(originalBody, MaxResponseSize)
 	if err != nil {
 		return err
+	}
+	if err := originalBody.Close(); err != nil {
+		resp.Body = http.NoBody
+		return fmt.Errorf("close traced HTTP response body: %w", err)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(data))
 	fmt.Fprintf(os.Stderr, "AW TRACE response body: %s\n", string(data))

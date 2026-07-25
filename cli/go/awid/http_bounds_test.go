@@ -290,7 +290,7 @@ func TestRegistryErrorsSanitizeEscapedControlsAfterJSONDecode(t *testing.T) {
 func TestRegistryErrorSanitizesEscapedStructuredMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"detail":{"code":"bad_request","message":"bad\n\u001b[31m"}}`)
+		_, _ = io.WriteString(w, `{"detail":{"code":"bad\u001b[31m","message":"bad\n\u001b[31m"}}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -299,12 +299,15 @@ func TestRegistryErrorSanitizesEscapedStructuredMessage(t *testing.T) {
 	if !errors.As(err, &registryErr) {
 		t.Fatalf("error=%v, want RegistryError", err)
 	}
+	if registryErr.Code != "bad [31m" {
+		t.Fatalf("unsafe decoded registry code %q", registryErr.Code)
+	}
 	if registryErr.Message != "bad [31m" {
 		t.Fatalf("unsafe decoded registry message %q", registryErr.Message)
 	}
 }
 
-func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
+func TestTrustClientsCloseBodiesAfterRepeatedResponses(t *testing.T) {
 	const attempts = 4
 	normalRequest := func(httpClient *http.Client) error {
 		client, err := New("https://trust.example")
@@ -321,7 +324,17 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 		statusCode int
 		body       func() io.Reader
 		invoke     func(*http.Client) error
+		wantError  bool
 	}{
+		{
+			name:       "normal client trace success",
+			trace:      "1",
+			statusCode: http.StatusOK,
+			body: func() io.Reader {
+				return strings.NewReader("{}")
+			},
+			invoke: normalRequest,
+		},
 		{
 			name:       "normal client trace oversize",
 			trace:      "1",
@@ -329,7 +342,8 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 			body: func() io.Reader {
 				return io.LimitReader(zeroReader{}, 10*1024*1024+1)
 			},
-			invoke: normalRequest,
+			invoke:    normalRequest,
+			wantError: true,
 		},
 		{
 			name:       "normal client remote error",
@@ -337,7 +351,8 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 			body: func() io.Reader {
 				return strings.NewReader("malicious error")
 			},
-			invoke: normalRequest,
+			invoke:    normalRequest,
+			wantError: true,
 		},
 		{
 			name:       "registry client malformed JSON",
@@ -349,6 +364,7 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 				_, err := NewAWIDRegistryClient(httpClient, nil).ResolveKeyAt(context.Background(), "https://trust.example", "did:aw:test")
 				return err
 			},
+			wantError: true,
 		},
 		{
 			name:       "registry resolver malformed JSON",
@@ -360,6 +376,7 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), "https://trust.example", "did:aw:test", true)
 				return err
 			},
+			wantError: true,
 		},
 	}
 
@@ -380,12 +397,16 @@ func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 			})}
 
 			for range attempts {
-				if err := test.invoke(httpClient); err == nil {
+				err := test.invoke(httpClient)
+				if test.wantError && err == nil {
 					t.Fatal("malicious response was accepted")
+				}
+				if !test.wantError && err != nil {
+					t.Fatalf("valid response failed: %v", err)
 				}
 			}
 			if closed != attempts {
-				t.Fatalf("closed %d response bodies after %d failures", closed, attempts)
+				t.Fatalf("closed %d original response bodies after %d requests", closed, attempts)
 			}
 		})
 	}
@@ -399,12 +420,13 @@ func (f cleanupRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 
 type cleanupBody struct {
 	io.Reader
-	onClose func()
+	onClose  func()
+	closeErr error
 }
 
 func (b *cleanupBody) Close() error {
 	b.onClose()
-	return nil
+	return b.closeErr
 }
 
 type zeroReader struct{}
@@ -412,6 +434,31 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
+}
+
+func TestTraceResponsePropagatesOriginalBodyCloseError(t *testing.T) {
+	t.Setenv("AW_TRACE", "1")
+	closeErr := errors.New("close failed")
+	closed := 0
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body: &cleanupBody{
+			Reader:   strings.NewReader("{}"),
+			onClose:  func() { closed++ },
+			closeErr: closeErr,
+		},
+	}
+
+	if err := traceHTTPClientResponse(resp); !errors.Is(err, closeErr) {
+		t.Fatalf("error=%v, want close error", err)
+	}
+	if closed != 1 {
+		t.Fatalf("original body closed %d times, want 1", closed)
+	}
+	if resp.Body != http.NoBody {
+		t.Fatal("failed original body remained reachable after close")
+	}
 }
 
 func TestTraceResponseCannotReadPastResponseLimit(t *testing.T) {
