@@ -194,7 +194,7 @@ That inference is the bug class that destroys durable identities.
 
 The attach-only walking skeleton is implemented by the
 `aweb.identity-attach` messaging capability under
-`oas/capabilities/aweb-identity-attach`. Its ID is deliberately distinct from
+`oas/.agents/capabilities/owned/aweb-identity-attach`. Its ID is deliberately distinct from
 upstream OAS's destructive per-instance `oas.aweb` lifecycle. The messaging
 layer must select this capability explicitly, so capability discovery order
 cannot substitute one retire policy for the other:
