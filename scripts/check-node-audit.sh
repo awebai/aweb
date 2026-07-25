@@ -22,9 +22,13 @@
 # reachable in our code, and it does not audit the Go or Python toolchains
 # (Go: default-aall; Python locks: routed to the owning teams).
 #
+# Before consulting advisories, verify that both shipped bundles resolve every
+# channel-core production dependency at the version in channel-core's lockfile.
+# This is authoritative build provenance; bundle string markers are not.
+#
 # Usage:
-#   check-node-audit.sh              audit all Node packages
-#   check-node-audit.sh --self-test  prove the gate fails on a known-bad version
+#   check-node-audit.sh              verify build inputs, then audit all Node packages
+#   check-node-audit.sh --self-test  prove both gates fail for their intended reasons
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,6 +51,7 @@ audit_package() {
 
 run_audits() {
   local status=0
+  node "$ROOT/scripts/check-node-build-provenance.mjs" || status=1
   # Authoritative: these production dependencies are what get bundled/shipped.
   audit_package "channel-core" "AUTHORITATIVE - deps here are inlined into both bundles" || status=1
   # Weak by construction (see header), but a regression here is still real.
@@ -60,6 +65,10 @@ run_audits() {
 # known published advisory and asserts the gate rejects it.
 self_test() {
   local tmp status out
+  if ! node --test "$ROOT/scripts/test-node-build-provenance.mjs"; then
+    echo "SELF-TEST FAIL: the build-provenance gate did not reject its bad fixture"
+    return 1
+  fi
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   cat > "$tmp/package.json" <<'JSON'
