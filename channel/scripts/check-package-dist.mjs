@@ -33,22 +33,42 @@ if (!dist.includes(appEventConsumer) || !dist.includes(appAwakeningKind)) {
 }
 
 // Freshness gate: the plugin bundle inlines channel-core via the file: symlink,
-// so a stale channel-core/dist would silently ship the plugin WITHOUT merged
-// security fixes. Each marker is a string that only exists once its fix is
-// bundled from current channel-core src; a fresh build (prebuild rebuilds
-// channel-core) contains them all. If any is missing, channel-core was bundled
-// stale — rebuild it (npm run build in channel-core) and re-bundle.
-const securityFixMarkers = [
-  { task: "aajc.3 DID-log genesis/rotation authorization binding", marker: "not derived from genesis" },
-  { task: "aajr TS full-log walk", marker: "audit log current did:key mismatch" },
-  { task: "aajc.2 fail-closed trust pin store", marker: "refusing to start" },
+// so a stale channel-core/dist would silently ship the plugin WITHOUT the
+// hardened security surface. Two independent checks guard this:
+//
+//  1. Fix-specific code markers below assert that the actual hardened code is
+//     bundled. Each string exists only while its fix is present, so a revert of
+//     the verifier or pin store (even one that keeps contract.ts) removes the
+//     string and fails the gate. These prove code presence, not a declared
+//     version.
+//  2. The security-contract sentinel is a stable exported constant re-exported
+//     by channel/src/index.ts. It changes only on an intentional contract
+//     revision, so it flags an unbuilt/stale bundle without churning on
+//     unrelated error-wording edits. It declares the contract version; it does
+//     not by itself prove the code is present — that is what the markers do.
+const securityCodeMarkers = [
+  // aajc.3 DID-log verifier: genesis/rotation state_hash binding.
+  "stableIdentityStateHash",
+  // aajc.3 DID-log verifier: rotation-operation authorization enforcement.
+  "seq>1 requires rotate_key operation",
+  // aajc.2 fail-closed trust pin store: present-but-empty rejects instead of
+  // silently starting with a discarded store.
+  "pin store is empty or has no document",
 ];
-for (const { task, marker } of securityFixMarkers) {
+for (const marker of securityCodeMarkers) {
   if (!dist.includes(marker)) {
     throw new Error(
-      `channel dist is missing ${task} (marker "${marker}") — channel-core was bundled stale; rebuild channel-core before packaging`,
+      `channel dist is missing hardened security code (marker: ${JSON.stringify(marker)}) — channel-core was bundled stale or a security fix was reverted. Rebuild channel-core from source; if the code intentionally changed, update this marker.`,
     );
   }
+}
+
+const securityContractSentinel =
+  "aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1";
+if (!dist.includes(securityContractSentinel)) {
+  throw new Error(
+    `channel dist is missing the channel-core security-contract sentinel (${securityContractSentinel}) — channel-core was bundled stale, or the contract changed without updating this gate. Rebuild channel-core; if the contract intentionally changed, update both channel-core/src/contract.ts and this sentinel.`,
+  );
 }
 
 console.log(`channel package dist is coherent for ${pkg.version}`);

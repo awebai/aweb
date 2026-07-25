@@ -372,10 +372,10 @@ describe("dispatchEvent", () => {
       "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
-  test("keeps mail unread after fire-and-forget Claude notification transport resolves", async () => {
+  test("acks mail only after the Claude notification (presentation) resolves", async () => {
     let finishNotification: (() => void) | undefined;
     const notification = vi.fn(() => new Promise<void>((resolve) => {
       finishNotification = resolve;
@@ -400,13 +400,15 @@ describe("dispatchEvent", () => {
     );
     await vi.waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
 
+    // Not acked while presentation (the notification) is still pending...
     expect(client.post).not.toHaveBeenCalled();
     finishNotification?.();
     await dispatch;
-    expect(client.post).not.toHaveBeenCalled();
+    // ...acked once presentation completes.
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-claude-pending/ack");
   });
 
-  test("deduplicates Claude notification replay without acknowledging unread mail", async () => {
+  test("deduplicates Claude notification replay and acks the delivered mail", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
     const pinStore = new PinStore();
@@ -428,7 +430,7 @@ describe("dispatchEvent", () => {
     await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
 
     expect(notification).toHaveBeenCalledTimes(1);
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-ack-retry/ack");
   });
 
   test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {

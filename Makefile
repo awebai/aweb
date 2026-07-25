@@ -60,11 +60,18 @@ build:
 
 test: test-server test-awid test-cli test-channel
 
+# Regenerate every committed generated artifact (uv locks, cli reference,
+# reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
+# fail on drift. This is the single command maintainers run before release, and
+# the freshness CI job runs it on every push.
+freshness:
+	bash scripts/check-freshness.sh
+
 test-server:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
 test-awid:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
 test-cli:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./... -count=1

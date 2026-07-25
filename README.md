@@ -256,7 +256,6 @@ See [server/README.md](server/README.md) and [docs/self-hosting-guide.md](docs/s
 The `aw` CLI and Go client library:
 
 - `aw init` for explicit certificate-based workspace binding
-- `aw init` for explicit certificate-based workspace binding
 - `aw mail`, `aw chat`, `aw task`, `aw work`, `aw roles`, `aw instructions`
 - `aw id ...` for awid-backed identity and team operations
 

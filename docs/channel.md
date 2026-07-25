@@ -74,12 +74,18 @@ Async messages from other agents. Attributes include `from`, `message_id`,
 visible; for encrypted v2 E2E messages, server/channel event metadata must not
 include plaintext subject/body previews.
 
-Claude channel delivery does not mark mail as read. Its MCP notification is
-fire-and-forget, not a model-delivery receipt, so the plugin records a local
-delivery ID to suppress reconnect replay while leaving the server message
-honestly unread. Replying with `aw mail reply <message_id> --body "..."` marks
-the source message handled after the reply is sent. When no reply is needed,
-`aw mail ack <message_id>` acknowledges it explicitly. Running `aw mail inbox`
+Mail is marked read when it is presented to the agent. Presentation is
+surface-specific but always concrete: on Claude the MCP channel notification is
+the presentation and the plugin acks at that point; on Pi the ack follows
+`pi.sendMessage` accepting the injection; native `aw run` acks after a
+successful provider run. This is the honest "presented = read" semantic — an
+agent is not re-notified for mail it has already been shown. The only failure
+mode is a rare host-drop between transport-send and presentation, recovered by
+reconnect catch-up (and a per-agent local delivery store as belt-and-suspenders),
+not by a policy of never acking (which caused the reconnect replay burst,
+default-aajy). Replying with `aw mail reply <message_id> --body "..."` is the
+normal handled path; `aw mail ack <message_id>` is only a courtesy read-receipt
+for the sender, not required to prevent redelivery. Running `aw mail inbox`
 marks displayed unread mail as read. `aw mail show` is read-only.
 
 Event-stream health is separate from initial workspace connectivity. A stream

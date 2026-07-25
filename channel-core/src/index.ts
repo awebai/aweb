@@ -7,6 +7,7 @@ export { PinStore, type IdentityScope, type Pin, type PinResult } from "./identi
 export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL, type StableIdentityVerification } from "./identity/registry.js";
 export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, normalizeIdentityScope, type TrustResult, type RotationAnnouncement, type ReplacementAnnouncement } from "./identity/trust.js";
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
+export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
 export { loadSigningKey } from "./identity/keys.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
