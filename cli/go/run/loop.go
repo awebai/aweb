@@ -421,6 +421,18 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	defer cancel()
 
 	errCh := make(chan error, 1)
+	type providerOutput struct {
+		line  bool
+		label string
+		text  string
+	}
+	providerOutputCh := make(chan providerOutput)
+	sendProviderOutput := func(output providerOutput) {
+		select {
+		case providerOutputCh <- output:
+		case <-runCtx.Done():
+		}
+	}
 
 	var busInterrupts <-chan BusEvent
 	if l.EventBus != nil {
@@ -438,28 +450,34 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 			providerInput.SetWriter(w)
 		}
 		sinks.ptyPartial = func(chunk string) {
-			l.handleRawProviderChunk("provider", chunk, presenter)
+			sendProviderOutput(providerOutput{label: "provider", text: chunk})
 		}
 	} else {
 		sinks.stderrLine = func(line string) {
-			l.handleRawProviderChunk("provider stderr", line+"\n", presenter)
+			sendProviderOutput(providerOutput{label: "provider stderr", text: line + "\n"})
 		}
 		sinks.stderrPartial = func(chunk string) {
-			l.handleRawProviderChunk("provider stderr", chunk, presenter)
+			sendProviderOutput(providerOutput{label: "provider stderr", text: chunk})
 		}
 		sinks.stdoutPartial = func(chunk string) {
-			l.handleRawProviderChunk("provider stdout", chunk, presenter)
+			sendProviderOutput(providerOutput{label: "provider stdout", text: chunk})
 		}
 	}
 
 	go func() {
 		errCh <- l.Runner(runCtx, opts.WorkingDir, argv, func(line string) {
-			l.handleOutputLine(line, presenter, st, &observedSessionID, &agentText)
+			sendProviderOutput(providerOutput{line: true, text: line})
 		}, sinks)
 	}()
 
 	for {
 		select {
+		case output := <-providerOutputCh:
+			if output.line {
+				l.handleOutputLine(output.text, presenter, st, &observedSessionID, &agentText)
+			} else {
+				l.handleRawProviderChunk(output.label, output.text, presenter)
+			}
 		case err := <-errCh:
 			st.RunPhase = RunPhaseIdle
 			l.drainPendingControlEvents(st, true)
@@ -1777,11 +1795,10 @@ func (l *Loop) markStatusDirty() {
 // single load yields a consistent snapshot; do not add a second atomic, because
 // two atomics give two consistent reads and one inconsistent LINE.
 //
-// This says nothing about the rendering path as a whole, which is NOT
-// single-owner: handleOutputLine renders from the provider output goroutine
-// while also mutating the shared state the formatters read. That ownership
-// violation is tracked as default-aaky; do not read the paragraph above as
-// evidence that rendering is otherwise safe.
+// The rendering path is single-owner: provider callbacks send immutable output
+// events to runOnce, and the main loop parses them, mutates state, and renders.
+// Background goroutines must signal or send values; they must never read the
+// main-loop state or call a status formatter directly.
 func (l *Loop) connState() ConnectionState {
 	if l.EventBus == nil {
 		return ConnDisconnected
