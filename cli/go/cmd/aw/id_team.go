@@ -854,12 +854,12 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 		return usageError("external identity home requires --global for team invite acceptance; local identity creation is not identity-home-aware")
 	}
 	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
-		IdentityHome: externalTeamIdentityHome(home),
+		IdentityHome: externalIdentityHomeRoot(home),
 		Name:         teamAcceptAlias,
 		Address:      teamAcceptAddress,
 		Scope:        acceptScope,
 		NoAddress:    teamAcceptNoAddress,
-	}, teamInviteStoreOptions{IdentityHome: externalTeamIdentityHome(home), SetActive: true})
+	}, teamInviteStoreOptions{IdentityHome: externalIdentityHomeRoot(home), SetActive: true})
 	if err != nil {
 		return err
 	}
@@ -943,12 +943,12 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 		_, teamAddMemberAddress = resolveIdentityFieldsForCert(workingDir)
 	}
 	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
-		IdentityHome: externalTeamIdentityHome(home),
+		IdentityHome: externalIdentityHomeRoot(home),
 		Name:         teamAddAlias,
 		Address:      teamAddMemberAddress,
 		Scope:        awid.IdentityModeGlobal,
 		NoAddress:    teamAcceptNoAddress,
-	}, teamInviteStoreOptions{IdentityHome: externalTeamIdentityHome(home), SetActive: false, RejectDuplicate: true})
+	}, teamInviteStoreOptions{IdentityHome: externalIdentityHomeRoot(home), SetActive: false, RejectDuplicate: true})
 	if err != nil {
 		return err
 	}
@@ -970,7 +970,7 @@ func runTeamSwitch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	teamState, err := requireTeamStateForMembershipAt(workingDir, externalTeamIdentityHome(home))
+	teamState, err := requireTeamStateForMembershipAt(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		return err
 	}
@@ -986,7 +986,7 @@ func runTeamSwitch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	teamState.ActiveTeam = teamID
-	if err := saveCurrentTeamState(workingDir, externalTeamIdentityHome(home), teamState); err != nil {
+	if err := saveCurrentTeamState(workingDir, externalIdentityHomeRoot(home), teamState); err != nil {
 		return err
 	}
 	printOutput(teamSwitchOutput{
@@ -1005,7 +1005,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	teamState, err := requireTeamStateForMembershipAt(workingDir, externalTeamIdentityHome(home))
+	teamState, err := requireTeamStateForMembershipAt(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		return err
 	}
@@ -1017,7 +1017,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 			Alias:  strings.TrimSpace(membership.Alias),
 			Active: strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
 		}
-		if cert, err := loadTeamCertificateAt(workingDir, externalTeamIdentityHome(home), membership.TeamID); err == nil && cert != nil {
+		if cert, err := loadTeamCertificateAt(workingDir, externalIdentityHomeRoot(home), membership.TeamID); err == nil && cert != nil {
 			item.IdentityScope = awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
 			item.IssuedAt = strings.TrimSpace(cert.IssuedAt)
 		}
@@ -1163,7 +1163,7 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	identityHome := externalTeamIdentityHome(home)
+	identityHome := externalIdentityHomeRoot(home)
 	teamState, err := requireTeamStateForMembershipAt(workingDir, identityHome)
 	if err != nil {
 		return err
@@ -2932,13 +2932,6 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 		return nil, "", err
 	}
 	return stored[0].Certificate, certPath, nil
-}
-
-func externalTeamIdentityHome(home awconfig.IdentityHome) string {
-	if home.External() {
-		return home.Root
-	}
-	return ""
 }
 
 func saveCurrentTeamState(workingDir, identityHome string, state *awconfig.TeamState) error {

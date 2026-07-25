@@ -61,7 +61,18 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if home.External() {
+		signingKeyPath, err = awconfig.IdentityHomePath(home, "signing.key")
+		if err != nil {
+			return err
+		}
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return usageError("current identity has no local signing key")
@@ -86,7 +97,7 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 		Alias:  alias,
 	}
 
-	identity, err := loadOptionalTeamRequestIdentity(workingDir)
+	identity, err := loadOptionalTeamRequestIdentityAt(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		return err
 	}
@@ -111,7 +122,17 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 }
 
 func loadOptionalTeamRequestIdentity(workingDir string) (*awconfig.ResolvedIdentity, error) {
-	identity, err := awconfig.ResolveIdentity(workingDir)
+	return loadOptionalTeamRequestIdentityAt(workingDir, "")
+}
+
+func loadOptionalTeamRequestIdentityAt(workingDir, identityHome string) (*awconfig.ResolvedIdentity, error) {
+	var identity *awconfig.ResolvedIdentity
+	var err error
+	if strings.TrimSpace(identityHome) != "" {
+		identity, err = awconfig.ResolveIdentityFromHome(workingDir, identityHome)
+	} else {
+		identity, err = awconfig.ResolveIdentity(workingDir)
+	}
 	if err == nil {
 		if err := validateResolvedIdentity(identity); err != nil {
 			return nil, err

@@ -132,7 +132,11 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
-	client, sel, err := resolveClientSelectionForDir(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	client, sel, err := resolveClientSelectionAtIdentityHome(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -144,7 +148,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return usageError("selected account has no identity; run 'aw init' first")
 	}
 
-	state, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	state, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		if !(state == nil && os.IsNotExist(err)) {
 			return fmt.Errorf("load workspace state: %w", err)
@@ -236,6 +240,13 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfig.WorktreeWorkspace, *awconfig.TeamState, string, error) {
+	if strings.TrimSpace(identityHome) != "" {
+		return awconfig.LoadWorkspaceAndTeamStateFromIdentityHome(identityHome)
+	}
+	return awconfig.LoadWorkspaceAndTeamState(workingDir)
+}
+
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
@@ -319,7 +330,11 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, _, err := resolveClientSelectionForDir(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	client, _, err := resolveClientSelectionAtIdentityHome(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -337,7 +352,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
 	}
 
-	state, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	state, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		return fmt.Errorf("load workspace binding: %w", err)
 	}

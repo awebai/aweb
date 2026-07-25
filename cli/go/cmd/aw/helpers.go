@@ -81,6 +81,13 @@ func identityHomeForDir(workingDir string) (awconfig.IdentityHome, error) {
 	return awconfig.ResolveIdentityHome(workingDir, identityHomeFlag)
 }
 
+func externalIdentityHomeRoot(home awconfig.IdentityHome) string {
+	if home.External() {
+		return home.Root
+	}
+	return ""
+}
+
 func externalIdentityRef(home awconfig.IdentityHome) string {
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home.Root, "identity.yaml"))
 	if err == nil && identity != nil {
