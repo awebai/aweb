@@ -124,7 +124,14 @@ export class SenderTrustManager {
       meta,
       registryCheck.confirmedCurrentKey,
     );
-    this.persistVerifiedHeadCheckpoint(store, fromStableID, registryCheck.verifiedHead);
+    // Advancing the checkpoint is itself a reason to persist the store. Relying
+    // on the pin-write path to have set stored would be coincidental coupling:
+    // a refactor of any return path would silently drop rollback protection.
+    const checkpointAdvanced = this.persistVerifiedHeadCheckpoint(
+      store,
+      fromStableID,
+      registryCheck.verifiedHead,
+    );
     if (
       pinResult.status === "identity_mismatch"
       && !recipientBindingMismatch
@@ -134,7 +141,7 @@ export class SenderTrustManager {
     ) {
       return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
     }
-    return pinResult;
+    return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
   }
 
   private checkRecipientBinding(
@@ -236,12 +243,13 @@ export class SenderTrustManager {
     store: PinStore,
     stableID: string | undefined,
     head: VerifiedLogHead | undefined,
-  ): void {
-    if (!stableID || !head || head.seq < 1 || !head.entryHash.trim()) return;
+  ): boolean {
+    if (!stableID || !head || head.seq < 1 || !head.entryHash.trim()) return false;
     const pin = store.pins.get(stableID);
-    if (!pin || head.seq <= (pin.log_seq ?? 0)) return;
+    if (!pin || head.seq <= (pin.log_seq ?? 0)) return false;
     pin.log_seq = head.seq;
     pin.log_entry_hash = head.entryHash;
+    return true;
   }
 
   private checkTOFUPinWithMeta(
@@ -311,10 +319,10 @@ export class SenderTrustManager {
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
-            // A verified registry chain is authoritative for global identities;
-            // stale local TOFU must not block archive/recreate.
-            // Security assumption: awid enforces a did:aw belongs to one
-            // current address; the client does not independently prove that.
+            // Same stable identity, different did:key: this is key rotation,
+            // which the DID log DOES prove (did:aw -> did:key), so a verified
+            // registry chain is sufficient here. It says nothing about address
+            // ownership — that is enforced in the mismatch branch below.
             if (registryConfirmedCurrentKey) {
               store.storePin(pinKey, trustAddress, "", "");
               const updated = store.pins.get(pinKey)!;
