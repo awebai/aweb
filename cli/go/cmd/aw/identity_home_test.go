@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,10 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_roles_id": "roles-1", "roles": map[string]any{"attached-role": map[string]any{"title": "Attached"}}})
 		case "/v1/agents/me":
 			_ = json.NewEncoder(w).Encode(map[string]any{"role_name": "attached-role"})
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -92,6 +97,17 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 			}
 			if err := json.Unmarshal(extractJSON(t, out), &identity); err != nil || identity.Address != "aweb.ai/attached" {
 				t.Fatalf("whoami did not use attached principal: address=%q err=%v\n%s", identity.Address, err, string(out))
+			}
+
+			mailArgs := []string{"mail", "inbox", "--json"}
+			if tc.name == "flag" {
+				mailArgs = append([]string{"--identity-home", identityHome}, mailArgs...)
+			}
+			mail := exec.CommandContext(ctx, bin, mailArgs...)
+			mail.Dir = instanceHome
+			mail.Env = cmd.Env
+			if mailOut, mailErr := mail.CombinedOutput(); mailErr != nil {
+				t.Fatalf("attached mail inbox failed: %v\n%s", mailErr, mailOut)
 			}
 
 			// Exercise a principal write through the real command path. The workspace
@@ -216,6 +232,77 @@ func TestExternalIdentityHomeRoutesMailAndRegistrySigningAuthority(t *testing.T)
 	}
 	if authority.SubjectDID != did {
 		t.Fatalf("registry authority DID=%q want %q", authority.SubjectDID, did)
+	}
+}
+
+func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell provider fixture is unix-only")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "events") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	principalParent := filepath.Join(root, "principal")
+	instance := filepath.Join(root, "instance")
+	providerBin := filepath.Join(root, "provider-bin")
+	if err := os.MkdirAll(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(providerBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, principalParent, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
+		WorkspaceID: "workspace-attached", DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub),
+		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent, SigningKey: key,
+	})
+	identityHome, err := filepath.EvalSymlinks(filepath.Join(principalParent, ".aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturePath := filepath.Join(root, "provider-identity-home")
+	provider := filepath.Join(providerBin, "claude")
+	script := "#!/bin/sh\nprintf '%s' \"$AWEB_IDENTITY_HOME\" > \"$RUN_IDENTITY_CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"duration_ms\":1,\"session_id\":\"attached-session\"}'\n"
+	if err := os.WriteFile(provider, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "run", "claude", "--prompt", "done", "--max-runs", "1", "--wait", "0", "--idle-wait", "0")
+	cmd.Dir = instance
+	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")),
+		"PATH="+providerBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"RUN_IDENTITY_CAPTURE="+capturePath,
+		awconfig.IdentityHomeEnv+"=",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("attached run failed: %v\n%s", err, out)
+	}
+	captured, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("provider was not invoked: %v", err)
+	}
+	if got := strings.TrimSpace(string(captured)); got != identityHome {
+		t.Fatalf("provider %s=%q want %q", awconfig.IdentityHomeEnv, got, identityHome)
+	}
+	if _, err := os.Lstat(filepath.Join(instance, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("run copied principal workspace into instance: %v", err)
 	}
 }
 

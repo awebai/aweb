@@ -7,28 +7,16 @@ import (
 )
 
 // identityHomeAwareCommandPaths is intentionally a positive, exact allowlist.
-// Every entry below either uses the reviewed current-principal resolver or is
-// identity-neutral. A newly added command is denied under an external identity
-// home until its production path has been reviewed and tested.
+// Every entry has a production-binary regression against an external principal
+// and an empty instance. A newly added command is denied until equivalent
+// evidence is added; plausible-looking code is not sufficient evidence.
 var identityHomeAwareCommandPaths = map[string]struct{}{
-	"aw a2a cancel": {}, "aw a2a card": {}, "aw a2a publish": {}, "aw a2a send": {}, "aw a2a status": {},
-	"aw chat extend-wait": {}, "aw chat history": {}, "aw chat listen": {}, "aw chat open": {}, "aw chat pending": {}, "aw chat read": {}, "aw chat send": {}, "aw chat send-and-leave": {}, "aw chat send-and-wait": {}, "aw chat show-pending": {},
-	"aw contacts add": {}, "aw contacts list": {}, "aw contacts remove": {},
-	"aw control interrupt": {}, "aw control pause": {}, "aw control resume": {},
-	"aw directory": {}, "aw events stream": {}, "aw heartbeat": {},
-	"aw id encryption-key rotate": {}, "aw id encryption-key setup": {}, "aw id encryption-key show": {}, "aw id rotate-key": {}, "aw id show": {},
-	"aw inbound-mode":          {},
-	"aw instructions activate": {}, "aw instructions history": {}, "aw instructions reset": {}, "aw instructions set": {}, "aw instructions show": {},
-	"aw lock acquire": {}, "aw lock list": {}, "aw lock release": {}, "aw lock renew": {}, "aw lock revoke": {},
-	"aw log":      {},
-	"aw mail ack": {}, "aw mail inbox": {}, "aw mail reply": {}, "aw mail send": {}, "aw mail show": {},
-	"aw notify": {},
-	"aw reset":  {}, "aw role-name set": {},
-	"aw roles activate": {}, "aw roles add": {}, "aw roles deactivate": {}, "aw roles history": {}, "aw roles list": {}, "aw roles reset": {}, "aw roles set": {}, "aw roles show": {},
-	"aw run":        {},
-	"aw task close": {}, "aw task comment add": {}, "aw task comment list": {}, "aw task create": {}, "aw task delete": {}, "aw task dep add": {}, "aw task dep list": {}, "aw task dep remove": {}, "aw task list": {}, "aw task reopen": {}, "aw task show": {}, "aw task stats": {}, "aw task update": {},
-	"aw whoami": {},
-	"aw work active": {}, "aw work blocked": {}, "aw work ready": {},
+	"aw a2a status":       {},
+	"aw mail inbox":       {},
+	"aw reset":            {},
+	"aw role-name set":    {},
+	"aw run":              {},
+	"aw whoami":           {},
 	"aw workspace delete": {},
 }
 

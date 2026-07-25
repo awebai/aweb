@@ -518,7 +518,15 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 }
 
 func resolveRunWorkspaceStateForDir(workingDir string) (runWorkspaceState, error) {
-	_, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return runWorkspaceStateInitialized, err
+	}
+	workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml")
+	if err != nil {
+		return runWorkspaceStateInitialized, err
+	}
+	_, err = awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	if err == nil {
 		return runWorkspaceStateInitialized, nil
 	}
