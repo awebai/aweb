@@ -361,6 +361,146 @@ func TestConcurrentRotationRefusesIdentityChangedWhileWaiting(t *testing.T) {
 	}
 }
 
+func TestConcurrentWaiterRecoversAppliedRotationAfterLostResponse(t *testing.T) {
+	oldPublic, oldPrivate, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdPublic, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPublic)
+	thirdDID := awid.ComputeDIDKey(thirdPublic)
+	stableID := awid.ComputeStableID(oldPublic)
+
+	putArrived := make(chan struct{})
+	releasePut := make(chan struct{})
+	allowRecovery := make(chan struct{})
+	var mu sync.Mutex
+	committedDID := ""
+	putCalls := 0
+	postPutKeyReads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		committed := committedDID
+		mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/full":
+			current := oldDID
+			if committed != "" {
+				current = committed
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": stableID, "current_did_key": current,
+				"created_at": "2026-07-24T00:00:00Z", "updated_at": "2026-07-24T00:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/key":
+			mu.Lock()
+			if committedDID != "" {
+				postPutKeyReads++
+			}
+			readNumber := postPutKeyReads
+			current := committedDID
+			mu.Unlock()
+			if readNumber == 1 {
+				// The first process has lost the successful response and cannot
+				// establish the authoritative outcome, so it must preserve state.
+				current = thirdDID
+			} else if readNumber > 1 {
+				<-allowRecovery
+			}
+			if current == "" {
+				current = oldDID
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": stableID, "current_did_key": current,
+				"log_head": map[string]any{
+					"seq": 1, "operation": "register_did", "new_did_key": oldDID,
+					"entry_hash": strings.Repeat("a", 64), "state_hash": strings.Repeat("b", 64),
+					"authorized_by": oldDID, "signature": "test", "timestamp": "2026-07-24T00:00:00Z",
+				},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/did/"+stableID:
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			putCalls++
+			call := putCalls
+			if call == 1 {
+				committedDID, _ = request["new_did_key"].(string)
+			}
+			mu.Unlock()
+			if call != 1 {
+				http.Error(w, "rotation definitely not applied", http.StatusConflict)
+				return
+			}
+			close(putArrived)
+			<-releasePut
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = connection.Close()
+		default:
+			t.Errorf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, server.URL, oldPrivate)
+
+	first := startRotationCommand(t, ctx, bin, dir)
+	select {
+	case <-putArrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first rotation did not reach the registry")
+	}
+	waiter := startRotationCommand(t, ctx, bin, dir)
+	time.Sleep(200 * time.Millisecond)
+	close(releasePut)
+	firstErr := <-first.done
+	if firstErr == nil || !strings.Contains(first.output.String(), "outcome unknown") {
+		t.Fatalf("first rotation error=%v, want preserved unknown outcome\n%s", firstErr, first.output)
+	}
+	close(allowRecovery)
+	if waiterErr := <-waiter.done; waiterErr != nil {
+		t.Fatalf("waiting rotation did not recover the committed operation: %v\n%s", waiterErr, waiter.output)
+	}
+	for _, want := range []string{"\"status\": \"finalized\"", "\"rerun_required\": true"} {
+		if !strings.Contains(waiter.output.String(), want) {
+			t.Fatalf("waiter output missing %q:\n%s", want, waiter.output)
+		}
+	}
+	mu.Lock()
+	gotCommitted, gotPutCalls := committedDID, putCalls
+	mu.Unlock()
+	if gotPutCalls != 1 {
+		t.Fatalf("rotation PUT calls=%d, want only the applied first operation", gotPutCalls)
+	}
+	identity := loadIdentityForTest(t, dir)
+	if identity.DID != gotCommitted {
+		t.Fatalf("local identity did=%q, want recovered registry key %q", identity.DID, gotCommitted)
+	}
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
+		t.Fatal(err)
+	} else if pending != nil {
+		t.Fatalf("pending state remains after waiter recovery: %+v", pending)
+	}
+}
+
 type runningRotationCommand struct {
 	done   <-chan error
 	output *bytes.Buffer

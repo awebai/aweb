@@ -85,7 +85,7 @@ func TestExternalIdentityRotationRecoveryPathsFailClosedAtEachUse(t *testing.T) 
 	if err := os.Symlink(outside, filepath.Join(rotationDir, "pending")); err != nil {
 		t.Fatal(err)
 	}
-	state := &pendingRotationState{StableID: "did:aw:stable", PendingKey: "pending.key"}
+	state := &pendingRotationState{OperationID: "11111111-1111-4111-8111-111111111111", StableID: "did:aw:stable", PendingKey: "pending.key"}
 	if err := savePendingRotationState(rotationDir, state); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("pending-state write symlink error=%v", err)
 	}

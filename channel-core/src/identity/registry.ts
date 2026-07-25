@@ -5,6 +5,7 @@ import * as ed from "@noble/ed25519";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
+import { readBoundedJSON, readSafeErrorExcerpt } from "../api/response.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -360,6 +361,7 @@ export class RegistryResolver {
   private async getJSON<T>(baseURL: string, path: string, bypassCache = false): Promise<T> {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
+      redirect: "error",
       headers: {
         Accept: "application/json",
         ...(bypassCache ? { "Cache-Control": "no-cache" } : {}),
@@ -367,9 +369,9 @@ export class RegistryResolver {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      throw new Error(await response.text().catch(() => `${response.status}`));
+      throw new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`));
     }
-    return response.json() as Promise<T>;
+    return readBoundedJSON<T>(response);
   }
 }
 

@@ -206,6 +206,20 @@ func TestRegistryClientAcceptsExactRotationReplayWhenRegistryHasReplacementKey(t
 	}
 }
 
+func TestRegistryClientKeepsRotationOutcomeUnknownForOversizeSubmitResponse(t *testing.T) {
+	oldDID, oldPrivate, _, newPrivate, didAW := newRotationTestKeys(t)
+	fixture := newRotationRegistryFixture(t, didAW, oldDID, func(_ *rotationRegistryFixture, w http.ResponseWriter, _ *http.Request, _ didUpdateRequest) {
+		_, _ = w.Write([]byte(`{}` + strings.Repeat(" ", MaxResponseSize-1)))
+	})
+
+	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
+	var outcomeErr *DIDRotationError
+	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {
+		t.Fatalf("error=%v, want outcome-unknown DIDRotationError", err)
+	}
+}
+
 func TestRegistryClientReportsRotationDefinitelyNotAppliedWhenRegistryRemainsOld(t *testing.T) {
 	oldDID, oldPrivate, _, newPrivate, didAW := newRotationTestKeys(t)
 	fixture := newRotationRegistryFixture(t, didAW, oldDID, func(_ *rotationRegistryFixture, w http.ResponseWriter, _ *http.Request, _ didUpdateRequest) {

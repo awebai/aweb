@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -182,19 +181,22 @@ func postJSONWithHeaders(
 		req.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := DoNoRedirect(&http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}, req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &RegistryError{StatusCode: resp.StatusCode, Detail: strings.TrimSpace(string(detail))}
+		return &RegistryError{StatusCode: resp.StatusCode, Detail: ReadErrorExcerpt(resp.Body)}
 	}
 
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return err
+	}
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.Unmarshal(data, out)
 }

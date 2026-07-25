@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +17,7 @@ import (
 var idRotateKeyCmd = &cobra.Command{
 	Use:   "rotate-key",
 	Short: "Rotate the current global identity signing key at the registry",
+	Args:  cobra.NoArgs,
 	RunE:  runIDRotateKey,
 }
 
@@ -75,6 +75,17 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
 		return err
 	}
+	if pending, err := loadPendingRotationState(rotationDir, identity.StableID); err != nil {
+		return err
+	} else if pending != nil {
+		out, recoverErr := recoverPendingRotation(ctx, identity, rotationDir)
+		if recoverErr != nil {
+			return recoverErr
+		}
+		out.RerunRequired = true
+		printOutput(out, formatIDRotationRecovery)
+		return nil
+	}
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return err
@@ -83,20 +94,14 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	if pending, err := loadPendingRotationState(rotationDir, identity.StableID); err != nil {
-		return err
-	} else if pending != nil {
-		return usageError(
-			"pending rotation exists for %s at %s; resolve it before starting another key rotation",
-			identity.StableID,
-			pendingRotationStatePath(rotationDir, identity.StableID),
-		)
-	}
 	if err := os.MkdirAll(filepath.Join(rotationDir, "pending"), 0o700); err != nil {
 		return err
 	}
 
+	operationID, err := awid.GenerateUUID4()
+	if err != nil {
+		return err
+	}
 	newPub, newPriv, err := awid.GenerateKeypair()
 	if err != nil {
 		return err
@@ -107,19 +112,24 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generated replacement did:key unexpectedly matched the current did:key")
 	}
 
-	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, newDID, newPub, newPriv)
-	if err != nil {
-		return err
-	}
+	pendingKeyPath, _ := pendingRotationKeyPaths(rotationDir, operationID)
 	pendingState := &pendingRotationState{
+		OperationID: operationID,
 		StableID:    identity.StableID,
 		OldDID:      oldDID,
 		NewDID:      newDID,
 		RegistryURL: registryURL,
 		PendingKey:  pendingKeyPath,
 	}
+	// Persist transaction ownership before key material. A crash in between is
+	// recoverable as definitely-not-submitted; the reverse order leaves an
+	// undiscoverable private key with no operation record.
 	if err := savePendingRotationState(rotationDir, pendingState); err != nil {
+		return err
+	}
+	if _, err := savePendingRotationKeypair(rotationDir, operationID, newPub, newPriv); err != nil {
 		_ = cleanupPendingRotationKeypair(pendingKeyPath)
+		_ = removePendingRotationStateOwned(rotationDir, identity.StableID, operationID)
 		return err
 	}
 
@@ -130,7 +140,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 			if cleanupErr := cleanupPendingRotationKeypair(pendingKeyPath); cleanupErr != nil {
 				return fmt.Errorf("%w; failed to discard the unused replacement signing key: %v", err, cleanupErr)
 			}
-			if cleanupErr := removePendingRotationState(rotationDir, identity.StableID); cleanupErr != nil {
+			if cleanupErr := removePendingRotationStateOwned(rotationDir, identity.StableID, operationID); cleanupErr != nil {
 				return fmt.Errorf("%w; failed to remove pending rotation state: %v", err, cleanupErr)
 			}
 			return err
@@ -162,32 +172,8 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	if _, err := promotePendingRotationKeypair(identity.SigningKeyPath, pendingKeyPath, newDID); err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to activate the new local signing key", err)
-	}
-
-	state, err := awconfig.LoadWorktreeIdentityFrom(identity.IdentityPath)
-	if err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to reload local identity state", err)
-	}
-	state.DID = newDID
-	state.RegistryStatus = "registered"
-	if strings.TrimSpace(registryURL) != "" {
-		state.RegistryURL = registryURL
-	}
-	if err := awconfig.SaveWorktreeIdentityTo(identity.IdentityPath, state); err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to update local identity state", err)
-	}
-
-	if err := awid.ArchiveKey(filepath.Dir(identity.SigningKeyPath), oldDID, signingKey.Public().(ed25519.PublicKey), signingKey); err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to archive the previous signing key", err)
-	}
-
-	if err := removePendingRotationState(rotationDir, identity.StableID); err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to remove pending rotation state", err)
-	}
-	if err := cleanupPendingRotationKeypair(pendingKeyPath); err != nil {
-		return rotationFinalizeError(rotationDir, identity.StableID, "failed to clean pending rotation key material", err)
+	if err := finalizePendingRotation(identity, rotationDir, pendingState); err != nil {
+		return rotationFinalizeError(rotationDir, identity.StableID, "failed to finalize the applied rotation", err)
 	}
 
 	printOutput(idRotateOutput{

@@ -7,6 +7,7 @@ import fnmatch
 import ipaddress
 import json
 import logging
+from json import loads as json_loads
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -31,6 +32,37 @@ from awid.signing import canonical_json_bytes, sign_message
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
 
 logger = logging.getLogger(__name__)
+
+MAX_REGISTRY_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_REGISTRY_ERROR_BYTES = 64 * 1024
+
+
+def _safe_error_text(content: bytes) -> str:
+    text = content.decode("utf-8", errors="replace")
+    sanitized = "".join(" " if not char.isprintable() else char for char in text)
+    return " ".join(sanitized.split())
+
+
+async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> bytes:
+    # httpx decompresses each raw chunk before yielding it, so an encoded bomb
+    # can allocate past max_bytes before this function can inspect the result.
+    content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise ValueError("unsupported HTTP Content-Encoding")
+
+    if response.is_stream_consumed:
+        content = response.content
+        if len(content) > max_bytes:
+            raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
+        return content
+
+    content = bytearray()
+    async for chunk in response.aiter_raw(chunk_size=64 * 1024):
+        if len(content) + len(chunk) > max_bytes:
+            raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
+        content.extend(chunk)
+    return bytes(content)
+
 
 _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
 _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
@@ -208,6 +240,7 @@ class RegistryClient:
             httpx.AsyncClient(
                 timeout=self.timeout_seconds,
                 transport=self.transport,
+                follow_redirects=False,
             ),
         )
 
@@ -257,18 +290,36 @@ class RegistryClient:
         json: dict[str, Any] | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
-        response = await self._http_client.request(
-            method,
-            f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-            headers=headers,
-            json=json,
-        )
+        request_headers = {
+            key: value
+            for key, value in (headers or {}).items()
+            if key.strip().lower() != "accept-encoding"
+        }
+        request_headers["Accept-Encoding"] = "identity"
+        async with asyncio.timeout(self.timeout_seconds):
+            async with self._http_client.stream(
+                method,
+                f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+                headers=request_headers,
+                json=json,
+            ) as response:
+                max_bytes = (
+                    MAX_REGISTRY_RESPONSE_BYTES
+                    if 200 <= response.status_code < 300
+                    else MAX_REGISTRY_ERROR_BYTES
+                )
+                content = await _read_bounded_response(response, max_bytes)
         if not 200 <= response.status_code < 300:
             detail = None
             try:
-                detail = response.json().get("detail")
+                parsed_error = json_loads(content)
+                if isinstance(parsed_error, dict):
+                    raw_detail = parsed_error.get("detail")
+                    if raw_detail is not None:
+                        detail = _safe_error_text(str(raw_detail).encode("utf-8"))
             except Exception:
                 detail = None
+            response_text = _safe_error_text(content)
             if response.status_code == 409:
                 if detail == "did_aw must be registered before address assignment":
                     raise DIDRegistrationRequiredError()
@@ -277,13 +328,13 @@ class RegistryClient:
                 if detail == "address already bound to a different did_aw":
                     raise AddressAlreadyBoundError()
             raise RegistryError(
-                detail or response.text,
+                detail or response_text,
                 status_code=response.status_code,
-                detail=detail or response.text,
+                detail=detail or response_text,
             )
-        if not response.content:
+        if not content:
             return {}
-        return response.json()
+        return json_loads(content)
 
     async def aclose(self) -> None:
         await self._http_client.aclose()

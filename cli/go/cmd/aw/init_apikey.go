@@ -741,7 +741,7 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := (&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}).Do(req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}, req)
 	if err != nil {
 		return nil, err
 	}
@@ -749,7 +749,7 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		detail := strings.TrimSpace(string(respBody))
+		detail := awid.SanitizeErrorText(string(respBody))
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			if detail != "" {
@@ -772,8 +772,12 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 		}
 	}
 
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read workspace init response: %w", err)
+	}
 	var result apiKeyBootstrapResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return nil, fmt.Errorf("decode workspace init response: %w", err)
 	}
 	return &result, nil
