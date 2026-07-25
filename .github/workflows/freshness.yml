@@ -101,8 +101,14 @@ jobs:
 
   # Separate job because the race detector is the instrument that validates the
   # concurrency classes this audit found, and it must be able to fail on its own
-  # rather than being masked by an unrelated failure in the plain run. Scoped to
-  # the packages that hold concurrent code; no blanket exclusions within them.
+  # rather than being masked by an unrelated failure in the plain run.
+  #
+  # Runs over ./... rather than a package list. A hand-maintained list silently
+  # stops covering the moment someone adds concurrent code to a package not on
+  # it, and nothing notices — the same drift that let stale inventories rot in
+  # default-aajc.16. The four goroutine-launching packages that the original
+  # list omitted (the root package, chat, a2agw, cmd/aweb-a2a-gw) were measured
+  # race-clean before widening, so this costs coverage nothing (default-aalx).
   go-race:
     runs-on: ubuntu-latest
     steps:
@@ -114,4 +120,4 @@ jobs:
 
       - name: Race detector
         working-directory: cli/go
-        run: go test -race ./awid/ ./run/ ./cmd/aw/ ./internal/conformance/ -count=1
+        run: go test -race ./... -count=1

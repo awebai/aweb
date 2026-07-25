@@ -406,7 +406,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 
 	var createInviteCalls, acceptInviteCalls int
 	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newHTTPTestServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			cert := requireCertificateAuthForTest(t, r)
@@ -423,7 +423,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"expires_at":     "2026-08-17T00:00:00Z",
 				"namespace_slug": "gracehosted",
 				"namespace":      "gracehosted.aweb.ai",
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			acceptInviteCalls++
@@ -458,7 +458,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"identity_id":    "agent-" + alias,
 				"alias":          alias,
 				"api_key":        "aw_sk_child_not_printed",
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"did":            didKey,
 				"custody":        "self",
 				"lifetime":       "ephemeral",
@@ -467,7 +467,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"team_cert":      encoded,
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": server.URL, "aweb_url": server.URL, "registry_url": server.URL})
+			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": serverURL, "aweb_url": serverURL, "registry_url": serverURL})
 		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
@@ -499,7 +499,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv(libraryURLEnvVar, server.URL)

@@ -1412,13 +1412,13 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	var registeredCert map[string]any
 	var connectCalls int
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
@@ -1449,7 +1449,7 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1603,7 +1603,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 	}
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			cert := requireCertificateAuthForTest(t, r)
@@ -1620,7 +1620,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"expires_at":     "2026-05-17T00:00:00Z",
 				"namespace_slug": "gracehosted",
 				"namespace":      "gracehosted.aweb.ai",
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
@@ -1663,7 +1663,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"identity_id":    "agent-bob",
 				"alias":          "bob",
 				"api_key":        "aw_sk_child_not_printed",
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"did":            didKey,
 				"custody":        "self",
 				"lifetime":       "ephemeral",
@@ -1692,16 +1692,16 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-bob", "backend:acme.com", "bob")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	home := t.TempDir()
 	inviterDir := filepath.Join(home, "alice")
@@ -1820,7 +1820,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	var acceptBody map[string]any
 	var acceptVerifiedDID bool
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
@@ -1897,7 +1897,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 				"identity_id":    "agent-durable-child",
 				"name":           "durable-child",
 				"api_key":        "aw_sk_child_not_printed",
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"did":            didKey,
 				"stable_id":      acceptedStableID,
 				"address":        "globalhosted.aweb.ai/durable-child",
@@ -1910,7 +1910,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	home := t.TempDir()
 	acceptDir := filepath.Join(home, "durable")
@@ -2019,7 +2019,7 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 	var firstStableID string
 	var acceptCalls int
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
 			t.Fatalf("hosted global retry must not use split DID registration")
 		}
@@ -2067,7 +2067,7 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 			"identity_id":    "agent-retry-child",
 			"name":           "retry-child",
 			"api_key":        "aw_sk_child_not_printed",
-			"server_url":     server.URL,
+			"server_url":     serverURL,
 			"did":            req.DID,
 			"stable_id":      stableID,
 			"address":        "globalhosted.aweb.ai/retry-child",
@@ -2077,7 +2077,7 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 			"created":        true,
 			"team_cert":      encoded,
 		})
-	}))
+	})
 	t.Cleanup(server.Close)
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
@@ -2116,7 +2116,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	var firstDID string
 	var acceptCalls int
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2157,7 +2157,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 			"identity_id":    "agent-retry-child",
 			"alias":          "retry-child",
 			"api_key":        "aw_sk_child_not_printed",
-			"server_url":     server.URL,
+			"server_url":     serverURL,
 			"did":            req.DID,
 			"custody":        "self",
 			"lifetime":       "ephemeral",
@@ -2165,7 +2165,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 			"created":        true,
 			"team_cert":      encoded,
 		})
-	}))
+	})
 	t.Cleanup(server.Close)
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
@@ -2480,7 +2480,7 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 
 	var acceptVerifiedDID bool
 	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newHTTPTestServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2543,7 +2543,7 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 			"identity_id":    "agent-alice",
 			"name":           "alice",
 			"api_key":        "aw_sk_child_not_printed",
-			"server_url":     server.URL,
+			"server_url":     serverURL,
 			"did":            globalDID,
 			"stable_id":      globalStableID,
 			"custody":        "self",
@@ -2552,7 +2552,7 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 			"created":        true,
 			"team_cert":      encoded,
 		})
-	}))
+	})
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
 
@@ -3753,9 +3753,13 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *testing.T) {
 	t.Parallel()
 
-	var registeredCert map[string]any
-	var memberDID string
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
 	memberDIDAW := "did:aw:alice"
+	var registeredCert guarded[map[string]any]
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
@@ -3769,9 +3773,11 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 				"created_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
-			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+			var cert map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&cert); err != nil {
 				t.Fatal(err)
 			}
+			registeredCert.set(cert)
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -3790,12 +3796,6 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
-
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID = awid.ComputeDIDKey(memberPub)
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
 		"--team", "backend",
@@ -3823,17 +3823,18 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 	if got["member_address"] != "acme.com/alice" {
 		t.Fatalf("member_address=%v", got["member_address"])
 	}
-	if registeredCert["member_did_key"] != memberDID {
-		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
+	gotCert := registeredCert.get()
+	if gotCert["member_did_key"] != memberDID {
+		t.Fatalf("registry cert member_did_key=%v", gotCert["member_did_key"])
 	}
-	if registeredCert["member_did_aw"] != memberDIDAW {
-		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
+	if gotCert["member_did_aw"] != memberDIDAW {
+		t.Fatalf("registry cert member_did_aw=%v", gotCert["member_did_aw"])
 	}
-	if registeredCert["member_address"] != "acme.com/alice" {
-		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	if gotCert["member_address"] != "acme.com/alice" {
+		t.Fatalf("registry cert member_address=%v", gotCert["member_address"])
 	}
-	if registeredCert["identity_scope"] != awid.IdentityModeGlobal {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
+	if gotCert["identity_scope"] != awid.IdentityModeGlobal {
+		t.Fatalf("registry cert lifetime=%v", gotCert["identity_scope"])
 	}
 }
 

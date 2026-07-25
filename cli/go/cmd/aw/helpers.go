@@ -597,10 +597,15 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	if err != nil {
 		return err
 	}
+	// Fail closed. Substituting an empty store here would silently discard every
+	// pinned identity and reopen first-contact TOFU, so anything except a
+	// genuinely absent file (which LoadPinStore reports as a fresh store) aborts
+	// the command. channel-core's loadPinStore already refuses to start on the
+	// same shared ~/.config/aw/known_agents.yaml; Go swallowed it, which left the
+	// two runtimes with opposite behaviour on one file (default-aajc.9).
 	ps, err := awid.LoadPinStore(pinPath)
 	if err != nil {
-		debugLog("load pin store: %v", err)
-		ps = awid.NewPinStore()
+		return fmt.Errorf("%w; refusing to continue without the trust database", err)
 	}
 	c.SetPinStore(ps, pinPath)
 	registry, err := newSelectionRegistryResolver(c.Client.HTTPClient(), baseURL, sel.RegistryURL)

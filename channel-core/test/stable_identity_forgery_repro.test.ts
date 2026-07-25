@@ -76,4 +76,54 @@ describe("forged rotation spoofing (aajc.3 repro)", () => {
     expect(result.outcome).not.toBe("OK_VERIFIED");
     expect(result.outcome).toBe("OK_DEGRADED");
   });
+
+  test("fractional seq cannot skip cached-head adjacency", () => {
+    const victimGenesisPub = ed.getPublicKey(seed(0x11));
+    const victimGenesisDID = computeDIDKey(victimGenesisPub);
+    const victimStableID = computeStableID(victimGenesisPub);
+
+    const attackerPrevPriv = seed(0x22);
+    const attackerPrevDID = computeDIDKey(ed.getPublicKey(attackerPrevPriv));
+    const attackerNewDID = computeDIDKey(ed.getPublicKey(seed(0x33)));
+
+    const head = {
+      authorized_by: attackerPrevDID,
+      new_did_key: attackerNewDID,
+      operation: "rotate_key",
+      prev_entry_hash: "0".repeat(64),
+      previous_did_key: attackerPrevDID,
+      seq: 1.5,
+      state_hash: bytesToHex(sha256(new TextEncoder().encode(
+        `{"current_did_key":"${attackerNewDID}","did_aw":"${victimStableID}"}`,
+      ))),
+      timestamp: "2026-02-22T10:05:00Z",
+    };
+    const payload = canonicalDidLogPayload(victimStableID, {
+      ...head,
+      entry_hash: "",
+      signature: "",
+    });
+    const entryHash = bytesToHex(sha256(new TextEncoder().encode(payload)));
+    const signature = Buffer.from(
+      ed.sign(new TextEncoder().encode(payload), attackerPrevPriv),
+    ).toString("base64url").replace(/-/g, "+").replace(/_/g, "/");
+
+    const resolution: DidKeyResolution = {
+      did_aw: victimStableID,
+      current_did_key: attackerNewDID,
+      log_head: { ...head, entry_hash: entryHash, signature },
+    };
+    const cached = {
+      seq: 1,
+      entryHash: "a".repeat(64),
+      stateHash: "b".repeat(64),
+      currentDidKey: victimGenesisDID,
+      fetchedAt: 0,
+    };
+
+    const result = verifyDidKeyResolution(resolution, cached, Date.now());
+
+    expect(result.outcome).toBe("HARD_ERROR");
+    expect(result.nextHead).toBeUndefined();
+  });
 });

@@ -67,6 +67,34 @@ func newLocalHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
 // done right (default-aajc.15).
 func newLocalHTTPServerWithURL(t *testing.T, build func(url string) http.Handler) *httptest.Server {
 	t.Helper()
+	return newHTTPTestServerWithURL(t, func(url string) http.Handler {
+		handler := build(url)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// aw probes for aweb by calling GET /v1/agents/heartbeat on candidate bases.
+			// Return any non-404 to indicate "endpoint exists" without side effects.
+			// Only intercept GET; POST is the actual heartbeat and should reach the inner handler.
+			if r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat") {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			handler.ServeHTTP(w, r)
+		})
+	})
+}
+
+func newLocalHTTPServerHandlerWithURL(t *testing.T, handler func(url string, w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	return newLocalHTTPServerWithURL(t, func(url string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler(url, w, r)
+		})
+	})
+}
+
+// newHTTPTestServerWithURL is the plain httptest.NewServer equivalent for
+// handlers that need their own immutable URL before the server starts.
+func newHTTPTestServerWithURL(t *testing.T, build func(url string) http.Handler) *httptest.Server {
+	t.Helper()
 
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -75,20 +103,9 @@ func newLocalHTTPServerWithURL(t *testing.T, build func(url string) http.Handler
 	// Matches how httptest derives Server.URL for a non-TLS server, so the
 	// handler sees exactly the URL callers will use.
 	url := "http://" + l.Addr().String()
-	handler := build(url)
-	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// aw probes for aweb by calling GET /v1/agents/heartbeat on candidate bases.
-		// Return any non-404 to indicate "endpoint exists" without side effects.
-		// Only intercept GET; POST is the actual heartbeat and should reach the inner handler.
-		if r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat") {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	})
 	srv := &httptest.Server{
 		Listener: l,
-		Config:   &http.Server{Handler: wrapped},
+		Config:   &http.Server{Handler: build(url)},
 	}
 	srv.Start()
 	if srv.URL != url {
@@ -96,6 +113,15 @@ func newLocalHTTPServerWithURL(t *testing.T, build func(url string) http.Handler
 	}
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func newHTTPTestServerHandlerWithURL(t *testing.T, handler func(url string, w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	return newHTTPTestServerWithURL(t, func(url string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler(url, w, r)
+		})
+	})
 }
 
 // extractJSON finds the first JSON object in mixed output (e.g. from
@@ -1574,14 +1600,12 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 		RegistryURL: registryServer.URL,
 		CreatedAt:   "2026-04-26T00:00:00Z",
 	})
+	// Build the pin the way production does, so the fixture cannot drift out of
+	// the shape the loader (and channel-core's validator) accepts.
 	pins := awid.NewPinStore()
-	pins.Pins[recipientStableID] = &awid.Pin{
-		Address:  recipientAddress,
-		StableID: recipientStableID,
-		DIDKey:   recipientDID,
-		Server:   registryServer.URL,
-	}
-	pins.Addresses[recipientAddress] = recipientStableID
+	pins.StorePin(recipientStableID, recipientAddress, "", registryServer.URL)
+	pins.Pins[recipientStableID].StableID = recipientStableID
+	pins.Pins[recipientStableID].DIDKey = recipientDID
 	if err := pins.Save(filepath.Join(tmp, ".config", "aw", "known_agents.yaml")); err != nil {
 		t.Fatalf("write known_agents: %v", err)
 	}

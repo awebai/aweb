@@ -305,7 +305,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 	var initBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -347,7 +347,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 				t.Fatal(encErr)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "default:alice.aweb.ai",
@@ -377,7 +377,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -417,7 +417,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 	var initBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -459,7 +459,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 				t.Fatal(encErr)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          "alice",
 				"team_id":        "default:alice.aweb.ai",
@@ -489,7 +489,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	tmp := t.TempDir()
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{

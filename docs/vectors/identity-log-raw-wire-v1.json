@@ -1,0 +1,20 @@
+{
+  "schema": "aweb.identity-log.raw-wire.v1",
+  "description": "Raw JSON DID-log vectors for values that cannot be represented by typed conformance structs before runtime decoding.",
+  "cases": [
+    {
+      "name": "fractional-seq-bypasses-cached-adjacency",
+      "resolution_json": "{\"did_aw\":\"did:aw:EWz6pPaKQQP6zCLc9Ngeju7bucK\",\"current_did_key\":\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\",\"log_head\":{\"authorized_by\":\"did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK\",\"new_did_key\":\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\",\"operation\":\"rotate_key\",\"prev_entry_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"previous_did_key\":\"did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK\",\"seq\":1.5,\"state_hash\":\"43736dc96d248360167407a9cb788a0b322ebbfe618f58aa9722eba248c522ce\",\"timestamp\":\"2026-02-22T10:05:00Z\",\"entry_hash\":\"afe98359249043b2292c2a220e2167b618f3edc7cb3e30e894a86682794b6f89\",\"signature\":\"UlkNhMStyp16oX5XvjMgLE/y245BxrFz1AKEGFN1tPf1C0/bREUrKjL5z4GrdTWmnVBOwtCaMHQrLKWirkjOCQ\"}}",
+      "cached_json": "{\"seq\":1,\"entryHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"stateHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"currentDidKey\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"fetchedAt\":0}",
+      "expected_outcome": "HARD_ERROR",
+      "known_runtime_gap": null
+    },
+    {
+      "name": "seq-exceeds-javascript-safe-integer-range",
+      "resolution_json": "{\"did_aw\":\"did:aw:EWz6pPaKQQP6zCLc9Ngeju7bucK\",\"current_did_key\":\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\",\"log_head\":{\"authorized_by\":\"did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK\",\"new_did_key\":\"did:key:z6Mkg49NtQR2LyYRDCQFK4w1VVHqhypZSSRo7HsyuN7SV7v5\",\"operation\":\"rotate_key\",\"prev_entry_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"previous_did_key\":\"did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK\",\"seq\":9007199254740992,\"state_hash\":\"43736dc96d248360167407a9cb788a0b322ebbfe618f58aa9722eba248c522ce\",\"timestamp\":\"2026-02-22T10:05:00Z\",\"entry_hash\":\"ec4192a261db91820625772de1bd10fdc4251ee1fe903e5dc3f1ed7e520df554\",\"signature\":\"TVdN5qkbL+J9n1B+9uA1SEO5V4FiRo+WogzWIzlkirwRMI/mDut10XJA7AZIr6sQDShKrYvcabjsOVb1zc82DQ\"}}",
+      "cached_json": "{\"seq\":1,\"entryHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"stateHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"currentDidKey\":\"did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S\",\"fetchedAt\":0}",
+      "expected_outcome": "HARD_ERROR",
+      "known_runtime_gap": "Go currently accepts this integer; Go safe-range tightening is tracked separately."
+    }
+  ]
+}

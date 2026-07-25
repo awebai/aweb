@@ -44,12 +44,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	var gotAuthHeader string
 	var gotCertHeader string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			gotAuthHeader = r.Header.Get("Authorization")
@@ -74,7 +74,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -221,12 +221,12 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 
 	var gotConnectPath string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL + "/api",
-				"aweb_url":       server.URL + "/api",
+				"onboarding_url": serverURL + "/api",
+				"aweb_url":       serverURL + "/api",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
 			gotConnectPath = r.URL.Path
@@ -247,7 +247,7 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -334,12 +334,12 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	}
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
 			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -350,7 +350,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 				"repo_id":      "repo-uuid-1",
 			})
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

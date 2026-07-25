@@ -37,98 +37,100 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 		onboardingURL   string
 	)
 
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			globalDidAW, _ = payload["did_aw"].(string)
-			globalDidKey, _ = payload["new_did_key"].(string)
-			for _, field := range []string{"did_key", "server", "address", "handle"} {
-				if _, ok := payload[field]; ok {
-					t.Fatalf("register_did payload unexpectedly carried %q", field)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
 				}
-			}
-			didRegistered = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          globalDidAW,
-				"current_did_key": globalDidKey,
-				"created_at":      "2026-04-07T00:00:00Z",
-				"updated_at":      "2026-04-07T00:00:00Z",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
-			redeemAuth = strings.TrimSpace(r.Header.Get("Authorization"))
-			redeemTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-			var err error
-			redeemBodyBytes, err = io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(redeemBodyBytes, &redeemBody); err != nil {
-				t.Fatal(err)
-			}
+				globalDidAW, _ = payload["did_aw"].(string)
+				globalDidKey, _ = payload["new_did_key"].(string)
+				for _, field := range []string{"did_key", "server", "address", "handle"} {
+					if _, ok := payload[field]; ok {
+						t.Fatalf("register_did payload unexpectedly carried %q", field)
+					}
+				}
+				didRegistered = true
+				_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+			case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw":          globalDidAW,
+					"current_did_key": globalDidKey,
+					"created_at":      "2026-04-07T00:00:00Z",
+					"updated_at":      "2026-04-07T00:00:00Z",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
+				redeemAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+				redeemTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+				var err error
+				redeemBodyBytes, err = io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(redeemBodyBytes, &redeemBody); err != nil {
+					t.Fatal(err)
+				}
 
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:juanre.aweb.ai",
-				MemberDIDKey:  globalDidKey,
-				MemberDIDAW:   globalDidAW,
-				MemberAddress: "juanre.aweb.ai/laptop-agent",
-				Alias:         "laptop-agent",
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:juanre.aweb.ai",
+					MemberDIDKey:  globalDidKey,
+					MemberDIDAW:   globalDidAW,
+					MemberAddress: "juanre.aweb.ai/laptop-agent",
+					Alias:         "laptop-agent",
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"certificate":    encoded,
+					"team_id":        "default:juanre.aweb.ai",
+					"lifetime":       "persistent",
+					"alias":          "laptop-agent",
+					"did_aw":         globalDidAW,
+					"member_address": "juanre.aweb.ai/laptop-agent",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				if !didRegistered {
+					t.Fatal("bootstrap-redeem ran before DID registration")
+				}
+				if !strings.HasPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "DIDKey ") {
+					t.Fatalf("connect auth=%q", r.Header.Get("Authorization"))
+				}
+				if strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")) == "" {
+					t.Fatal("missing team certificate header")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"team_id":      "default:juanre.aweb.ai",
+					"alias":        "laptop-agent",
+					"agent_id":     "agent-1",
+					"workspace_id": "ws-1",
+					"repo_id":      "",
+					"team_did_key": teamDIDKey,
+				})
+			case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+				writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+			case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+				writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop-agent")
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			encoded, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate":    encoded,
-				"team_id":        "default:juanre.aweb.ai",
-				"lifetime":       "persistent",
-				"alias":          "laptop-agent",
-				"did_aw":         globalDidAW,
-				"member_address": "juanre.aweb.ai/laptop-agent",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			if !didRegistered {
-				t.Fatal("bootstrap-redeem ran before DID registration")
-			}
-			if !strings.HasPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "DIDKey ") {
-				t.Fatalf("connect auth=%q", r.Header.Get("Authorization"))
-			}
-			if strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")) == "" {
-				t.Fatal("missing team certificate header")
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "default:juanre.aweb.ai",
-				"alias":        "laptop-agent",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "",
-				"team_did_key": teamDIDKey,
-			})
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
-			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:juanre.aweb.ai", "laptop-agent")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -279,61 +281,63 @@ func TestConnectBootstrapLocal(t *testing.T) {
 
 	var redeemBody map[string]any
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			t.Fatal("local connect should not register did:aw")
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
-			data, err := io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+				t.Fatal("local connect should not register did:aw")
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
+				data, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(data, &redeemBody); err != nil {
+					t.Fatal(err)
+				}
+				didKey, _ := redeemBody["did_key"].(string)
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:         "default:juanre.aweb.ai",
+					MemberDIDKey: didKey,
+					Alias:        "ci-runner-01",
+					Lifetime:     awid.LifetimeEphemeral,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"certificate": encoded,
+					"team_id":     "default:juanre.aweb.ai",
+					"lifetime":    "ephemeral",
+					"alias":       "ci-runner-01",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"team_id":      "default:juanre.aweb.ai",
+					"alias":        "ci-runner-01",
+					"agent_id":     "agent-2",
+					"workspace_id": "ws-2",
+					"repo_id":      "",
+					"team_did_key": teamDIDKey,
+				})
+			case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+				writePublishEncryptionKeyResponseForTest(t, w, "agent-2", "default:juanre.aweb.ai", "ci-runner-01")
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			if err := json.Unmarshal(data, &redeemBody); err != nil {
-				t.Fatal(err)
-			}
-			didKey, _ := redeemBody["did_key"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:juanre.aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        "ci-runner-01",
-				Lifetime:     awid.LifetimeEphemeral,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encoded, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate": encoded,
-				"team_id":     "default:juanre.aweb.ai",
-				"lifetime":    "ephemeral",
-				"alias":       "ci-runner-01",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "default:juanre.aweb.ai",
-				"alias":        "ci-runner-01",
-				"agent_id":     "agent-2",
-				"workspace_id": "ws-2",
-				"repo_id":      "",
-				"team_did_key": teamDIDKey,
-			})
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-2", "default:juanre.aweb.ai", "ci-runner-01")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -372,23 +376,25 @@ func TestConnectBootstrapMapsConflict(t *testing.T) {
 	t.Parallel()
 
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
-			w.WriteHeader(http.StatusConflict)
-			_, _ = io.WriteString(w, `{"detail":"token already consumed"}`)
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"detail":"token already consumed"}`)
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -444,72 +450,74 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 		}
 	}))
 
-	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       awebServer.URL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-				"features":       []string{"bootstrap_tokens"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
+	onboardingServer := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       awebServer.URL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+					"features":       []string{"bootstrap_tokens"},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				globalDidAW, _ = payload["did_aw"].(string)
+				globalDidKey, _ = payload["new_did_key"].(string)
+				_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+			case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw":          globalDidAW,
+					"current_did_key": globalDidKey,
+					"created_at":      "2026-04-07T00:00:00Z",
+					"updated_at":      "2026-04-07T00:00:00Z",
+				})
+			case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+				var assertion awid.EncryptionKeyAssertion
+				if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(assertion)
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
+				var redeemBody map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&redeemBody); err != nil {
+					t.Fatal(err)
+				}
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:juanre.aweb.ai",
+					MemberDIDKey:  globalDidKey,
+					MemberDIDAW:   globalDidAW,
+					MemberAddress: "juanre.aweb.ai/laptop-agent",
+					Alias:         "laptop-agent",
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"certificate":    encoded,
+					"team_id":        "default:juanre.aweb.ai",
+					"lifetime":       "persistent",
+					"alias":          "laptop-agent",
+					"did_aw":         globalDidAW,
+					"member_address": "juanre.aweb.ai/laptop-agent",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				t.Fatal("connect should use discovered aweb_url, not the bootstrap base URL")
+			default:
+				t.Fatalf("unexpected bootstrap service request %s %s", r.Method, r.URL.Path)
 			}
-			globalDidAW, _ = payload["did_aw"].(string)
-			globalDidKey, _ = payload["new_did_key"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case r.Method == http.MethodGet && globalDidAW != "" && r.URL.Path == "/v1/did/"+globalDidAW+"/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          globalDidAW,
-				"current_did_key": globalDidKey,
-				"created_at":      "2026-04-07T00:00:00Z",
-				"updated_at":      "2026-04-07T00:00:00Z",
-			})
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
-			var assertion awid.EncryptionKeyAssertion
-			if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(assertion)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
-			var redeemBody map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&redeemBody); err != nil {
-				t.Fatal(err)
-			}
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:juanre.aweb.ai",
-				MemberDIDKey:  globalDidKey,
-				MemberDIDAW:   globalDidAW,
-				MemberAddress: "juanre.aweb.ai/laptop-agent",
-				Alias:         "laptop-agent",
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encoded, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate":    encoded,
-				"team_id":        "default:juanre.aweb.ai",
-				"lifetime":       "persistent",
-				"alias":          "laptop-agent",
-				"did_aw":         globalDidAW,
-				"member_address": "juanre.aweb.ai/laptop-agent",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			t.Fatal("connect should use discovered aweb_url, not the bootstrap base URL")
-		default:
-			t.Fatalf("unexpected bootstrap service request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = onboardingServer.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -381,14 +381,12 @@ func writeKnownAgentPinForTest(t *testing.T, workingDir, address, registryURL st
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
+	// Build the pin the way production does, so the fixture cannot drift out of
+	// the shape the loader (and channel-core's validator) accepts.
 	pins := awid.NewPinStore()
-	pins.Pins[stableID] = &awid.Pin{
-		Address:  address,
-		StableID: stableID,
-		DIDKey:   did,
-		Server:   registryURL,
-	}
-	pins.Addresses[address] = stableID
+	pins.StorePin(stableID, address, "", registryURL)
+	pins.Pins[stableID].StableID = stableID
+	pins.Pins[stableID].DIDKey = did
 	if err := pins.Save(filepath.Join(workingDir, ".config", "aw", "known_agents.yaml")); err != nil {
 		t.Fatalf("write known_agents: %v", err)
 	}

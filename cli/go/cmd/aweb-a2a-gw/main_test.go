@@ -56,6 +56,8 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 				"did_aw":          recipientStableID,
 				"current_did_key": recipientDID,
 			})
+		case "/v1/messages/conversations/conv-1":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
 			t.Fatalf("unexpected aweb request %s %s", r.Method, r.URL.Path)
 		}
@@ -516,13 +518,17 @@ func TestA2AGatewayManagedACRefreshFailureKeepsLastGoodRoutes(t *testing.T) {
 func TestA2AGatewayManagedACRefreshExtendsAcceptWindowForStableRevision(t *testing.T) {
 	var posted map[string]any
 	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/a2a/gateway/bridge/a2a-gateway/messages" {
+		switch r.URL.Path {
+		case "/api/v1/a2a/gateway/bridge/a2a-gateway/messages":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+		case "/api/v1/a2a/gateway/bridge/a2a-gateway/conversations/conv-1":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+		default:
 			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
 	}))
 	defer acServer.Close()
 
