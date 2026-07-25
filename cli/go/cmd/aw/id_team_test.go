@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -4099,6 +4100,7 @@ memberships:
 }
 
 func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
+	var registeredCertMu sync.Mutex
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
@@ -4115,6 +4117,8 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 				"created_at":      "2026-04-09T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			registeredCertMu.Lock()
+			defer registeredCertMu.Unlock()
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
 			}
@@ -4201,9 +4205,12 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if _, err := os.Lstat(emptyIdentityHome); !os.IsNotExist(err) {
 		t.Fatalf("external local accept mutated empty principal: %v", err)
 	}
+	registeredCertMu.Lock()
 	if registeredCert != nil {
+		registeredCertMu.Unlock()
 		t.Fatalf("external local accept mutated remote certificate state: %+v", registeredCert)
 	}
+	registeredCertMu.Unlock()
 	if _, err := awconfig.LoadTeamInvite(inviteID); err != nil {
 		t.Fatalf("external local accept consumed invite token: %v", err)
 	}
@@ -4226,8 +4233,11 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if addGot["team_id"] != "ops:acme.com" {
 		t.Fatalf("team_id=%v", addGot["team_id"])
 	}
-	if registeredCert["member_did_key"] != memberDIDKey {
-		t.Fatalf("registered cert member_did_key=%v", registeredCert["member_did_key"])
+	registeredCertMu.Lock()
+	registeredMemberDIDKey := registeredCert["member_did_key"]
+	registeredCertMu.Unlock()
+	if registeredMemberDIDKey != memberDIDKey {
+		t.Fatalf("registered cert member_did_key=%v", registeredMemberDIDKey)
 	}
 	keyAfter, err := os.ReadFile(filepath.Join(tmp, ".aw", "signing.key"))
 	if err != nil {
