@@ -1581,7 +1581,7 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 	}
 }
 
-func TestAwIDRotateKeyRefusesWhenPendingRotationExists(t *testing.T) {
+func TestAwIDRotateKeyPreservesPendingRotationWhenRecoveryIsUnknown(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := awid.GenerateKeypair()
@@ -1609,11 +1609,13 @@ func TestAwIDRotateKeyRefusesWhenPendingRotationExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingDID := awid.ComputeDIDKey(pendingPub)
-	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, pendingDID, pendingPub, pendingPriv)
+	operationID := "11111111-1111-4111-8111-111111111111"
+	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, operationID, pendingPub, pendingPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := savePendingRotationState(rotationDir, &pendingRotationState{
+		OperationID: operationID,
 		StableID:    stableID,
 		OldDID:      did,
 		NewDID:      pendingDID,
@@ -1627,11 +1629,18 @@ func TestAwIDRotateKeyRefusesWhenPendingRotationExists(t *testing.T) {
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected rotate-key to fail\n%s", string(out))
+	if err != nil {
+		t.Fatalf("expected an unknown-preserved recovery result: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "pending rotation exists") {
-		t.Fatalf("unexpected error output:\n%s", string(out))
+	for _, want := range []string{"unknown_preserved", "rerun_required", pendingRotationStatePath(rotationDir, stableID)} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("recovery output missing %q:\n%s", want, string(out))
+		}
+	}
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
+		t.Fatal(err)
+	} else if pending == nil || pending.OperationID != operationID {
+		t.Fatalf("pending state was not preserved: %+v", pending)
 	}
 }
 
