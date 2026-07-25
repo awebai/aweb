@@ -211,32 +211,37 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 		}
 	}
 
-	claimOut := run("claim-human", "--email", "alice@example.com", "--mock-url", server.URL, "--json")
-	var claimOutput map[string]any
-	if err := json.Unmarshal(extractJSON(t, claimOut), &claimOutput); err != nil {
-		t.Fatal(err)
+	assertExternalClaim := func(email, wantUsername string) {
+		t.Helper()
+		claimOut := run("claim-human", "--email", email, "--mock-url", server.URL, "--json")
+		var claimOutput map[string]any
+		if err := json.Unmarshal(extractJSON(t, claimOut), &claimOutput); err != nil {
+			t.Fatal(err)
+		}
+		if claimOutput["username"] != wantUsername || claimOutput["status"] != "verification_sent" {
+			t.Fatalf("claim-human output=%v", claimOutput)
+		}
+		var claim signedClaim
+		select {
+		case claim = <-claimRequests:
+		case <-time.After(5 * time.Second):
+			t.Fatal("claim-human did not send the externally signed request")
+		}
+		var claimBody map[string]any
+		if err := json.Unmarshal(claim.body, &claimBody); err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.Fields(claim.authorization)
+		if claimBody["username"] != wantUsername || claimBody["did_key"] != principalDID || len(parts) != 3 || parts[1] != principalDID {
+			t.Fatalf("claim-human did not use external principal state: body=%v auth=%q", claimBody, claim.authorization)
+		}
+		if !verifyCloudDIDPayload(t, principalPub, http.MethodPost, "/api/v1/claim-human", claim.timestamp, claim.body, parts[2]) {
+			t.Fatal("claim-human signature did not verify with external principal key")
+		}
 	}
-	if claimOutput["username"] != "alice" || claimOutput["status"] != "verification_sent" {
-		t.Fatalf("claim-human output=%v", claimOutput)
-	}
-	var claim signedClaim
-	select {
-	case claim = <-claimRequests:
-	case <-time.After(5 * time.Second):
-		t.Fatal("claim-human did not send the externally signed request")
-	}
-	var claimBody map[string]any
-	if err := json.Unmarshal(claim.body, &claimBody); err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.Fields(claim.authorization)
-	if claimBody["username"] != "alice" || claimBody["did_key"] != principalDID || len(parts) != 3 || parts[1] != principalDID {
-		t.Fatalf("claim-human did not use external signing/workspace state: body=%v auth=%q", claimBody, claim.authorization)
-	}
-	if !verifyCloudDIDPayload(t, principalPub, http.MethodPost, "/api/v1/claim-human", claim.timestamp, claim.body, parts[2]) {
-		t.Fatal("claim-human signature did not verify with external principal key")
-	}
-	assertInstanceStateAbsent("claim-human")
+
+	assertExternalClaim("alice@example.com", "alice")
+	assertInstanceStateAbsent("identity-less claim-human")
 
 	statusShadow := seedLocalShadow()
 	statusOut := run("workspace", "status", "--json")
@@ -253,19 +258,25 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	writeIdentityForTest(t, principalDir, awconfig.WorktreeIdentity{
 		DID:            principalDID,
 		StableID:       principalStableID,
-		Address:        "alice.aweb.ai/alice",
+		Address:        "external.aweb.ai/principal-name",
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    registryServer.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-07-25T00:00:00Z",
 	})
+	writeStandaloneSelfCustodyIdentity(t, instance, "shadow.aweb.ai/shadow", principalDID, principalStableID, registryServer.URL, principalKey)
+	identityShadow := fileDigestsForTest(t, filepath.Join(instance, ".aw"))
+	assertExternalClaim("principal@example.com", "external")
+	removeLocalShadow("identity-present claim-human", identityShadow)
+	assertInstanceStateAbsent("identity-present claim-human")
+
 	requestOut := run("id", "team", "request", "--team", teamID, "--name", "alice", "--json")
 	var request teamRequestOutput
 	if err := json.Unmarshal(extractJSON(t, requestOut), &request); err != nil {
 		t.Fatal(err)
 	}
-	if request.DIDKey != principalDID || request.DIDAW != principalStableID || request.Address != "alice.aweb.ai/alice" || !strings.Contains(request.Command, "--global") {
+	if request.DIDKey != principalDID || request.DIDAW != principalStableID || request.Address != "external.aweb.ai/principal-name" || !strings.Contains(request.Command, "--global") {
 		t.Fatalf("team request omitted external principal identity: %+v", request)
 	}
 	assertInstanceStateAbsent("team request")
