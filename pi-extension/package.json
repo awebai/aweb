@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership ../skills/aweb-bootstrap ../skills/aweb-identity skills/",
-    "prebuild": "node scripts/ensure-channel-core.mjs",
+    "prebuild": "node scripts/ensure-channel-core.mjs && node ../scripts/check-node-build-provenance.mjs --package pi-extension",
     "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
     "pretest": "node scripts/ensure-channel-core.mjs",
     "test": "node --import tsx --test test/*.test.ts",

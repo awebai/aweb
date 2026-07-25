@@ -2452,7 +2452,7 @@ phase_amy_symptom_reproducer() {
 
   if [[ ! -f "$channel_dist" ]]; then
     echo "  Building channel dist (one-time)..."
-    (cd "$REPO_ROOT/channel" && npm install --silent && npm run build --silent) >/dev/null 2>&1 || {
+    (cd "$REPO_ROOT/channel" && npm ci --silent && npm run build --silent) >/dev/null 2>&1 || {
       echo "  FAIL: channel dist build failed at $REPO_ROOT/channel"
       fail=$((fail + 1))
       return 0

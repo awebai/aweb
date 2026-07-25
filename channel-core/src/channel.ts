@@ -617,6 +617,9 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
   if (status === "verification_stale") {
     return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
   }
+  if (status === "pin_conflict") {
+    return "WARNING: two pin records conflict for this sender. Stable-identity migration was refused to avoid discarding trust state; inspect and repair the pin store before trusting the sender.";
+  }
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 

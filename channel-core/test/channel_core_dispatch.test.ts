@@ -725,6 +725,50 @@ describe("channel-core dispatchAgentEvent", () => {
     }));
   });
 
+  test("surfaces pin migration conflicts in metadata and operator presentation", async () => {
+    const awakenings: ChannelAwakening[] = [];
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-pin-conflict",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "conflicting identity",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const conflictTrust = {
+      normalizeTrust: vi.fn(async () => ({ status: "pin_conflict", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: conflictTrust,
+        self,
+        onAwakening: (awakening) => { awakenings.push(awakening); },
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-conflict" } satisfies AgentEvent,
+    );
+
+    expect(awakenings[0].meta).toMatchObject({
+      trust_status: "pin_conflict",
+      verified: "false",
+    });
+    const rendered = formatAwakeningForAgent(awakenings[0]);
+    expect(rendered).toContain("two pin records conflict");
+    expect(rendered).toContain("migration was refused");
+    expect(rendered).toContain("avoid discarding trust state");
+  });
+
   test("formats stale verification as retryable rather than identity mismatch", () => {
     const rendered = formatAwakeningForAgent({
       kind: "mail",

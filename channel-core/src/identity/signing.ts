@@ -30,7 +30,8 @@ export type VerificationStatus =
   | "unverified"
   | "failed"
   | "verification_stale"
-  | "identity_mismatch";
+  | "identity_mismatch"
+  | "pin_conflict";
 
 /**
  * Build the canonical JSON payload for message signing.
