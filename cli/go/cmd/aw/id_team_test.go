@@ -4190,7 +4190,18 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	identityHome := filepath.Join(canonicalTmp, ".aw")
-	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--name", "alice", "--address", "acme.com/alice", token, "--json")
+	localAccept := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", token, "--json")
+	localAccept.Env = testCommandEnv(tmp)
+	localAccept.Dir = instanceHome
+	localOut, localErr := localAccept.CombinedOutput()
+	if localErr == nil || !strings.Contains(string(localOut), "external identity home requires --global") {
+		t.Fatalf("external local accept did not fail before mutation: err=%v\n%s", localErr, localOut)
+	}
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external local accept mutated instance: %v", err)
+	}
+
+	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--address", "acme.com/alice", token, "--json")
 	runAdd.Env = testCommandEnv(tmp)
 	runAdd.Dir = instanceHome
 	addOut, err := runAdd.CombinedOutput()
@@ -4233,6 +4244,13 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
 	}
+	acceptedCert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, "ops:acme.com")
+	if err != nil {
+		t.Fatalf("accepted certificate missing from principal: %v", err)
+	}
+	if acceptedCert.Team != "ops:acme.com" || acceptedCert.MemberDIDKey != memberDIDKey || strings.TrimSpace(acceptedCert.IssuedAt) == "" {
+		t.Fatalf("accepted certificate mismatch: %+v", acceptedCert)
+	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
 	}
@@ -4253,6 +4271,15 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if listGot.ActiveTeam != "ops:acme.com" || len(listGot.Memberships) != 2 {
 		t.Fatalf("list=%+v", listGot)
+	}
+	var listedOps *teamListItem
+	for i := range listGot.Memberships {
+		if listGot.Memberships[i].TeamID == "ops:acme.com" {
+			listedOps = &listGot.Memberships[i]
+		}
+	}
+	if listedOps == nil || listedOps.IdentityScope != awid.IdentityModeGlobal || strings.TrimSpace(listedOps.IssuedAt) == "" {
+		t.Fatalf("list omitted external certificate metadata: %+v", listedOps)
 	}
 
 	runSwitch := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "switch", "backend:acme.com", "--json")

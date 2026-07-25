@@ -850,6 +850,9 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if home.External() && acceptScope != awid.IdentityModeGlobal {
+		return usageError("external identity home requires --global for team invite acceptance; local identity creation is not identity-home-aware")
+	}
 	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
 		IdentityHome: externalTeamIdentityHome(home),
 		Name:         teamAcceptAlias,
@@ -1477,7 +1480,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		addressName = name
 	}
 	if alias == "" {
-		alias = resolveAliasFromIdentity(workingDir)
+		alias = resolveAliasFromIdentityAt(workingDir, opts.IdentityHome)
 	}
 	if alias == "" && addressName != "" {
 		alias = addressName
@@ -3269,7 +3272,7 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 	}
 	alias := strings.TrimSpace(opts.Name)
 	if alias == "" {
-		alias = resolveAliasFromIdentity(opts.WorkingDir)
+		alias = resolveAliasFromIdentityAt(opts.WorkingDir, opts.IdentityHome)
 	}
 	if alias == "" {
 		return teamMemberEnrollmentPlan{}, usageError("--name is required (no identity found to derive name from)")
@@ -3519,7 +3522,18 @@ func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 }
 
 func resolveAliasFromIdentity(workingDir string) string {
+	return resolveAliasFromIdentityAt(workingDir, "")
+}
+
+func resolveAliasFromIdentityAt(workingDir, identityHome string) string {
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
+	if strings.TrimSpace(identityHome) != "" {
+		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
+		if err != nil {
+			return ""
+		}
+		identityPath = path
+	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil || strings.TrimSpace(identity.Address) == "" {
 		return ""
