@@ -140,6 +140,10 @@ export class DeliveryStore {
     this.prune();
   }
 
+  unmark(key: string): void {
+    this.entries.delete(key);
+  }
+
   // Persist marks with an atomic, merge-on-save read-modify-write. A plain
   // overwrite would clobber marks another writer added since we loaded — making
   // delivered messages look undelivered and replay on reconnect (default-aajy).
@@ -148,6 +152,11 @@ export class DeliveryStore {
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const own = new Map(this.entries);
+    // Node has no portable flock, so use a maintained atomic-directory lock
+    // rather than a bespoke stale-lock protocol. A healthy owner heartbeats at
+    // 10s and is never reclaimed; after SIGKILL, delivery marking may block for
+    // the 30s stale ceiling before recovery. Acquisition retry is bounded, and
+    // a false reclaim can cause redelivery but cannot cross a trust boundary.
     let compromised: Error | undefined;
     const release = await lock(this.path, {
       realpath: false,
@@ -403,11 +412,7 @@ async function dispatchAppEvent(
     deliveryIntent: event.delivery_intent || "ambient",
     meta,
   });
-  dispatched.add(key);
-  if (options.deliveryStore) {
-    options.deliveryStore.mark(key);
-    await options.deliveryStore.save();
-  }
+  await persistDeliveryMark(options.deliveryStore, dispatched, key);
 }
 
 async function dispatchMailEvent(
@@ -462,11 +467,7 @@ async function dispatchMailEvent(
       meta,
       deliveryIntent: "wake",
     });
-    dispatched.add(key);
-    if (options.deliveryStore) {
-      options.deliveryStore.mark(key);
-      await options.deliveryStore.save();
-    }
+    await persistDeliveryMark(options.deliveryStore, dispatched, key);
     if (options.mailAcknowledgment !== "manual") {
       await ackMessage(options.client, msg.message_id);
     }
@@ -525,15 +526,30 @@ async function dispatchChatEvent(
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
-    dispatched.add(key);
-    if (options.deliveryStore) {
-      options.deliveryStore.mark(key);
-      await options.deliveryStore.save();
-    }
+    await persistDeliveryMark(options.deliveryStore, dispatched, key);
     lastMessageId = msg.message_id;
   }
   if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
   if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
+}
+
+async function persistDeliveryMark(
+  deliveryStore: DeliveryStore | undefined,
+  dispatched: Set<string>,
+  key: string,
+): Promise<void> {
+  if (deliveryStore) {
+    deliveryStore.mark(key);
+    try {
+      await deliveryStore.save();
+    } catch (error) {
+      // A transient in-memory mark must not turn a failed durable save into an
+      // acknowledgment on the next event. Leave the message pending instead.
+      deliveryStore.unmark(key);
+      throw error;
+    }
+  }
+  dispatched.add(key);
 }
 
 async function normalizeMessageTrust(
