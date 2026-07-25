@@ -10,22 +10,20 @@ import (
 	"time"
 )
 
-// TestTruncatedLogCannotRollPinBackToRetiredKey is the aajc.8 anti-rollback
-// repro. Verified log heads live only in a process-memory cache
-// (registry_resolver.go headCache), while the pin survives on disk. So after a
-// restart a compromised registry can serve a VALID but TRUNCATED prefix of the
-// log — genesis alone — and the client, having no persisted memory of the
-// higher sequence it already verified, accepts the retired key as current and
-// rolls the pin backwards. That defeats rotation revocation exactly when an old
-// key plus the registry are compromised, which is the case rotation exists for.
-//
-// The fix requires an authenticated checkpoint (verified seq + entry hash)
-// persisted with the pin, and refusing any served log that does not contain and
-// extend it.
-func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
-	t.Parallel()
+// didLogRegistry serves one identity that legitimately rotates key1 -> key2.
+// Flipping truncated makes it serve a VALID but truncated prefix (genesis only),
+// which is the rollback attack.
+type didLogRegistry struct {
+	stableID  string
+	did1      string
+	did2      string
+	truncated *bool
+	pins      *PinStore
+	newClient func() *Client
+}
 
-	// One identity that legitimately rotates key1 -> key2.
+func newDidLogRegistry(t *testing.T) *didLogRegistry {
+	t.Helper()
 	pub1, priv1, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +55,6 @@ func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
 		},
 	}).LogHead
 
-	// truncated flips the registry from honest (full log, seq 2) to malicious
-	// (genesis only, seq 1) — a valid prefix, correctly signed.
 	truncated := false
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		head, current := rotated, did2
@@ -86,13 +82,12 @@ func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	address := "acme.com/alice"
 	// The pin store is the part that persists across a restart.
 	pins := NewPinStore()
 
-	// newSession simulates a fresh process: new resolver (empty head cache) and
+	// newClient simulates a fresh process: new resolver (empty head cache) and
 	// new client, reusing the persisted pin store.
-	newSession := func() *Client {
+	newClient := func() *Client {
 		resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
 		resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 			value:     DomainAuthority{RegistryURL: server.URL},
@@ -107,9 +102,30 @@ func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
 		return c
 	}
 
+	return &didLogRegistry{
+		stableID: stableID, did1: did1, did2: did2,
+		truncated: &truncated, pins: pins, newClient: newClient,
+	}
+}
+
+const didLogTestAddress = "acme.com/alice"
+
+// The aajc.8 anti-rollback repro. Verified log heads lived only in a
+// process-memory cache while the pin survives on disk, so after a restart a
+// compromised registry could serve a VALID but TRUNCATED prefix — genesis alone
+// — and the client, with no persisted memory of the higher sequence it had
+// already verified, accepted the retired key as current and rolled the pin
+// backwards. That defeats rotation revocation exactly when an old key plus the
+// registry are compromised, which is the case rotation exists for.
+func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
+	t.Parallel()
+
+	f := newDidLogRegistry(t)
+	address, pins, stableID, did1, did2 := didLogTestAddress, f.pins, f.stableID, f.did1, f.did2
+
 	// Session 1: the honest registry serves the full log; the client verifies
 	// the rotation and pins the CURRENT key.
-	status, _ := newSession().NormalizeSenderTrust(
+	status, _ := f.newClient().NormalizeSenderTrust(
 		context.Background(), Verified, address, did2, stableID, nil, nil, nil,
 	)
 	if status != Verified {
@@ -121,9 +137,9 @@ func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
 
 	// Restart. The registry is now compromised along with the RETIRED key, and
 	// serves a valid truncated prefix that ends at genesis.
-	truncated = true
+	*f.truncated = true
 
-	status, _ = newSession().NormalizeSenderTrust(
+	status, _ = f.newClient().NormalizeSenderTrust(
 		context.Background(), Verified, address, did1, stableID, nil, nil, nil,
 	)
 
@@ -132,5 +148,50 @@ func TestTruncatedLogCannotRollPinBackToRetiredKey(t *testing.T) {
 	}
 	if got := pins.Pins[stableID].DIDKey; got != did2 {
 		t.Fatalf("pin rolled back to retired key %q; must stay at rotated %q", got, did2)
+	}
+}
+
+// A pin written before checkpoints existed carries no log_seq/log_entry_hash.
+// It must still advance safely: verification anchors the head through the full
+// log from genesis, the pin follows the rotation, and it acquires a checkpoint
+// so it is protected from then on. Migration must not require re-pinning.
+func TestLegacyPinWithoutCheckpointMigratesThroughFullLog(t *testing.T) {
+	t.Parallel()
+
+	f := newDidLogRegistry(t)
+
+	// A legacy pin: the identity and its current key, but no checkpoint.
+	f.pins.StorePin(f.stableID, didLogTestAddress, "", "")
+	f.pins.Pins[f.stableID].StableID = f.stableID
+	f.pins.Pins[f.stableID].DIDKey = f.did1
+	if f.pins.Pins[f.stableID].LogSeq != 0 {
+		t.Fatal("fixture must start without a checkpoint")
+	}
+
+	status, _ := f.newClient().NormalizeSenderTrust(
+		context.Background(), Verified, didLogTestAddress, f.did2, f.stableID, nil, nil, nil,
+	)
+
+	if status != Verified {
+		t.Fatalf("legacy pin migration: status=%q, want verified", status)
+	}
+	pin := f.pins.Pins[f.stableID]
+	if pin.DIDKey != f.did2 {
+		t.Fatalf("legacy pin did:key=%q, want rotated %q", pin.DIDKey, f.did2)
+	}
+	if pin.LogSeq != 2 || pin.LogEntryHash == "" {
+		t.Fatalf("legacy pin did not acquire a checkpoint: seq=%d hash=%q", pin.LogSeq, pin.LogEntryHash)
+	}
+
+	// Now protected: a truncated prefix is refused after the restart.
+	*f.truncated = true
+	status, _ = f.newClient().NormalizeSenderTrust(
+		context.Background(), Verified, didLogTestAddress, f.did1, f.stableID, nil, nil, nil,
+	)
+	if status != IdentityMismatch {
+		t.Fatalf("after migration, rollback status=%q, want IdentityMismatch", status)
+	}
+	if got := f.pins.Pins[f.stableID].DIDKey; got != f.did2 {
+		t.Fatalf("pin rolled back to %q, want %q", got, f.did2)
 	}
 }

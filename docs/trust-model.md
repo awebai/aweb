@@ -303,10 +303,23 @@ acme.com/alice → did:aw:new  (new identity, namespace controller signed)
 ```
 
 Recipients see that the address still resolves but the underlying `did:aw`
-changed.  They can verify the namespace controller authorized the change.
-This is weaker trust than signed rotation — it says "the namespace owner
-vouches for this replacement" rather than "the old identity vouches for
+changed.  This is weaker trust than signed rotation — it says "the namespace
+owner vouches for this replacement" rather than "the old identity vouches for
 this successor."
+
+**The controller-signed announcement is required, not advisory.** A client that
+holds a pin for an address refuses to move it to a different `did:aw` without
+one, and reports `identity_mismatch` instead. A valid DID log for the incoming
+identity is *never* sufficient on its own: the log proves `did:aw → did:key`,
+not `address → did:aw`, and an attacker who legitimately owns their own `did:aw`
+has a wholly valid log. The controller's authority is anchored in the address's
+`_awid` DNS TXT `controller=` field rather than in the registry response, so a
+compromised registry cannot forge it. The announcement is carried on the message
+and self-authenticating, so it needs no registry read route to be verified.
+
+Operationally this means an address handover that is not accompanied by a
+controller-signed announcement will be refused. See `default-aakj` for
+publishing announcements registry-side.
 
 ---
 

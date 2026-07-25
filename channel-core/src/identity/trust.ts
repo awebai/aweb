@@ -5,6 +5,7 @@ import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
 import { RegistryResolver, type VerifiedLogHead } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
+import { decodeRawStdBase64OrEmpty } from "./base64.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -602,7 +603,9 @@ function canonicalObject(fields: Array<[string, string]>): string {
 }
 
 function b64Decode(value: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(value, "base64"));
+  // Strict, matching Go's RawStdEncoding: a signature the Go verifier refuses
+  // must not decode here (default-aajc.8).
+  return decodeRawStdBase64OrEmpty(value);
 }
 
 function escapeJSON(s: string): string {
