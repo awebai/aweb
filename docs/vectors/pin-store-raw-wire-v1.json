@@ -108,18 +108,19 @@
     },
     {
       "name": "merge-key",
-      "yaml": "defaults: &d\n  server: s1\npins:\n  did:key:zA:\n    <<: *d\n    address: acme.com/alice\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\naddresses:\n  acme.com/alice: did:key:zA\n",
+      "note": "The merge value is an INLINE mapping with no anchor. An earlier version used '<<: *anchor', which both runtimes rejected at their ANCHOR guard before the merge-key guard ran \u2014 so the case passed while testing nothing it was named for, and disabling either merge-key check left the whole corpus green. Keep this fixture anchor-free.",
+      "yaml": "pins:\n  did:key:zA:\n    <<:\n      server: s1\n    address: acme.com/alice\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\naddresses:\n  acme.com/alice: did:key:zA\n",
       "expected": {
         "go": {
           "outcome": "reject",
           "error_substrings": [
-            "must not define a YAML anchor"
+            "must not use YAML merge keys"
           ]
         },
         "typescript": {
           "outcome": "reject",
           "error_substrings": [
-            "must not use anchors or aliases"
+            "must not use merge keys"
           ]
         }
       }
