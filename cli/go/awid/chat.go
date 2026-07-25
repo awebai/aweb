@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -850,9 +849,9 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 		c.latestClientVersion.Store(v)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: body}
 	}
 	return NewSSEStream(resp.Body), nil
 }

@@ -1013,12 +1013,12 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any,
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body), RequestID: resp.Header.Get("X-Request-ID")}
+	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: string(data), RequestID: resp.Header.Get("X-Request-ID")}
 	}
 	if out == nil {
 		return nil
@@ -1109,6 +1109,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, decorated
 		}
 		if err := traceHTTPClientResponse(resp); err != nil {
+			_ = resp.Body.Close()
 			return nil, err
 		}
 		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {

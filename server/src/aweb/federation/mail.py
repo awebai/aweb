@@ -17,6 +17,12 @@ MAX_FEDERATION_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_FEDERATION_ERROR_BYTES = 64 * 1024
 
 
+def _safe_error_text(content: bytes) -> str:
+    text = content.decode("utf-8", errors="replace")
+    sanitized = "".join(" " if not char.isprintable() else char for char in text)
+    return " ".join(sanitized.split())
+
+
 async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> bytes:
     content = bytearray()
     async for chunk in response.aiter_bytes():
@@ -116,10 +122,10 @@ def _response_detail(status_code: int, content: bytes) -> str:
     try:
         data = json.loads(content)
     except Exception:
-        text = content.decode("utf-8", errors="replace").strip()
+        text = _safe_error_text(content)
         return text or f"HTTP {status_code}"
     if isinstance(data, dict):
         detail = data.get("detail") or data.get("error")
         if detail:
-            return str(detail)
+            return _safe_error_text(str(detail).encode("utf-8"))
     return f"HTTP {status_code}"

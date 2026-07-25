@@ -37,6 +37,12 @@ MAX_REGISTRY_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_REGISTRY_ERROR_BYTES = 64 * 1024
 
 
+def _safe_error_text(content: bytes) -> str:
+    text = content.decode("utf-8", errors="replace")
+    sanitized = "".join(" " if not char.isprintable() else char for char in text)
+    return " ".join(sanitized.split())
+
+
 async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> bytes:
     content = bytearray()
     async for chunk in response.aiter_bytes():
@@ -293,7 +299,7 @@ class RegistryClient:
                     detail = parsed_error.get("detail")
             except Exception:
                 detail = None
-            response_text = content.decode("utf-8", errors="replace")
+            response_text = _safe_error_text(content)
             if response.status_code == 409:
                 if detail == "did_aw must be registered before address assignment":
                     raise DIDRegistrationRequiredError()

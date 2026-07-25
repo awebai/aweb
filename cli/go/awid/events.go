@@ -158,9 +158,9 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 		c.latestClientVersion.Store(v)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: body}
 	}
 	return newAgentEventStream(resp.Body), nil
 }

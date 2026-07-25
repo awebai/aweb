@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,27 @@ func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 				t.Fatal("oversize response was accepted")
 			}
 		})
+	}
+}
+
+func TestClientBoundsAndSanitizesErrorExcerpt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, "bad\x1b[31m\n"+strings.Repeat("x", MaxErrorResponseSize+1024))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	err = client.Get(context.Background(), "/v1/trust", &out)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error=%v, want APIError", err)
+	}
+	if len(apiErr.Body) > MaxErrorResponseSize || strings.Contains(apiErr.Body, "\x1b") || strings.Contains(apiErr.Body, "\n") {
+		t.Fatalf("unsafe error excerpt length=%d body-prefix=%q", len(apiErr.Body), apiErr.Body[:min(len(apiErr.Body), 32)])
 	}
 }
 

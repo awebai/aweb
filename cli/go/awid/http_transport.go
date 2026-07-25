@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // HTTP transport tuning for hostile venue networks (conference WiFi, NAT
@@ -20,6 +21,8 @@ import (
 // APITimeoutEnvVar configures the overall timeout for normal API requests.
 // It accepts Go duration strings such as "30s" or "1m".
 const APITimeoutEnvVar = "AWEB_HTTP_TIMEOUT"
+
+const MaxErrorResponseSize = 64 * 1024
 
 var apiTimeoutWarnOnce sync.Once
 
@@ -39,6 +42,26 @@ func ReadAllBounded(reader io.Reader, max int64) ([]byte, error) {
 		return nil, ErrResponseTooLarge
 	}
 	return data, nil
+}
+
+// ReadErrorExcerpt returns a bounded single-line diagnostic. Error bodies are
+// attacker-controlled and must not inject terminal control sequences or force
+// the client to retain an arbitrarily large response.
+func ReadErrorExcerpt(reader io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(reader, MaxErrorResponseSize+1))
+	if err != nil {
+		return ""
+	}
+	if len(data) > MaxErrorResponseSize {
+		data = data[:MaxErrorResponseSize]
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, string(data))
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // DoNoRedirect sends req without allowing an HTTP redirect to cross the

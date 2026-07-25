@@ -632,10 +632,7 @@ func readBodyString(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
-	if err != nil {
-		return ""
-	}
+	data := []byte(ReadErrorExcerpt(resp.Body))
 	var body map[string]any
 	if err := json.Unmarshal(data, &body); err == nil {
 		if detail, ok := body["detail"].(string); ok && strings.TrimSpace(detail) != "" {

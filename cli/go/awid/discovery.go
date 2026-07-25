@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,15 +37,14 @@ func DiscoverServices(ctx context.Context, baseURL string) (*DiscoveryResponse, 
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := DoNoRedirect(&http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}, req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, &RegistryError{StatusCode: resp.StatusCode, Detail: strings.TrimSpace(string(detail))}
+		return nil, &RegistryError{StatusCode: resp.StatusCode, Detail: ReadErrorExcerpt(resp.Body)}
 	}
 
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)

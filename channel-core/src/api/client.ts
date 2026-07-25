@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
-import { MAX_HTTP_ERROR_BYTES, readBoundedJSON, readBoundedResponse } from "./response.js";
+import { readBoundedJSON, readSafeErrorExcerpt } from "./response.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -62,7 +62,7 @@ export class APIClient {
 
     const resp = await fetch(url, init);
     if (!resp.ok) {
-      const text = await readBoundedResponse(resp, MAX_HTTP_ERROR_BYTES).catch(() => "");
+      const text = await readSafeErrorExcerpt(resp).catch(() => "");
       throw new APIError(resp.status, text);
     }
 
@@ -83,7 +83,7 @@ export class APIClient {
     });
 
     if (!resp.ok) {
-      const text = await readBoundedResponse(resp, MAX_HTTP_ERROR_BYTES).catch(() => "");
+      const text = await readSafeErrorExcerpt(resp).catch(() => "");
       throw new APIError(resp.status, text);
     }
 

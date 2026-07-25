@@ -23,6 +23,13 @@ func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 		invoke           func(string) error
 	}{
 		{
+			name: "service discovery",
+			invoke: func(baseURL string) error {
+				_, err := DiscoverServices(context.Background(), baseURL)
+				return err
+			},
+		},
+		{
 			name:             "standard API request",
 			expectsAuthority: true,
 			invoke: func(baseURL string) error {

@@ -39,6 +39,11 @@ export async function readBoundedResponse(
   return new TextDecoder("utf-8", { fatal: true }).decode(body);
 }
 
+export async function readSafeErrorExcerpt(response: Response): Promise<string> {
+  const text = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export async function readBoundedJSON<T>(response: Response): Promise<T> {
   return JSON.parse(await readBoundedResponse(response)) as T;
 }

@@ -5,7 +5,7 @@ import * as ed from "@noble/ed25519";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
 import { decodeRawStdBase64OrEmpty } from "./base64.js";
-import { MAX_HTTP_ERROR_BYTES, readBoundedJSON, readBoundedResponse } from "../api/response.js";
+import { readBoundedJSON, readSafeErrorExcerpt } from "../api/response.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -369,7 +369,7 @@ export class RegistryResolver {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      throw new Error(await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES).catch(() => `${response.status}`));
+      throw new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`));
     }
     return readBoundedJSON<T>(response);
   }
