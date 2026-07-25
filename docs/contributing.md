@@ -119,6 +119,27 @@ cd cli/go && GOCACHE=/tmp/go-build-aweb go test ./...
 ./scripts/e2e-oss-user-journey.sh
 ```
 
+## Generated-artifact freshness
+
+Some tracked files are generated from source and must not drift from it: the
+`uv.lock` files (`awid/`, `server/`), the CLI command reference
+(`docs/cli-command-reference.md`), the reserved-app-ids artifacts, resource
+packs, and the built claude-channel and pi-extension bundles (both rebuilt from
+`channel-core` source at build time).
+
+Before opening a release PR, run the single freshness command and commit any
+regenerated output:
+
+```
+make freshness
+```
+
+The `Freshness` CI job runs the same check on every push and fails on drift.
+Routine `make test` uses `uv run --frozen`, so tests never silently repair a
+stale lock — regenerate it explicitly with `cd server && uv lock` (or `cd awid
+&& uv lock`) and commit the result. An AWID version bump therefore also requires
+regenerating `server/uv.lock` (the server depends on the editable AWID source).
+
 ## Documentation Discipline
 
 - Use code as the source of truth, not stale design assumptions.

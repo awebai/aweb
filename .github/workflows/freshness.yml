@@ -1,0 +1,42 @@
+name: Freshness
+
+# Regenerate every intentionally committed generated artifact (uv locks, cli
+# reference, reserved-app-ids, resource packs, and the claude-channel + pi
+# bundles) and fail on drift, so stale committed metadata is caught mechanically
+# instead of by reviewer inspection (default-aajc.5).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install channel-core deps
+        working-directory: channel-core
+        run: npm ci
+
+      - name: Install channel deps
+        working-directory: channel
+        run: npm ci
+
+      - name: Install pi-extension deps
+        working-directory: pi-extension
+        run: npm ci
+
+      - name: Freshness gate
+        run: bash scripts/check-freshness.sh

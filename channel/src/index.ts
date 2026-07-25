@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type APIClient,
   type AgentEvent,
+  CHANNEL_CORE_SECURITY_CONTRACT,
   createChannelClient,
   createRegistryResolver,
   dispatchAgentEvent,
@@ -20,7 +21,9 @@ import {
   startChannelLoop,
 } from "@awebai/channel-core";
 
-export { resolveRegistryFallbackURL };
+// Re-exported so the built plugin bundle carries the channel-core security
+// contract sentinel that the freshness gate (check-package-dist.mjs) asserts.
+export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
 async function main() {
   const workdir = process.cwd();
