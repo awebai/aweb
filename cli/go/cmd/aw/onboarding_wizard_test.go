@@ -785,78 +785,80 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		}
 	}))
 
-	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       awebServer.URL,
-				"registry_url":   registryServer.URL,
-				"version":        "1.7.0",
-				"features":       []string{"managed_namespaces", "claim_human"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
+	onboardingServer := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       awebServer.URL,
+					"registry_url":   registryServer.URL,
+					"version":        "1.7.0",
+					"features":       []string{"managed_namespaces", "claim_human"},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				checkBodies = append(checkBodies, body)
+				username := strings.TrimSpace(body["username"].(string))
+				w.Header().Set("Content-Type", "application/json")
+				if username == "Invalid_Probe" {
+					_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"available":true}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(signupBody["username"].(string))
+				alias := strings.TrimSpace(signupBody["alias"].(string))
+				didKey := strings.TrimSpace(signupBody["did_key"].(string))
+				didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+				memberAddress := username + ".aweb.ai/" + alias
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:" + username + ".aweb.ai",
+					MemberDIDKey:  didKey,
+					MemberDIDAW:   didAW,
+					MemberAddress: memberAddress,
+					Alias:         alias,
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user_id":          "user-1",
+					"username":         username,
+					"org_id":           "org-1",
+					"namespace_domain": username + ".aweb.ai",
+					"team_id":          "default:" + username + ".aweb.ai",
+					"api_key":          "aw_sk_guided_hosted",
+					"certificate":      encodedCert,
+					"did_aw":           didAW,
+					"member_address":   memberAddress,
+					"alias":            alias,
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				if err := json.NewDecoder(r.Body).Decode(&claimBody); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "verification_sent",
+					"email":  claimBody["email"],
+				})
+			default:
+				t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 			}
-			checkBodies = append(checkBodies, body)
-			username := strings.TrimSpace(body["username"].(string))
-			w.Header().Set("Content-Type", "application/json")
-			if username == "Invalid_Probe" {
-				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"available":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
-				t.Fatal(err)
-			}
-			username := strings.TrimSpace(signupBody["username"].(string))
-			alias := strings.TrimSpace(signupBody["alias"].(string))
-			didKey := strings.TrimSpace(signupBody["did_key"].(string))
-			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user_id":          "user-1",
-				"username":         username,
-				"org_id":           "org-1",
-				"namespace_domain": username + ".aweb.ai",
-				"team_id":          "default:" + username + ".aweb.ai",
-				"api_key":          "aw_sk_guided_hosted",
-				"certificate":      encodedCert,
-				"did_aw":           didAW,
-				"member_address":   memberAddress,
-				"alias":            alias,
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			if err := json.NewDecoder(r.Body).Decode(&claimBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "verification_sent",
-				"email":  claimBody["email"],
-			})
-		default:
-			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = onboardingServer.URL
+		})
+	})
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -1034,86 +1036,88 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	var signupBodies []map[string]any
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   registryServer.URL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   registryServer.URL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(body["username"].(string))
+				w.Header().Set("Content-Type", "application/json")
+				if username == "Invalid_Probe" {
+					_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"available":true}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				signupBodies = append(signupBodies, body)
+				username := strings.TrimSpace(body["username"].(string))
+				if len(signupBodies) == 1 {
+					w.WriteHeader(http.StatusConflict)
+					_, _ = w.Write([]byte(`{"detail":"username taken"}`))
+					return
+				}
+				alias := strings.TrimSpace(body["alias"].(string))
+				didKey := strings.TrimSpace(body["did_key"].(string))
+				didAW := strings.TrimSpace(body["did_aw"].(string))
+				memberAddress := username + ".aweb.ai/" + alias
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:" + username + ".aweb.ai",
+					MemberDIDKey:  didKey,
+					MemberDIDAW:   didAW,
+					MemberAddress: memberAddress,
+					Alias:         alias,
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user_id":          "user-1",
+					"username":         username,
+					"org_id":           "org-1",
+					"namespace_domain": username + ".aweb.ai",
+					"team_id":          "default:" + username + ".aweb.ai",
+					"api_key":          "aw_sk_guided_hosted",
+					"certificate":      encodedCert,
+					"did_aw":           didAW,
+					"member_address":   memberAddress,
+					"alias":            alias,
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"team_id":      "default:jack-2.aweb.ai",
+					"alias":        "laptop",
+					"agent_id":     "agent-1",
+					"workspace_id": "ws-1",
+					"repo_id":      "repo-1",
+					"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+				})
+			case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+				writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack-2.aweb.ai", "laptop")
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			username := strings.TrimSpace(body["username"].(string))
-			w.Header().Set("Content-Type", "application/json")
-			if username == "Invalid_Probe" {
-				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"available":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			signupBodies = append(signupBodies, body)
-			username := strings.TrimSpace(body["username"].(string))
-			if len(signupBodies) == 1 {
-				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"detail":"username taken"}`))
-				return
-			}
-			alias := strings.TrimSpace(body["alias"].(string))
-			didKey := strings.TrimSpace(body["did_key"].(string))
-			didAW := strings.TrimSpace(body["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user_id":          "user-1",
-				"username":         username,
-				"org_id":           "org-1",
-				"namespace_domain": username + ".aweb.ai",
-				"team_id":          "default:" + username + ".aweb.ai",
-				"api_key":          "aw_sk_guided_hosted",
-				"certificate":      encodedCert,
-				"did_aw":           didAW,
-				"member_address":   memberAddress,
-				"alias":            alias,
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "default:jack-2.aweb.ai",
-				"alias":        "laptop",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "repo-1",
-				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-			})
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack-2.aweb.ai", "laptop")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -1156,28 +1160,30 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 func TestExecuteHostedPathDoesNotPromptForUsernameRetryWhenNonInteractive(t *testing.T) {
 	var signupCalls int
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			signupCalls++
-			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"detail":"username taken"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			t.Fatal("connect must not run after signup conflict")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				signupCalls++
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"detail":"username taken"}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				t.Fatal("connect must not run after signup conflict")
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+		})
+	})
 
 	_, err := executeHostedPath(guidedOnboardingRequest{
 		WorkingDir:     t.TempDir(),
@@ -1305,69 +1311,71 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 		}
 	}))
 
-	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       awebServer.URL,
-				"registry_url":   registryServer.URL,
-				"version":        "1.7.0",
-				"features":       []string{"managed_namespaces"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
+	onboardingServer := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       awebServer.URL,
+					"registry_url":   registryServer.URL,
+					"version":        "1.7.0",
+					"features":       []string{"managed_namespaces"},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(body["username"].(string))
+				w.Header().Set("Content-Type", "application/json")
+				if username == "Invalid_Probe" {
+					_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"available":true}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(signupBody["username"].(string))
+				alias := strings.TrimSpace(signupBody["alias"].(string))
+				didKey := strings.TrimSpace(signupBody["did_key"].(string))
+				didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+				memberAddress := username + ".aweb.ai/" + alias
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:" + username + ".aweb.ai",
+					MemberDIDKey:  didKey,
+					MemberDIDAW:   didAW,
+					MemberAddress: memberAddress,
+					Alias:         alias,
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user_id":          "user-1",
+					"username":         username,
+					"org_id":           "org-1",
+					"namespace_domain": username + ".aweb.ai",
+					"team_id":          "default:" + username + ".aweb.ai",
+					"api_key":          "aw_sk_guided_hosted",
+					"certificate":      encodedCert,
+					"did_aw":           didAW,
+					"member_address":   memberAddress,
+					"alias":            alias,
+				})
+			default:
+				t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 			}
-			username := strings.TrimSpace(body["username"].(string))
-			w.Header().Set("Content-Type", "application/json")
-			if username == "Invalid_Probe" {
-				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"available":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
-				t.Fatal(err)
-			}
-			username := strings.TrimSpace(signupBody["username"].(string))
-			alias := strings.TrimSpace(signupBody["alias"].(string))
-			didKey := strings.TrimSpace(signupBody["did_key"].(string))
-			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user_id":          "user-1",
-				"username":         username,
-				"org_id":           "org-1",
-				"namespace_domain": username + ".aweb.ai",
-				"team_id":          "default:" + username + ".aweb.ai",
-				"api_key":          "aw_sk_guided_hosted",
-				"certificate":      encodedCert,
-				"did_aw":           didAW,
-				"member_address":   memberAddress,
-				"alias":            alias,
-			})
-		default:
-			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = onboardingServer.URL
+		})
+	})
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -1462,52 +1470,54 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 		}
 	}))
 
-	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       awebServer.URL,
-				"registry_url":   registryServer.URL,
-				"version":        "1.7.0",
-				"features":       []string{"managed_namespaces"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"available":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
-				t.Fatal(err)
+	onboardingServer := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       awebServer.URL,
+					"registry_url":   registryServer.URL,
+					"version":        "1.7.0",
+					"features":       []string{"managed_namespaces"},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"available":true}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(signupBody["username"].(string))
+				alias := strings.TrimSpace(signupBody["alias"].(string))
+				didKey := strings.TrimSpace(signupBody["did_key"].(string))
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:         "default:" + username + ".aweb.ai",
+					MemberDIDKey: didKey,
+					Alias:        alias,
+					Lifetime:     awid.LifetimeEphemeral,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				certB64, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"certificate":    certB64,
+					"did_aw":         "",
+					"member_address": "",
+					"alias":          alias,
+					"team_id":        "default:" + username + ".aweb.ai",
+					"api_key":        "aw_sk_guided_hosted",
+				})
+			default:
+				t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 			}
-			username := strings.TrimSpace(signupBody["username"].(string))
-			alias := strings.TrimSpace(signupBody["alias"].(string))
-			didKey := strings.TrimSpace(signupBody["did_key"].(string))
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:" + username + ".aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			certB64, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate":    certB64,
-				"did_aw":         "",
-				"member_address": "",
-				"alias":          alias,
-				"team_id":        "default:" + username + ".aweb.ai",
-				"api_key":        "aw_sk_guided_hosted",
-			})
-		default:
-			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = onboardingServer.URL
+		})
+	})
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -1619,65 +1629,67 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 		}
 	}))
 
-	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       awebServer.URL,
-				"registry_url":   registryServer.URL,
-				"version":        "1.7.0",
-				"features":       []string{"managed_namespaces"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
+	onboardingServer := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       awebServer.URL,
+					"registry_url":   registryServer.URL,
+					"version":        "1.7.0",
+					"features":       []string{"managed_namespaces"},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"available":true}`))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+					t.Fatal(err)
+				}
+				username := strings.TrimSpace(signupBody["username"].(string))
+				alias := strings.TrimSpace(signupBody["alias"].(string))
+				didKey := strings.TrimSpace(signupBody["did_key"].(string))
+				didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+				memberAddress := username + ".aweb.ai/" + alias
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:          "default:" + username + ".aweb.ai",
+					MemberDIDKey:  didKey,
+					MemberDIDAW:   didAW,
+					MemberAddress: memberAddress,
+					Alias:         alias,
+					Lifetime:      awid.LifetimePersistent,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				certB64, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Mirror the production cli-signup response shape that
+				// validateHostedSignupResponse expects: certificate (base64), did_aw,
+				// member_address, alias. Older test-fixture variants used
+				// "team_certificate" + missing did_aw and predate the validate path
+				// added in onboarding_wizard.go:665.
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"certificate":    certB64,
+					"did_aw":         didAW,
+					"member_address": memberAddress,
+					"alias":          alias,
+					"team_id":        "default:" + username + ".aweb.ai",
+					"api_key":        "aw_sk_guided_hosted",
+				})
+			default:
+				t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"available":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
-				t.Fatal(err)
-			}
-			username := strings.TrimSpace(signupBody["username"].(string))
-			alias := strings.TrimSpace(signupBody["alias"].(string))
-			didKey := strings.TrimSpace(signupBody["did_key"].(string))
-			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			certB64, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Mirror the production cli-signup response shape that
-			// validateHostedSignupResponse expects: certificate (base64), did_aw,
-			// member_address, alias. Older test-fixture variants used
-			// "team_certificate" + missing did_aw and predate the validate path
-			// added in onboarding_wizard.go:665.
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate":    certB64,
-				"did_aw":         didAW,
-				"member_address": memberAddress,
-				"alias":          alias,
-				"team_id":        "default:" + username + ".aweb.ai",
-				"api_key":        "aw_sk_guided_hosted",
-			})
-		default:
-			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = onboardingServer.URL
+		})
+	})
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -2380,68 +2392,70 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 	}
 
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   onboardingURL,
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
-			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   onboardingURL,
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+				_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				didKey := strings.TrimSpace(body["did_key"].(string))
+				alias := strings.TrimSpace(body["alias"].(string))
+				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+					Team:         "default:jack.aweb.ai",
+					MemberDIDKey: didKey,
+					Alias:        alias,
+					Lifetime:     awid.LifetimeEphemeral,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user_id":          "user-1",
+					"username":         "jack",
+					"org_id":           "org-1",
+					"namespace_domain": "jack.aweb.ai",
+					"team_id":          "default:jack.aweb.ai",
+					"api_key":          "aw_sk_guided_hosted",
+					"certificate":      encodedCert,
+					"did_aw":           "",
+					"member_address":   "",
+					"alias":            alias,
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"team_id":      "default:jack.aweb.ai",
+					"alias":        "laptop",
+					"agent_id":     "agent-1",
+					"workspace_id": "ws-1",
+					"repo_id":      "repo-1",
+					"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				events = append(events, "claim-human")
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "verification_sent", "email": "jack@example.com"})
+			case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+				writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
+			default:
+				t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 			}
-			didKey := strings.TrimSpace(body["did_key"].(string))
-			alias := strings.TrimSpace(body["alias"].(string))
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:jack.aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user_id":          "user-1",
-				"username":         "jack",
-				"org_id":           "org-1",
-				"namespace_domain": "jack.aweb.ai",
-				"team_id":          "default:jack.aweb.ai",
-				"api_key":          "aw_sk_guided_hosted",
-				"certificate":      encodedCert,
-				"did_aw":           "",
-				"member_address":   "",
-				"alias":            alias,
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "default:jack.aweb.ai",
-				"alias":        "laptop",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "repo-1",
-				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			events = append(events, "claim-human")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "verification_sent", "email": "jack@example.com"})
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "default:jack.aweb.ai", "laptop")
-		default:
-			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	var out bytes.Buffer
 	_, err = executeHostedPath(guidedOnboardingRequest{

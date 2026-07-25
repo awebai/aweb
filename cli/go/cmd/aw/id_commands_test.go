@@ -1419,88 +1419,90 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 	var rotated atomic.Bool
 	var seenPut atomic.Bool
 	var newDID string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/did/" + stableID + "/key":
-			if r.Method != http.MethodGet {
-				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": oldDID,
-				"log_head":        didLogJSON(logHead),
-			})
-		case "/v1/did/" + stableID + "/full":
-			if r.Method != http.MethodGet {
-				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			}
-			authDID := didFromRegistryAuthHeader(t, r)
-			currentDID := oldDID
-			if rotated.Load() {
-				currentDID = newDID
-				if authDID != newDID {
-					t.Fatalf("post-rotation auth did=%q want %q", authDID, newDID)
+	_ = newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		registryURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/did/" + stableID + "/key":
+				if r.Method != http.MethodGet {
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 				}
-			} else if authDID != oldDID {
-				t.Fatalf("pre-rotation auth did=%q want %q", authDID, oldDID)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": currentDID,
-				"created_at":      "2026-04-05T00:00:00Z",
-				"updated_at":      "2026-04-05T00:00:00Z",
-			})
-		case "/v1/did/" + stableID:
-			if r.Method != http.MethodPut {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw":          stableID,
+					"current_did_key": oldDID,
+					"log_head":        didLogJSON(logHead),
+				})
+			case "/v1/did/" + stableID + "/full":
+				if r.Method != http.MethodGet {
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+				authDID := didFromRegistryAuthHeader(t, r)
+				currentDID := oldDID
+				if rotated.Load() {
+					currentDID = newDID
+					if authDID != newDID {
+						t.Fatalf("post-rotation auth did=%q want %q", authDID, newDID)
+					}
+				} else if authDID != oldDID {
+					t.Fatalf("pre-rotation auth did=%q want %q", authDID, oldDID)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw":          stableID,
+					"current_did_key": currentDID,
+					"created_at":      "2026-04-05T00:00:00Z",
+					"updated_at":      "2026-04-05T00:00:00Z",
+				})
+			case "/v1/did/" + stableID:
+				if r.Method != http.MethodPut {
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				if payload["operation"] != "rotate_key" {
+					t.Fatalf("operation=%v", payload["operation"])
+				}
+				if payload["authorized_by"] != oldDID {
+					t.Fatalf("authorized_by=%v", payload["authorized_by"])
+				}
+				if int(payload["seq"].(float64)) != 2 {
+					t.Fatalf("seq=%v", payload["seq"])
+				}
+				if payload["prev_entry_hash"] != logHead.EntryHash {
+					t.Fatalf("prev_entry_hash=%v want %s", payload["prev_entry_hash"], logHead.EntryHash)
+				}
+				newDID, _ = payload["new_did_key"].(string)
+				if strings.TrimSpace(newDID) == "" || newDID == oldDID {
+					t.Fatalf("new_did_key=%q", newDID)
+				}
+				entry := &awid.DidKeyEvidence{
+					Seq:            2,
+					Operation:      "rotate_key",
+					PreviousDIDKey: stringPtr(oldDID),
+					NewDIDKey:      newDID,
+					PrevEntryHash:  stringPtr(logHead.EntryHash),
+					StateHash:      payload["state_hash"].(string),
+					AuthorizedBy:   oldDID,
+					Timestamp:      payload["timestamp"].(string),
+				}
+				sig, err := base64.RawStdEncoding.DecodeString(payload["signature"].(string))
+				if err != nil {
+					t.Fatalf("decode signature: %v", err)
+				}
+				if !ed25519.Verify(oldPub, []byte(awid.CanonicalDidLogPayload(stableID, entry)), sig) {
+					t.Fatal("invalid rotation signature")
+				}
+				rotated.Store(true)
+				seenPut.Store(true)
+				_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
+			case "/v1/agents/heartbeat":
+				w.WriteHeader(http.StatusOK)
+			default:
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload["operation"] != "rotate_key" {
-				t.Fatalf("operation=%v", payload["operation"])
-			}
-			if payload["authorized_by"] != oldDID {
-				t.Fatalf("authorized_by=%v", payload["authorized_by"])
-			}
-			if int(payload["seq"].(float64)) != 2 {
-				t.Fatalf("seq=%v", payload["seq"])
-			}
-			if payload["prev_entry_hash"] != logHead.EntryHash {
-				t.Fatalf("prev_entry_hash=%v want %s", payload["prev_entry_hash"], logHead.EntryHash)
-			}
-			newDID, _ = payload["new_did_key"].(string)
-			if strings.TrimSpace(newDID) == "" || newDID == oldDID {
-				t.Fatalf("new_did_key=%q", newDID)
-			}
-			entry := &awid.DidKeyEvidence{
-				Seq:            2,
-				Operation:      "rotate_key",
-				PreviousDIDKey: stringPtr(oldDID),
-				NewDIDKey:      newDID,
-				PrevEntryHash:  stringPtr(logHead.EntryHash),
-				StateHash:      payload["state_hash"].(string),
-				AuthorizedBy:   oldDID,
-				Timestamp:      payload["timestamp"].(string),
-			}
-			sig, err := base64.RawStdEncoding.DecodeString(payload["signature"].(string))
-			if err != nil {
-				t.Fatalf("decode signature: %v", err)
-			}
-			if !ed25519.Verify(oldPub, []byte(awid.CanonicalDidLogPayload(stableID, entry)), sig) {
-				t.Fatal("invalid rotation signature")
-			}
-			rotated.Store(true)
-			seenPut.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	registryURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

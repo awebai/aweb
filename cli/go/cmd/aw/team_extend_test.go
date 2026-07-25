@@ -63,8 +63,8 @@ func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
 		ActiveTeam: "active:acme.com",
 		Memberships: []awconfig.TeamMembership{{
-			TeamID:  "active:acme.com",
-			Alias:   "captain",
+			TeamID:   "active:acme.com",
+			Alias:    "captain",
 			CertPath: ".aw/team-certs/active.pem",
 		}},
 	}); err != nil {
