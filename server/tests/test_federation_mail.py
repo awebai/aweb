@@ -14,6 +14,7 @@ from aweb.federation.envelope import FederationEnvelope
 from aweb.federation.mail import (
     MAX_FEDERATION_ERROR_BYTES,
     MAX_FEDERATION_RESPONSE_BYTES,
+    FederatedMailDeliveryError,
     deliver_federated_message,
 )
 
@@ -137,3 +138,75 @@ async def test_federation_delivery_enforces_response_limit(extra_bytes: int, sho
                 signature="signature",
                 transport=transport,
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suffix", "should_succeed"),
+    [(b" \r\n\t", True), (b"\n{}", False)],
+)
+async def test_federation_delivery_requires_one_json_document(
+    suffix: bytes,
+    should_succeed: bool,
+):
+    transport = MockTransport(lambda _request: Response(200, content=b"{}" + suffix))
+
+    if should_succeed:
+        assert await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        ) == {}
+    else:
+        with pytest.raises(FederatedMailDeliveryError, match="invalid JSON"):
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body_size", "should_reach_remote_error"),
+    [(64 * 1024, True), (64 * 1024 + 1, False)],
+)
+async def test_federation_delivery_enforces_error_limit(
+    body_size: int,
+    should_reach_remote_error: bool,
+):
+    transport = MockTransport(lambda _request: Response(500, content=b"x" * body_size))
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        )
+    if should_reach_remote_error:
+        assert str(caught.value).endswith("x" * (64 * 1024))
+    else:
+        assert "maximum size of 65536 bytes" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_sanitizes_error_controls():
+    transport = MockTransport(
+        lambda _request: Response(500, content=b"bad\x1b[31m\nnext\x00line")
+    )
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        )
+    message = str(caught.value)
+    assert "\x1b" not in message
+    assert "\n" not in message
+    assert "\x00" not in message
+    assert message.endswith("bad [31m next line")

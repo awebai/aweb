@@ -98,6 +98,56 @@ describe("trust response bounds", () => {
     await expect(client.get("/oversize")).rejects.toThrow(/maximum|size|large|limit/i);
   });
 
+  test.each([
+    { name: "trailing whitespace", suffix: " \r\n\t", shouldSucceed: true },
+    { name: "a second document", suffix: "\n{}", shouldSucceed: false },
+  ])("standard API handles $name strictly", async ({ suffix, shouldSucceed }) => {
+    const serverURL = await listen((_request, response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(`{}${suffix}`);
+    });
+    const client = new APIClient(serverURL, auth);
+
+    const request = client.get("/strict-json");
+    if (shouldSucceed) {
+      await expect(request).resolves.toEqual({});
+    } else {
+      await expect(request).rejects.toThrow();
+    }
+  });
+
+  test.each([
+    { name: "trailing whitespace", suffix: " \r\n\t", shouldSucceed: true },
+    { name: "a second document", suffix: "\n{}", shouldSucceed: false },
+  ])("registry resolver handles $name strictly", async ({ suffix, shouldSucceed }) => {
+    const didKey = "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd";
+    const serverURL = await listen((request, response) => {
+      const body = request.url?.includes("/addresses/")
+        ? {
+            address_id: "addr-1",
+            domain: "example.com",
+            name: "alice",
+            did_aw: "did:aw:test",
+            current_did_key: didKey,
+            created_at: "2026-07-25T00:00:00Z",
+          }
+        : { did_aw: "did:aw:test", current_did_key: didKey };
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(`${JSON.stringify(body)}${suffix}`);
+    });
+    const notFound = Object.assign(new Error("not found"), { code: "ENOTFOUND" });
+    const resolver = new RegistryResolver(fetch, async () => { throw notFound; }, undefined, {
+      fallbackRegistryURL: serverURL,
+    });
+
+    const request = resolver.resolveAddressIdentity("example.com/alice");
+    if (shouldSucceed) {
+      await expect(request).resolves.toEqual({ did: didKey, stableID: "did:aw:test" });
+    } else {
+      await expect(request).rejects.toThrow();
+    }
+  });
+
   test("standard API rejects a decompressed response over the limit", async () => {
     const content = gzipSync(`{}${" ".repeat(MAX_RESPONSE_BYTES - 1)}`);
     const serverURL = await listen((_request, response) => {

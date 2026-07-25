@@ -10,6 +10,90 @@ import (
 	"time"
 )
 
+func TestInjectedHTTPClientCannotFollowTrustRedirects(t *testing.T) {
+	tests := []struct {
+		name   string
+		invoke func(*http.Client, string) error
+	}{
+		{
+			name: "standard API request",
+			invoke: func(httpClient *http.Client, baseURL string) error {
+				client, err := New(baseURL)
+				if err != nil {
+					return err
+				}
+				client.SetHTTPClient(httpClient)
+				var out map[string]any
+				return client.Get(context.Background(), "/v1/trust", &out)
+			},
+		},
+		{
+			name: "registry client request",
+			invoke: func(httpClient *http.Client, baseURL string) error {
+				_, err := NewAWIDRegistryClient(httpClient, nil).GetDIDLog(context.Background(), baseURL, "did:aw:test")
+				return err
+			},
+		},
+		{
+			name: "registry resolver request",
+			invoke: func(httpClient *http.Client, baseURL string) error {
+				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var targetHits atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				targetHits.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(target.Close)
+
+			var sourceHits atomic.Int32
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sourceHits.Add(1)
+				http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(source.Close)
+
+			var redirectChecks atomic.Int32
+			injectedClient := &http.Client{
+				CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+					redirectChecks.Add(1)
+					return nil
+				},
+			}
+
+			_ = test.invoke(injectedClient, source.URL)
+			if sourceHits.Load() != 1 {
+				t.Fatalf("redirect source received %d requests, want 1", sourceHits.Load())
+			}
+			if targetHits.Load() != 0 {
+				t.Fatalf("redirect target received %d requests, want 0", targetHits.Load())
+			}
+			if redirectChecks.Load() != 0 {
+				t.Fatalf("injected redirect policy ran %d times for trust request, want 0", redirectChecks.Load())
+			}
+
+			resp, err := injectedClient.Get(source.URL + "/shared-policy-check")
+			if err != nil {
+				t.Fatalf("shared injected client no longer follows redirects: %v", err)
+			}
+			_ = resp.Body.Close()
+			if targetHits.Load() != 1 {
+				t.Fatalf("shared injected client reached redirect target %d times, want 1", targetHits.Load())
+			}
+			if redirectChecks.Load() != 1 {
+				t.Fatalf("shared injected redirect policy ran %d times, want 1", redirectChecks.Load())
+			}
+		})
+	}
+}
+
 func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 	_, signingKey, err := ed25519.GenerateKey(nil)
 	if err != nil {

@@ -58,6 +58,76 @@ func TestClientResponseLimitRejectsOversizeWithoutRejectingExactLimit(t *testing
 	}
 }
 
+func TestTrustResponsesRequireOneJSONDocument(t *testing.T) {
+	tests := []struct {
+		name      string
+		response  string
+		wantError bool
+		invoke    func(string) error
+	}{
+		{
+			name:     "standard API allows trailing whitespace",
+			response: "{} \r\n\t",
+			invoke: func(baseURL string) error {
+				client, err := New(baseURL)
+				if err != nil {
+					return err
+				}
+				var out map[string]any
+				return client.Get(context.Background(), "/v1/trust", &out)
+			},
+		},
+		{
+			name:      "standard API rejects second document",
+			response:  "{}\n{}",
+			wantError: true,
+			invoke: func(baseURL string) error {
+				client, err := New(baseURL)
+				if err != nil {
+					return err
+				}
+				var out map[string]any
+				return client.Get(context.Background(), "/v1/trust", &out)
+			},
+		},
+		{
+			name:     "registry resolver allows trailing whitespace",
+			response: "{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"} \r\n\t",
+			invoke: func(baseURL string) error {
+				_, err := NewRegistryResolver(nil, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				return err
+			},
+		},
+		{
+			name:      "registry resolver rejects second document",
+			response:  "{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}",
+			wantError: true,
+			invoke: func(baseURL string) error {
+				_, err := NewRegistryResolver(nil, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, test.response)
+			}))
+			t.Cleanup(server.Close)
+
+			err := test.invoke(server.URL)
+			if test.wantError && err == nil {
+				t.Fatal("under-limit second JSON document was accepted")
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("trailing JSON whitespace was rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 	_, signingKey, err := ed25519.GenerateKey(nil)
 	if err != nil {

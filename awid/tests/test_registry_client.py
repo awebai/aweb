@@ -15,6 +15,7 @@ from awid.registry import (
     MAX_REGISTRY_RESPONSE_BYTES,
     CachedRegistryClient,
     RegistryClient,
+    RegistryError,
 )
 
 
@@ -124,6 +125,70 @@ async def test_registry_client_enforces_response_limit(extra_bytes: int, should_
                 await registry.health()
     finally:
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suffix", "should_succeed"),
+    [(b" \r\n\t", True), (b"\n{}", False)],
+)
+async def test_registry_client_requires_one_json_document(
+    suffix: bytes,
+    should_succeed: bool,
+):
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(lambda _request: Response(200, content=b"{}" + suffix)),
+    )
+    try:
+        if should_succeed:
+            assert await registry.health() == {}
+        else:
+            with pytest.raises(json.JSONDecodeError):
+                await registry.health()
+    finally:
+        await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body_size", "should_succeed"),
+    [(64 * 1024, True), (64 * 1024 + 1, False)],
+)
+async def test_registry_client_enforces_error_limit(body_size: int, should_succeed: bool):
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(lambda _request: Response(500, content=b"x" * body_size)),
+    )
+    try:
+        if should_succeed:
+            with pytest.raises(RegistryError) as caught:
+                await registry.health()
+            assert caught.value.detail == "x" * (64 * 1024)
+        else:
+            with pytest.raises(ValueError, match="maximum|size|large|limit"):
+                await registry.health()
+    finally:
+        await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registry_client_sanitizes_error_controls():
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(
+            lambda _request: Response(500, content=b"bad\x1b[31m\nnext\x00line")
+        ),
+    )
+    try:
+        with pytest.raises(RegistryError) as caught:
+            await registry.health()
+    finally:
+        await registry.aclose()
+    assert "\x1b" not in caught.value.detail
+    assert "\n" not in caught.value.detail
+    assert "\x00" not in caught.value.detail
+    assert caught.value.detail == "bad [31m next line"
 
 
 class FakeRedis:
