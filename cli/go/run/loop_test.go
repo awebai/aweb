@@ -2418,85 +2418,77 @@ func TestRealCommandRunnerPTYProvidesTTYAndAcceptsInput(t *testing.T) {
 	}
 
 	const prompt = "Allow? [y/N]"
-	partialSeen := make(chan string, 1)
-	promptReady := make(chan struct{})
-	lineSeen := make(chan string, 1)
+	outputSeen := make(chan string, 16)
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go func() {
+		var providerStdin io.WriteCloser
 		var streamedPrompt strings.Builder
 		promptSignaled := false
 		done <- RealCommandRunner(ctx, "", []string{
 			"sh", "-c", "test -t 0 || exit 42; printf 'Allow? [y/N]'; read answer; printf '\\n%s\\n' \"$answer\"",
 		}, func(line string) {
-			select {
-			case lineSeen <- line:
-			default:
-			}
+			outputSeen <- line + "\n"
 		}, &commandOutputSinks{
 			usePTY: true,
 			ptyPartial: func(chunk string) {
+				outputSeen <- chunk
 				if !promptSignaled {
-					partialSeen <- chunk
 					streamedPrompt.WriteString(chunk)
 					if strings.Contains(streamedPrompt.String(), prompt) {
-						close(promptReady)
 						promptSignaled = true
+						_, _ = io.WriteString(providerStdin, "y\n")
 					}
 				}
 			},
 			stdinReady: func(w io.WriteCloser) {
-				go func() {
-					select {
-					case <-promptReady:
-						_, _ = io.WriteString(w, "y\n")
-					case <-ctx.Done():
-					}
-				}()
+				providerStdin = w
 			},
 		})
 	}()
 
-	var gotPrompt strings.Builder
+	var output strings.Builder
 	deadline := time.After(1 * time.Second)
-	for !strings.Contains(gotPrompt.String(), prompt) {
+	for !strings.Contains(output.String(), prompt) {
 		select {
-		case chunk := <-partialSeen:
-			gotPrompt.WriteString(chunk)
+		case chunk := <-outputSeen:
+			output.WriteString(chunk)
 		case <-deadline:
-			t.Fatalf("timed out waiting for PTY partial prompt; got %q", gotPrompt.String())
+			t.Fatalf("timed out waiting for PTY partial prompt; got %q", output.String())
 		}
 	}
-	if gotPrompt.String() != prompt {
-		t.Fatalf("unexpected PTY partial %q", gotPrompt.String())
+	if output.String() != prompt {
+		t.Fatalf("unexpected PTY partial %q", output.String())
 	}
 
 	deadline = time.After(2 * time.Second)
-	for {
+	finished := false
+	for !finished {
 		select {
-		case got := <-lineSeen:
-			if got == "" {
-				continue
+		case chunk := <-outputSeen:
+			output.WriteString(chunk)
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("RealCommandRunner returned error: %v", err)
 			}
-			if got != "y" {
-				t.Fatalf("unexpected PTY stdout line %q", got)
-			}
-			goto ptyDone
+			finished = true
 		case <-deadline:
-			t.Fatal("timed out waiting for PTY input round-trip")
+			t.Fatalf("timed out waiting for PTY runner to finish; output %q", output.String())
 		}
 	}
 
-ptyDone:
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("RealCommandRunner returned error: %v", err)
+drainOutput:
+	for {
+		select {
+		case chunk := <-outputSeen:
+			output.WriteString(chunk)
+		default:
+			break drainOutput
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for PTY runner to finish")
+	}
+	if got := strings.ReplaceAll(output.String(), "\r", ""); !strings.Contains(got, "\ny\n") {
+		t.Fatalf("PTY input was not echoed by the provider: %q", got)
 	}
 }
