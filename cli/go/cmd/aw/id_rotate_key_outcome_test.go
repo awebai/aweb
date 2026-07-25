@@ -256,13 +256,21 @@ func TestAwIDRotateKeyPreservesPendingKeyWhenRegistryOutcomeIsUnknown(t *testing
 		t.Fatalf("active key changed to %q after unknown outcome, want old key %q", got, oldDID)
 	}
 
-	// A fresh process must see the same recovery state and must not submit a new rotation.
+	// A fresh process reconciles the preserved operation, reports the result,
+	// and exits without chaining a new key rotation into the same invocation.
 	restartOut, restartErr := runRotateKeyCommand(ctx, bin, tmp)
-	if restartErr == nil {
-		t.Fatalf("expected pending-rotation refusal after restart\n%s", restartOut)
+	if restartErr != nil {
+		t.Fatalf("pending rotation recovery failed: %v\n%s", restartErr, restartOut)
 	}
-	if !strings.Contains(string(restartOut), statePath) {
-		t.Fatalf("restart error missing recovery state path:\n%s", restartOut)
+	for _, want := range []string{"rolled_back", "rerun_required", statePath} {
+		if !strings.Contains(string(restartOut), want) {
+			t.Fatalf("restart recovery output missing %q:\n%s", want, restartOut)
+		}
+	}
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
+		t.Fatal(err)
+	} else if pending != nil {
+		t.Fatalf("rolled-back pending state still present: %+v", pending)
 	}
 	_, putCalls := fixture.snapshot()
 	if putCalls != 2 {

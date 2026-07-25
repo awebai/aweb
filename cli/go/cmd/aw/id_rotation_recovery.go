@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,11 +15,13 @@ import (
 )
 
 type pendingRotationState struct {
+	OperationID string `yaml:"operation_id,omitempty"`
 	StableID    string `yaml:"stable_id"`
 	OldDID      string `yaml:"old_did"`
 	NewDID      string `yaml:"new_did"`
 	RegistryURL string `yaml:"registry_url,omitempty"`
 	PendingKey  string `yaml:"pending_key"`
+	legacy      bool
 }
 
 func rotationStateDirForIdentity(identity *awconfig.ResolvedIdentity) (string, error) {
@@ -60,7 +63,12 @@ func loadPendingRotationState(rotationDir, stableID string) (*pendingRotationSta
 	}
 	var state pendingRotationState
 	if err := yaml.Unmarshal(data, &state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode pending rotation state %s: %w", path, err)
+	}
+	if strings.TrimSpace(state.OperationID) == "" {
+		state.legacy = true
+		digest := sha256.Sum256([]byte(strings.Join([]string{state.StableID, state.OldDID, state.NewDID, state.PendingKey}, "\x00")))
+		state.OperationID = fmt.Sprintf("legacy-%x", digest[:12])
 	}
 	return &state, nil
 }
@@ -68,6 +76,9 @@ func loadPendingRotationState(rotationDir, stableID string) (*pendingRotationSta
 func savePendingRotationState(rotationDir string, state *pendingRotationState) error {
 	if state == nil {
 		return fmt.Errorf("nil pending rotation state")
+	}
+	if strings.TrimSpace(state.OperationID) == "" {
+		return fmt.Errorf("pending rotation operation_id is required")
 	}
 	data, err := yaml.Marshal(state)
 	if err != nil {
@@ -77,10 +88,25 @@ func savePendingRotationState(rotationDir string, state *pendingRotationState) e
 	if err := preflightRotationFile(path); err != nil {
 		return err
 	}
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("pending rotation state already exists at %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	return awid.AtomicWriteFile(path, data)
 }
 
-func removePendingRotationState(rotationDir, stableID string) error {
+func removePendingRotationStateOwned(rotationDir, stableID, operationID string) error {
+	state, err := loadPendingRotationState(rotationDir, stableID)
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		return nil
+	}
+	if strings.TrimSpace(state.OperationID) != strings.TrimSpace(operationID) {
+		return fmt.Errorf("pending rotation state is owned by operation %s, not %s", state.OperationID, operationID)
+	}
 	path := pendingRotationStatePath(rotationDir, stableID)
 	if err := preflightRotationFile(path); err != nil {
 		return err
@@ -110,13 +136,89 @@ func preflightRotationFile(path string) error {
 }
 
 func cleanupPendingRotationKeypair(keyPath string) error {
-	if err := os.Remove(keyPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Remove(awid.PublicKeyPath(keyPath)); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
+		if err := preflightRotationFile(path); err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
+}
+
+func validatePendingRotationState(rotationDir, stableID string, state *pendingRotationState) error {
+	if state == nil {
+		return fmt.Errorf("missing pending rotation state")
+	}
+	if strings.TrimSpace(state.OperationID) == "" {
+		return fmt.Errorf("pending rotation operation_id is required")
+	}
+	if strings.TrimSpace(state.StableID) != strings.TrimSpace(stableID) {
+		return fmt.Errorf("pending rotation stable_id %q does not match active identity %q", state.StableID, stableID)
+	}
+	if strings.TrimSpace(state.OldDID) == "" || strings.TrimSpace(state.NewDID) == "" || strings.TrimSpace(state.OldDID) == strings.TrimSpace(state.NewDID) {
+		return fmt.Errorf("pending rotation has invalid old_did/new_did")
+	}
+	expectedKey, _ := pendingRotationKeyPaths(rotationDir, state.OperationID)
+	if state.legacy {
+		expectedKey, _ = pendingRotationKeyPaths(rotationDir, state.NewDID)
+	}
+	owned, err := sameRotationPath(state.PendingKey, expectedKey)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("pending rotation key path %q is not owned by operation %s", state.PendingKey, state.OperationID)
+	}
+	if err := preflightRotationFile(state.PendingKey); err != nil {
+		return err
+	}
+	if err := preflightRotationFile(awid.PublicKeyPath(state.PendingKey)); err != nil {
+		return err
+	}
+	priv, err := awid.LoadSigningKey(state.PendingKey)
+	if os.IsNotExist(err) {
+		return nil // Promotion may have moved the private key before state cleanup.
+	}
+	if err != nil {
+		return fmt.Errorf("load pending rotation key: %w", err)
+	}
+	derivedPublic := priv.Public().(ed25519.PublicKey)
+	if got := awid.ComputeDIDKey(derivedPublic); strings.TrimSpace(got) != strings.TrimSpace(state.NewDID) {
+		return fmt.Errorf("pending rotation key belongs to %s, not %s", got, state.NewDID)
+	}
+	storedPublic, err := awid.LoadPublicKey(awid.PublicKeyPath(state.PendingKey))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("load pending rotation public key: %w", err)
+	}
+	if err == nil && !derivedPublic.Equal(storedPublic) {
+		return fmt.Errorf("pending rotation public key does not match its private key")
+	}
+	return nil
+}
+
+func sameRotationPath(first, second string) (bool, error) {
+	resolve := func(path string) (string, error) {
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return "", err
+		}
+		absolute, err := filepath.Abs(filepath.Join(parent, filepath.Base(path)))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(absolute), nil
+	}
+	firstResolved, err := resolve(first)
+	if err != nil {
+		return false, err
+	}
+	secondResolved, err := resolve(second)
+	if err != nil {
+		return false, err
+	}
+	return firstResolved == secondResolved, nil
 }
 
 func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, expectedDID string) (string, error) {
