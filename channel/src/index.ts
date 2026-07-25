@@ -54,7 +54,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Claude channel notifications have no model-delivery receipt, so mail stays unread after notification. Replying acknowledges it automatically: aw mail reply <message_id> --body "<reply>". If no reply is needed, acknowledge it only after processing: aw mail ack <message_id>.
+Mail events (type="mail") are async. Mail is marked read when it is presented to you (this notification is that presentation), so you will not be re-notified for the same message. Reply when a reply is warranted: aw mail reply <message_id> --body "<reply>". You do not need to run aw mail ack to prevent redelivery; ack is only a courtesy read-receipt for the sender.
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.
@@ -86,10 +86,12 @@ Control events (type="control") are operational signals. On "pause", stop curren
       method: "notifications/claude/channel",
       params: { content: awakening.content, meta: awakening.meta },
     }),
-    // Claude's channel protocol is a fire-and-forget MCP notification. Transport
-    // send is not proof that the model received it, so only an agent-side reply
-    // or explicit `aw mail ack` may mark mail read on this surface.
-    mailAcknowledgment: "manual",
+    // On Claude the MCP notification IS the presentation of the mail to the
+    // agent (Claude presents at the first tool boundary), so mail is marked read
+    // at presentation — matching the honest semantic "presented = read". A rare
+    // host-drop is recovered by reconnect catch-up, not by never acking; the
+    // withheld-ack policy caused a replay burst on reconnect (default-aajy).
+    mailAcknowledgment: "delivery",
     onStreamState: (state) => {
       if (state.state === "connected") return;
       const content = formatEventStreamState(state);
@@ -122,7 +124,8 @@ export async function dispatchEvent(
         method: "notifications/claude/channel",
         params: { content: awakening.content, meta: awakening.meta },
       }),
-      mailAcknowledgment: "manual",
+      // Presented (notification) = read; see startChannelLoop above (aajy).
+      mailAcknowledgment: "delivery",
     },
     dispatched,
     event,

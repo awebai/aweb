@@ -767,6 +767,19 @@ shared team membership authorizes delivery when the recipient uses
    `team_and_contacts` accepts verified same-team members plus exact active
    identity contacts for the verified sender address.
 
+**Read semantic (authoritative): mail is marked read when it is PRESENTED to
+the agent — never on transport-send alone, and never withheld under a
+never-ack policy.** Presentation is surface-specific but always concrete: the
+Claude MCP channel notification is the presentation (ack at notification); Pi
+acks after `pi.sendMessage` accepts the injection; native `aw run` acks after a
+successful provider run. The only honest failure mode is a rare host-drop
+between transport-send and presentation, recovered by reconnect catch-up plus a
+per-agent local delivery store. Acking before presentation (the original defect)
+risks silent message loss; never acking (manual-only) leaves mail unread so the
+server re-delivers it on every reconnect — the replay burst regression
+(default-aajy). `aw mail ack` is a courtesy read-receipt for the sender, not the
+mechanism that prevents redelivery.
+
 **Contacts** are stored per-identity in aweb. Contacts management:
 `POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may
 carry labels or handle metadata. For delivery authorization, stale

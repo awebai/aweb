@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
@@ -50,6 +50,7 @@ export interface ChannelLoopOptions {
   onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
   mailAcknowledgment?: "delivery" | "manual";
   deliveryStore?: DeliveryStore;
+  deliveryStorePath?: string;
   localDecrypt?: LocalDecryptProvider;
   workdir?: string;
   awCommand?: string;
@@ -106,20 +107,26 @@ export class DeliveryStore {
   ) {}
 
   static async load(path: string = DEFAULT_DELIVERY_STORE_PATH): Promise<DeliveryStore> {
+    return new DeliveryStore(path, await DeliveryStore.readEntries(path));
+  }
+
+  // Read the on-disk marks, dropping expired ones. Absent, unreadable, or
+  // malformed content reads as no marks.
+  private static async readEntries(path: string): Promise<Map<string, number>> {
+    const entries = new Map<string, number>();
     try {
       const raw = JSON.parse(await readFile(path, "utf-8")) as Record<string, string | number>;
       const now = Date.now();
-      const entries = new Map<string, number>();
       for (const [key, value] of Object.entries(raw)) {
         const timestamp = typeof value === "number" ? value : Date.parse(value);
         if (Number.isFinite(timestamp) && now - timestamp <= DELIVERED_IDS_TTL_MS) {
           entries.set(key, timestamp);
         }
       }
-      return new DeliveryStore(path, entries);
     } catch {
-      return new DeliveryStore(path, new Map());
+      // No readable/parseable store yet.
     }
+    return entries;
   }
 
   has(key: string): boolean {
@@ -132,14 +139,50 @@ export class DeliveryStore {
     this.prune();
   }
 
+  // Persist marks with an atomic, merge-on-save read-modify-write. A plain
+  // overwrite would clobber marks another writer added since we loaded — making
+  // delivered messages look undelivered and replay on reconnect (default-aajy).
+  // Union the on-disk marks with our own, write atomically, and retry if a
+  // concurrent writer clobbered our marks between the merge and the rename.
   async save(): Promise<void> {
-    this.prune();
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    const own = new Map(this.entries);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const merged = await DeliveryStore.readEntries(this.path);
+      for (const [key, value] of own) {
+        const existing = merged.get(key);
+        if (existing === undefined || value > existing) merged.set(key, value);
+      }
+      this.entries = merged;
+      this.prune();
+      await this.writeAtomic();
+      const onDisk = await DeliveryStore.readEntries(this.path);
+      if ([...own.keys()].every((key) => onDisk.has(key) || !this.entries.has(key))) return;
+    }
+  }
+
+  private async writeAtomic(): Promise<void> {
     const payload = Object.fromEntries(
       [...this.entries.entries()].map(([key, value]) => [key, new Date(value).toISOString()]),
     );
-    await writeFile(this.path, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+    const data = `${JSON.stringify(payload, null, 2)}\n`;
+    // O_EXCL temp + atomic rename, symlink-safe, mode 0600 — matching the pin
+    // store (aajc.2), so a crash mid-write cannot corrupt the store.
+    const tmp = `${this.path}.tmp-${process.pid}-${Date.now()}-${DeliveryStore.tmpCounter += 1}`;
+    const file = await open(tmp, "wx", 0o600);
+    try {
+      await file.writeFile(data, "utf-8");
+      await file.sync();
+    } catch (error) {
+      await file.close().catch(() => {});
+      await rm(tmp, { force: true }).catch(() => {});
+      throw error;
+    }
+    await file.close();
+    await rename(tmp, this.path);
   }
+
+  private static tmpCounter = 0;
 
   private prune(): void {
     const now = Date.now();
@@ -191,7 +234,12 @@ export function createChannelClient(config: {
 
 export async function startChannelLoop(options: ChannelLoopOptions): Promise<void> {
   const dispatched = new Set<string>();
-  const deliveryStore = options.deliveryStore || await DeliveryStore.load(DEFAULT_DELIVERY_STORE_PATH);
+  // Per-agent delivery store: one global file shared by every agent on the host
+  // let ~95 concurrent agents clobber each other's marks (default-aajy). Scope
+  // it to this agent's workspace (.aw) so each writes its own file.
+  const deliveryStorePath = options.deliveryStorePath
+    || (options.workdir ? join(options.workdir, ".aw", "channel-delivered-ids.json") : DEFAULT_DELIVERY_STORE_PATH);
+  const deliveryStore = options.deliveryStore || await DeliveryStore.load(deliveryStorePath);
   const localDecrypt = options.localDecrypt || (
     options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
   );
