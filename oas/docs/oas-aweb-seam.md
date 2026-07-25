@@ -15,23 +15,35 @@ re-check rather than trust. Versions: OAS 0.18.1, aw CLI 1.32.10, Claude Code
 
 ## The invariant
 
-> A principal's existence and authority are never a side effect of execution.
+> A principal's lifetime and cleanup ownership are an explicit recorded
+> decision, never incidental to execution and never inferred afterwards.
 
-OAS creates, runs, and destroys instances and sessions. It may **attach** a
-principal, but it never owns one it did not provision, and cleanup authority is
-**recorded at provision time**, never **inferred at retire time**.
+OAS may **create** a principal or **attach** an existing one — both are
+legitimate. What is never legitimate is either happening as a side effect, or
+cleanup authority being deduced later from what happens to be on disk. The
+decision is made and recorded **at binding time**; retire consumes that record
+and does nothing it does not authorise.
 
 ## The three entities
 
 | Entity | Owner | Lifetime | Holds |
 |---|---|---|---|
-| **Principal** | aweb | Durable; exists while offline | Address, `did:aw` stable id, credentials, durable mutable state |
+| **Principal** | aweb | **Declared** — disposable or durable | Address, `did:aw` stable id, credentials, durable mutable state |
 | **Instance** | OAS | Until explicit retire | Home, worktree, task context |
 | **Session** | OAS | One model process | Nothing durable |
 
-A **worker** is an instance whose principal was provisioned for it, and is
-therefore cleanup-owned by it. A **resident** is a durable principal with zero
-or one active instances.
+A principal's lifetime is a property of the **binding that created or attached
+it**, not of the kind of thing it is. The same identity machinery serves a
+worker that dies this afternoon and a resident that outlives the repository.
+
+- a **disposable worker** is an instance whose principal was provisioned *as
+  disposable*, and is therefore cleanup-owned by that instance;
+- a **resident** is a durable principal with zero or one active instances. It
+  may have been provisioned durably by an instance that no longer exists, or
+  attached from elsewhere; in neither case does an instance own its cleanup.
+
+Provisioning and cleanup ownership are therefore independent: creating a
+principal does not imply owning it.
 
 Note the vocabulary collision: aweb already uses "workspace" for its registered
 identity record, so the OAS-side object is called **Instance** here.
@@ -55,13 +67,20 @@ second orchestrator and should be rejected.
 
 ## Verb boundary
 
-- **`aw` creates and custodies** a principal — create, verify, rotate, migrate.
-  It has no OAS knowledge, ever.
-- **The aweb OAS integration attaches and runs** one, delegating to `oas spawn`.
-  It never touches tmux, worktrees, runtime flags, or instance directories.
+- **`aw` supplies and custodies the primitives** — create, verify, rotate,
+  migrate an identity, and hold its credentials. It has no OAS knowledge, ever.
+- **The capability decides and records** — it explicitly provisions a principal
+  (disposable or durable) or attaches an existing one, and records that
+  decision with its cleanup ownership.
+- **OAS executes** — it creates, runs and destroys instances and sessions, and
+  invokes the capability's hooks. The capability never touches tmux, worktrees,
+  runtime flags, or instance directories.
 
-This ordering also makes bootstrap obvious: create the principal with `aw`, then
-attach it.
+The layering is what matters: `aw` holds capability without policy, the
+capability holds policy without orchestration, and OAS orchestrates without
+identity knowledge. Bootstrap follows from it — a principal can be created
+ahead of time with `aw` and attached later, or provisioned by the capability at
+bind time, and the record says which happened.
 
 ## Filesystem layout
 
@@ -76,9 +95,11 @@ The v1 declaration is exactly: `schema_version` (`1`), `address`, `stable_id`
 (the `did:aw`), `team_id`, `soul`, and an optional `soul_version`. Unknown
 fields are rejected, so a stray secret cannot ride along.
 
-There is deliberately **no policy block**. Cleanup ownership is a property of a
-*binding* — attach versus provision — not of a principal, so a policy field here
-would be speculative. `schema_version` exists to allow additive evolution when a
+There is deliberately **no policy block**. Cleanup ownership is a property of
+the *binding mode* — including whether a provision was durable or disposable —
+not of a principal, so a policy field here would be speculative. The same
+declaration can be attached by one instance and describe a principal another
+instance provisioned durably. `schema_version` exists to allow additive evolution when a
 field is actually needed; speculative fields in a published contract are worse
 than adding one later.
 
@@ -183,11 +204,16 @@ Do not compensate for any of this by pinning the rotatable `did:key`.
 
 ## Identity binding
 
-Declared explicitly, never inferred:
+Declared explicitly, never inferred. Three modes, defined once here and
+described in full under *Binding modes* below:
 
-- **`attach`** — expected stable id, credential reference; `cleanup_owner = external`
-- **`provision`** — authority reference, requested alias; `cleanup_owner = instance`
-- **`none`**
+- **`provision-disposable`** — mint for this instance; `cleanup_owner = instance`
+- **`provision-durable`** — create to outlive it; `cleanup_owner = external`
+- **`attach-existing`** — bind an existing principal; `cleanup_owner = external`
+
+There is no `none` mode. Selecting `messaging: none` in the deployment config
+already expresses that, and a second way to say the same thing is a second thing
+to keep consistent.
 
 Inferring cleanup ownership from the presence of a `.aw` directory is rejected.
 That inference is the bug class that destroys durable identities.
@@ -371,9 +397,10 @@ always declared, never defaulted into:
 
 At binding time the capability records **what it created, that resource's
 lifecycle, and who owns cleanup**. Retire consumes that record and deletes only
-identities that are both **disposable** and **OAS-owned**. This is the same rule
-the epic's proofs establish — authority recorded at provision time, never
-inferred at retire time — applied to creation as well as to attachment.
+identities that are both **disposable** and **OAS-owned**. This is the invariant
+stated at the top of this document — lifetime and cleanup ownership are an
+explicit recorded decision, never incidental and never inferred — applied to
+creation as well as to attachment.
 
 Making attach a *peer* of provision rather than an exception is deliberate: an
 exception has a default that someone must remember, and a peer does not.
@@ -429,24 +456,42 @@ partial on `deleted_at IS NULL`, so a soft-deleted workspace frees its alias.
 or accept invitations, mutate remote membership, or wait for interactive login.
 Onboarding belongs in an explicit, trusted, idempotent setup step.
 
-## Slices
+## Ordered plan
 
-**Slice 1 — a resident runs and no identity is destroyed.** Prompt separator;
-declaration and principal store; explicit identity resolution; attach-only
-binding. Delivers **non-destruction** in full, with no upstream change required.
+The **ordinary provisioned worker is the mainstream path**; the durable resident
+is the extension. An earlier revision of this document led with the resident,
+which is the exception — we built it first, and that ordering is corrected here.
 
-It does **not** deliver fail-closed admission, which is impossible while hook
-failure is advisory. Before critical hooks land, the proof may be exercised only
-as an **attended development experiment against controlled throwaway
-principals**. It is not a supported release and is not valid for durable
-production principals. Returning deliberately broken launch arguments so the
-command dies in the window was considered and rejected as a dishonest hack.
+1. **Prompt separator.** Delimit the task prompt after capability-contributed
+   launch arguments. Done; open upstream as OAS-Framework PR 37.
+2. **Lifecycle policy in the capability.** The three binding modes; created
+   resource, lifecycle and cleanup owner recorded at binding time; retire
+   deleting only identities that are both disposable and OAS-owned.
+3. **Clean external customer proof.** A fresh workspace, two developers,
+   duplicate local instance names — the ordinary provision-and-retire journey
+   end to end.
+4. **The validated hook environment map**, upstream, plus the adapter output
+   that uses it. This is what gives a launched process a deterministic identity;
+   without it there is no attachment, only verification.
+5. **Throwaway Pi attach proof** — positive wake, reply, ordinary retire.
+6. **Explicit per-instance capability settings** and required-hook fatal
+   outcome with rollback.
+7. **Migrate the first durable resident**, and not before.
 
-**Slice 2 — safety.** Critical hooks (the supported-release gate); admission
-lease v1.
+**What is already delivered:** non-destruction in full, with no upstream change
+required — see *Proofs*.
 
-**Slice 3 — execution correctness.** Session start/end/resume; true fencing v2;
-liveness from process state.
+**What is not:** fail-closed admission, which is impossible while hook failure
+is advisory. Until required hooks land, any attach is an **attended development
+experiment against controlled throwaway principals** — not a supported release
+and not valid for durable production principals. Returning deliberately broken
+launch arguments so the command dies in the window was considered and rejected
+as a dishonest hack.
+
+**Deferred, deliberately:** provision journal and provisioning authority,
+admission lease, true fencing, session start/end/resume, and resident GC. Each
+is real work and none of it is on the path to a first working resident; several
+would harden a mechanism whose positive capability is still unproven.
 
 ## Proofs
 
