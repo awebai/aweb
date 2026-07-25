@@ -234,7 +234,7 @@ spec: docs/specification.md
 
 Golden fixtures live in `docs/vectors/a2a-v1.json` and are exercised by `cli/go/internal/conformance`.
 
-The fixture source was cross-checked against the upstream `scripts/proto_to_json_schema.sh` generator from the pinned A2A commit using `protoc-gen-jsonschema` v0.5.2. The generated schema hash and proto-derived JSON field sets are recorded in `docs/vectors/a2a-v1.json`; conformance tests reject fixture fields outside those sets.
+The fixture source was cross-checked against the upstream A2A repository's `scripts/proto_to_json_schema.sh` generator (a path in that repository, not this one) from the pinned A2A commit using `protoc-gen-jsonschema` v0.5.2. The generated schema hash and proto-derived JSON field sets are recorded in `docs/vectors/a2a-v1.json`; conformance tests reject fixture fields outside those sets.
 
 `card_digest` is computed as:
 

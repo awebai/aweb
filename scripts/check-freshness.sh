@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
-# Deterministic freshness gate (default-aajc.5): regenerate every intentionally
-# committed generated artifact and fail if it drifts from its source. Routine
-# CI runs this so drift is caught mechanically instead of by reviewer
-# inspection. It never touches state outside the repository (isolated uv cache)
-# and needs no production credentials.
+# Freshness gate (default-aajc.5, scope corrected in default-aajc.16).
+#
+# WHAT THIS CHECKS, stated precisely because the previous wording claimed more
+# than it validated:
+#   1. Intentionally committed GENERATED artifacts are regenerated and must not
+#      drift from their source (uv locks, cli reference, resource packs,
+#      reserved app ids, the claude-channel and pi bundles).
+#   2. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
+#
+# WHAT IT CANNOT CHECK, and therefore what still requires human review: whether
+# documentation PROSE is true. A path can resolve while the sentence around it
+# is wrong; a :LINE anchor can point at unrelated code; a hand-written inventory
+# (test counts, ownership tables) can be stale while every link works. This gate
+# reduces the manual surface, it does not eliminate it — see the freshness
+# section of docs/contributing.md.
+#
+# It never touches state outside the repository (isolated uv cache) and needs no
+# production credentials.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -57,6 +70,18 @@ if (cd pi-extension && node scripts/ensure-channel-core.mjs >/dev/null 2>&1 && n
   echo "pi-extension bundle is up to date"
 else
   echo "FAIL: pi-extension bundle failed to build/validate from source"
+  status=1
+fi
+
+# 5. Documentation path references. Deleted code must not be described as live;
+#    default-aajc.6 removed the channel shadow modules while the architecture
+#    map still documented them as existing. The self-test proves this check can
+#    still FAIL, so it cannot decay into an always-green no-op.
+section "documentation path references"
+if scripts/check-doc-paths.sh --self-test && scripts/check-doc-paths.sh; then
+  echo "documented paths are up to date"
+else
+  echo "FAIL: documentation references a path that does not exist (or the checker's self-test failed)"
   status=1
 fi
 

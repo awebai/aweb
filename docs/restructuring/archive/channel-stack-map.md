@@ -1,6 +1,23 @@
-# Channel stack map — consumers of the core Event/SSE channel
+# ARCHIVED — Channel stack map (historical snapshot)
 
-Status: familiarization map for restructuring planning. Scope: `channel-core/`, `channel/`, `pi-extension/`. No implementation recommendations are tasks yet.
+> **This is a historical snapshot, not a source of truth.** It records the
+> channel stack as it stood when the map was written, to support restructuring
+> planning. It is **not maintained**, and its file paths, `:LINE` anchors and
+> test counts are **expected to be stale**. Do not use it to decide what code
+> exists today; read the code.
+>
+> - **Archived:** 2026-07-24, at repository SHA `56dddb6e`.
+> - **Known to be superseded:** the "Local duplicate-code caveat" section below
+>   describes `channel/src/api`, `channel/src/identity` and `channel/src/config.ts`
+>   as existing. Those shadow implementations were **deleted** by default-aajc.6;
+>   the runtime has always used `@awebai/channel-core`. The test counts in the
+>   "Validation" section are likewise from the original run and no longer match.
+> - **Why archived rather than updated:** the document's accuracy rests on
+>   dozens of hand-maintained `file:line` anchors across four packages plus
+>   hand-counted test totals. Keeping that true requires exactly the manual
+>   upkeep that let it rot in the first place (default-aajc.16).
+
+Original status line, as written: familiarization map for restructuring planning. Scope: `channel-core/`, `channel/`, `pi-extension/`. No implementation recommendations are tasks yet.
 
 ## Framing against SOT §3
 

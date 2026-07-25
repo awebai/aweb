@@ -1,7 +1,7 @@
 # Layer mapping — how aw CLI + channel stack map onto the restructuring SOT
 
 Purpose: synthesis over the two familiarization maps
-([cli-go-map.md](cli-go-map.md), [channel-stack-map.md](channel-stack-map.md))
+([cli-go-map.md](cli-go-map.md), [archive/channel-stack-map.md](archive/channel-stack-map.md) — archived)
 that ties the current `aw` Go CLI and the channel stack onto the destination
 layers in [restructuring-sot.md](../restructuring-sot.md). It exists to make the
 milestone 1–2 boundary (app contract/manifest + `aw` plugin dispatch) concrete
@@ -107,7 +107,7 @@ guess; the gateway needs the same explicit placement to build MCP tool calls
 
 ## 3. The core event/SSE channel (SOT §3) and its consumers
 
-From [channel-stack-map.md](channel-stack-map.md):
+From [archive/channel-stack-map.md](archive/channel-stack-map.md) (archived snapshot; verify against current code before relying on it):
 
 - **`channel-core` ↔ `claude-channel`/`pi` is already the right shape**:
   host-agnostic subscriber/runtime + thin host adapters. The host-neutral
