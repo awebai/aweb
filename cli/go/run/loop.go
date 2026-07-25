@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,6 +18,12 @@ import (
 )
 
 type Loop struct {
+	// statusDirty is signalled by background goroutines that want the status
+	// line repainted. It carries no value: the consumer re-reads the authoritative
+	// atomic state itself, so coalesced signals can never render a stale value
+	// (default-aaks).
+	statusDirty chan struct{}
+
 	Provider          Provider
 	Runner            CommandRunner
 	Sleep             SleepFunc
@@ -58,7 +65,6 @@ type state struct {
 	LastRunError       string
 	LastRunUsage       UsageStats
 	HasRunUsage        bool
-	ConnState          ConnectionState
 	ProviderInput      *providerInputState
 	ClaimedTaskRef     string
 }
@@ -176,20 +182,27 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		defer func() { _ = serviceSupervisor.Stop() }()
 	}
 	if l.EventBus != nil {
-		streamErrorReported := false
+		// Buffered by one: a repaint request is a request to re-read current
+		// state, so a pending signal already covers any later change.
+		l.statusDirty = make(chan struct{}, 1)
+		// These callbacks run on the EventBus goroutine. They must not read or
+		// write anything owned by the main loop: refreshStatusLine WRITES
+		// st.RunPhase and reads a dozen fields the main loop mutates
+		// continuously, so painting from here is a data race, not just a
+		// display concern. Instead the bus signals and the main loop renders
+		// (default-aaks).
+		var streamErrorReported atomic.Bool
 		l.EventBus.onStateChange = func(cs ConnectionState) {
-			state.ConnState = cs
 			if cs == ConnStreaming {
-				streamErrorReported = false
+				streamErrorReported.Store(false)
 			}
-			l.refreshStatusLine(state)
+			l.markStatusDirty()
 		}
 		l.EventBus.onConnectionNotice = l.println
 		l.EventBus.onError = func(awid.AgentEvent) {
-			if streamErrorReported {
+			if !streamErrorReported.CompareAndSwap(false, true) {
 				return
 			}
-			streamErrorReported = true
 			l.println("aweb: event stream reported a server error; incoming events may be delayed")
 		}
 		l.EventBus.Start(ctx)
@@ -369,7 +382,7 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 		}
 		l.displayText(DisplayKindPlain, "\n")
 	}
-	l.setStatusLine(formatRunStatus(st))
+	l.setStatusLine(formatRunStatus(st, l.connState()))
 	l.renderInputPrompt(st)
 
 	presenter := &presenterState{}
@@ -538,7 +551,7 @@ func (l *Loop) handleOutputLine(line string, presenter *presenterState, st *stat
 		statusChanged = true
 	}
 	if statusChanged {
-		l.setStatusLine(formatRunStatus(st))
+		l.setStatusLine(formatRunStatus(st, l.connState()))
 	}
 	switch event.Type {
 	case EventText:
@@ -747,6 +760,8 @@ func (l *Loop) waitForBusEvents(ctx context.Context, waitSeconds int, st *state)
 					return l.processWakeEvent(ctx, evt, st)
 				}
 			}
+		case <-l.statusDirtyC():
+			l.refreshStatusLine(st)
 		case busEvt := <-bus.Interrupts():
 			wakeNow := l.applyBusInterrupt(busEvt, st, nil)
 			if st.StopRequested {
@@ -1141,7 +1156,7 @@ func (l *Loop) queuePromptText(st *state, rawText string, imagePaths []string, a
 	if activeRun {
 		l.printf("\nqueued: %s\n", newText)
 		if st.RunPhase == RunPhaseWorking {
-			l.setStatusLine(formatRunStatus(st))
+			l.setStatusLine(formatRunStatus(st, l.connState()))
 		}
 	}
 }
@@ -1390,7 +1405,8 @@ func (l *Loop) refreshStatusLine(st *state) {
 		l.setStatusLine(pausedStatusText)
 		return
 	}
-	if status := formatRunStatus(st); strings.TrimSpace(status) != "" {
+	conn := l.connState()
+	if status := formatRunStatus(st, conn); strings.TrimSpace(status) != "" {
 		l.setStatusLine(status)
 		return
 	}
@@ -1401,7 +1417,7 @@ func (l *Loop) refreshStatusLine(st *state) {
 	} else {
 		st.RunPhase = RunPhaseWaitingForWork
 	}
-	l.setStatusLine(formatWaitStatus(label, st))
+	l.setStatusLine(formatWaitStatus(label, st, conn))
 }
 
 func (l *Loop) clearStatusLine() {
@@ -1720,4 +1736,48 @@ func stdinTextPayload(stderrSink any) string {
 		return ""
 	}
 	return sinks.stdinText
+}
+
+// statusDirtyC returns the repaint-request channel, allocating on first use.
+// A nil channel blocks forever in a select, which is the correct behaviour for
+// a loop that never had a bus attached.
+func (l *Loop) statusDirtyC() <-chan struct{} {
+	return l.statusDirty
+}
+
+// markStatusDirty asks the main loop to repaint the status line. It is safe to
+// call from any goroutine and never blocks: the signal is a request to re-read
+// current state, so coalescing repeated requests loses nothing.
+func (l *Loop) markStatusDirty() {
+	if l.statusDirty == nil {
+		return
+	}
+	select {
+	case l.statusDirty <- struct{}{}:
+	default:
+	}
+}
+
+// connState reports the authoritative connection state, owned by the EventBus
+// and stored atomically there.
+//
+// DESIGN CONSTRAINT, scoped to this value: conn is the only EventBus-owned value
+// that participates in the rendered status line, and each render loads it
+// exactly once and threads it through as a parameter. That is why a single
+// atomic is sufficient for conn — one value sampled once per line cannot be
+// internally inconsistent. If a second EventBus-owned value is ever added to the
+// render, pack them into one immutable struct swapped via atomic.Pointer so a
+// single load yields a consistent snapshot; do not add a second atomic, because
+// two atomics give two consistent reads and one inconsistent LINE.
+//
+// This says nothing about the rendering path as a whole, which is NOT
+// single-owner: handleOutputLine renders from the provider output goroutine
+// while also mutating the shared state the formatters read. That ownership
+// violation is tracked as default-aaky; do not read the paragraph above as
+// evidence that rendering is otherwise safe.
+func (l *Loop) connState() ConnectionState {
+	if l.EventBus == nil {
+		return ConnDisconnected
+	}
+	return l.EventBus.State()
 }
