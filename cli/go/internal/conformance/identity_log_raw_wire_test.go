@@ -16,11 +16,17 @@ import (
 type identityLogRawWireVectors struct {
 	Schema string `json:"schema"`
 	Cases  []struct {
-		Name            string  `json:"name"`
-		ResolutionJSON  string  `json:"resolution_json"`
-		CachedJSON      string  `json:"cached_json"`
-		ExpectedOutcome string  `json:"expected_outcome"`
-		KnownRuntimeGap *string `json:"known_runtime_gap"`
+		Name            string `json:"name"`
+		ResolutionJSON  string `json:"resolution_json"`
+		CachedJSON      string `json:"cached_json"`
+		ExpectedOutcome string `json:"expected_outcome"`
+		// Positive per-runtime expectations. A nullable note that doubled as a
+		// branch selector let the corpus change WHICH assertion ran, which is the
+		// divergence-hiding property a conformance corpus exists to prevent.
+		ExpectedErrorSubstrings struct {
+			Go      []string `json:"go"`
+			GoInt32 []string `json:"go_int32"`
+		} `json:"expected_error_substrings"`
 	} `json:"cases"`
 }
 
@@ -98,23 +104,19 @@ func TestIdentityLogRawWireVectors(t *testing.T) {
 			if err == nil {
 				t.Fatal("raw-wire case unexpectedly resolved")
 			}
-			if c.KnownRuntimeGap == nil {
-				if !strings.Contains(err.Error(), "cannot unmarshal number 1.5") || !strings.Contains(err.Error(), "type int") {
-					t.Fatalf("fractional seq did not fail in production decode: %v", err)
-				}
-				return
+			// Expectations come from the vector, so the corpus states what each
+			// runtime must do rather than selecting an assertion for it.
+			want := c.ExpectedErrorSubstrings.Go
+			if strconv.IntSize == 32 && len(c.ExpectedErrorSubstrings.GoInt32) > 0 {
+				want = c.ExpectedErrorSubstrings.GoInt32
 			}
-			// On 32-bit Go this wire integer cannot fit in int and is rejected by
-			// production decoding. On 64-bit Go the decoder can represent it, so
-			// it must reach the verifier's cross-runtime safe-integer guard.
-			if strconv.IntSize == 32 {
-				if !strings.Contains(err.Error(), "cannot unmarshal number 9007199254740992") || !strings.Contains(err.Error(), "type int") {
-					t.Fatalf("out-of-range seq did not fail in production decode: %v", err)
-				}
-				return
+			if len(want) == 0 {
+				t.Fatalf("vector %q carries no Go error expectation", c.Name)
 			}
-			if !strings.Contains(err.Error(), "outside the safe integer range") {
-				t.Fatalf("integer case did not reach the production verifier: %v", err)
+			for _, substr := range want {
+				if !strings.Contains(err.Error(), substr) {
+					t.Fatalf("error %q does not contain %q", err.Error(), substr)
+				}
 			}
 		})
 	}
