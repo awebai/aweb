@@ -201,6 +201,10 @@ func recoverPendingRotation(ctx context.Context, identity *awconfig.ResolvedIden
 		out.Detail = fmt.Sprintf("authoritative registry state is unknown; replacement key preserved: %v", err)
 		return out, nil
 	}
+	if err := validateRotationResolutionIdentity(resolution, state.StableID); err != nil {
+		out.Detail = fmt.Sprintf("authoritative registry identity is unknown; replacement key and state preserved: %v", err)
+		return out, nil
+	}
 	switch strings.TrimSpace(resolution.CurrentDIDKey) {
 	case strings.TrimSpace(state.NewDID):
 		if err := finalizePendingRotation(identity, rotationDir, state); err != nil {
@@ -225,6 +229,20 @@ func recoverPendingRotation(ctx context.Context, identity *awconfig.ResolvedIden
 		out.Detail = fmt.Sprintf("registry uses unexpected did:key %s; replacement key and state preserved", strings.TrimSpace(resolution.CurrentDIDKey))
 	}
 	return out, nil
+}
+
+func validateRotationResolutionIdentity(resolution *awid.DidKeyResolution, expectedDIDAW string) error {
+	if resolution == nil {
+		return fmt.Errorf("registry returned no DID resolution")
+	}
+	responseDIDAW := strings.TrimSpace(resolution.DIDAW)
+	if responseDIDAW == "" {
+		return fmt.Errorf("registry resolution is missing did:aw")
+	}
+	if responseDIDAW != strings.TrimSpace(expectedDIDAW) {
+		return fmt.Errorf("registry resolved did:aw %s, expected %s", responseDIDAW, strings.TrimSpace(expectedDIDAW))
+	}
+	return nil
 }
 
 func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir string, state *pendingRotationState) error {

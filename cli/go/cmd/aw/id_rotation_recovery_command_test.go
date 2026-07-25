@@ -78,6 +78,27 @@ func TestLegacyPendingRotationStateGetsStableOwnershipForRecovery(t *testing.T) 
 	}
 }
 
+func TestRotationResolutionIdentityMustBePresentAndMatch(t *testing.T) {
+	stableID := "did:aw:expected"
+	for _, tc := range []struct {
+		name       string
+		resolution *awid.DidKeyResolution
+		wantError  bool
+	}{
+		{name: "nil", wantError: true},
+		{name: "empty", resolution: &awid.DidKeyResolution{}, wantError: true},
+		{name: "mismatched", resolution: &awid.DidKeyResolution{DIDAW: "did:aw:other"}, wantError: true},
+		{name: "matching", resolution: &awid.DidKeyResolution{DIDAW: stableID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateRotationResolutionIdentity(tc.resolution, stableID)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("validation error=%v, want error=%v", err, tc.wantError)
+			}
+		})
+	}
+}
+
 func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -85,16 +106,24 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
+	wrongDIDAW := "did:aw:other-identity"
+	emptyDIDAW := ""
 	for _, tc := range []struct {
-		name          string
-		registryState string
-		wantStatus    string
-		wantPending   bool
-		wantActiveNew bool
-		localPromoted bool
+		name                string
+		registryState       string
+		responseDIDAW       *string
+		overrideResponseDID bool
+		wantStatus          string
+		wantPending         bool
+		wantActiveNew       bool
+		localPromoted       bool
 	}{
 		{name: "applied", registryState: "new", wantStatus: "finalized", wantActiveNew: true},
 		{name: "not applied", registryState: "old", wantStatus: "rolled_back"},
+		{name: "old key from another identity", registryState: "old", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
+		{name: "new key from another identity", registryState: "new", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
+		{name: "empty response identity", registryState: "new", responseDIDAW: &emptyDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
+		{name: "missing response identity", registryState: "old", overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
 		{name: "old registry with promoted local key", registryState: "old", wantStatus: "unknown_preserved", wantPending: true, wantActiveNew: true, localPromoted: true},
 		{name: "unexpected key", registryState: "third", wantStatus: "unknown_preserved", wantPending: true},
 	} {
@@ -120,6 +149,9 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 				http.Error(w, "unexpected", http.StatusInternalServerError)
 			})
 			fixture.currentDID = current
+			if tc.overrideResponseDID {
+				fixture.responseDIDAW = tc.responseDIDAW
+			}
 
 			dir := filepath.Join(tmp, strings.ReplaceAll(tc.name, " ", "-"))
 			if err := os.MkdirAll(dir, 0o755); err != nil {
