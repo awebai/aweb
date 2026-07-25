@@ -378,7 +378,7 @@ func loadExclusiveStringInput(inline, filePath, flagName string) (string, error)
 	}
 	switch {
 	case filePath != "":
-		data, err := os.ReadFile(filePath)
+		data, err := readFileBounded(filePath, maxBodyFileBytes)
 		if err != nil {
 			return "", err
 		}
@@ -398,7 +398,7 @@ func loadOptionalRequestBody(inline, filePath string) ([]byte, error) {
 	}
 	switch {
 	case filePath != "":
-		return os.ReadFile(filePath)
+		return readFileBounded(filePath, maxBodyFileBytes)
 	case inline != "":
 		return []byte(inline), nil
 	default:

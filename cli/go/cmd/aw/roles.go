@@ -444,13 +444,13 @@ func resolveRolesAddPlaybook(stdin io.Reader, playbook, playbookFile string) (st
 	case playbookFile == "":
 		return "", usageError("missing required flag: --playbook or --playbook-file")
 	case playbookFile == "-":
-		data, err := io.ReadAll(stdin)
+		data, err := readAllBounded(stdin, maxBodyFileBytes)
 		if err != nil {
 			return "", err
 		}
 		return string(data), nil
 	default:
-		data, err := os.ReadFile(playbookFile)
+		data, err := readFileBounded(playbookFile, maxBodyFileBytes)
 		if err != nil {
 			return "", err
 		}
@@ -471,13 +471,13 @@ func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.Te
 	case bundleFile == "":
 		return aweb.TeamRolesBundle{}, usageError("missing required flag: --bundle-json or --bundle-file")
 	case bundleFile == "-":
-		data, err := io.ReadAll(stdin)
+		data, err := readAllBounded(stdin, maxBodyFileBytes)
 		if err != nil {
 			return aweb.TeamRolesBundle{}, err
 		}
 		raw = data
 	default:
-		data, err := os.ReadFile(bundleFile)
+		data, err := readFileBounded(bundleFile, maxBodyFileBytes)
 		if err != nil {
 			return aweb.TeamRolesBundle{}, err
 		}
