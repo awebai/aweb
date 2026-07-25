@@ -256,15 +256,28 @@ func TeamStatePath(root string) string {
 
 func LoadTeamState(workingDir string) (*TeamState, error) {
 	path := TeamStatePath(workingDir)
+	state, err := loadTeamStateFrom(path)
+	if os.IsNotExist(err) {
+		return migrateTeamStateFromWorkspace(workingDir)
+	}
+	return state, err
+}
+
+func LoadTeamStateFromIdentityHome(identityHome string) (*TeamState, error) {
+	path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "teams.yaml")
+	if err != nil {
+		return nil, err
+	}
+	return loadTeamStateFrom(path)
+}
+
+func loadTeamStateFrom(path string) (*TeamState, error) {
 	if err := preflightIdentityFile(path, "team state file"); err != nil {
 		return nil, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-		return migrateTeamStateFromWorkspace(workingDir)
+		return nil, err
 	}
 	var state TeamState
 	if err := yaml.Unmarshal(data, &state); err != nil {
@@ -319,7 +332,18 @@ func LoadWorkspaceAndTeamState(startDir string) (*WorktreeWorkspace, *TeamState,
 }
 
 func SaveTeamState(workingDir string, state *TeamState) error {
-	path := TeamStatePath(workingDir)
+	return saveTeamStateTo(TeamStatePath(workingDir), state)
+}
+
+func SaveTeamStateToIdentityHome(identityHome string, state *TeamState) error {
+	path, err := IdentityHomePath(IdentityHome{Root: identityHome}, "teams.yaml")
+	if err != nil {
+		return err
+	}
+	return saveTeamStateTo(path, state)
+}
+
+func saveTeamStateTo(path string, state *TeamState) error {
 	if err := preflightIdentityFile(path, "team state file"); err != nil {
 		return err
 	}

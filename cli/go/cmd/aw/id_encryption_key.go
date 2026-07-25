@@ -120,8 +120,8 @@ func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEnc
 	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate)
 }
 
-func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool) (idEncryptionKeyOutput, error) {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
+func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHomes ...string) (idEncryptionKeyOutput, error) {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
 	}
@@ -223,8 +223,8 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 	}, nil
 }
 
-func ensureLocalIdentityEncryptionKeyForDir(workingDir string) error {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir)
+func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHomes ...string) error {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
 	if err != nil {
 		return err
 	}
@@ -293,8 +293,17 @@ func shouldRefreshEncryptionKeyForIdentityBinding(err error) bool {
 		strings.Contains(msg, "identity_did does not match current did:key")
 }
 
-func resolveIdentityForEncryptionKeyForDir(workingDir string) (*awconfig.ResolvedIdentity, error) {
-	if home, err := identityHomeForDir(workingDir); err != nil {
+func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHomes ...string) (*awconfig.ResolvedIdentity, error) {
+	explicitIdentityHome := len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != ""
+	if explicitIdentityHome {
+		identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHomes[0])
+		if err == nil {
+			return identity, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	} else if home, err := identityHomeForDir(workingDir); err != nil {
 		return nil, err
 	} else if home.External() {
 		return resolveIdentityForDir(workingDir)

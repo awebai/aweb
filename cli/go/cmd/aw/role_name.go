@@ -46,8 +46,8 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	wd, _ := os.Getwd()
-	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(wd)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
+	workspacePath := sel.WorkspacePath
 	if err != nil {
 		if os.IsNotExist(err) {
 			return usageError("current worktree is missing .aw/workspace.yaml; run `aw init` first")

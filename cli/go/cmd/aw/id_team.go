@@ -2897,11 +2897,11 @@ func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOut
 	return ensureLocalIdentityEncryptionKeyForDir(workingDir)
 }
 
-func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool) error {
+func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {
 	if output == nil || cert == nil {
 		return fmt.Errorf("accepted team membership is required")
 	}
-	teamState, err := loadOptionalTeamState(workingDir)
+	teamState, err := loadOptionalTeamState(workingDir, identityHomes...)
 	if err != nil {
 		return err
 	}
@@ -2933,11 +2933,20 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 	if setActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)
 	}
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		return awconfig.SaveTeamStateToIdentityHome(identityHomes[0], teamState)
+	}
 	return awconfig.SaveTeamState(workingDir, teamState)
 }
 
-func loadOptionalTeamState(workingDir string) (*awconfig.TeamState, error) {
-	teamState, err := awconfig.LoadTeamState(workingDir)
+func loadOptionalTeamState(workingDir string, identityHomes ...string) (*awconfig.TeamState, error) {
+	var teamState *awconfig.TeamState
+	var err error
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHomes[0])
+	} else {
+		teamState, err = awconfig.LoadTeamState(workingDir)
+	}
 	if err == nil {
 		return teamState, nil
 	}

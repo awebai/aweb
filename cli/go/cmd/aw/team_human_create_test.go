@@ -1195,6 +1195,19 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 	t.Setenv("HOME", home)
 	t.Setenv("AW_CONFIG_PATH", "")
 	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	externalIdentityHome := filepath.Join(root, "external-principal")
+	if err := os.MkdirAll(externalIdentityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(externalIdentityHome, "sentinel"), []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonicalExternalIdentityHome, err := filepath.EvalSymlinks(externalIdentityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalIdentityHome = canonicalExternalIdentityHome
+	t.Setenv(awconfig.IdentityHomeEnv, externalIdentityHome)
 	t.Chdir(root)
 	jsonFlag = true
 
@@ -1271,6 +1284,13 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 	}
 	if workspace.APIKey != "workspace-sk-dev" {
 		t.Fatalf("workspace api key=%q", workspace.APIKey)
+	}
+	entries, err := os.ReadDir(externalIdentityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "sentinel" {
+		t.Fatalf("target provisioning contaminated current external principal: %v", entries)
 	}
 }
 

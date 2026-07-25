@@ -79,23 +79,14 @@ func identityHomeSourceName(source IdentityHomeSource) string {
 }
 
 func preflightIdentityFile(path, label string) error {
-	if strings.TrimSpace(os.Getenv(IdentityHomeEnv)) == "" {
-		return nil
-	}
 	return pathpreflight.PreflightFile(path, label, pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func preflightIdentityDir(path, label string) error {
-	if strings.TrimSpace(os.Getenv(IdentityHomeEnv)) == "" {
-		return nil
-	}
 	return pathpreflight.PreflightDir(path, label, pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
 func WorktreeIdentityHome(worktreeDir string) string {
-	if root := strings.TrimSpace(os.Getenv(IdentityHomeEnv)); root != "" {
-		return filepath.Clean(root)
-	}
 	return filepath.Join(filepath.Clean(worktreeDir), ".aw")
 }
 

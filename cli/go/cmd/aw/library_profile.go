@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 	"gopkg.in/yaml.v3"
@@ -326,8 +327,14 @@ func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSel
 	return materialized, materialized.FilesWritten, nil
 }
 
-func configureMaterializedAgentHome(homeDir string) error {
-	if result := InjectAgentDocs(homeDir); result != nil && len(result.Errors) > 0 {
+func configureMaterializedAgentHome(homeDir string, identityHomes ...awconfig.IdentityHome) error {
+	var docsResult *injectDocsResult
+	if len(identityHomes) > 0 {
+		docsResult = InjectAgentDocsAtIdentityHome(homeDir, identityHomes[0])
+	} else {
+		docsResult = InjectAgentDocs(homeDir)
+	}
+	if result := docsResult; result != nil && len(result.Errors) > 0 {
 		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
 	}
 	if result := SetupChannelMCP(homeDir, false); result != nil && result.Error != nil {

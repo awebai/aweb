@@ -28,16 +28,17 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	WorkingDir  string
-	AwebURL     string
-	RegistryURL string
-	APIKey      string
-	Name        string
-	Alias       string
-	Role        string
-	HumanName   string
-	AgentType   string
-	Persistent  bool
+	WorkingDir   string
+	IdentityHome string
+	AwebURL      string
+	RegistryURL  string
+	APIKey       string
+	Name         string
+	Alias        string
+	Role         string
+	HumanName    string
+	AgentType    string
+	Persistent   bool
 	// InboundMode is "open" or "team_and_contacts" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -224,10 +225,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 
 	out, err := initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
-		Role:      strings.TrimSpace(req.Role),
-		HumanName: strings.TrimSpace(req.HumanName),
-		AgentType: strings.TrimSpace(req.AgentType),
-		APIKey:    strings.TrimSpace(resp.APIKey),
+		Role:         strings.TrimSpace(req.Role),
+		HumanName:    strings.TrimSpace(req.HumanName),
+		AgentType:    strings.TrimSpace(req.AgentType),
+		APIKey:       strings.TrimSpace(resp.APIKey),
+		IdentityHome: strings.TrimSpace(req.IdentityHome),
 	})
 	if err != nil {
 		// Roll back everything this run created. The partial-init state (when

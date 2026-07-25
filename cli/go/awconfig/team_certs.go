@@ -65,7 +65,14 @@ func LoadTeamCertificateForTeam(worktreeDir, teamID string) (*awid.TeamCertifica
 }
 
 func ListTeamCertificates(worktreeDir string) ([]StoredTeamCertificate, error) {
-	dir := TeamCertificatesDir(worktreeDir)
+	return listTeamCertificatesFromDir(TeamCertificatesDir(worktreeDir))
+}
+
+func ListTeamCertificatesFromIdentityHome(identityHome string) ([]StoredTeamCertificate, error) {
+	return listTeamCertificatesFromDir(filepath.Join(filepath.Clean(identityHome), "team-certs"))
+}
+
+func listTeamCertificatesFromDir(dir string) ([]StoredTeamCertificate, error) {
 	if err := preflightIdentityDir(dir, "team certificate directory"); err != nil {
 		return nil, err
 	}

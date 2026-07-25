@@ -62,7 +62,7 @@ func TestResolveIdentityHomeRejectsRelativeAndSymlinkedRoots(t *testing.T) {
 	}
 }
 
-func TestPrincipalPathAPIsRedirectTogetherWhileHostAndInstancePathsDoNot(t *testing.T) {
+func TestWorktreePathAPIsHonorExplicitDirectoryDespiteAwIdentityHome(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -80,14 +80,15 @@ func TestPrincipalPathAPIsRedirectTogetherWhileHostAndInstancePathsDoNot(t *test
 		"keys":        WorktreeEncryptionKeysDir(instance),
 		"context":     WorktreeContextPath(instance),
 	}
+	wantRoot := filepath.Join(instance, ".aw")
 	for name, path := range paths {
-		rel, err := filepath.Rel(principal, path)
+		rel, err := filepath.Rel(wantRoot, path)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			t.Errorf("%s path %q is outside principal %q", name, path, principal)
+			t.Errorf("%s path %q ignored explicit worktree root %q", name, path, wantRoot)
 		}
-	}
-	if got := filepath.Join(instance, ".aw", "a2a-credentials.yaml"); strings.HasPrefix(got, principal) {
-		t.Fatalf("instance A2A path redirected: %s", got)
+		if strings.HasPrefix(path, principal) {
+			t.Errorf("%s path was ambiently redirected into %q", name, principal)
+		}
 	}
 }
 

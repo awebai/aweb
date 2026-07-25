@@ -105,6 +105,10 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 	if err != nil {
 		return nil, err
 	}
+	return resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
+}
+
+func resolveSelectionAtIdentityHome(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*awconfig.Selection, error) {
 	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
 		ServerName:           serverFlag,
 		TeamIDOverride:       strings.TrimSpace(teamIDOverride),
@@ -260,7 +264,18 @@ func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride str
 	if err != nil {
 		return nil, nil, err
 	}
+	return resolveClientForSelection(workingDir, sel)
+}
 
+func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
+	sel, err := resolveSelectionAtIdentityHome(workingDir, "", identityHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resolveClientForSelection(workingDir, sel)
+}
+
+func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
 	if err := checkIdentityMismatch(workingDir, sel); err != nil {
 		return nil, nil, err
 	}
@@ -307,7 +322,16 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	}
 	sel.BaseURL = baseURL
 
-	identity, err := awconfig.ResolveIdentity(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var identity *awconfig.ResolvedIdentity
+	if home.External() {
+		identity, err = awconfig.ResolveIdentityFromHome(workingDir, home.Root)
+	} else {
+		identity, err = awconfig.ResolveIdentity(workingDir)
+	}
 	identityMissing := errors.Is(err, os.ErrNotExist)
 	if err != nil && !identityMissing {
 		return nil, nil, err
@@ -810,15 +834,17 @@ func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid
 }
 
 func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, error) {
-	workingDir = strings.TrimSpace(workingDir)
-	if workingDir == "" {
-		var err error
-		workingDir, err = os.Getwd()
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if home.External() {
+		signingKeyPath, err = awconfig.IdentityHomePath(home, "signing.key")
 		if err != nil {
 			return nil, err
 		}
 	}
-	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1250,7 +1276,18 @@ func handleFromAddress(address string) string {
 }
 
 func ensureWorktreeContextAt(workingDir string) error {
-	ctxPath := awconfig.WorktreeContextPath(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	return ensureWorktreeContextAtIdentityHome(home.Root)
+}
+
+func ensureWorktreeContextAtIdentityHome(identityHome string) error {
+	ctxPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "context")
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(ctxPath); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
