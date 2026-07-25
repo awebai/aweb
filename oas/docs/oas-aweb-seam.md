@@ -347,6 +347,88 @@ continues, so it starts unattended but connection is unproven; an installed and
 enabled plugin may load the channel with no flag at all, which would be the
 smaller fix.
 
+## Binding modes and where lifecycle policy lives
+
+OAS is **not** a local-and-ephemeral-only system, and this seam must not assume
+it is. The four lifetimes are distinct and none of them implies another:
+
+| | Lifetime |
+|---|---|
+| **Principal** | durable, possibly global; outlives every process |
+| **Soul and its reviewed learning** | durable, committed, reviewed |
+| **Instance** | replaceable |
+| **Session** | transient |
+
+The capability therefore supports three explicit binding modes, and the mode is
+always declared, never defaulted into:
+
+- **provision-disposable** — mint an identity for this instance; the instance
+  owns cleanup; retire deletes it.
+- **provision-durable** — create an identity intended to outlive the instance;
+  the instance does **not** own cleanup; retire preserves it.
+- **attach-existing** — bind an already-provisioned principal; cleanup owner is
+  external; retire preserves it.
+
+At binding time the capability records **what it created, that resource's
+lifecycle, and who owns cleanup**. Retire consumes that record and deletes only
+identities that are both **disposable** and **OAS-owned**. This is the same rule
+the epic's proofs establish — authority recorded at provision time, never
+inferred at retire time — applied to creation as well as to attachment.
+
+Making attach a *peer* of provision rather than an exception is deliberate: an
+exception has a default that someone must remember, and a peer does not.
+
+### Policy belongs in the capability, not in the protocol
+
+An earlier draft of this document proposed restricting the aweb spawn grant
+server-side so it could not mint durable identities. That was **wrong, and is
+withdrawn.** aweb legitimately supports creating durable identities; that is a
+feature used by real flows, and constraining the protocol because one consumer
+might misuse it is the wrong layer.
+
+The distinction is between **authority** and **policy**. The existing invite
+already carries sufficient authority. What was missing was policy — and policy
+belongs in the trusted capability that decides what to create, expressed through
+the recorded lifecycle above.
+
+No change to aweb or AC is required for this seam. The finding that a spawn
+invite *can* mint a durable global principal is retained as context for writing
+that policy (`aweb-oas-aaaa.27`, P3, non-blocking); it would only become a
+protocol question if a concrete **non-OAS** abuse case established one.
+
+### The two invite mechanisms are not equivalent
+
+Anything reasoning about grant strength must distinguish them:
+
+**Hosted (AC)** — verified in `ac/backend/src/aweb_cloud/services/spawn.py`:
+`max_uses` defaults to **1** and must be ≥ 1; expiry defaults to **24h**
+(`DEFAULT_EXPIRES_IN_SECONDS`), minimum 60s, maximum 30 days
+(`MAX_EXPIRES_IN_SECONDS`); revocation exists (`revoked_at`); and consumption is
+transactional under `FOR UPDATE` (`:413`), so the use counter is race-safe.
+
+**Local controller / BYOIDT** — verified in `cli/go/awconfig/team_invites.go`:
+the `TeamInvite` record has **no expiry field and no use counter** at all. It is
+single-use only by convention — the consumer deletes the local pending file
+(`cli/go/cmd/aw/id_team.go:1389`). There is no server-side enforcement of either
+property.
+
+So a policy that relies on max-uses or expiry holds on the hosted path and does
+**not** hold on the local path. Do not reason about "the invite" as one thing.
+
+### Alias policy
+
+Alias derivation and uniqueness are a **capability** concern. The server's
+UNIQUE `(team_id, alias)` index is a **backstop**, not the mechanism: it rejects
+a duplicate cleanly, so the failure is availability rather than collision, but
+it cannot make names unique *by construction*. Note also that the index is
+partial on `deleted_at IS NULL`, so a soft-deleted workspace frees its alias.
+
+### Acquisition stays separate from onboarding
+
+`oas install` is deterministic acquisition and lock restore. It must not issue
+or accept invitations, mutate remote membership, or wait for interactive login.
+Onboarding belongs in an explicit, trusted, idempotent setup step.
+
 ## Slices
 
 **Slice 1 — a resident runs and no identity is destroyed.** Prompt separator;
