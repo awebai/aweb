@@ -34,12 +34,7 @@ export const principalDeclarationSchema = Object.freeze({
   },
 });
 
-/**
- * Validate an already-parsed declaration without loading its YAML source.
- * Team IDs must already be canonical lowercase DNS-style
- * `team-name:namespace`; this trust anchor does not apply parser normalization
- * or accept the legacy underscore form.
- */
+/** Parse the v1 declaration's deliberately flat, scalar-only YAML surface. */
 export function parsePrincipalDeclarationYaml(source) {
   if (typeof source !== "string") throw new TypeError("principal declaration YAML must be text");
   const declaration = {};
@@ -81,6 +76,12 @@ export function loadPrincipalDeclaration(path) {
   return { declaration: parsePrincipalDeclarationYaml(readFileSync(canonical, "utf8")), path: canonical };
 }
 
+/**
+ * Validate an already-parsed declaration without loading its YAML source.
+ * Team IDs must already be canonical lowercase DNS-style
+ * `team-name:namespace`; this trust anchor does not apply parser normalization
+ * or accept the legacy underscore form.
+ */
 export function validatePrincipalDeclaration(declaration) {
   if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) {
     throw new TypeError("principal declaration must be an object");
