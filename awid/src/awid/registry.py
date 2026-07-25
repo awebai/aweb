@@ -44,8 +44,20 @@ def _safe_error_text(content: bytes) -> str:
 
 
 async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> bytes:
+    # httpx decompresses each raw chunk before yielding it, so an encoded bomb
+    # can allocate past max_bytes before this function can inspect the result.
+    content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise ValueError(f"unsupported HTTP Content-Encoding: {content_encoding}")
+
+    if response.is_stream_consumed:
+        content = response.content
+        if len(content) > max_bytes:
+            raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
+        return content
+
     content = bytearray()
-    async for chunk in response.aiter_bytes():
+    async for chunk in response.aiter_raw(chunk_size=64 * 1024):
         if len(content) + len(chunk) > max_bytes:
             raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
         content.extend(chunk)
@@ -278,11 +290,17 @@ class RegistryClient:
         json: dict[str, Any] | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
+        request_headers = {
+            key: value
+            for key, value in (headers or {}).items()
+            if key.strip().lower() != "accept-encoding"
+        }
+        request_headers["Accept-Encoding"] = "identity"
         async with asyncio.timeout(self.timeout_seconds):
             async with self._http_client.stream(
                 method,
                 f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-                headers=headers,
+                headers=request_headers,
                 json=json,
             ) as response:
                 max_bytes = (

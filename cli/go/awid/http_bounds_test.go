@@ -246,6 +246,64 @@ func TestClientBoundsAndSanitizesErrorExcerpt(t *testing.T) {
 	}
 }
 
+func TestRegistryErrorsSanitizeEscapedControlsAfterJSONDecode(t *testing.T) {
+	tests := []struct {
+		name   string
+		invoke func(*http.Client, string) error
+	}{
+		{
+			name: "registry client",
+			invoke: func(httpClient *http.Client, baseURL string) error {
+				_, err := NewAWIDRegistryClient(httpClient, nil).ResolveKeyAt(context.Background(), baseURL, "did:aw:test")
+				return err
+			},
+		},
+		{
+			name: "registry resolver",
+			invoke: func(httpClient *http.Client, baseURL string) error {
+				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"detail":"bad\n\u001b[31m"}`)
+			}))
+			t.Cleanup(server.Close)
+
+			err := test.invoke(server.Client(), server.URL)
+			body, ok := HTTPErrorBody(err)
+			if !ok {
+				t.Fatalf("error=%v, want HTTP error", err)
+			}
+			if body != "bad [31m" {
+				t.Fatalf("unsafe decoded error body %q", body)
+			}
+		})
+	}
+}
+
+func TestRegistryErrorSanitizesEscapedStructuredMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"detail":{"code":"bad_request","message":"bad\n\u001b[31m"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := NewAWIDRegistryClient(server.Client(), nil).ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
+	var registryErr *RegistryError
+	if !errors.As(err, &registryErr) {
+		t.Fatalf("error=%v, want RegistryError", err)
+	}
+	if registryErr.Message != "bad [31m" {
+		t.Fatalf("unsafe decoded registry message %q", registryErr.Message)
+	}
+}
+
 func TestTrustClientsCloseBodiesAfterRepeatedFailures(t *testing.T) {
 	const attempts = 4
 	normalRequest := func(httpClient *http.Client) error {

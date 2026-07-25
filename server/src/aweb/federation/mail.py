@@ -24,8 +24,20 @@ def _safe_error_text(content: bytes) -> str:
 
 
 async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> bytes:
+    # httpx decompresses each raw chunk before yielding it, so an encoded bomb
+    # can allocate past max_bytes before this function can inspect the result.
+    content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise ValueError(f"unsupported HTTP Content-Encoding: {content_encoding}")
+
+    if response.is_stream_consumed:
+        content = response.content
+        if len(content) > max_bytes:
+            raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
+        return content
+
     content = bytearray()
-    async for chunk in response.aiter_bytes():
+    async for chunk in response.aiter_raw(chunk_size=64 * 1024):
         if len(content) + len(chunk) > max_bytes:
             raise ValueError(f"HTTP response exceeds maximum size of {max_bytes} bytes")
         content.extend(chunk)
@@ -65,7 +77,10 @@ async def deliver_federated_message(
                     "POST",
                     f"{origin}/v1/federation/messages",
                     json=request_body,
-                    headers={"Accept": "application/json"},
+                    headers={
+                        "Accept": "application/json",
+                        "Accept-Encoding": "identity",
+                    },
                 ) as response:
                     max_bytes = (
                         MAX_FEDERATION_RESPONSE_BYTES

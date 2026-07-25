@@ -658,7 +658,7 @@ func parseRegistryError(resp *http.Response) error {
 				regErr.Code = strings.TrimSpace(code)
 			}
 			if message, ok := detail["message"].(string); ok {
-				regErr.Message = strings.TrimSpace(message)
+				regErr.Message = SanitizeErrorText(message)
 			}
 		}
 	}

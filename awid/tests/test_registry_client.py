@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import gzip
 import json
 
 import httpx
@@ -24,20 +23,86 @@ def test_registry_http_bound_values_are_pinned():
     assert MAX_REGISTRY_ERROR_BYTES == 64 * 1024
 
 
+class UnreadEncodedStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.iterations = 0
+        self.closed = 0
+
+    async def __aiter__(self):
+        self.iterations += 1
+        raise AssertionError("encoded response was read before rejection")
+        yield b""  # pragma: no cover
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
 @pytest.mark.asyncio
-async def test_registry_client_rejects_decompressed_response_over_limit():
-    content = gzip.compress(b"{}" + b" " * (MAX_REGISTRY_RESPONSE_BYTES - 1))
+async def test_registry_client_rejects_encoding_before_stream_iteration():
+    stream = UnreadEncodedStream()
+    accept_encoding: list[str] = []
+
+    def handler(request):
+        accept_encoding.append(request.headers.get("accept-encoding", ""))
+        return Response(200, stream=stream, headers={"Content-Encoding": "gzip"})
+
     registry = RegistryClient(
         registry_url="http://registry.test",
-        transport=MockTransport(
-            lambda _request: Response(200, content=content, headers={"Content-Encoding": "gzip"})
-        ),
+        transport=MockTransport(handler),
     )
     try:
-        with pytest.raises(ValueError, match="maximum|size|large|limit"):
+        with pytest.raises(ValueError, match="(?i)content.encoding"):
             await registry.health()
     finally:
         await registry.aclose()
+    assert accept_encoding == ["identity"]
+    assert stream.iterations == 0
+    assert stream.closed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_encoding", ["identity", " Identity "])
+async def test_registry_client_accepts_identity_encoded_response(content_encoding: str):
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(
+            lambda _request: Response(
+                200,
+                json={},
+                headers={"Content-Encoding": content_encoding},
+            )
+        ),
+    )
+    try:
+        assert await registry.health() == {}
+    finally:
+        await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_name", ["accept-encoding", "aCcEpT-EnCoDiNg"])
+async def test_registry_client_forces_identity_encoding_over_caller_header(
+    header_name: str,
+):
+    seen: list[str] = []
+
+    def handler(request):
+        seen.append(request.headers["accept-encoding"])
+        return Response(200, json={})
+
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(handler),
+    )
+    try:
+        assert await registry._request_json(
+            "GET",
+            "/health",
+            headers={header_name: "gzip"},
+        ) == {}
+    finally:
+        await registry.aclose()
+    assert seen == ["identity"]
 
 
 @pytest.mark.asyncio

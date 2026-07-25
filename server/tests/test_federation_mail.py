@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import gzip
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -40,18 +39,56 @@ def test_federation_http_bound_values_are_pinned():
     assert MAX_FEDERATION_ERROR_BYTES == 64 * 1024
 
 
+class UnreadEncodedStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.iterations = 0
+        self.closed = 0
+
+    async def __aiter__(self):
+        self.iterations += 1
+        raise AssertionError("encoded response was read before rejection")
+        yield b""  # pragma: no cover
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
 @pytest.mark.asyncio
-async def test_federation_rejects_decompressed_response_over_limit():
-    content = gzip.compress(b"{}" + b" " * (MAX_FEDERATION_RESPONSE_BYTES - 1))
-    with pytest.raises(Exception, match="maximum|size|large|limit"):
+async def test_federation_rejects_encoding_before_stream_iteration():
+    stream = UnreadEncodedStream()
+    accept_encoding: list[str] = []
+
+    def handler(request):
+        accept_encoding.append(request.headers.get("accept-encoding", ""))
+        return Response(200, stream=stream, headers={"Content-Encoding": "gzip"})
+
+    with pytest.raises(FederatedMailDeliveryError, match="(?i)content.encoding"):
         await deliver_federated_message(
             delivery_origin="https://target.example",
             envelope=_envelope(),
             signature="signature",
-            transport=MockTransport(
-                lambda _request: Response(200, content=content, headers={"Content-Encoding": "gzip"})
-            ),
+            transport=MockTransport(handler),
         )
+    assert accept_encoding == ["identity"]
+    assert stream.iterations == 0
+    assert stream.closed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_encoding", ["identity", " Identity "])
+async def test_federation_accepts_identity_encoded_response(content_encoding: str):
+    assert await deliver_federated_message(
+        delivery_origin="https://target.example",
+        envelope=_envelope(),
+        signature="signature",
+        transport=MockTransport(
+            lambda _request: Response(
+                200,
+                json={},
+                headers={"Content-Encoding": content_encoding},
+            )
+        ),
+    ) == {}
 
 
 @pytest.mark.asyncio

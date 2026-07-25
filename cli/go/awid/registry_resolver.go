@@ -636,7 +636,7 @@ func readBodyString(resp *http.Response) string {
 	var body map[string]any
 	if err := json.Unmarshal(data, &body); err == nil {
 		if detail, ok := body["detail"].(string); ok && strings.TrimSpace(detail) != "" {
-			return detail
+			return SanitizeErrorText(detail)
 		}
 	}
 	return strings.TrimSpace(string(data))
