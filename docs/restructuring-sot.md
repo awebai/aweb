@@ -94,7 +94,7 @@ wake-ups.
   is not yet app-generic** — `events.py` hard-codes mail/chat/control kinds and
   does not emit the work/claim kinds `channel-core` already defines; making it
   emit arbitrary app event kinds is part of milestone 3. See
-  [`restructuring/channel-stack-map.md`](restructuring/channel-stack-map.md).
+  [`restructuring/archive/channel-stack-map.md`](restructuring/archive/channel-stack-map.md) (archived snapshot).
 - **App registry + app grants** — what apps exist, and which apps a team has
   installed and with what scopes.
 - **Protocol transport for signed app envelopes** — the federated delivery
@@ -650,7 +650,7 @@ default comms app** during the whole transition (code stays in core a while).
 2. **`aw` plugin dispatch + `aw plugin` management** (prerequisite).
 3. **Core platform formalization:** app **registry** + app **grants**; make the
    **event channel app-generic** (emit arbitrary app event kinds, not the
-   hard-coded mail/chat/control set — see `channel-stack-map.md`); and the
+   hard-coded mail/chat/control set — see the archived `restructuring/archive/channel-stack-map.md`); and the
    **signed-envelope transport** primitive (extracted from `federation`;
    messages/chat keep using it but stay put).
 4. **Hosted gateway:** static → **dynamic manifest composition**; unify

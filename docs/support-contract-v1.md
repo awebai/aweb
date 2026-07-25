@@ -279,12 +279,14 @@ Error codes are stable. First-version codes both repos should agree on:
 
 ## Contract tests
 
-Both repos land a shared test helper that validates response bytes
-against this contract. Suggested location:
+**Not yet implemented.** The intent is that both repos land a shared test
+helper validating response bytes against this contract. These are *proposed*
+locations — none of these files exist yet, so do not read this section as
+evidence that the contract is covered by tests:
 
-- **aweb**: `cli/go/internal/supportcontract/v1_test.go` (Go) and
-  `server/src/aweb/support_contract/v1_test.py` (Python).
-- **ac**: `backend/tests/support_contract_v1_test.py`.
+- **aweb**: cli/go/internal/supportcontract/v1_test.go (Go) and
+  server/src/aweb/support_contract/v1_test.py (Python).
+- **ac**: backend/tests/support_contract_v1_test.py.
 
 Helper checks:
 - Envelope has all required fields.

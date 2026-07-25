@@ -11,7 +11,7 @@ This guide is for developers working inside the monorepo.
 | `server/src/aweb/routes/` | Core REST routers |
 | `server/src/aweb/coordination/routes/` | Coordination-specific REST routers |
 | `server/src/aweb/mcp/` | MCP server and tool implementations |
-| `server/src/aweb/awid/` | Identity, signing, custody, continuity |
+| `awid/src/awid/` | Identity, signing, custody, continuity — a separate Python package the server imports (`from awid...`), not a subdirectory of the server |
 | `cli/go/` | Go CLI and supporting client library |
 | `cli/go/cmd/aw/` | Cobra command tree |
 | `docs/` | Top-level protocol and developer docs |
@@ -147,3 +147,29 @@ regenerating `server/uv.lock` (the server depends on the editable AWID source).
   guesses.
 - When a route, tool, or command changes, update the corresponding docs in the
   same change.
+
+### What the freshness gate checks, and what it cannot
+
+`scripts/check-freshness.sh` mechanically verifies two things: that committed
+generated artifacts still match their sources, and that repository paths
+referenced in `docs/` actually exist (`scripts/check-doc-paths.sh`).
+
+It **cannot** verify that documentation prose is true. A path can resolve while
+the sentence around it is wrong, a `:LINE` anchor can point at unrelated code
+after a refactor, and a hand-written inventory can be stale while every link
+still works. Those remain review obligations, so when you change code:
+
+- Re-read the prose around any path you touched, not just the path itself.
+- Prefer stable symbol names and links over `file:line` anchors — line numbers
+  rot silently and are not checked.
+- Do not hand-maintain inventories (test counts, ownership tables). Generate
+  them, or state the date and SHA they were true at.
+
+### Point-in-time documents
+
+Analyses written to understand the tree at a moment (familiarization maps,
+migration surveys) rot by construction. Do not quietly update them: either keep
+them genuinely live, or move them to `docs/restructuring/archive/` with a
+prominent header giving the date and SHA and stating that they are unmaintained.
+Archived documents are excluded from the path check by design, because their
+references are *expected* to be stale — that is what makes them a record.
