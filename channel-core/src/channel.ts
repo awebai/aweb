@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
@@ -142,12 +143,26 @@ export class DeliveryStore {
   // Persist marks with an atomic, merge-on-save read-modify-write. A plain
   // overwrite would clobber marks another writer added since we loaded — making
   // delivered messages look undelivered and replay on reconnect (default-aajy).
-  // Union the on-disk marks with our own, write atomically, and retry if a
-  // concurrent writer clobbered our marks between the merge and the rename.
+  // The complete transaction must be cross-process exclusive: readback retries
+  // can each observe success before a later rename silently replaces it.
   async save(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const own = new Map(this.entries);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    let compromised: Error | undefined;
+    const release = await lock(this.path, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: {
+        retries: 200,
+        factor: 1,
+        minTimeout: 25,
+        maxTimeout: 25,
+        randomize: true,
+      },
+      onCompromised: (error) => { compromised = error; },
+    });
+    try {
       const merged = await DeliveryStore.readEntries(this.path);
       for (const [key, value] of own) {
         const existing = merged.get(key);
@@ -156,8 +171,9 @@ export class DeliveryStore {
       this.entries = merged;
       this.prune();
       await this.writeAtomic();
-      const onDisk = await DeliveryStore.readEntries(this.path);
-      if ([...own.keys()].every((key) => onDisk.has(key) || !this.entries.has(key))) return;
+      if (compromised) throw compromised;
+    } finally {
+      if (!compromised) await release();
     }
   }
 
