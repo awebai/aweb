@@ -40,9 +40,28 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Carries complete JSON text rather than pre-decoded typed structures, so
     decoder-level cases such as fractional and unsafe sequence numbers remain
     expressible to every runtime
-  - TypeScript rejects both cases. Go rejects fractional JSON during typed
-    decoding; Go safe-range tightening above 2^53 is tracked separately, and
-    the known temporary divergence is recorded on that vector
+  - BOTH runtimes reject BOTH cases; there is no outstanding divergence here.
+    They reject at different LAYERS, which the vector records as positive
+    per-runtime expectations rather than as a note: for a fractional seq Go
+    fails during typed JSON decoding (`seq` is an int field, so the value never
+    reaches the verifier) while TypeScript's `JSON.parse` accepts it and the
+    verifier's safe-integer guard rejects it. Above 2^53, 64-bit Go decodes the
+    value and the verifier's safe-integer bound rejects it; 32-bit Go cannot
+    represent it in `int` and fails during decoding
+
+- `pin-store-raw-wire-v1.json`
+  - Decode-level trust-store (`known_agents.yaml`) cases carrying RAW YAML wire
+    text, so each runtime feeds the same on-disk bytes through its own
+    load-and-validate path (Go `LoadPinStore`, TypeScript `PinStore.fromYAML`).
+    Pre-decoded structures could not express a malformed document at all
+  - Expectations are POSITIVE PER RUNTIME and include error substrings, so a
+    case asserts WHY a document was rejected. Outcomes alone are not enough:
+    two runtimes can reject the same input for different reasons, which reads
+    as agreement while hiding a divergence
+  - Three cases record a real, measured divergence: Go rejects non-string
+    mapping keys while js-yaml coerces them to strings and TypeScript accepts.
+    Not reachable through our own write path — `aw` is the sole writer.
+    Tightening TypeScript is tracked separately
 
 - `stable-id-v1.json`
   - `did:key` → stable ID derivation vectors
