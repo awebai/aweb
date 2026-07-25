@@ -68,9 +68,29 @@ attach it.
 Committed, in the one owning repo — public, reviewed, no keys:
 
 ```
-<repo>/oas/agents/<soul>/principals/<name>.yaml   # expected did:aw, soul ref, policy
+<repo>/oas/agents/<soul>/principals/<name>.yaml   # the v1 fields below
 <repo>/oas/agents/<soul>/soul/                    # the durable expert
 ```
+
+The v1 declaration is exactly: `schema_version` (`1`), `address`, `stable_id`
+(the `did:aw`), `team_id`, `soul`, and an optional `soul_version`. Unknown
+fields are rejected, so a stray secret cannot ride along.
+
+There is deliberately **no policy block**. Cleanup ownership is a property of a
+*binding* — attach versus provision — not of a principal, so a policy field here
+would be speculative. `schema_version` exists to allow additive evolution when a
+field is actually needed; speculative fields in a published contract are worse
+than adding one later.
+
+`team_id` must be written in canonical form — lowercase, DNS-style
+`team-name:namespace`. This is deliberately **stricter than**
+`awid/src/awid/team_ids.py:parse_team_id`, which accepts any non-empty
+`name:domain` and then lowercases it and strips a trailing dot. A declaration is
+a trust anchor, and silently canonicalizing a trust anchor is its own hazard, so
+a non-canonical id is rejected rather than normalized. The cost of that choice is
+real and worth stating: a team id the identity system accepts cannot be declared
+until it is written canonically, and the failure appears at attach time. The
+validation error therefore names the expected canonical form.
 
 Host-local, gitignored, resolved explicitly and never inferred from cwd:
 
