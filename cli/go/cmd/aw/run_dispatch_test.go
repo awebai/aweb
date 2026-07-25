@@ -5,8 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -502,10 +504,11 @@ func TestFormatFallbackCommsContextPrefersFromAddress(t *testing.T) {
 	}
 }
 
-// TestResolveChatWakeMarksRead verifies that resolveChatWake marks messages
-// as read after fetching the pending conversation.
-func TestResolveChatWakeMarksRead(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+// TestResolveChatWakeMarksReadAfterDelivery verifies that resolving a chat wake
+// leaves both suppression layers untouched until the provider accepts the
+// prompt, matching the mail delivery contract.
+func TestResolveChatWakeMarksReadAfterDelivery(t *testing.T) {
+	deliveredDir := deliveredIDsTestPath(t)
 
 	var markedReadSessionID string
 	var markedReadUpTo string
@@ -525,7 +528,6 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 				},
 			})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
-			// /v1/chat/sessions/{id}/read → parts: ["", "v1", "chat", "sessions", "{id}", "read"]
 			parts := strings.Split(r.URL.Path, "/")
 			markedReadSessionID = parts[4]
 			var req awid.ChatMarkReadRequest
@@ -550,11 +552,186 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 	if result.Skip {
 		t.Fatal("should not skip")
 	}
-	if markedReadSessionID != "s1" {
-		t.Fatalf("expected mark-read for session s1, got %q", markedReadSessionID)
+	if markedReadSessionID != "" {
+		t.Fatalf("chat was marked read before provider delivery: %q", markedReadSessionID)
 	}
-	if markedReadUpTo != "markread-msg-1" {
-		t.Fatalf("expected mark-read up to markread-msg-1, got %q", markedReadUpTo)
+	if delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir); err != nil {
+		t.Fatal(err)
+	} else if len(delivered) != 0 {
+		t.Fatalf("chat was locally suppressed before provider delivery: %#v", delivered)
+	}
+	if result.AfterDelivery == nil {
+		t.Fatal("expected post-delivery chat acknowledgement")
+	}
+	if err := result.AfterDelivery(context.Background()); err != nil {
+		t.Fatalf("post-delivery acknowledgement: %v", err)
+	}
+	if markedReadSessionID != "s1" || markedReadUpTo != "markread-msg-1" {
+		t.Fatalf("mark-read=(%q, %q), want (s1, markread-msg-1)", markedReadSessionID, markedReadUpTo)
+	}
+	if delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir); err != nil {
+		t.Fatal(err)
+	} else if _, ok := delivered["markread-msg-1"]; !ok {
+		t.Fatalf("presented chat was not durably marked: %#v", delivered)
+	}
+}
+
+func TestResolveChatWakePresentsAndAcknowledgesWholeIncomingBatch(t *testing.T) {
+	deliveredDir := deliveredIDsTestPath(t)
+	var markedReadUpTo string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: []awid.ChatMessage{
+				{MessageID: "incoming-1", FromAgent: "alice", Body: "first request"},
+				{MessageID: "self-1", FromAgent: "rose", Body: "my earlier reply"},
+				{MessageID: "incoming-2", FromAgent: "bob", Body: "second request"},
+			}})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			var req awid.ChatMarkReadRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			markedReadUpTo = req.UpToMessageID
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 2})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   "incoming-2",
+		FromAlias:   "bob",
+		UnreadCount: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected batch delivery, got %+v", result)
+	}
+	for _, body := range []string{"first request", "second request"} {
+		if !strings.Contains(result.CycleContext, body) {
+			t.Fatalf("provider context omitted %q: %q", body, result.CycleContext)
+		}
+	}
+	if strings.Contains(result.CycleContext, "my earlier reply") {
+		t.Fatalf("provider context included self-authored message: %q", result.CycleContext)
+	}
+	if result.AfterDelivery == nil {
+		t.Fatal("expected batch post-delivery acknowledgement")
+	}
+	if err := result.AfterDelivery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if markedReadUpTo != "incoming-2" {
+		t.Fatalf("marked read up to %q, want incoming-2", markedReadUpTo)
+	}
+	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"incoming-1", "incoming-2"} {
+		if _, ok := delivered[id]; !ok {
+			t.Fatalf("presented id %q missing from local delivery store: %#v", id, delivered)
+		}
+	}
+	if _, ok := delivered["self-1"]; ok {
+		t.Fatalf("self-authored id was locally suppressed: %#v", delivered)
+	}
+}
+
+func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
+	const expectedBatchLimit = 20
+	if maxChatMessagesPerWake != expectedBatchLimit {
+		t.Fatalf("maxChatMessagesPerWake=%d, want reviewed bound %d", maxChatMessagesPerWake, expectedBatchLimit)
+	}
+	deliveredDir := deliveredIDsTestPath(t)
+	messages := make([]awid.ChatMessage, expectedBatchLimit+2)
+	for i := range messages {
+		messages[i] = awid.ChatMessage{
+			MessageID: fmt.Sprintf("batch-%02d", i),
+			FromAgent: "alice",
+			Body:      fmt.Sprintf("request-%02d", i),
+		}
+	}
+	acked := -1
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: messages[acked+1:]})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			var req awid.ChatMarkReadRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			for i := range messages {
+				if messages[i].MessageID == req.UpToMessageID {
+					acked = i
+					break
+				}
+			}
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	first, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   messages[len(messages)-1].MessageID,
+		FromAlias:   "alice",
+		UnreadCount: len(messages),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < expectedBatchLimit; i++ {
+		if !strings.Contains(first.CycleContext, messages[i].Body) {
+			t.Fatalf("bounded context omitted index %d", i)
+		}
+	}
+	for i := expectedBatchLimit; i < len(messages); i++ {
+		if strings.Contains(first.CycleContext, messages[i].Body) {
+			t.Fatalf("bounded context included index %d", i)
+		}
+	}
+	if first.AfterDelivery == nil {
+		t.Fatal("expected bounded batch acknowledgement")
+	}
+	if err := first.AfterDelivery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if acked != expectedBatchLimit-1 {
+		t.Fatalf("acked index=%d, want %d", acked, expectedBatchLimit-1)
+	}
+
+	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != expectedBatchLimit {
+		t.Fatalf("delivered count=%d, want %d", len(delivered), expectedBatchLimit)
+	}
+	second, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   messages[len(messages)-1].MessageID,
+		FromAlias:   "alice",
+		UnreadCount: len(messages) - expectedBatchLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := expectedBatchLimit; i < len(messages); i++ {
+		if !strings.Contains(second.CycleContext, messages[i].Body) {
+			t.Fatalf("remainder context omitted index %d: %q", i, second.CycleContext)
+		}
 	}
 }
 
@@ -1269,7 +1446,51 @@ func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentAddressHan
 	}
 }
 
-func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
+func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
+	deliveredDir := deliveredIDsTestPath(t)
+	deliveredPath := filepath.Join(deliveredDir, ".aw", chat.DeliveredIDsFileName)
+	if err := os.MkdirAll(deliveredPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var markedRead bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: []awid.ChatMessage{
+				{MessageID: "persist-failure-1", FromAgent: "alice", Body: "hey"},
+			}})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			markedRead = true
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	resolved, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		MessageID: "persist-failure-1",
+		FromAlias: "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.AfterDelivery == nil {
+		t.Fatal("expected post-delivery acknowledgement")
+	}
+	if err := resolved.AfterDelivery(context.Background()); err == nil {
+		t.Fatal("expected local delivery-mark error")
+	}
+	if !markedRead {
+		t.Fatal("local persistence was attempted before the upstream read acknowledgement")
+	}
+}
+
+func TestResolveChatWakeFailedMarkReadLeavesMessageRetryable(t *testing.T) {
 	tmp := deliveredIDsTestPath(t)
 
 	var markedReadCalls int
@@ -1305,6 +1526,15 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	if first.Skip {
 		t.Fatalf("first delivery unexpectedly skipped: %+v", first)
 	}
+	if markedReadCalls != 0 {
+		t.Fatalf("chat was marked read before provider delivery: calls=%d", markedReadCalls)
+	}
+	if first.AfterDelivery == nil {
+		t.Fatal("expected post-delivery acknowledgement")
+	}
+	if err := first.AfterDelivery(context.Background()); err == nil {
+		t.Fatal("expected mark-read failure")
+	}
 	if markedReadCalls != 2 {
 		t.Fatalf("mark_read_calls=%d, want 2", markedReadCalls)
 	}
@@ -1313,8 +1543,8 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := delivered["dedup-msg-1"]; !ok {
-		t.Fatalf("missing delivered id dedup-msg-1: %#v", delivered)
+	if _, ok := delivered["dedup-msg-1"]; ok {
+		t.Fatalf("failed upstream ack must not suppress message locally: %#v", delivered)
 	}
 
 	second, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
@@ -1327,7 +1557,7 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.Skip {
-		t.Fatalf("expected duplicate wake to be skipped, got %+v", second)
+	if second.Skip {
+		t.Fatalf("failed acknowledgement made the message non-retryable: %+v", second)
 	}
 }

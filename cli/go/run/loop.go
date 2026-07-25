@@ -249,7 +249,7 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		}
 		if decision.AfterDelivery != nil {
 			if err := decision.AfterDelivery(ctx); err != nil {
-				l.printf("info: post-delivery acknowledgement failed; source remains pending: %v\n", err)
+				l.printf("info: post-delivery finalization failed: %v\n", err)
 			}
 		}
 		if state.ExitConfirmPending {
@@ -470,6 +470,9 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 			if strings.TrimSpace(st.LastRunError) != "" {
 				return errors.New(st.LastRunError)
 			}
+			if err != nil {
+				return err
+			}
 			if followUpRun {
 				switch {
 				case strings.TrimSpace(observedSessionID) == "":
@@ -488,7 +491,7 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 					return nil
 				}
 			}
-			return err
+			return nil
 		case event := <-l.controlEvents():
 			l.applyControlEvent(event, st, true, cancel)
 		case busEvt := <-busInterrupts:
