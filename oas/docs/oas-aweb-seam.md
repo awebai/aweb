@@ -511,12 +511,16 @@ passes with attached evidence.
 ### What is NOT yet proven, stated here rather than in a footnote
 
 **Nothing binds the launched runtime to the declared principal.** The spawn
-hook verifies the principal and persists the binding in capability metadata
-(`aweb-identity-attach.mjs`, spawn path), but contributes nothing to the launch.
-OAS accepts a hook `launch` map of runtime → extra **command arguments**
-(`lib/core.mjs:1452`); it has no hook **environment** map, so the authority
-variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`) is **not
-deterministically set by the hook or by OAS**. It is not "never set" — the
+hook verifies the principal and persists the binding in capability metadata,
+emitting exactly `meta` and `brief`
+(`oas/.agents/capabilities/owned/aweb-identity-attach/bin/aweb-identity-attach.mjs:171-174`)
+and so contributing nothing to the launch. OAS accepts a hook `launch` map of
+runtime → extra **command arguments** — documented at `lib/core.mjs:854-857`,
+aggregated at `:893`, appended to the command at `:1457`. It has no hook
+**environment** map: the command's environment prefix is built from a fixed set
+of core variables at `lib/core.mjs:1467`, with no hook contribution. So the
+authority variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`)
+is **not deterministically set by the hook or by OAS**. It is not "never set" — the
 launched process inherits an environment, and something in it may happen to
 carry that variable, which is precisely the ambient case described next.
 
@@ -542,14 +546,20 @@ include one.
 So the established results are bounded **safety** results, and are exactly two:
 
 - ordinary `oas retire` of an attached instance neither altered nor deleted the
-  principal, and leaked no material into the instance (`.17`);
+  principal, and leaked no material into the instance (`.17`, harness
+  `scripts/e2e-oas-attached-principal-retire.sh`, merged at `46b684ad`);
 - the attach path cannot register the disposable instance path, so the
-  gone-workspace destruction route is unreachable by construction (`.24`).
+  gone-workspace destruction route is unreachable by construction (`.24`,
+  request-surface guard `cli/go/cmd/aw/identity_home_test.go`, merged at
+  `affe23ac` and extended to headers and body at `2aec5f3e`).
 
 Neither establishes the absence of *every* harm — not provision-mode paths, not
 future code, not a route nobody has tested. Do not restate these as "cannot harm
-a principal". That it can *use* one is unproven, and requires an upstream
-environment seam that does not exist today.
+a principal". That it can *use* one is unproven, and stays unproven until some
+mechanism propagates the resolved identity home into the launched process
+deterministically. A validated hook environment map upstream is the proposed
+shape and the smallest one found; the requirement is the deterministic
+propagation, not that shape.
 
 Two related limits, for the same reason of not overstating by omission:
 
