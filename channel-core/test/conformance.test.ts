@@ -303,15 +303,12 @@ describe("trust conformance vectors", () => {
 function pinStoreFromVector(vector: PinStoreVector): PinStore {
   const store = new PinStore();
   for (const [key, pin] of Object.entries(vector.pins)) {
-    store.pins.set(key, {
-      address: pin.address,
-      handle: "",
-      stable_id: pin.stable_id || undefined,
-      did_key: pin.did_key || undefined,
-      first_seen: pin.first_seen,
-      last_seen: pin.last_seen,
-      server: pin.server || "",
-    });
+    store.storePin(key, pin.address, "", pin.server || "");
+    const stored = store.pins.get(key)!;
+    stored.stable_id = pin.stable_id || undefined;
+    stored.did_key = pin.did_key || undefined;
+    stored.first_seen = pin.first_seen;
+    stored.last_seen = pin.last_seen;
   }
   for (const [address, key] of Object.entries(vector.addresses)) {
     store.addresses.set(address, key);
