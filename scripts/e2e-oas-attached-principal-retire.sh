@@ -29,7 +29,7 @@ if [[ -z "$OAS_ROOT" ]]; then
 fi
 OAS_ROOT="$(canonical_dir "$OAS_ROOT")"
 OAS_CLI="$OAS_ROOT/bin/oas.mjs"
-CAPABILITY_SOURCE="$REPO_ROOT/oas/capabilities/aweb-identity-attach"
+CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
 
 AWID_PORT="${OAS_PROOF_AWID_PORT:-18110}"
 AWEB_PORT="${OAS_PROOF_AWEB_PORT:-18100}"
