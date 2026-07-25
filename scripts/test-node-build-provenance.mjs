@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -33,14 +34,20 @@ test("accepts bundled dependencies resolved through channel-core at their locked
   const result = runChecker();
   assert.equal(result.status, 0, output(result));
 
-  const expectedVersion = JSON.parse(
+  const ownerLock = JSON.parse(
     readFileSync(path.join(repoRoot, "channel-core", "package-lock.json"), "utf8"),
-  ).packages["node_modules/js-yaml"].version;
+  );
+  const expectedVersion = ownerLock.packages["node_modules/js-yaml"].version;
+  const expectedTransitiveVersion = ownerLock.packages["node_modules/tldts-core"].version;
   const coreRoot = realpathSync(path.join(repoRoot, "channel-core"));
   const checkerOutput = output(result);
   for (const bundledPackage of ["channel", "pi-extension"]) {
     assert.ok(checkerOutput.includes(`${bundledPackage}: @awebai/channel-core -> ${coreRoot}`));
     assert.ok(checkerOutput.includes(`${bundledPackage}: js-yaml@${expectedVersion} `));
+    assert.ok(
+      checkerOutput.includes(`${bundledPackage}: tldts-core@${expectedTransitiveVersion} `),
+      `${bundledPackage} did not verify the production transitive closure`,
+    );
   }
 });
 
@@ -84,25 +91,45 @@ test("rejects a resolved dependency that differs from the owner lockfile for tha
     cpSync(path.join(sourceCore, "package.json"), path.join(fixtureCore, "package.json"));
 
     const lock = JSON.parse(readFileSync(path.join(sourceCore, "package-lock.json"), "utf8"));
-    lock.packages["node_modules/js-yaml"].version = "0.0.0";
+    const lockedTransitiveVersion = lock.packages["node_modules/tldts-core"].version;
     writeFileSync(path.join(fixtureCore, "package-lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
 
-    const dependencies = Object.keys(
-      JSON.parse(readFileSync(path.join(sourceCore, "package.json"), "utf8")).dependencies,
-    );
-    for (const dependency of dependencies) {
-      const source = path.join(sourceCore, "node_modules", ...dependency.split("/"));
-      const target = path.join(fixtureCore, "node_modules", ...dependency.split("/"));
+    for (const [lockPath, record] of Object.entries(lock.packages)) {
+      if (!lockPath.startsWith("node_modules/") || record.dev) continue;
+      const source = path.join(sourceCore, ...lockPath.split("/"));
+      if (!existsSync(source)) continue;
+      const target = path.join(fixtureCore, ...lockPath.split("/"));
       mkdirSync(path.dirname(target), { recursive: true });
       cpSync(source, target, { recursive: true });
     }
+    const transitiveManifest = path.join(
+      fixtureCore,
+      "node_modules",
+      "tldts-core",
+      "package.json",
+    );
+    const transitive = JSON.parse(readFileSync(transitiveManifest, "utf8"));
+    transitive.version = "0.0.0-review-drift";
+    writeFileSync(transitiveManifest, `${JSON.stringify(transitive, null, 2)}\n`);
 
-    const fixtureBundle = path.join(fixtureRoot, "future-bundle");
+    const fixtureBundle = path.join(fixtureRoot, "packages", "review-future");
     mkdirSync(path.join(fixtureBundle, "node_modules", "@awebai"), { recursive: true });
-    cpSync(path.join(repoRoot, "channel", "package.json"), path.join(fixtureBundle, "package.json"));
-    cpSync(
-      path.join(repoRoot, "channel", "package-lock.json"),
+    const bundleManifest = JSON.parse(
+      readFileSync(path.join(repoRoot, "channel", "package.json"), "utf8"),
+    );
+    bundleManifest.devDependencies["@awebai/channel-core"] = "file:../../channel-core";
+    writeFileSync(
+      path.join(fixtureBundle, "package.json"),
+      `${JSON.stringify(bundleManifest, null, 2)}\n`,
+    );
+    const bundleLock = JSON.parse(
+      readFileSync(path.join(repoRoot, "channel", "package-lock.json"), "utf8"),
+    );
+    bundleLock.packages[""].devDependencies["@awebai/channel-core"] = "file:../../channel-core";
+    bundleLock.packages["node_modules/@awebai/channel-core"].resolved = "../../channel-core";
+    writeFileSync(
       path.join(fixtureBundle, "package-lock.json"),
+      `${JSON.stringify(bundleLock, null, 2)}\n`,
     );
     symlinkSync(
       fixtureCore,
@@ -111,13 +138,10 @@ test("rejects a resolved dependency that differs from the owner lockfile for tha
     );
 
     const result = runChecker(["--root", fixtureRoot]);
-    const resolvedVersion = JSON.parse(
-      readFileSync(path.join(sourceCore, "node_modules", "js-yaml", "package.json"), "utf8"),
-    ).version;
     assert.notEqual(result.status, 0, output(result));
     assert.ok(
       output(result).includes(
-        `future-bundle: js-yaml lockfile expects 0.0.0 but the build resolves ${resolvedVersion}`,
+        `packages/review-future: tldts-core lockfile expects ${lockedTransitiveVersion} but the build resolves 0.0.0-review-drift`,
       ),
       output(result),
     );
