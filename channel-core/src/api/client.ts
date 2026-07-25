@@ -47,7 +47,7 @@ export class APIClient {
       ...this.authHeaders(path, bodyText),
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
-    const init: RequestInit = { method, headers };
+    const init: RequestInit = { method, headers, redirect: "error" };
 
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
@@ -68,6 +68,7 @@ export class APIClient {
     const url = this.baseURL + path;
     const resp = await fetch(url, {
       signal,
+      redirect: "error",
       headers: {
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",

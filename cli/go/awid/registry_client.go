@@ -472,7 +472,7 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 		if err != nil {
 			return err
 		}
-		resp, err := c.httpClient().Do(req)
+		resp, err := DoNoRedirect(c.httpClient(), req)
 		if err != nil {
 			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {

@@ -182,7 +182,7 @@ func postJSONWithHeaders(
 		req.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := DoNoRedirect(http.DefaultClient, req)
 	if err != nil {
 		return err
 	}

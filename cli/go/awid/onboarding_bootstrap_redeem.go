@@ -78,7 +78,7 @@ func (c *Client) BootstrapRedeem(ctx context.Context, req *BootstrapRedeemReques
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
 	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := DoNoRedirect(c.httpClient, httpReq)
 	if err != nil {
 		return nil, err
 	}

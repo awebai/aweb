@@ -426,7 +426,7 @@ func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelec
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}).Do(req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}, req)
 	if err != nil {
 		return nil, err
 	}

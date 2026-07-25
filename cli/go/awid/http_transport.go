@@ -21,6 +21,21 @@ const APITimeoutEnvVar = "AWEB_HTTP_TIMEOUT"
 
 var apiTimeoutWarnOnce sync.Once
 
+// DoNoRedirect sends req without allowing an HTTP redirect to cross the
+// request's original trust boundary. The shallow copy preserves the caller's
+// transport, timeout, and other policy without mutating a client that may be
+// shared by concurrent requests.
+func DoNoRedirect(client *http.Client, req *http.Request) (*http.Response, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	noRedirectClient := *client
+	noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return noRedirectClient.Do(req)
+}
+
 // APITimeout returns the overall timeout for normal API requests:
 // AWEB_HTTP_TIMEOUT when set to a valid positive Go duration, otherwise
 // DefaultTimeout. Invalid values warn once and fall back to the default, so

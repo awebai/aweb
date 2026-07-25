@@ -842,7 +842,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 		}
 	}
 
-	resp, err := c.sseClient.Do(req)
+	resp, err := DoNoRedirect(c.sseClient, req)
 	if err != nil {
 		return nil, err
 	}

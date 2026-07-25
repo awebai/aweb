@@ -76,7 +76,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
 	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := DoNoRedirect(c.httpClient, httpReq)
 	if err != nil {
 		return nil, err
 	}

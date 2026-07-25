@@ -1,0 +1,74 @@
+import { createServer, type RequestListener } from "node:http";
+import { afterEach, describe, expect, test } from "vitest";
+import { APIClient, RegistryResolver } from "../src/index.js";
+
+const openServers: Array<ReturnType<typeof createServer>> = [];
+
+afterEach(async () => {
+  await Promise.all(openServers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  })));
+});
+
+async function listen(handler: RequestListener): Promise<string> {
+  const server = createServer(handler);
+  openServers.push(server);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("test server has no TCP address");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function redirectPair(): Promise<{ sourceURL: string; targetHits: () => number }> {
+  let hits = 0;
+  const targetURL = await listen((_request, response) => {
+    hits += 1;
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end("{}");
+  });
+  const sourceURL = await listen((request, response) => {
+    response.writeHead(307, { Location: `${targetURL}${request.url || "/"}` });
+    response.end();
+  });
+  return { sourceURL, targetHits: () => hits };
+}
+
+describe("trust requests reject redirects", () => {
+  const auth = {
+    did: "did:key:z6Mktest",
+    stableID: "did:aw:test",
+    signingKey: new Uint8Array(32).fill(1),
+    teamID: "backend:acme.com",
+    teamCertificateHeader: "secret-cert-header",
+  };
+
+  test("standard API requests never contact the redirect target", async () => {
+    const pair = await redirectPair();
+    const client = new APIClient(pair.sourceURL, auth);
+
+    await expect(client.get("/v1/teams/backend%3Aacme.com/agents/alice")).rejects.toThrow();
+    expect(pair.targetHits()).toBe(0);
+  });
+
+  test("SSE handshakes never contact the redirect target", async () => {
+    const pair = await redirectPair();
+    const client = new APIClient(pair.sourceURL, auth);
+
+    await expect(client.openSSE("/v1/events/stream", new AbortController().signal)).rejects.toThrow();
+    expect(pair.targetHits()).toBe(0);
+  });
+
+  test("registry lookups never contact the redirect target", async () => {
+    const pair = await redirectPair();
+    const notFound = Object.assign(new Error("not found"), { code: "ENOTFOUND" });
+    const resolver = new RegistryResolver(fetch, async () => { throw notFound; }, undefined, {
+      fallbackRegistryURL: pair.sourceURL,
+    });
+
+    await expect(resolver.resolveAddressIdentity("example.com/alice")).rejects.toThrow();
+    expect(pair.targetHits()).toBe(0);
+  });
+});

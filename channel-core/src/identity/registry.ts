@@ -360,6 +360,7 @@ export class RegistryResolver {
   private async getJSON<T>(baseURL: string, path: string, bypassCache = false): Promise<T> {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
+      redirect: "error",
       headers: {
         Accept: "application/json",
         ...(bypassCache ? { "Cache-Control": "no-cache" } : {}),

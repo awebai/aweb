@@ -2272,7 +2272,7 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}).Do(req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2582,7 +2582,7 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := newTeamCloudHTTPClient().Do(req)
+	resp, err := awid.DoNoRedirect(newTeamCloudHTTPClient(), req)
 	if err != nil {
 		return err
 	}
@@ -2805,7 +2805,7 @@ func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]a
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := newTeamCloudHTTPClient().Do(req)
+	resp, err := awid.DoNoRedirect(newTeamCloudHTTPClient(), req)
 	if err != nil {
 		return err
 	}
