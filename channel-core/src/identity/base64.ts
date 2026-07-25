@@ -14,6 +14,10 @@ const RAW_STD_BASE64 = /^[A-Za-z0-9+/]*$/;
 
 /** Decode strictly, or throw. Padding and stray characters are rejected. */
 export function decodeRawStdBase64(value: string): Uint8Array {
+  // Go's RawStdEncoding skips \r and \n anywhere in the input, so accepting
+  // them here is required for parity — rejecting them would be a divergence in
+  // the other direction.
+  value = value.replace(/[\r\n]/g, "");
   if (!RAW_STD_BASE64.test(value)) {
     throw new Error("illegal base64 data: expected unpadded standard alphabet");
   }

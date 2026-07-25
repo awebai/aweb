@@ -1,6 +1,7 @@
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { extractPublicKey } from "./did.js";
+import { decodeRawStdBase64 } from "./base64.js";
 
 // @noble/ed25519 v2 requires setting the hash function
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
@@ -111,10 +112,13 @@ function b64Encode(bytes: Uint8Array): string {
 }
 
 function b64Decode(s: string): Uint8Array {
-  const bin = atob(s);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+  // Strict, matching Go's RawStdEncoding. This is the message-envelope
+  // signature path (verifyMessage / verifySignedPayload) — the most exercised
+  // one — so a lenient decode here diverges from Go on every message
+  // (default-aajc.8). Throws on malformed input: both callers wrap this in a
+  // try/catch that reports "failed", so a bad signature must not decode to
+  // empty bytes and fall through to the verifier.
+  return decodeRawStdBase64(s);
 }
 
 /** Sign a message envelope. Returns base64 signature (no padding). */

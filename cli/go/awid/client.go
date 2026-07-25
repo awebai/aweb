@@ -703,10 +703,10 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 	case PinOK:
 		if fromStableID != "" {
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
-				// A verified registry chain is authoritative for persistent
-				// identities; stale local TOFU must not block archive/recreate.
-				// Security assumption: awid enforces a did:aw belongs to one
-				// current address; the client does not independently prove that.
+				// Same stable identity, different did:key: this is key rotation,
+				// which the DID log DOES prove (did:aw -> did:key), so a verified
+				// registry chain is sufficient here. It says nothing about address
+				// ownership — that is enforced in the mismatch branch below.
 				if registryConfirmedCurrentKey {
 					c.pinStore.StorePin(pinKey, trustAddress, "", "")
 					c.pinStore.Pins[pinKey].StableID = fromStableID
