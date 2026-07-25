@@ -194,6 +194,11 @@ A peer or intermediary that compresses despite the identity request is not
 compatible with the federation v1 transport contract. The resulting delivery
 failure is deliberate and visible rather than a reason to weaken the bound.
 
+The AWID registry client and federation delivery client enforce this policy in
+separate helpers. A future design prompted by a real peer-interoperability need
+can evolve federation response handling without weakening registry response
+handling.
+
 ## Recipient Server Verification
 
 The recipient server must verify:
