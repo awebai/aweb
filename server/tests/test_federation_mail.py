@@ -75,6 +75,31 @@ async def test_federation_rejects_encoding_before_stream_iteration():
 
 
 @pytest.mark.asyncio
+async def test_federation_does_not_echo_control_bearing_content_encoding():
+    stream = UnreadEncodedStream()
+    transport = MockTransport(
+        lambda _request: Response(
+            200,
+            stream=stream,
+            headers={"Content-Encoding": "\x1b[31m"},
+        )
+    )
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        )
+    message = str(caught.value)
+    assert "\x1b" not in message
+    assert message.endswith("unsupported HTTP Content-Encoding")
+    assert stream.iterations == 0
+    assert stream.closed == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content_encoding", ["identity", " Identity "])
 async def test_federation_accepts_identity_encoded_response(content_encoding: str):
     assert await deliver_federated_message(

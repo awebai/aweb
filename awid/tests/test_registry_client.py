@@ -61,6 +61,29 @@ async def test_registry_client_rejects_encoding_before_stream_iteration():
 
 
 @pytest.mark.asyncio
+async def test_registry_client_does_not_echo_control_bearing_content_encoding():
+    stream = UnreadEncodedStream()
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(
+            lambda _request: Response(
+                200,
+                stream=stream,
+                headers={"Content-Encoding": "\x1b[31m"},
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ValueError) as caught:
+            await registry.health()
+    finally:
+        await registry.aclose()
+    assert str(caught.value) == "unsupported HTTP Content-Encoding"
+    assert stream.iterations == 0
+    assert stream.closed == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content_encoding", ["identity", " Identity "])
 async def test_registry_client_accepts_identity_encoded_response(content_encoding: str):
     registry = RegistryClient(

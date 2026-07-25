@@ -48,7 +48,7 @@ async def _read_bounded_response(response: httpx.Response, max_bytes: int) -> by
     # can allocate past max_bytes before this function can inspect the result.
     content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
     if content_encoding not in {"", "identity"}:
-        raise ValueError(f"unsupported HTTP Content-Encoding: {content_encoding}")
+        raise ValueError("unsupported HTTP Content-Encoding")
 
     if response.is_stream_consumed:
         content = response.content
