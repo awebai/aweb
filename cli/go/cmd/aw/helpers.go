@@ -275,15 +275,23 @@ func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride str
 }
 
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionAtIdentityHome(workingDir, "", identityHome)
+	return resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, "", identityHome)
+}
+
+func resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
+	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
 	}
-	return resolveClientForSelection(workingDir, sel)
+	return resolveClientForSelectionAtIdentityHome(workingDir, externalIdentityHomeRoot(identityHome), sel)
 }
 
 func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	if err := checkIdentityMismatch(workingDir, sel); err != nil {
+	return resolveClientForSelectionAtIdentityHome(workingDir, "", sel)
+}
+
+func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
+	if err := checkIdentityMismatchAtIdentityHome(workingDir, identityHome, sel); err != nil {
 		return nil, nil, err
 	}
 
@@ -1510,10 +1518,24 @@ func mailShowConversationError(err error, conversationID string) error {
 // wrong agent when .aw/context resolves to a different account than
 // .aw/workspace.yaml expects.
 func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
+	return checkIdentityMismatchAtIdentityHome(workingDir, "", sel)
+}
+
+func checkIdentityMismatchAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) error {
 	if sel == nil || strings.TrimSpace(sel.Alias) == "" {
 		return nil
 	}
-	ws, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	var ws *awconfig.WorktreeWorkspace
+	var workspacePath string
+	var err error
+	if strings.TrimSpace(identityHome) != "" {
+		workspacePath, err = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
+		if err == nil {
+			ws, err = awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+		}
+	} else {
+		ws, workspacePath, err = awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	}
 	if err != nil || ws == nil {
 		return nil
 	}
@@ -1531,12 +1553,18 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 	}
 	if wsAlias != selAlias {
 		ctxPath := "(resolved from config)"
-		if p, err := awconfig.FindWorktreeContextPath(workingDir); err == nil {
-			ctxPath = p
+		wsPath := workspacePath
+		if strings.TrimSpace(identityHome) != "" {
+			if p, pathErr := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "context"); pathErr == nil {
+				ctxPath = p
+			}
+		} else {
+			if p, pathErr := awconfig.FindWorktreeContextPath(workingDir); pathErr == nil {
+				ctxPath = p
+			}
 		}
-		wsPath := "(unknown)"
-		if p, err := awconfig.FindWorktreeWorkspacePath(workingDir); err == nil {
-			wsPath = p
+		if strings.TrimSpace(wsPath) == "" {
+			wsPath = "(unknown)"
 		}
 		return &identityMismatchError{
 			ContextPath:    ctxPath,

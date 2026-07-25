@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -15,10 +16,10 @@ type workspaceTeamInvite struct {
 }
 
 func addWorktreeViaPrimaryInvite(
-	primaryDir, worktreePath, root, branchName string, branchCreated bool,
+	primaryDir, primaryIdentityHome, worktreePath, root, branchName string, branchCreated bool,
 	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
 ) (connectOutput, error) {
-	invite, err := createWorkspaceTeamInviteFromDir(primaryDir)
+	invite, err := createWorkspaceTeamInviteAt(primaryDir, primaryIdentityHome)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create team invite from primary workspace: %w", err)
@@ -64,7 +65,11 @@ func addWorktreeViaPrimaryInvite(
 }
 
 func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, error) {
-	workspace, teamState, rootDir, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	return createWorkspaceTeamInviteAt(workingDir, "")
+}
+
+func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
+	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
@@ -77,7 +82,7 @@ func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, e
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	awebURL := awebURLForTeamInvite(rootDir, teamID)
+	awebURL := awebURLForTeamInviteAt(rootDir, identityHome, teamID)
 	if awebURL == "" {
 		awebURL = strings.TrimSpace(workspace.AwebURL)
 	}
@@ -88,10 +93,10 @@ func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, e
 	}
 	var token string
 	if hasTeamKey {
-		registryURL := registryURLForTeamInvite(rootDir, domain, awebURL)
+		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
 		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, true)
 	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteToken(workingDir, teamID, true)
+		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
 	} else {
 		_, token, err = createTeamInviteToken(domain, team, "", awebURL, true)
 	}
@@ -103,8 +108,13 @@ func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, e
 
 func acceptTeamInviteWithPreferredAwebURL(homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {
 	preferredAwebURL = strings.TrimSpace(preferredAwebURL)
+	opts := teamAcceptInviteOptions{
+		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
+		Name:         alias,
+		Scope:        awid.IdentityModeLocal,
+	}
 	if preferredAwebURL == "" {
-		return acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{Name: alias, Scope: awid.IdentityModeLocal})
+		return acceptTeamInviteWithDetails(homeDir, token, opts)
 	}
 
 	previous, hadPrevious := os.LookupEnv("AWEB_URL")
@@ -118,5 +128,5 @@ func acceptTeamInviteWithPreferredAwebURL(homeDir, token, preferredAwebURL, alia
 			_ = os.Unsetenv("AWEB_URL")
 		}
 	}()
-	return acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{Name: alias, Scope: awid.IdentityModeLocal})
+	return acceptTeamInviteWithDetails(homeDir, token, opts)
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,17 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	}
 	claimRequests := make(chan signedClaim, 1)
 	certificateRequests := make(chan map[string]any, 1)
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/namespaces/alice.aweb.ai/teams/backend/certificates" {
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		certificateRequests <- body
+		w.WriteHeader(http.StatusCreated)
+	}))
 	var serverURL string
 	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
 		serverURL = baseURL
@@ -53,7 +65,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"onboarding_url": baseURL,
 					"aweb_url":       baseURL,
-					"registry_url":   baseURL,
+					"registry_url":   "http://127.0.0.1:1",
 					"version":        "1.7.0",
 				})
 			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
@@ -100,13 +112,6 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 						"developer": map[string]any{"title": "Developer"},
 					},
 				})
-			case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/alice.aweb.ai/teams/backend/certificates":
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Fatal(err)
-				}
-				certificateRequests <- body
-				w.WriteHeader(http.StatusCreated)
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 				requireCertificateAuthForTest(t, r)
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -178,6 +183,33 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 			t.Fatalf("%s created principal state in disposable instance: %v", step, err)
 		}
 	}
+	seedLocalShadow := func() map[string]struct{} {
+		t.Helper()
+		shadow := workspaceBinding(server.URL, teamID, "mallory", "shadow-workspace")
+		if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(instance, ".aw", "workspace.yaml"), &shadow); err != nil {
+			t.Fatal(err)
+		}
+		if err := awconfig.SaveTeamState(instance, &awconfig.TeamState{
+			ActiveTeam: teamID,
+			Memberships: []awconfig.TeamMembership{{
+				TeamID:   teamID,
+				Alias:    "mallory",
+				CertPath: awconfig.TeamCertificateRelativePath(teamID),
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return fileDigestsForTest(t, filepath.Join(instance, ".aw"))
+	}
+	removeLocalShadow := func(step string, before map[string]struct{}) {
+		t.Helper()
+		if after := fileDigestsForTest(t, filepath.Join(instance, ".aw")); !reflect.DeepEqual(after, before) {
+			t.Fatalf("%s allowed local shadow state to influence or mutate the external principal flow", step)
+		}
+		if err := os.RemoveAll(filepath.Join(instance, ".aw")); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	claimOut := run("claim-human", "--email", "alice@example.com", "--mock-url", server.URL, "--json")
 	var claimOutput map[string]any
@@ -206,6 +238,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	}
 	assertInstanceStateAbsent("claim-human")
 
+	statusShadow := seedLocalShadow()
 	statusOut := run("workspace", "status", "--json")
 	var status workspaceStatusOutput
 	if err := json.Unmarshal(extractJSON(t, statusOut), &status); err != nil {
@@ -214,6 +247,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	if status.SelectedTeam != teamID || status.Workspace.WorkspaceID != workspaceID || status.Workspace.Alias != "alice" || len(status.Memberships) != 1 || !status.Memberships[0].Active {
 		t.Fatalf("workspace status omitted external principal state: %+v", status)
 	}
+	removeLocalShadow("workspace status", statusShadow)
 	assertInstanceStateAbsent("workspace status")
 
 	writeIdentityForTest(t, principalDir, awconfig.WorktreeIdentity{
@@ -222,7 +256,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 		Address:        "alice.aweb.ai/alice",
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeGlobal,
-		RegistryURL:    server.URL,
+		RegistryURL:    registryServer.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-07-25T00:00:00Z",
 	})
@@ -236,6 +270,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	}
 	assertInstanceStateAbsent("team request")
 
+	addShadow := seedLocalShadow()
 	addOut := run("workspace", "add-worktree", "developer", "--name", "charlie", "--json")
 	var added workspaceAddWorktreeOutput
 	if err := json.Unmarshal(extractJSON(t, addOut), &added); err != nil {
@@ -262,5 +297,6 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	if childMembership == nil || childMembership.WorkspaceID != "child-workspace" || childMembership.Alias != "charlie" {
 		t.Fatalf("child workspace did not materialize external source membership: %+v", childWorkspace)
 	}
+	removeLocalShadow("workspace add-worktree", addShadow)
 	assertInstanceStateAbsent("workspace add-worktree")
 }
