@@ -178,6 +178,33 @@ Declared per run, never inferred:
 Inferring cleanup ownership from the presence of a `.aw` directory is rejected.
 That inference is the bug class that destroys durable identities.
 
+The attach-only walking skeleton is implemented by the owned `oas.aweb`
+capability under `oas/capabilities/oas-aweb`. Its resolved capability setting is
+explicit and positive:
+
+```yaml
+settings:
+  identity_binding:
+    schema_version: 1
+    mode: attach
+    principal: <declaration-basename>
+```
+
+At the production `spawn` hook, it validates the selected declaration, resolves
+and rechecks the host store, and verifies the declaration against
+`aw --identity-home <credentials> whoami --json` from the empty instance. OAS
+persists the resulting non-secret reference at
+`instance.json.capabilityMeta["oas.aweb"].identity_binding`, including
+`cleanup_owner: external`. It does not create an instance `.aw` directory or a
+second binding file.
+
+At the production `retire` hook, only a persisted v1 attach binding with
+external cleanup ownership produces an explicit `preserve_principal` receipt.
+The hook invokes no `aw` or principal filesystem cleanup operation. Missing or
+malformed metadata grants no cleanup authority. Modes other than `attach` are
+rejected in this slice rather than falling through to the pre-existing
+per-instance mint behavior.
+
 Provisioning uses a write-ahead lifecycle journal: journal **intent** keyed by a
 stable idempotency key, record the created resource id atomically, mark
 **active** before launch, and recover by scanning incomplete intents. Ordering

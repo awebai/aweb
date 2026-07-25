@@ -1,0 +1,6 @@
+{
+  "name": "@awebai/oas-aweb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module"
+}

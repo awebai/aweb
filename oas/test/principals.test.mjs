@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
   assertPrincipalStoreContained,
+  loadPrincipalDeclaration,
+  parsePrincipalDeclarationYaml,
   principalDeclarationSchema,
   resolvePrincipalHome,
   resolvePrincipalStore,
@@ -43,6 +45,31 @@ test("the declaration schema pins a stable did:aw, never a rotatable did:key", (
     /stable_id must be a did:aw stable identity/,
   );
   assert.deepEqual(validatePrincipalDeclaration(declaration()), declaration());
+});
+
+test("declaration YAML loading accepts only top-level scalar fields and rejects links", () => {
+  const yaml = [
+    "schema_version: 1",
+    "address: example.test/throwaway # expected address",
+    "stable_id: 'did:aw:2ThrowawayStableId123'",
+    "team_id: test-team:example.test",
+    "soul: \"developer\"",
+    "",
+  ].join("\n");
+  assert.deepEqual(parsePrincipalDeclarationYaml(yaml), declaration());
+  assert.throws(() => parsePrincipalDeclarationYaml(`${yaml}soul: duplicate\n`), /duplicate field: soul/);
+  assert.throws(() => parsePrincipalDeclarationYaml(`${yaml}  nested: forbidden\n`), /top-level scalar/);
+
+  const root = temporaryDirectory();
+  const declarationPath = join(root, "throwaway.yaml");
+  writeFileSync(declarationPath, yaml);
+  assert.deepEqual(loadPrincipalDeclaration(declarationPath), {
+    declaration: declaration(),
+    path: declarationPath,
+  });
+  const linkedPath = join(root, "linked.yaml");
+  symlinkSync(declarationPath, linkedPath);
+  assert.throws(() => loadPrincipalDeclaration(linkedPath), /symbolic link/);
 });
 
 test("declarations require exactly the public identity contract", () => {

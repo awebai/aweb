@@ -1,0 +1,20 @@
+{
+  "capability": "oas.aweb",
+  "version": "0.1.0",
+  "compatibility": {
+    "oas": ">=0.18.0"
+  },
+  "layer": "messaging",
+  "description": "Attach an OAS instance to an externally owned aweb principal.",
+  "requires": [
+    {
+      "command": "aw",
+      "why": "verify the selected external principal at attach time",
+      "install": "https://aweb.ai/docs"
+    }
+  ],
+  "hooks": {
+    "spawn": "bin/oas-aweb.mjs spawn",
+    "retire": "bin/oas-aweb.mjs retire"
+  }
+}
