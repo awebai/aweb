@@ -5,7 +5,7 @@ import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
 import { RegistryResolver, isValidDidLogSequence, type VerifiedLogHead } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
-import { decodeRawStdBase64OrEmpty } from "./base64.js";
+import { decodeRawStdBase64 } from "./base64.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -609,9 +609,10 @@ function canonicalObject(fields: Array<[string, string]>): string {
 }
 
 function b64Decode(value: string): Uint8Array {
-  // Strict, matching Go's RawStdEncoding: a signature the Go verifier refuses
-  // must not decode here (default-aajc.8).
-  return decodeRawStdBase64OrEmpty(value);
+  // Rotation and replacement announcements are remote signed data. Throw on
+  // malformed raw base64 before ed.verify so rejection does not depend on how
+  // the verifier treats an empty signature.
+  return decodeRawStdBase64(value);
 }
 
 function escapeJSON(s: string): string {

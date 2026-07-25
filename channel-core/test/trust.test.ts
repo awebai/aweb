@@ -15,6 +15,19 @@ import {
   type RotationAnnouncement,
 } from "../src/index.js";
 
+// Delegate to the real verifier while observing whether malformed input reaches it.
+const verifyCalls = vi.hoisted(() => vi.fn());
+vi.mock("@noble/ed25519", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@noble/ed25519")>();
+  return {
+    ...actual,
+    verify: (...args: Parameters<typeof actual.verify>) => {
+      verifyCalls();
+      return actual.verify(...args);
+    },
+  };
+});
+
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 function seed(byte: number): Uint8Array {
@@ -197,6 +210,48 @@ describe("SenderTrustManager", () => {
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
     expect(store.addresses.get("backend:acme.com/alice")).toBe(did);
+  });
+
+  test("rejects malformed announcement signatures before invoking the verifier", async () => {
+    const oldIdentity = await didFromSeed(41);
+    const newIdentity = await didFromSeed(42);
+    const controller = await didFromSeed(43);
+    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    const trust = new SenderTrustManager(
+      {} as never,
+      {} as never,
+      "backend:acme.com",
+      "",
+    ) as unknown as {
+      verifyRotationAnnouncement(
+        announcement: RotationAnnouncement,
+        messageDID: string,
+        pinnedDID: string,
+      ): boolean;
+      verifyReplacementAnnouncement(
+        address: string,
+        announcement: ReplacementAnnouncement,
+        messageDID: string,
+        pinnedDID: string,
+        meta: { controllerDid?: string },
+      ): boolean;
+    };
+    verifyCalls.mockClear();
+    expect(trust.verifyRotationAnnouncement({
+      old_did: oldIdentity.did,
+      new_did: newIdentity.did,
+      timestamp,
+      old_key_signature: "YWJj=",
+    }, newIdentity.did, oldIdentity.did)).toBe(false);
+    expect(trust.verifyReplacementAnnouncement("acme.com/alice", {
+      address: "acme.com/alice",
+      old_did: oldIdentity.did,
+      new_did: newIdentity.did,
+      controller_did: controller.did,
+      timestamp,
+      controller_signature: "YWJj=",
+    }, newIdentity.did, oldIdentity.did, { controllerDid: controller.did })).toBe(false);
+    expect(verifyCalls).not.toHaveBeenCalled();
   });
 
   test("accepts valid rotation announcements", async () => {

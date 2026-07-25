@@ -4,7 +4,7 @@ import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import * as ed from "@noble/ed25519";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
-import { decodeRawStdBase64OrEmpty } from "./base64.js";
+import { decodeRawStdBase64 } from "./base64.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -784,9 +784,10 @@ function isCanonicalTimestamp(value: string): boolean {
 }
 
 function b64Decode(value: string): Uint8Array {
-  // Strict, matching Go's RawStdEncoding: a signature the Go verifier refuses
-  // must not decode here (default-aajc.8).
-  return decodeRawStdBase64OrEmpty(value);
+  // DID-log heads are remote signed data. Throw on malformed raw base64 before
+  // ed.verify so rejection does not depend on how the verifier treats an empty
+  // signature.
+  return decodeRawStdBase64(value);
 }
 
 function bytesToHex(bytes: Uint8Array): string {
