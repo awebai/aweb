@@ -1761,14 +1761,20 @@ func (l *Loop) markStatusDirty() {
 // connState reports the authoritative connection state, owned by the EventBus
 // and stored atomically there.
 //
-// DESIGN CONSTRAINT: conn is the ONLY EventBus-owned value that participates in
-// the rendered status line, and each render loads it exactly once and threads it
-// through as a parameter. That is why a single atomic is sufficient: one value
-// sampled once per line cannot be internally inconsistent. Adding a second
-// background-owned value to the render would break that — two atomics give two
-// consistent reads and one inconsistent LINE. If a second such value is ever
-// needed, pack them into one immutable struct swapped via atomic.Pointer so a
-// single load yields a consistent snapshot; do not add a second atomic.
+// DESIGN CONSTRAINT, scoped to this value: conn is the only EventBus-owned value
+// that participates in the rendered status line, and each render loads it
+// exactly once and threads it through as a parameter. That is why a single
+// atomic is sufficient for conn — one value sampled once per line cannot be
+// internally inconsistent. If a second EventBus-owned value is ever added to the
+// render, pack them into one immutable struct swapped via atomic.Pointer so a
+// single load yields a consistent snapshot; do not add a second atomic, because
+// two atomics give two consistent reads and one inconsistent LINE.
+//
+// This says nothing about the rendering path as a whole, which is NOT
+// single-owner: handleOutputLine renders from the provider output goroutine
+// while also mutating the shared state the formatters read. That ownership
+// violation is tracked as default-aaky; do not read the paragraph above as
+// evidence that rendering is otherwise safe.
 func (l *Loop) connState() ConnectionState {
 	if l.EventBus == nil {
 		return ConnDisconnected
