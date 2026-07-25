@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
+import { MAX_HTTP_ERROR_BYTES, readBoundedJSON, readBoundedResponse } from "./response.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -47,7 +48,12 @@ export class APIClient {
       ...this.authHeaders(path, bodyText),
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
-    const init: RequestInit = { method, headers, redirect: "error" };
+    const init: RequestInit = {
+      method,
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+    };
 
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
@@ -56,11 +62,11 @@ export class APIClient {
 
     const resp = await fetch(url, init);
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
+      const text = await readBoundedResponse(resp, MAX_HTTP_ERROR_BYTES).catch(() => "");
       throw new APIError(resp.status, text);
     }
 
-    return resp.json() as Promise<T>;
+    return readBoundedJSON<T>(resp);
   }
 
   /** Open an SSE stream. Returns the raw Response for streaming. */
@@ -77,7 +83,7 @@ export class APIClient {
     });
 
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
+      const text = await readBoundedResponse(resp, MAX_HTTP_ERROR_BYTES).catch(() => "");
       throw new APIError(resp.status, text);
     }
 

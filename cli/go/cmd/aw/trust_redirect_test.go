@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"net/http"
@@ -121,6 +122,58 @@ func TestDirectTrustRequestsDoNotFollowRedirects(t *testing.T) {
 			}
 			if targetHits.Load() != 0 {
 				t.Fatalf("redirect target received %d requests, want 0", targetHits.Load())
+			}
+		})
+	}
+}
+
+func TestDirectTrustRequestsRejectOversizeResponses(t *testing.T) {
+	_, teamKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name           string
+		responsePrefix string
+		invoke         func(sourceURL string) error
+	}{
+		{name: "hosted team member removal", invoke: func(sourceURL string) error {
+			_, err := postHostedTeamRemoveMember(context.Background(), sourceURL, "secret-api-key", "default:example.com", hostedTeamRemoveMemberRequest{CertificateID: "cert-test"})
+			return err
+		}},
+		{name: "team service registration", invoke: func(sourceURL string) error {
+			return postTeamRegister(context.Background(), sourceURL, map[string]any{"controller_signature": "signed-authority"}, &map[string]any{})
+		}},
+		{name: "BYOT cleanup", invoke: func(sourceURL string) error {
+			return postTeamCleanupCloud(context.Background(), sourceURL, map[string]any{"controller_signature": "signed-authority"}, &map[string]any{})
+		}},
+		{name: "API key workspace init", invoke: func(sourceURL string) error {
+			_, err := postAPIKeyWorkspaceInit(context.Background(), sourceURL, "secret-api-key", apiKeyBootstrapRequest{})
+			return err
+		}},
+		{name: "public runnable profile", responsePrefix: `{"blueprint_ref":"aweb.team","blueprint_version":"1","profile_ref":"developer","version":"1","digest":"digest","files":[{"path":"AGENTS.md","content_utf8":"x"}]}`, invoke: func(sourceURL string) error {
+			_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{LibraryURL: sourceURL, SourceBlueprintRef: "aweb.team", ProfileRef: "developer"})
+			return err
+		}},
+		{name: "local identity key replacement", invoke: func(sourceURL string) error {
+			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), sourceURL, "alice", localIdentityKeyReplacementRequest{TeamID: "default:example.com"}, teamKey)
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				prefix := test.responsePrefix
+				if prefix == "" {
+					prefix = `{}`
+				}
+				_, _ = w.Write([]byte(prefix))
+				_, _ = w.Write(bytes.Repeat([]byte(" "), awid.MaxResponseSize+1-len(prefix)))
+			}))
+			t.Cleanup(server.Close)
+			if err := test.invoke(server.URL); err == nil {
+				t.Fatal("oversize response was accepted")
 			}
 		})
 	}

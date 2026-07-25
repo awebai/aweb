@@ -2277,11 +2277,15 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 		return nil, err
 	}
 	defer resp.Body.Close()
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read hosted remove-member response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var detail struct {
 			Detail any `json:"detail"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		_ = json.Unmarshal(responseBody, &detail)
 		if detail.Detail != nil {
 			encoded, _ := json.Marshal(detail.Detail)
 			return nil, fmt.Errorf("hosted remove-member returned %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
@@ -2289,7 +2293,7 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 		return nil, fmt.Errorf("hosted remove-member returned %d", resp.StatusCode)
 	}
 	var out hostedTeamRemoveMemberResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(responseBody, &out); err != nil {
 		return nil, fmt.Errorf("decode hosted remove-member response: %w", err)
 	}
 	if strings.EqualFold(strings.TrimSpace(out.Status), "not_found") {
@@ -2587,11 +2591,15 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		return err
 	}
 	defer resp.Body.Close()
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return fmt.Errorf("read service register response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var detail struct {
 			Detail any `json:"detail"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		_ = json.Unmarshal(responseBody, &detail)
 		if detail.Detail != nil {
 			encoded, _ := json.Marshal(detail.Detail)
 			return fmt.Errorf("service register: http %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
@@ -2599,7 +2607,7 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		return fmt.Errorf("service register: http %d", resp.StatusCode)
 	}
 	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		if err := json.Unmarshal(responseBody, out); err != nil {
 			return err
 		}
 	}
@@ -2810,11 +2818,15 @@ func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]a
 		return err
 	}
 	defer resp.Body.Close()
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return fmt.Errorf("read cloud cleanup response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var detail struct {
 			Detail any `json:"detail"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		_ = json.Unmarshal(responseBody, &detail)
 		if detail.Detail != nil {
 			encoded, _ := json.Marshal(detail.Detail)
 			return fmt.Errorf("aweb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
@@ -2822,7 +2834,7 @@ func postTeamCleanupCloud(ctx context.Context, awebURL string, body map[string]a
 		return fmt.Errorf("aweb: http %d", resp.StatusCode)
 	}
 	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		if err := json.Unmarshal(responseBody, out); err != nil {
 			return err
 		}
 	}

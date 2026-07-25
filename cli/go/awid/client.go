@@ -1013,8 +1013,7 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any,
 	}
 	defer resp.Body.Close()
 
-	limited := io.LimitReader(resp.Body, MaxResponseSize)
-	data, err := io.ReadAll(limited)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return err
 	}
@@ -1242,7 +1241,7 @@ func traceHTTPClientResponse(resp *http.Response) error {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
 		return nil
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return err
 	}

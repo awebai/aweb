@@ -49,8 +49,12 @@ func DiscoverServices(ctx context.Context, baseURL string) (*DiscoveryResponse, 
 		return nil, &RegistryError{StatusCode: resp.StatusCode, Detail: strings.TrimSpace(string(detail))}
 	}
 
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read discovery response: %w", err)
+	}
 	var out DiscoveryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode discovery response: %w", err)
 	}
 	return &out, nil

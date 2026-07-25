@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -622,14 +621,18 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &APIError{StatusCode: resp.StatusCode, Body: readBodyString(resp)}
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func readBodyString(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return ""
 	}

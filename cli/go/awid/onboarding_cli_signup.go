@@ -193,8 +193,12 @@ func postJSONWithHeaders(
 		return &RegistryError{StatusCode: resp.StatusCode, Detail: strings.TrimSpace(string(detail))}
 	}
 
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return err
+	}
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.Unmarshal(data, out)
 }

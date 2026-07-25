@@ -36,6 +36,8 @@ async function redirectPair(): Promise<{ sourceURL: string; targetHits: () => nu
   return { sourceURL, targetHits: () => hits };
 }
 
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
 describe("trust requests reject redirects", () => {
   const auth = {
     did: "did:key:z6Mktest",
@@ -70,5 +72,43 @@ describe("trust requests reject redirects", () => {
 
     await expect(resolver.resolveAddressIdentity("example.com/alice")).rejects.toThrow();
     expect(pair.targetHits()).toBe(0);
+  });
+});
+
+describe("trust response bounds", () => {
+  const auth = {
+    did: "did:key:z6Mktest",
+    stableID: "did:aw:test",
+    signingKey: new Uint8Array(32).fill(1),
+    teamID: "backend:acme.com",
+    teamCertificateHeader: "secret-cert-header",
+  };
+
+  test("standard API accepts exactly the limit and rejects one trailing byte", async () => {
+    const serverURL = await listen((request, response) => {
+      const size = request.url === "/exact" ? MAX_RESPONSE_BYTES : MAX_RESPONSE_BYTES + 1;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(`{}${" ".repeat(size - 2)}`);
+    });
+    const client = new APIClient(serverURL, auth);
+
+    await expect(client.get("/exact")).resolves.toEqual({});
+    await expect(client.get("/oversize")).rejects.toThrow(/maximum|size|large|limit/i);
+  });
+
+  test("registry resolver rejects the first oversize trust response", async () => {
+    let requests = 0;
+    const serverURL = await listen((_request, response) => {
+      requests += 1;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(`{}${" ".repeat(MAX_RESPONSE_BYTES - 1)}`);
+    });
+    const notFound = Object.assign(new Error("not found"), { code: "ENOTFOUND" });
+    const resolver = new RegistryResolver(fetch, async () => { throw notFound; }, undefined, {
+      fallbackRegistryURL: serverURL,
+    });
+
+    await expect(resolver.resolveAddressIdentity("example.com/alice")).rejects.toThrow(/maximum|size|large|limit/i);
+    expect(requests).toBe(1);
   });
 });

@@ -435,8 +435,12 @@ func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelec
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("GET %s returned %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read library get-profile response: %w", err)
+	}
 	var out libraryProfileDetailResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(responseBody, &out); err != nil {
 		return nil, fmt.Errorf("decode library get-profile response: %w", err)
 	}
 	if err := validateLibraryProfileDetailResponse(&out); err != nil {

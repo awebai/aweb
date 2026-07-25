@@ -772,8 +772,12 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 		}
 	}
 
+	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("read workspace init response: %w", err)
+	}
 	var result apiKeyBootstrapResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return nil, fmt.Errorf("decode workspace init response: %w", err)
 	}
 	return &result, nil

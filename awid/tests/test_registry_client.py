@@ -2,11 +2,56 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 from httpx import MockTransport, Response
 
+import awid.registry as registry_module
 from awid.did import generate_keypair
-from awid.registry import CachedRegistryClient, RegistryClient
+from awid.registry import MAX_REGISTRY_RESPONSE_BYTES, CachedRegistryClient, RegistryClient
+
+
+@pytest.mark.asyncio
+async def test_registry_client_explicitly_disables_redirects(monkeypatch):
+    real_client = httpx.AsyncClient
+    configured: list[bool] = []
+
+    def client_factory(**kwargs):
+        configured.append(kwargs.get("follow_redirects", True))
+        kwargs.setdefault("follow_redirects", True)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(registry_module.httpx, "AsyncClient", client_factory)
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(lambda _request: Response(200, json={})),
+    )
+    try:
+        await registry.health()
+    finally:
+        await registry.aclose()
+    assert configured == [False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_bytes", "should_succeed"),
+    [(0, True), (1, False)],
+)
+async def test_registry_client_enforces_response_limit(extra_bytes: int, should_succeed: bool):
+    content = b"{}" + b" " * (MAX_REGISTRY_RESPONSE_BYTES - 2 + extra_bytes)
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(lambda _request: Response(200, content=content)),
+    )
+    try:
+        if should_succeed:
+            assert await registry.health() == {}
+        else:
+            with pytest.raises(ValueError, match="maximum|size|large|limit"):
+                await registry.health()
+    finally:
+        await registry.aclose()
 
 
 class FakeRedis:

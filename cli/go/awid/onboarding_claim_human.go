@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -86,8 +85,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 		c.latestClientVersion.Store(v)
 	}
 
-	limited := io.LimitReader(resp.Body, MaxResponseSize)
-	data, err := io.ReadAll(limited)
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
 		return nil, err
 	}

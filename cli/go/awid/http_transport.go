@@ -1,7 +1,9 @@
 package awid
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +22,24 @@ import (
 const APITimeoutEnvVar = "AWEB_HTTP_TIMEOUT"
 
 var apiTimeoutWarnOnce sync.Once
+
+var ErrResponseTooLarge = errors.New("HTTP response exceeds maximum size")
+
+// ReadAllBounded reads at most max+1 bytes so an exactly-at-limit response is
+// accepted while any trailing byte is rejected.
+func ReadAllBounded(reader io.Reader, max int64) ([]byte, error) {
+	if max < 0 {
+		return nil, fmt.Errorf("maximum response size must not be negative")
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, ErrResponseTooLarge
+	}
+	return data, nil
+}
 
 // DoNoRedirect sends req without allowing an HTTP redirect to cross the
 // request's original trust boundary. The shallow copy preserves the caller's
