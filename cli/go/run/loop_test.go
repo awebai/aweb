@@ -384,6 +384,56 @@ func TestLoopLeavesWakePendingWhenProviderDeliveryFails(t *testing.T) {
 	}
 }
 
+func TestLoopInterruptedProviderDoesNotFinalizeDelivery(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	controller := newFakeInputController()
+	loop.Control = controller
+	started := make(chan struct{})
+	loop.Runner = func(ctx context.Context, _ string, _ []string, _ func(string), _ any) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	finalized := false
+	loop.Dispatch = &fakeDispatcher{decisions: []DispatchDecision{{
+		Mission: "incoming chat",
+		AfterDelivery: func(context.Context) error {
+			finalized = true
+			return nil
+		},
+	}}}
+	go func() {
+		<-started
+		controller.events <- ControlEvent{Type: ControlStop}
+	}()
+
+	if err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if finalized {
+		t.Fatal("interrupted provider run finalized an unpresented wake")
+	}
+}
+
+func TestLoopPropagatesPostDeliveryFailure(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
+		onLine("ignored")
+		return nil
+	}
+	loop.Dispatch = &fakeDispatcher{decisions: []DispatchDecision{{
+		Mission: "incoming chat",
+		AfterDelivery: func(context.Context) error {
+			return errors.New("mark read failed")
+		},
+	}}}
+
+	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
+	if err == nil || !strings.Contains(err.Error(), "mark read failed") {
+		t.Fatalf("Run error=%v, want post-delivery failure", err)
+	}
+}
+
 func TestLoopExposesProviderInputWithPTY(t *testing.T) {
 	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
 	var sawStdinReady bool

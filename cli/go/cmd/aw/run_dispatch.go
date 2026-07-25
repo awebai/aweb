@@ -15,7 +15,10 @@ import (
 	awrun "github.com/awebai/aw/run"
 )
 
-const maxChatMessagesPerWake = 20
+const (
+	maxChatMessagesPerWake = 20
+	maxChatHistoryFetch    = 2000
+)
 
 type runWakeResolution struct {
 	Skip          bool
@@ -136,18 +139,16 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 	}
 	messageID := strings.TrimSpace(evt.MessageID)
 	if messageID != "" {
-		limit := evt.UnreadCount
-		if limit <= 0 {
-			limit = 20
-		} else if limit > 100 {
-			limit = 100
+		limit, err := unreadChatHistoryLimit(evt.UnreadCount)
+		if err != nil {
+			return runWakeResolution{}, err
 		}
 		history, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
 			SessionID:  sessionID,
 			UnreadOnly: true,
 			Limit:      limit,
 		})
-		if err == nil {
+		if err == nil && requireCompleteUnreadChatHistory(evt.UnreadCount, limit, len(history.Messages)) == nil {
 			filtered := chat.FilterDeliveredMessages(history.Messages)
 			presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
 			if len(presented) > 0 {
@@ -170,13 +171,16 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if alias == "" {
 			alias = strings.TrimSpace(pending.LastFrom)
 		}
-		// Mark as read — fetch unread history to find the last message ID.
-		histResp, _ := client.ChatHistory(ctx, awid.ChatHistoryParams{
+		limit, err := unreadChatHistoryLimit(pending.UnreadCount)
+		if err != nil {
+			return runWakeResolution{}, err
+		}
+		histResp, historyErr := client.ChatHistory(ctx, awid.ChatHistoryParams{
 			SessionID:  sessionID,
 			UnreadOnly: true,
-			Limit:      100,
+			Limit:      limit,
 		})
-		if histResp != nil {
+		if historyErr == nil && histResp != nil && requireCompleteUnreadChatHistory(pending.UnreadCount, limit, len(histResp.Messages)) == nil {
 			filtered := chat.FilterDeliveredMessages(histResp.Messages)
 			presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
 			if len(presented) > 0 {
@@ -290,6 +294,28 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 		return false
 	}
 	return strings.TrimSpace(selfAlias) != "" && strings.EqualFold(strings.TrimSpace(pending.LastFrom), strings.TrimSpace(selfAlias))
+}
+
+// The history API applies LIMIT to newest rows. Fetch the complete unread set
+// before selecting its oldest bounded prefix, or a watermark through the
+// selected suffix would silently acknowledge older messages never presented.
+func unreadChatHistoryLimit(unreadCount int) (int, error) {
+	if unreadCount > maxChatHistoryFetch {
+		return 0, fmt.Errorf("chat unread backlog %d exceeds safe history fetch limit %d", unreadCount, maxChatHistoryFetch)
+	}
+	// Always request the maximum: the event count can be stale if another
+	// message arrives before the history fetch.
+	return maxChatHistoryFetch, nil
+}
+
+func requireCompleteUnreadChatHistory(expectedCount, requestedLimit, fetchedCount int) error {
+	if expectedCount > fetchedCount {
+		return fmt.Errorf("chat history returned %d of %d unread messages; refusing to acknowledge an omitted prefix", fetchedCount, expectedCount)
+	}
+	if fetchedCount == requestedLimit {
+		return fmt.Errorf("chat history reached limit %d; refusing to acknowledge a potentially omitted prefix", requestedLimit)
+	}
+	return nil
 }
 
 func incomingChatMessages(messages []awid.ChatMessage, selfAlias string, selfDIDs ...string) []awid.ChatMessage {

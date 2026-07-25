@@ -241,15 +241,17 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 			return fmt.Errorf("prompt cannot be empty")
 		}
 		state.Run++
-		if err := l.runOnce(ctx, opts, state, fullPrompt, decision.ImagePaths, displayLines, decision.UserPrompt); err != nil {
-			if state.StopRequested && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		runErr := l.runOnce(ctx, opts, state, fullPrompt, decision.ImagePaths, displayLines, decision.UserPrompt)
+		interrupted := errors.Is(runErr, errRunInterrupted)
+		if runErr != nil && !interrupted {
+			if state.StopRequested && (errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)) {
 				return nil
 			}
-			return err
+			return runErr
 		}
-		if decision.AfterDelivery != nil {
+		if !interrupted && decision.AfterDelivery != nil {
 			if err := decision.AfterDelivery(ctx); err != nil {
-				l.printf("info: post-delivery finalization failed: %v\n", err)
+				return fmt.Errorf("post-delivery finalization failed: %w", err)
 			}
 		}
 		if state.ExitConfirmPending {
@@ -319,6 +321,8 @@ func (l *Loop) nextPrompt(ctx context.Context, opts LoopOptions, st *state) (Dis
 	}
 	return DispatchDecision{Mission: explicitMissionPrompt, WaitSeconds: opts.WaitSeconds}, nil
 }
+
+var errRunInterrupted = errors.New("provider run interrupted")
 
 func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt string, imagePaths []string, displayLines []DisplayLine, userPrompt string) error {
 	l.clearStatusLine()
@@ -464,7 +468,7 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 				st.Paused = true
 				st.PauseAfterRun = true
 				st.RunInterrupted = false
-				return nil
+				return errRunInterrupted
 			}
 			st.RunInterrupted = false
 			if strings.TrimSpace(st.LastRunError) != "" {

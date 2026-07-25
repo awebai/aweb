@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -650,7 +651,7 @@ func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
 		t.Fatalf("maxChatMessagesPerWake=%d, want reviewed bound %d", maxChatMessagesPerWake, expectedBatchLimit)
 	}
 	deliveredDir := deliveredIDsTestPath(t)
-	messages := make([]awid.ChatMessage, expectedBatchLimit+2)
+	messages := make([]awid.ChatMessage, 121)
 	for i := range messages {
 		messages[i] = awid.ChatMessage{
 			MessageID: fmt.Sprintf("batch-%02d", i),
@@ -663,7 +664,17 @@ func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
-			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: messages[acked+1:]})
+			unread := messages[acked+1:]
+			limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+			if err != nil || limit < 1 {
+				t.Fatalf("invalid history limit %q", r.URL.Query().Get("limit"))
+			}
+			// Production selects newest LIMIT rows, then returns that suffix in
+			// chronological order.
+			if len(unread) > limit {
+				unread = unread[len(unread)-limit:]
+			}
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: unread})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
 			var req awid.ChatMarkReadRequest
 			json.NewDecoder(r.Body).Decode(&req)
@@ -696,10 +707,8 @@ func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
 			t.Fatalf("bounded context omitted index %d", i)
 		}
 	}
-	for i := expectedBatchLimit; i < len(messages); i++ {
-		if strings.Contains(first.CycleContext, messages[i].Body) {
-			t.Fatalf("bounded context included index %d", i)
-		}
+	if strings.Contains(first.CycleContext, messages[expectedBatchLimit].Body) {
+		t.Fatalf("bounded context included index %d", expectedBatchLimit)
 	}
 	if first.AfterDelivery == nil {
 		t.Fatal("expected bounded batch acknowledgement")
@@ -728,10 +737,135 @@ func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := expectedBatchLimit; i < len(messages); i++ {
+	for i := expectedBatchLimit; i < expectedBatchLimit*2; i++ {
 		if !strings.Contains(second.CycleContext, messages[i].Body) {
-			t.Fatalf("remainder context omitted index %d: %q", i, second.CycleContext)
+			t.Fatalf("next batch omitted index %d: %q", i, second.CycleContext)
 		}
+	}
+	if strings.Contains(second.CycleContext, messages[expectedBatchLimit*2].Body) {
+		t.Fatalf("next batch exceeded reviewed bound: %q", second.CycleContext)
+	}
+}
+
+func TestResolveChatWakePendingDoesNotAckOmittedOlderPrefix(t *testing.T) {
+	const expectedBatchLimit = 20
+	deliveredIDsTestPath(t)
+	messages := make([]awid.ChatMessage, 121)
+	for i := range messages {
+		messages[i] = awid.ChatMessage{
+			MessageID: fmt.Sprintf("pending-%03d", i),
+			FromAgent: "alice",
+			Body:      fmt.Sprintf("pending-request-%03d", i),
+		}
+	}
+	markedReadUpTo := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
+				SessionID: "s1", LastFrom: "alice", LastMessage: messages[len(messages)-1].Body,
+				UnreadCount: len(messages), SenderWaiting: true,
+			}}})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+			if err != nil || limit < 1 {
+				t.Fatalf("invalid history limit %q", r.URL.Query().Get("limit"))
+			}
+			selected := messages
+			if len(selected) > limit {
+				selected = selected[len(selected)-limit:]
+			}
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: selected})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			var req awid.ChatMarkReadRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			markedReadUpTo = req.UpToMessageID
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	resolved, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < expectedBatchLimit; i++ {
+		if !strings.Contains(resolved.CycleContext, messages[i].Body) {
+			t.Fatalf("pending context omitted oldest index %d: %q", i, resolved.CycleContext)
+		}
+	}
+	if strings.Contains(resolved.CycleContext, messages[expectedBatchLimit].Body) {
+		t.Fatalf("pending context exceeded reviewed bound: %q", resolved.CycleContext)
+	}
+	if resolved.AfterDelivery == nil {
+		t.Fatal("expected pending batch acknowledgement")
+	}
+	if err := resolved.AfterDelivery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if markedReadUpTo != messages[expectedBatchLimit-1].MessageID {
+		t.Fatalf("marked through %q, want %q", markedReadUpTo, messages[expectedBatchLimit-1].MessageID)
+	}
+}
+
+func TestResolveChatWakeIncompleteHistoryNeverCreatesAcknowledgement(t *testing.T) {
+	deliveredIDsTestPath(t)
+	var readCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
+				SessionID: "s1", LastFrom: "alice", LastMessage: "newest summary",
+				UnreadCount: 121, SenderWaiting: true,
+			}}})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			messages := make([]awid.ChatMessage, 100)
+			for i := range messages {
+				messages[i] = awid.ChatMessage{MessageID: fmt.Sprintf("suffix-%03d", i+21), FromAgent: "alice", Body: "suffix"}
+			}
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: messages})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			readCalls++
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	resolved, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   "suffix-120",
+		FromAlias:   "alice",
+		UnreadCount: 121,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Skip || !strings.Contains(resolved.CycleContext, "newest summary") {
+		t.Fatalf("expected unacknowledged pending summary fallback, got %+v", resolved)
+	}
+	if resolved.AfterDelivery != nil {
+		t.Fatal("incomplete history created a watermark acknowledgement")
+	}
+	if readCalls != 0 {
+		t.Fatalf("incomplete history marked %d times", readCalls)
+	}
+}
+
+func TestUnreadChatHistoryLimitRejectsUnpageableBacklog(t *testing.T) {
+	if _, err := unreadChatHistoryLimit(maxChatHistoryFetch + 1); err == nil {
+		t.Fatal("backlog beyond fetch limit must fail rather than watermark an omitted prefix")
 	}
 }
 
