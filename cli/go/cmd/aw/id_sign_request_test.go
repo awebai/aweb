@@ -509,14 +509,14 @@ func TestAwIDRequestTeamAuthSignsGlobalWorkspaceRequest(t *testing.T) {
 	stableID := awid.ComputeStableID(pub)
 	address := "acme.com/athena"
 
-	var sawStableID string
-	var sawCert *awid.TeamCertificate
-	var teamPub ed25519.PublicKey
+	var sawStableID guarded[string]
+	var sawCert guarded[*awid.TeamCertificate]
+	var teamPub guarded[ed25519.PublicKey]
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
-		sawCert = requireCertificateAuthForTest(t, r)
+		sawStableID.set(strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW")))
+		sawCert.set(requireCertificateAuthForTest(t, r))
 		if err := verifyTeamAuthRequestFixtureForTest(r, []byte(`{"task":"global"}`), time.Now().UTC(), map[string]ed25519.PublicKey{
-			"backend:acme.com": teamPub,
+			"backend:acme.com": teamPub.get(),
 		}, nil); err != nil {
 			t.Fatalf("team-auth verifier rejected request: %v", err)
 		}
@@ -529,7 +529,7 @@ func TestAwIDRequestTeamAuthSignsGlobalWorkspaceRequest(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	teamPub = writeGlobalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "backend:acme.com", "athena", did, stableID, address, priv)
+	teamPub.set(writeGlobalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "backend:acme.com", "athena", did, stableID, address, priv))
 
 	run := exec.CommandContext(ctx, bin, "id", "request", "POST", server.URL+"/v1/awco/tasks",
 		"--team-auth",
@@ -543,14 +543,16 @@ func TestAwIDRequestTeamAuthSignsGlobalWorkspaceRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("global id request --team-auth failed: %v\n%s", err, string(out))
 	}
-	if sawStableID != stableID {
-		t.Fatalf("X-AWEB-DID-AW=%q want %q", sawStableID, stableID)
+	gotStableID := sawStableID.get()
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
 	}
-	if sawCert.MemberDIDKey != did || sawCert.MemberDIDAW != stableID || sawCert.MemberAddress != address {
-		t.Fatalf("certificate identity fields=%+v", sawCert)
+	gotCert := sawCert.get()
+	if gotCert.MemberDIDKey != did || gotCert.MemberDIDAW != stableID || gotCert.MemberAddress != address {
+		t.Fatalf("certificate identity fields=%+v", gotCert)
 	}
-	if sawCert.IdentityScope != awid.IdentityModeGlobal {
-		t.Fatalf("certificate identity_scope=%q want global", sawCert.IdentityScope)
+	if gotCert.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("certificate identity_scope=%q want global", gotCert.IdentityScope)
 	}
 }
 

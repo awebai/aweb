@@ -63,8 +63,8 @@ func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
 		ActiveTeam: "active:acme.com",
 		Memberships: []awconfig.TeamMembership{{
-			TeamID:  "active:acme.com",
-			Alias:   "captain",
+			TeamID:   "active:acme.com",
+			Alias:    "captain",
 			CertPath: ".aw/team-certs/active.pem",
 		}},
 	}); err != nil {
@@ -255,7 +255,7 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 	var initCalls, connectCalls, removeCalls int
 	var removeAuth string
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++
@@ -276,7 +276,7 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": server.URL, "team_cert": encoded, "alias": alias, "team_id": actualTeamID, "workspace_id": "ws-rollback", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": returnedKey})
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": serverURL, "team_cert": encoded, "alias": alias, "team_id": actualTeamID, "workspace_id": "ws-rollback", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": returnedKey})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			connectCalls++
 			requireCertificateAuthForTest(t, r)
@@ -293,7 +293,7 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 	teamHumanExtendAPIKey = explicitKey
 	teamHumanExtendTeamID = "default:other.aweb.ai"
 	initAwebURL = server.URL

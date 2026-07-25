@@ -34,35 +34,37 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	var gotAuth string
 	var gotTimestamp string
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   "https://api.awid.ai",
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
-			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-			var err error
-			gotBodyBytes, err = io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   "https://api.awid.ai",
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+				gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+				var err error
+				gotBodyBytes, err = io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "verification_sent",
+					"email":  "alice@example.com",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "verification_sent",
-				"email":  "alice@example.com",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -122,35 +124,37 @@ func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
 	var gotAuth string
 	var gotTimestamp string
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   "https://api.awid.ai",
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
-			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-			var err error
-			gotBodyBytes, err = io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   "https://api.awid.ai",
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+				gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+				var err error
+				gotBodyBytes, err = io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "verification_sent",
+					"email":  "alice@example.com",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "verification_sent",
-				"email":  "alice@example.com",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -213,25 +217,27 @@ func TestClaimHumanCommandPrintsAlreadyAttachedWithoutEmailClaim(t *testing.T) {
 	stableID := awid.ComputeStableID(pub)
 
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   "https://api.awid.ai",
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "already_attached",
-				"email":  "alice@example.com",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   "https://api.awid.ai",
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "already_attached",
+					"email":  "alice@example.com",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -270,28 +276,30 @@ func TestClaimHumanCommandUsesExplicitUsernameForBYODIdentity(t *testing.T) {
 
 	var gotBody map[string]any
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   "https://api.awid.ai",
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   "https://api.awid.ai",
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "verification_sent",
+					"email":  "alice@example.com",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "verification_sent",
-				"email":  "alice@example.com",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -326,28 +334,30 @@ func TestClaimHumanCommandAllowsUsernameOverride(t *testing.T) {
 
 	var gotBody map[string]any
 	var onboardingURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": onboardingURL,
-				"aweb_url":       onboardingURL,
-				"registry_url":   "https://api.awid.ai",
-				"version":        "1.7.0",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
-			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-				t.Fatal(err)
+	server := newLocalHTTPServerWithURL(t, func(baseURL string) http.Handler {
+		onboardingURL = baseURL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"onboarding_url": onboardingURL,
+					"aweb_url":       onboardingURL,
+					"registry_url":   "https://api.awid.ai",
+					"version":        "1.7.0",
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status": "verification_sent",
+					"email":  "alice@example.com",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "verification_sent",
-				"email":  "alice@example.com",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	onboardingURL = server.URL
+		})
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
