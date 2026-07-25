@@ -191,15 +191,21 @@ variables > local active team certificate in `.aw/team-certs/` > local
 `.aw/workspace.yaml` > local `.aw/identity.yaml` (for global identity fields) >
 local `.aw/context`.
 
-`--identity-home` and `AWEB_IDENTITY_HOME` name the credential root directly:
-`identity.yaml`, `signing.key`, `encryption-keys/`, `workspace.yaml`,
-`teams.yaml`, and `team-certs/` live immediately beneath it. The path must be
-absolute and must not contain existing symlink components. It changes identity
-authority without changing the process working directory, so relative message
-body and task paths remain instance-local. Profile, plugin, runtime,
-interaction-log, A2A task-token, and chat-delivery-cache state also remain in
-the instance home. Namespace/team controller keys under `~/.awid` and host TOFU
-state are never redirected.
+`--identity-home` and `AWEB_IDENTITY_HOME` name the current principal's
+credential root directly. Principal state lives immediately beneath it:
+`identity.yaml`, `signing.key`, `workspace.yaml`, `teams.yaml`, `team-certs/`,
+`encryption.yaml`, `encryption-keys/`, `context`, rotation and bootstrap
+recovery markers, and static A2A endpoint credentials (entries without
+`task_id`). The path must be absolute and must not contain existing symlink
+components. Commands that provision another agent or the A2A gateway continue
+to use the explicit target root passed to them; the current-principal override
+does not redefine those paths.
+
+Identity selection does not change the process working directory, so relative
+message body and task paths remain instance-local. Profile, plugin, runtime,
+interaction-log, A2A task-token entries (entries with `task_id`), and
+chat-delivery-cache state also remain in the instance home. Namespace/team
+controller keys under `~/.awid` and host TOFU state are never redirected.
 
 An external identity home grants use authority, not cleanup authority. `aw
 reset` and `aw workspace delete` refuse while the flag or environment override

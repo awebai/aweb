@@ -550,16 +550,21 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			apiAlias = ""
 			apiName = alias
 		}
+		identityHome, err := identityHomeForDir(wd)
+		if err != nil {
+			return err
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			WorkingDir:  wd,
-			AwebURL:     apiKeyAwebURL,
-			RegistryURL: registryURL,
-			APIKey:      apiKey,
-			Name:        apiName,
-			Alias:       apiAlias,
-			Persistent:  firstAgentGlobal,
-			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			WorkingDir:   wd,
+			IdentityHome: identityHome.Root,
+			AwebURL:      apiKeyAwebURL,
+			RegistryURL:  registryURL,
+			APIKey:       apiKey,
+			Name:         apiName,
+			Alias:        apiAlias,
+			Persistent:   firstAgentGlobal,
+			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
 		if err != nil {
 			return err

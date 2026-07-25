@@ -148,18 +148,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		identityHome, err := identityHomeForDir(wd)
+		if err != nil {
+			return err
+		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			WorkingDir:  wd,
-			AwebURL:     awebURL,
-			RegistryURL: registryURL,
-			APIKey:      apiKey,
-			Name:        resolveInitGlobalName(initPersistent),
-			Alias:       resolveAliasValue(resolveInitLocalName()),
-			Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Persistent:  initPersistent,
-			InboundMode: canonicalInitInboundModeForWire(initInboundMode),
+			WorkingDir:   wd,
+			IdentityHome: identityHome.Root,
+			AwebURL:      awebURL,
+			RegistryURL:  registryURL,
+			APIKey:       apiKey,
+			Name:         resolveInitGlobalName(initPersistent),
+			Alias:        resolveAliasValue(resolveInitLocalName()),
+			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
+			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			Persistent:   initPersistent,
+			InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
 		})
 		if err != nil {
 			return err

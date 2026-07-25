@@ -18,6 +18,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -1560,16 +1561,22 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err != nil {
 		return nil, err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
 	if scope == awid.IdentityModeGlobal {
-		if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
 			return nil, err
 		}
-	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false); err != nil {
+	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false, home.Root); err != nil {
 		return nil, err
 	}
 	// Accept completed: clear the pending marker so the home is no longer in
 	// pending-accept state. (The completed-identity guard already protects it.)
-	_ = os.Remove(hostedAcceptPendingMarkerPath(workingDir))
+	if err := removeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+		return nil, err
+	}
 
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
@@ -1593,13 +1600,25 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
 		return nil, nil, err
 	}
-	keyPath := awconfig.WorktreeSigningKeyPath(workingDir)
-	markerPath := hostedAcceptPendingMarkerPath(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPath, err := awconfig.IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return nil, nil, err
+	}
+	markerPath := hostedAcceptPendingMarkerPath(workingDir, home.Root)
 	if _, err := os.Stat(keyPath); err == nil {
-		completedPaths := []string{
-			awconfig.WorktreeIdentityPath(workingDir),
-			awconfig.WorktreeWorkspacePath(workingDir),
+		identityPath, pathErr := awconfig.IdentityHomePath(home, "identity.yaml")
+		if pathErr != nil {
+			return nil, nil, pathErr
 		}
+		workspacePath, pathErr := awconfig.IdentityHomePath(home, "workspace.yaml")
+		if pathErr != nil {
+			return nil, nil, pathErr
+		}
+		completedPaths := []string{identityPath, workspacePath}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
 				return nil, nil, usageError("refusing to overwrite existing %s", path)
@@ -1611,7 +1630,10 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 		if markerErr != nil {
 			return nil, nil, markerErr
 		}
-		certsPath := awconfig.TeamCertificatesDir(workingDir)
+		certsPath := filepath.Join(home.Root, "team-certs")
+		if err := pathpreflight.PreflightDir(certsPath, "team certificate directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return nil, nil, err
+		}
 		if _, err := os.Stat(certsPath); err == nil {
 			// A previous hosted accept can fail after writing the certificate but
 			// before writing identity.yaml. The pending marker proves this is the
@@ -1642,8 +1664,8 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
 		return nil, nil, fmt.Errorf("save pending hosted accept signing key: %w", err)
 	}
-	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
-		return nil, nil, fmt.Errorf("write pending hosted accept marker: %w", err)
+	if err := writeHostedAcceptPendingMarker(markerPath); err != nil {
+		return nil, nil, err
 	}
 	return pub, signingKey, nil
 }
@@ -1651,8 +1673,12 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 // hostedAcceptPendingMarkerPath is the marker written next to the signing key
 // while a hosted accept is pending, so a retry reuses the key while a stray
 // leftover key (no marker) is refused.
-func hostedAcceptPendingMarkerPath(workingDir string) string {
-	return filepath.Join(filepath.Dir(awconfig.WorktreeSigningKeyPath(workingDir)), "pending-hosted-accept")
+func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) string {
+	root := filepath.Join(filepath.Clean(workingDir), ".aw")
+	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
+		root = filepath.Clean(identityHomes[0])
+	}
+	return filepath.Join(root, "pending-hosted-accept")
 }
 
 func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress, expectedScope string, expectedNoAddress bool) (*awid.TeamCertificate, string, error) {
@@ -1757,7 +1783,34 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	return nil
 }
 
+func preflightHostedAcceptPendingMarker(markerPath string) error {
+	return pathpreflight.PreflightFile(markerPath, "hosted accept recovery marker", pathpreflight.AllowTempAmbientSymlinkPrefix())
+}
+
+func writeHostedAcceptPendingMarker(markerPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
+	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
+		return fmt.Errorf("write pending hosted accept marker: %w", err)
+	}
+	return nil
+}
+
+func removeHostedAcceptPendingMarker(markerPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func statHostedAcceptPendingMarker(markerPath, keyPath string) error {
+	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
+		return err
+	}
 	if _, err := os.Stat(markerPath); err != nil {
 		if os.IsNotExist(err) {
 			return usageError(

@@ -37,7 +37,19 @@ type InteractionEntry struct {
 }
 
 func interactionLogRoot(startDir string) string {
-	return filepath.Clean(startDir)
+	dir := filepath.Clean(startDir)
+	for {
+		for _, marker := range []string{filepath.Join(".aw", "context"), filepath.Join(".aw", "workspace.yaml"), ".git"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Clean(startDir)
+		}
+		dir = parent
+	}
 }
 
 func interactionLogPath(startDir string) string {

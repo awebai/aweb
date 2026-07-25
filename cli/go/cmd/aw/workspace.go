@@ -540,14 +540,15 @@ func addWorktreeViaCloudBootstrap(
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir: worktreePath,
-		AwebURL:    awebURL,
-		APIKey:     apiKey,
-		Alias:      alias,
-		Role:       role,
-		HumanName:  strings.TrimSpace(state.HumanName),
-		AgentType:  strings.TrimSpace(state.AgentType),
-		Persistent: false,
+		WorkingDir:   worktreePath,
+		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
+		AwebURL:      awebURL,
+		APIKey:       apiKey,
+		Alias:        alias,
+		Role:         role,
+		HumanName:    strings.TrimSpace(state.HumanName),
+		AgentType:    strings.TrimSpace(state.AgentType),
+		Persistent:   false,
 	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
