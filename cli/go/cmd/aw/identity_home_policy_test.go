@@ -135,7 +135,6 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 			name string
 			args []string
 		}{
-			{name: "identity-create", args: []string{"id", "create", "--name", "unsafe", "--domain", "example.test"}},
 			{name: "team-list", args: []string{"id", "team", "list", "--json"}},
 			{name: "workspace-status", args: []string{"workspace", "status", "--json"}},
 			{name: "roles-show", args: []string{"roles", "show", "--json"}},

@@ -57,6 +57,7 @@ func init() {
 }
 
 type idCreateOptions struct {
+	IdentityHome             *awconfig.IdentityHome
 	Name                     string
 	Domain                   string
 	RegistryURL              string
@@ -103,7 +104,13 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	identityHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+
 	out, err := executeIDCreate(workingDir, idCreateOptions{
+		IdentityHome:  &identityHome,
 		Name:          idCreateName,
 		Domain:        idCreateDomain,
 		RegistryURL:   idCreateRegistryURL,
@@ -170,17 +177,19 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	encryptionKeyID := ""
 	encryptionKeyPath := ""
 	identity := &awconfig.ResolvedIdentity{
-		WorkingDir:     workingDir,
-		IdentityPath:   plan.IdentityPath,
-		SigningKeyPath: plan.SigningKeyPath,
-		DID:            plan.DIDKey,
-		StableID:       plan.DIDAW,
-		Address:        plan.Address,
-		Custody:        awid.CustodySelf,
-		IdentityScope:  awid.IdentityModeGlobal,
-		RegistryURL:    plan.RegistryURL,
-		RegistryStatus: registryStatus,
-		CreatedAt:      plan.CreatedAt,
+		WorkingDir:           workingDir,
+		IdentityHome:         identityHomeRoot(opts.IdentityHome),
+		ExternalIdentityHome: opts.IdentityHome != nil && opts.IdentityHome.External(),
+		IdentityPath:         plan.IdentityPath,
+		SigningKeyPath:       plan.SigningKeyPath,
+		DID:                  plan.DIDKey,
+		StableID:             plan.DIDAW,
+		Address:              plan.Address,
+		Custody:              awid.CustodySelf,
+		IdentityScope:        awid.IdentityModeGlobal,
+		RegistryURL:          plan.RegistryURL,
+		RegistryStatus:       registryStatus,
+		CreatedAt:            plan.CreatedAt,
 	}
 	record, assertion, err := createLocalEncryptionKeyRecord(identity, prepared.IdentityKey, "")
 	if err != nil {
@@ -188,7 +197,11 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	}
 	state := &awconfig.EncryptionKeyState{ActiveKeyID: record.KeyID}
 	state.UpsertRecord(*record)
-	if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(workingDir), state); err != nil {
+	encryptionStatePath, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return idCreateOutput{}, err
+	}
+	if err := awconfig.SaveEncryptionKeyStateTo(encryptionStatePath, state); err != nil {
 		return idCreateOutput{}, err
 	}
 	if registryStatus == "registered" {
@@ -197,11 +210,14 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		} else {
 			record.PublishedAt = time.Now().UTC().Format(time.RFC3339)
 			state.UpsertRecord(*record)
-			_ = awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(workingDir), state)
+			_ = awconfig.SaveEncryptionKeyStateTo(encryptionStatePath, state)
 		}
 	}
 	encryptionKeyID = record.KeyID
-	encryptionKeyPath = resolveWorktreeRelativePath(workingDir, record.PrivateKeyPath)
+	encryptionKeyPath, err = resolveIdentityStoredPath(workingDir, identity.IdentityHome, record.PrivateKeyPath)
+	if err != nil {
+		return idCreateOutput{}, err
+	}
 
 	return idCreateOutput{
 		Status:            "created",
@@ -232,6 +248,20 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	workspacePath := awconfig.WorktreeWorkspacePath(workingDir)
+	if opts.IdentityHome != nil {
+		identityPath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "identity.yaml")
+		if err != nil {
+			return nil, err
+		}
+		signingKeyPath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "signing.key")
+		if err != nil {
+			return nil, err
+		}
+		workspacePath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "workspace.yaml")
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
 		return nil, err
 	}
@@ -291,6 +321,13 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		IdentityKey:   identityKey,
 		ControllerKey: controllerKey,
 	}, nil
+}
+
+func identityHomeRoot(home *awconfig.IdentityHome) string {
+	if home == nil {
+		return ""
+	}
+	return home.Root
 }
 
 func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (string, error) {

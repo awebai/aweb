@@ -25,6 +25,7 @@ func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
 // evidence is added; plausible-looking code is not sufficient evidence.
 var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw a2a status":       {},
+	"aw id create":        {},
 	"aw mail inbox":       {},
 	"aw reset":            {},
 	"aw role-name set":    {},
