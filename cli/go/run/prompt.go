@@ -47,7 +47,7 @@ func ComposeStatusLine(identity string, transient string) string {
 	return identity + " · " + transient
 }
 
-func formatRunStatus(st *state) string {
+func formatRunStatus(st *state, conn ConnectionState) string {
 	if st == nil || st.RunPhase != RunPhaseWorking {
 		return ""
 	}
@@ -64,7 +64,7 @@ func formatRunStatus(st *state) string {
 	if strings.TrimSpace(st.NextPrompt) != "" {
 		parts = append(parts, "queued")
 	}
-	switch st.ConnState {
+	switch conn {
 	case ConnStreaming:
 		parts = append(parts, "aweb events connected")
 	case ConnReconnecting:
@@ -73,7 +73,7 @@ func formatRunStatus(st *state) string {
 	return strings.Join(parts, " · ")
 }
 
-func formatWaitStatus(label string, st *state) string {
+func formatWaitStatus(label string, st *state, conn ConnectionState) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return ""
@@ -89,7 +89,7 @@ func formatWaitStatus(label string, st *state) string {
 		parts = append(parts, "autofeed")
 	}
 	if st != nil {
-		switch st.ConnState {
+		switch conn {
 		case ConnStreaming:
 			parts = append(parts, "aweb events connected")
 		case ConnReconnecting:

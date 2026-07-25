@@ -749,15 +749,15 @@ func TestLoopBasePromptDoesNotAutoRerunWithoutWake(t *testing.T) {
 
 func TestFormatRunStatusOmitsRunLabel(t *testing.T) {
 	st := &state{RunPhase: RunPhaseWaitingForWork}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnDisconnected)
 	if got != "" {
 		t.Fatalf("expected empty status with only run label, got %q", got)
 	}
 }
 
 func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
-	st := &state{Autofeed: true, ConnState: ConnReconnecting}
-	got := formatWaitStatus("waiting for prompt", st)
+	st := &state{Autofeed: true}
+	got := formatWaitStatus("waiting for prompt", st, ConnReconnecting)
 	want := "waiting for prompt · autofeed · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
@@ -766,7 +766,7 @@ func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 
 func TestFormatWaitStatusShowsClaimedTaskRef(t *testing.T) {
 	st := &state{ClaimedTaskRef: "aweb-aaag"}
-	got := formatWaitStatus("waiting for prompt", st)
+	got := formatWaitStatus("waiting for prompt", st, ConnDisconnected)
 	want := "waiting for prompt · task aweb-aaag"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
@@ -778,9 +778,8 @@ func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 		RunPhase:          RunPhaseWorking,
 		CumulativeCostUSD: 0.05,
 		Autofeed:          true,
-		ConnState:         ConnStreaming,
 	}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnStreaming)
 	want := "$0.05 · autofeed · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
@@ -791,9 +790,8 @@ func TestFormatRunStatusShowsClaimedTaskRef(t *testing.T) {
 	st := &state{
 		RunPhase:       RunPhaseWorking,
 		ClaimedTaskRef: "aweb-aaag",
-		ConnState:      ConnStreaming,
 	}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnStreaming)
 	want := "task aweb-aaag · aweb events connected"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
@@ -804,9 +802,8 @@ func TestFormatRunStatusShowsReconnecting(t *testing.T) {
 	st := &state{
 		RunPhase:          RunPhaseWorking,
 		CumulativeCostUSD: 0.05,
-		ConnState:         ConnReconnecting,
 	}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnReconnecting)
 	want := "$0.05 · aweb events down; retrying"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
@@ -818,7 +815,7 @@ func TestFormatRunStatusShowsQueuedWhenPromptPending(t *testing.T) {
 		RunPhase:   RunPhaseWorking,
 		NextPrompt: "fix the bug",
 	}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnDisconnected)
 	if got != "queued" {
 		t.Fatalf("expected 'queued', got %q", got)
 	}
@@ -826,7 +823,7 @@ func TestFormatRunStatusShowsQueuedWhenPromptPending(t *testing.T) {
 
 func TestFormatRunStatusOmitsQueuedWhenNoPromptPending(t *testing.T) {
 	st := &state{RunPhase: RunPhaseWorking}
-	got := formatRunStatus(st)
+	got := formatRunStatus(st, ConnDisconnected)
 	if strings.Contains(got, "queued") {
 		t.Fatalf("expected no 'queued' indicator without pending prompt, got %q", got)
 	}
