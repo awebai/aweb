@@ -43,6 +43,9 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := requireIdentityHomeAwareCommand(cmd, home.External()); err != nil {
+			return err
+		}
 		loadDotenvBestEffort()
 		if home.External() {
 			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
