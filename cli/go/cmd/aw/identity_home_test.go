@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +22,89 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestExternalIdentityHomeWhoamiCannotRegisterInstanceWorkspace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	principalParent := filepath.Join(root, "principal")
+	if err := os.MkdirAll(principalParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	type observedRequest struct {
+		Method string
+		URL    string
+		Body   string
+	}
+	var requestMu sync.Mutex
+	var requests []observedRequest
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			http.Error(w, readErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		requestMu.Lock()
+		requests = append(requests, observedRequest{Method: r.Method, URL: r.URL.RequestURI(), Body: string(body)})
+		requestMu.Unlock()
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agents/me/inbound-mode" {
+			http.Error(w, "unexpected request", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(awid.AgentInboundModeResponse{
+			AgentID: "agent-attached", TeamID: "backend:aweb.ai", Alias: "attached",
+			IdentityScope: awid.IdentityModeGlobal, InboundMode: "open", Configurable: true,
+		})
+	}))
+
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, principalParent, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
+		WorkspaceID: "workspace-attached", DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub),
+		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent, SigningKey: key,
+	})
+	identityHome := filepath.Join(principalParent, ".aw")
+	instanceHome := filepath.Join(root, "disposable-instance")
+	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "whoami", "--json")
+	cmd.Dir = instanceHome
+	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")), "AWEB_IDENTITY_HOME=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("attached whoami failed: %v\n%s", err, out)
+	}
+	requestMu.Lock()
+	gotRequests := append([]observedRequest(nil), requests...)
+	requestMu.Unlock()
+	wantRequests := []observedRequest{{Method: http.MethodGet, URL: "/v1/agents/me/inbound-mode"}}
+	if !reflect.DeepEqual(gotRequests, wantRequests) {
+		t.Fatalf("attached whoami sent a request capable of registering its instance path: got %#v want %#v", gotRequests, wantRequests)
+	}
+	requestWire, err := json.Marshal(gotRequests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(requestWire), instanceHome) {
+		t.Fatalf("attached whoami disclosed its disposable instance path to the server: %s", requestWire)
+	}
+	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("attached whoami created instance identity state: %v", err)
+	}
+}
 
 func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMaterial(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
