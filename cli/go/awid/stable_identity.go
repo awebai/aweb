@@ -19,6 +19,11 @@ const (
 	StableIdentityHardError  StableIdentityOutcome = "HARD_ERROR"
 )
 
+// maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER. It bounds values that
+// cross the Go/TypeScript boundary, where a larger integer cannot be represented
+// exactly on the TypeScript side.
+const maxSafeInteger = 1<<53 - 1
+
 type DidKeyEvidence struct {
 	Seq            int     `json:"seq"`
 	Operation      string  `json:"operation"`
@@ -77,6 +82,15 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 	}
 	if head.Seq < 1 {
 		return StableIdentityHardError, nil, fmt.Errorf("log_head seq must be >= 1")
+	}
+	// Beyond 2^53 JavaScript cannot distinguish adjacent integers, so the
+	// TypeScript verifier refuses these outright (default-aamg) and Go has to
+	// agree or the two runtimes disagree about the same log. Nothing legitimate
+	// reaches this: no DID log has 2^53 entries. Checked here rather than at each
+	// caller because VerifyDidLogEntries verifies every entry through this
+	// function, so this is the single point every seq passes (default-aamh).
+	if head.Seq > maxSafeInteger {
+		return StableIdentityHardError, nil, fmt.Errorf("log_head seq %d is outside the safe integer range (max %d)", head.Seq, maxSafeInteger)
 	}
 	if head.Seq == 1 {
 		if head.Operation != "create" && head.Operation != "register_did" {
