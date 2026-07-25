@@ -149,23 +149,35 @@ break on every rotation and train people to ignore mismatches. The `did:aw`
 survives rotation, while an address re-minted after a delete receives a *new*
 `did:aw` — so pinning the stable id detects re-mint and tolerates rotation.
 
-### What the pin does and does not buy
+### What the pin affords, and what v1 attach actually checks
 
-Guaranteed:
-- detection of alias delete-and-re-mint, and of a wrong stable identity;
-- resolution of legitimate key rotation without editing the declaration.
+The pin makes stronger checks *possible*; it does not perform them. What it
+buys depends entirely on **what the declared `did:aw` is compared against.**
 
-**Not** guaranteed: detection of a compromised registry returning an
-attacker-controlled current `did:key` for the same `did:aw`. That holds only if
-resolution cryptographically verifies rotation history. `aw id verify <did_aw>`
-verifies the full audit log and a DID-log verifier exists in both Go and TS
-backed by shared signed vectors, so the primitive is probably present — but
-whether the *attach-time path* invokes it, rather than calling `aw id resolve`
-and trusting the answer, is an open test. Verifier parity is not runtime parity:
-this codebase has previously shipped a byte-identical verifier sitting behind a
-resolver that did not walk the log.
+**Compared against a registry resolution of the address**, the pin detects
+delete-and-re-mint — a re-minted address receives a *new* `did:aw`, so the
+resolved stable id stops matching the declaration — and it tolerates legitimate
+key rotation, since `did:aw` survives rotation.
 
-Do not compensate for this by pinning the rotatable `did:key`.
+**Compared against local credentials**, which is what v1 attach does via
+`aw --identity-home <credentials> whoami`, it establishes only that the
+credentials at that path agree with the declaration. It **cannot** detect
+delete-and-re-mint: stale local credentials still carry the old `did:aw` and
+still match a stale declaration, because nothing has resolved the address.
+
+So v1 attach performs no registry resolution, walks no DID log, and invokes no
+`aw id verify`. It is not a weaker form of registry verification — it is a
+different check, and it must not be described as identity verification.
+
+The stronger properties require resolving the address at attach time and
+comparing the returned stable id; resisting a *compromised* registry requires
+verifying rotation history rather than trusting the response. `aw id verify`
+exists and a DID-log verifier exists in both Go and TS backed by shared signed
+vectors, but verifier parity is not runtime parity: this codebase has shipped a
+byte-identical verifier behind a resolver that did not walk the log. Adding
+either is a deliberate decision with its own cost, not an assumed default.
+
+Do not compensate for any of this by pinning the rotatable `did:key`.
 
 ## Identity binding
 
