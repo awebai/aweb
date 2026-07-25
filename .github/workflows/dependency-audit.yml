@@ -13,6 +13,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The advisory database changes independently of this repository, so a
+  # push/PR-only trigger would leave a newly published advisory against an
+  # UNCHANGED dependency unnoticed until somebody happened to push. That defeats
+  # the stated purpose of this workflow — it exists precisely to turn red without
+  # a change here.
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
 
 jobs:
   node-audit:

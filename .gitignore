@@ -54,3 +54,6 @@ pi-extension/skills/
 /cli/agents/instances/oas-coordinator/
 /cli/agents/instances/oas-developer/
 /cli/agents/instances/oas-reviewer/
+/agents/instances/oas-seam-dev/
+/agents/instances/oas-seam-rev/
+/cli/agents/instances/aw-sec-dev-2/

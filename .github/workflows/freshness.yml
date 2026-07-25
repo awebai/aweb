@@ -79,3 +79,39 @@ jobs:
       - name: pi-extension suite
         working-directory: pi-extension
         run: npm test
+
+  # The Go unit suites were not executed by ANY workflow: CI ran only
+  # `go test -tags e2e ./e2e` via cli-e2e. So every Go-side security test in the
+  # aajc epic — forged-rotation refusal, address-takeover refusal, the
+  # anti-rollback checkpoint, the read bounds — was ungated, while the
+  # TypeScript mirrors of the same checks were gated by the job above
+  # (default-aajc.15).
+  go-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - name: Go unit suites
+        working-directory: cli/go
+        run: go test ./... -count=1
+
+  # Separate job because the race detector is the instrument that validates the
+  # concurrency classes this audit found, and it must be able to fail on its own
+  # rather than being masked by an unrelated failure in the plain run. Scoped to
+  # the packages that hold concurrent code; no blanket exclusions within them.
+  go-race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - name: Race detector
+        working-directory: cli/go
+        run: go test -race ./awid/ ./run/ ./cmd/aw/ ./internal/conformance/ -count=1
