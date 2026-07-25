@@ -146,3 +146,57 @@ func TestAdvancedCheckpointThatPersistsIsVerified(t *testing.T) {
 		t.Errorf("checkpoint was reported verified but is not on disk: %+v", got)
 	}
 }
+
+// Reviewer finding (aajc.9a): the first-contact downgrade is not enough on its
+// own. After a failed commit the mutated pin is still in memory, so the SECOND
+// message from the same sender takes the PinOK path — which treats the pin as
+// already durable — and is reported verified while the store does not exist at
+// all. The downgrade must persist until the state is actually committed.
+func TestSenderStaysUnverifiedWhileTheStoreCannotBeCommitted(t *testing.T) {
+	path := unwritablePinPath(t)
+	c, _ := newPinClient(t, path)
+
+	const addr = "alice@example.com"
+	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+
+	first := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
+	if first == Verified {
+		t.Fatal("first contact with a failed commit must not be verified")
+	}
+
+	second := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
+	if second == Verified || second == VerifiedCustodial {
+		t.Fatalf("second=%q: the pin is still not on disk, so it is not continuity", second)
+	}
+
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("fixture is wrong: the store must not exist")
+	}
+}
+
+// ...and once the store can be written again, the sender recovers to verified
+// without needing a restart.
+func TestSenderRecoversOnceTheStoreCanBeCommitted(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := newPinClient(t, filepath.Join(blocked, "known_agents.yaml"))
+
+	const addr = "alice@example.com"
+	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+
+	if status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil); status == Verified {
+		t.Fatal("precondition: the first commit must fail")
+	}
+
+	// Clear the obstruction; the same client must be able to commit now.
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
+	if status != Verified {
+		t.Fatalf("status=%q: once the store commits, the sender must verify again", status)
+	}
+}

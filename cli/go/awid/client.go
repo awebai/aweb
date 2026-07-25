@@ -537,9 +537,13 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	// An advanced anti-rollback checkpoint that is not durable would let the next
 	// process accept a log head we have already moved past (default-aajc.8), so a
 	// failure to commit it must not be reported as verified.
-	if err := c.persistVerifiedHeadCheckpoint(fromStableID, verifiedHead); err != nil &&
-		(status == Verified || status == VerifiedCustodial) {
-		status = VerificationStale
+	if err := c.persistVerifiedHeadCheckpoint(fromStableID, verifiedHead); err != nil {
+		if c.pinStore != nil {
+			c.pinStore.undurable.Store(true)
+		}
+		if status == Verified || status == VerifiedCustodial {
+			status = VerificationStale
+		}
 	}
 	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
@@ -733,9 +737,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 			c.pinStore.Pins[pinKey].StableID = fromStableID
 			c.pinStore.Pins[pinKey].DIDKey = fromDID
 		}
-		// The pin already matched and is already durable; this only refreshes
-		// last_seen, so a failure is an availability problem, not a continuity one.
-		_ = c.savePinStore()
+		status = c.commitRefresh(status)
 	case PinMismatch:
 		pinnedKey := c.pinStore.Addresses[trustAddress]
 		// A verified DID log proves did:aw -> did:key. It proves NOTHING about
@@ -855,8 +857,31 @@ func (c *Client) savePinStore() error {
 // downgraded, so a full disk cannot make every already-pinned sender unverifiable.
 func (c *Client) commitContinuity(status VerificationStatus) VerificationStatus {
 	if err := c.savePinStore(); err != nil {
+		c.pinStore.undurable.Store(true)
 		return VerificationStale
 	}
+	c.pinStore.undurable.Store(false)
+	return status
+}
+
+// commitRefresh persists a change that is NOT itself a continuity claim — a
+// last_seen touch on a pin that already matched. Normally a failure here is an
+// availability problem and the status stands, because the durable pin is
+// unchanged.
+//
+// It stops standing once a continuity commit has already failed. The mutated pin
+// is still in memory, so the next message from that sender takes this path and
+// would be reported verified against a record that is not on disk at all. While
+// the store is undurable we retry and keep the sender unverified until it lands.
+func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
+	if !c.pinStore.undurable.Load() {
+		_ = c.savePinStore()
+		return status
+	}
+	if err := c.savePinStore(); err != nil {
+		return VerificationStale
+	}
+	c.pinStore.undurable.Store(false)
 	return status
 }
 

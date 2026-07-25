@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -49,15 +51,30 @@ type Pin struct {
 	FirstSeen    string `yaml:"first_seen"`
 	LastSeen     string `yaml:"last_seen"`
 	Server       string `yaml:"server"`
+
+	// unknown holds fields written by a client that knows more than this one.
+	// They are kept verbatim and re-emitted on Save. Dropping them would let an
+	// older binary silently delete a newer one's state — for something like an
+	// anti-rollback anchor that is the aajc.8 failure with no error anywhere.
+	unknown map[string]*yaml.Node
 }
 
 // PinStore manages TOFU identity pins for known agents.
 // Pins are keyed by did:key or stable_id (did:aw). The Addresses map is a
 // reverse index from address to pin key for the identity-mismatch check.
 type PinStore struct {
-	mu        sync.Mutex        `yaml:"-"`
+	mu sync.Mutex `yaml:"-"`
+	// undurable records that a continuity change (a new or rotated pin, or an
+	// advanced anti-rollback checkpoint) is held in memory but is NOT on disk.
+	// While it is set, the in-memory store is ahead of the file, so a pin that
+	// looks established here may not exist for the next process. Atomic because
+	// the trust paths hold mu across their save and the checkpoint path does not.
+	undurable atomic.Bool       `yaml:"-"`
 	Pins      map[string]*Pin   `yaml:"pins"`
 	Addresses map[string]string `yaml:"addresses"`
+
+	// unknown preserves root-level fields from a newer client; see Pin.unknown.
+	unknown map[string]*yaml.Node
 }
 
 // NewPinStore returns an empty pin store.
@@ -107,13 +124,14 @@ func LoadPinStore(path string) (*PinStore, error) {
 	return ps, nil
 }
 
-// parsePinStore decodes and validates the on-disk document. yaml.v3 already
-// rejects duplicate mapping keys, matching js-yaml on the Node side.
+// parsePinStore decodes and validates the on-disk document. Validation happens
+// on raw YAML nodes rather than through struct decoding, because yaml.v3 coerces
+// scalars (address: 123 would silently become "123") and honours custom tags,
+// neither of which channel-core's JSON_SCHEMA loader accepts.
 func parsePinStore(data []byte) (*PinStore, error) {
-	// Decode into a generic document first: yaml.Unmarshal reports no error for
-	// an empty input, which would hand back an empty trust store.
-	var root map[string]yaml.Node
 	dec := yaml.NewDecoder(bytes.NewReader(data))
+
+	var root yaml.Node
 	if err := dec.Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
 			// A present file that yields no document is truncation or
@@ -121,98 +139,209 @@ func parsePinStore(data []byte) (*PinStore, error) {
 			// intentionally empty store is written as "pins: {}".
 			return nil, errors.New("store is empty or has no document (truncated?)")
 		}
-		var typeErr *yaml.TypeError
-		if errors.As(err, &typeErr) {
-			return nil, errors.New("root must be a mapping")
-		}
 		return nil, err
 	}
-	if root == nil {
+
+	// Exactly one document. Otherwise a file whose first document is an empty
+	// store and whose second holds the real pins would load as no pins at all,
+	// and js-yaml refuses multi-document input outright.
+	var trailing yaml.Node
+	if err := dec.Decode(&trailing); err == nil {
+		return nil, errors.New("store must be a single document")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	doc := &root
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) != 1 {
+			return nil, errors.New("store is empty or has no document (truncated?)")
+		}
+		doc = doc.Content[0]
+	}
+	if doc.Kind == 0 || doc.Tag == "!!null" {
 		return nil, errors.New("store is empty or has no document (truncated?)")
+	}
+	if err := requireMapping(doc, "store root"); err != nil {
+		return nil, err
 	}
 
 	ps := NewPinStore()
-
-	if node, ok := root["pins"]; ok && present(&node) {
-		if node.Kind != yaml.MappingNode {
-			return nil, errors.New("'pins' must be a mapping")
+	var pinsNode, addressesNode *yaml.Node
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		key, value := doc.Content[i], doc.Content[i+1]
+		switch key.Value {
+		case "pins":
+			pinsNode = value
+		case "addresses":
+			addressesNode = value
+		case mergeKey:
+			// A merge key would let one mapping pull in another's fields, which
+			// is both a schema hole and the shape behind the js-yaml merge-key
+			// advisories. It is not part of this format.
+			return nil, errors.New("store must not use YAML merge keys")
+		default:
+			// Kept verbatim and re-emitted on Save, so a newer client's state
+			// survives a round trip through this binary rather than being
+			// silently deleted.
+			if ps.unknown == nil {
+				ps.unknown = map[string]*yaml.Node{}
+			}
+			if _, dup := ps.unknown[key.Value]; dup {
+				return nil, fmt.Errorf("duplicate field %q", key.Value)
+			}
+			ps.unknown[key.Value] = value
 		}
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			key, value := node.Content[i], node.Content[i+1]
+	}
+
+	if pinsNode != nil && present(pinsNode) {
+		if err := requireMapping(pinsNode, "'pins'"); err != nil {
+			return nil, err
+		}
+		for i := 0; i+1 < len(pinsNode.Content); i += 2 {
+			key, value := pinsNode.Content[i], pinsNode.Content[i+1]
 			if key.Value == "" {
 				return nil, errors.New("store has an empty pin key")
 			}
 			if _, dup := ps.Pins[key.Value]; dup {
 				return nil, fmt.Errorf("duplicate pin key %q", key.Value)
 			}
-			if value.Kind != yaml.MappingNode {
-				return nil, fmt.Errorf("pin %q must be a mapping", key.Value)
+			pin, err := parsePin(key.Value, value)
+			if err != nil {
+				return nil, err
 			}
-			// log_seq is the anti-rollback checkpoint. Check it on the raw node:
-			// decoded into an int, an explicit 0 is indistinguishable from an
-			// absent field, so a rolled-back checkpoint would pass silently.
-			if seq := field(value, "log_seq"); seq != nil {
-				var n int
-				if seq.Tag != "!!int" || seq.Decode(&n) != nil || n < 1 {
-					return nil, fmt.Errorf("pin %q field 'log_seq' must be a positive integer", key.Value)
-				}
-			}
-			var pin Pin
-			if err := value.Decode(&pin); err != nil {
-				return nil, fmt.Errorf("pin %q is malformed: %w", key.Value, err)
-			}
-			if pin.Address == "" {
-				return nil, fmt.Errorf("pin %q field 'address' must be a non-empty string", key.Value)
-			}
-			if pin.FirstSeen == "" {
-				return nil, fmt.Errorf("pin %q field 'first_seen' must be a non-empty string", key.Value)
-			}
-			if pin.LastSeen == "" {
-				return nil, fmt.Errorf("pin %q field 'last_seen' must be a non-empty string", key.Value)
-			}
-			ps.Pins[key.Value] = &pin
+			ps.Pins[key.Value] = pin
 		}
 	}
 
-	if node, ok := root["addresses"]; ok && present(&node) {
-		if node.Kind != yaml.MappingNode {
-			return nil, errors.New("'addresses' must be a mapping")
+	if addressesNode != nil && present(addressesNode) {
+		if err := requireMapping(addressesNode, "'addresses'"); err != nil {
+			return nil, err
 		}
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			key, value := node.Content[i], node.Content[i+1]
+		for i := 0; i+1 < len(addressesNode.Content); i += 2 {
+			key, value := addressesNode.Content[i], addressesNode.Content[i+1]
 			if key.Value == "" {
 				return nil, errors.New("store has an empty address key")
 			}
 			if _, dup := ps.Addresses[key.Value]; dup {
 				return nil, fmt.Errorf("duplicate address key %q", key.Value)
 			}
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" || value.Value == "" {
+			pinKey, err := requireString(value, fmt.Sprintf("address %q", key.Value))
+			if err != nil {
+				return nil, err
+			}
+			if pinKey == "" {
 				return nil, fmt.Errorf("address %q must reference a non-empty pin key", key.Value)
 			}
-			ps.Addresses[key.Value] = value.Value
+			ps.Addresses[key.Value] = pinKey
 		}
 	}
 
-	// Every address must resolve to a known pin, or the reverse index is corrupt
-	// and identity-mismatch checks silently misfire against a pin that is not there.
+	// The forward and reverse indexes must agree in BOTH directions. Checking
+	// only that a reverse entry resolves to some pin leaves a pin whose address
+	// has no reverse entry, and CheckPin then reports "new" for an address we
+	// actually hold a pin for — first-contact TOFU against a known identity.
 	for address, pinKey := range ps.Addresses {
-		if _, ok := ps.Pins[pinKey]; !ok {
+		pin, ok := ps.Pins[pinKey]
+		if !ok {
 			return nil, fmt.Errorf("address %q references unknown pin", address)
 		}
-	}
-
-	// One address, one owner. Two pins claiming the same address is an
-	// unresolved identity conflict, and picking either one would be choosing a
-	// trust anchor by map-iteration order.
-	owner := make(map[string]string, len(ps.Pins))
-	for pinKey, pin := range ps.Pins {
-		if previous, taken := owner[pin.Address]; taken {
-			return nil, fmt.Errorf("address %q is claimed by two pins (%q and %q)", pin.Address, previous, pinKey)
+		if pin.Address != address {
+			return nil, fmt.Errorf("reverse index for %q points at a pin whose address is %q", address, pin.Address)
 		}
-		owner[pin.Address] = pinKey
+	}
+	for pinKey, pin := range ps.Pins {
+		mapped, ok := ps.Addresses[pin.Address]
+		if !ok {
+			return nil, fmt.Errorf("pin %q claims address %q with no reverse index entry", pinKey, pin.Address)
+		}
+		if mapped != pinKey {
+			return nil, fmt.Errorf("pin %q claims address %q, but the reverse index points at %q", pinKey, pin.Address, mapped)
+		}
 	}
 
 	return ps, nil
+}
+
+// mergeKey is YAML's merge indicator.
+const mergeKey = "<<"
+
+// pinFields are the fields a pin may carry. Anything else is preserved
+// verbatim; see Pin.unknown.
+var pinFields = map[string]bool{
+	"address": true, "handle": true, "stable_id": true, "did_key": true,
+	"log_seq": true, "log_entry_hash": true,
+	"first_seen": true, "last_seen": true, "server": true,
+}
+
+func parsePin(key string, node *yaml.Node) (*Pin, error) {
+	if err := requireMapping(node, fmt.Sprintf("pin %q", key)); err != nil {
+		return nil, err
+	}
+	pin := &Pin{}
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		name, value := node.Content[i].Value, node.Content[i+1]
+		if name == mergeKey {
+			return nil, fmt.Errorf("pin %q must not use YAML merge keys", key)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("pin %q has duplicate field %q", key, name)
+		}
+		seen[name] = true
+		if !pinFields[name] {
+			if pin.unknown == nil {
+				pin.unknown = map[string]*yaml.Node{}
+			}
+			pin.unknown[name] = value
+			continue
+		}
+
+		where := fmt.Sprintf("pin %q field %q", key, name)
+		if name == "log_seq" {
+			// The anti-rollback checkpoint. Checked on the raw node because an
+			// explicit 0 is indistinguishable from an absent field once decoded,
+			// so a rolled-back checkpoint would pass silently.
+			var n int
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" || value.Decode(&n) != nil || n < 1 {
+				return nil, fmt.Errorf("pin %q field 'log_seq' must be a positive integer", key)
+			}
+			pin.LogSeq = n
+			continue
+		}
+		text, err := requireString(value, where)
+		if err != nil {
+			return nil, err
+		}
+		switch name {
+		case "address":
+			pin.Address = text
+		case "handle":
+			pin.Handle = text
+		case "stable_id":
+			pin.StableID = text
+		case "did_key":
+			pin.DIDKey = text
+		case "log_entry_hash":
+			pin.LogEntryHash = text
+		case "first_seen":
+			pin.FirstSeen = text
+		case "last_seen":
+			pin.LastSeen = text
+		case "server":
+			pin.Server = text
+		}
+	}
+	if pin.Address == "" {
+		return nil, fmt.Errorf("pin %q field 'address' must be a non-empty string", key)
+	}
+	if pin.FirstSeen == "" {
+		return nil, fmt.Errorf("pin %q field 'first_seen' must be a non-empty string", key)
+	}
+	if pin.LastSeen == "" {
+		return nil, fmt.Errorf("pin %q field 'last_seen' must be a non-empty string", key)
+	}
+	return pin, nil
 }
 
 // present reports whether a mapping entry carries an actual value; an absent or
@@ -221,14 +350,65 @@ func present(n *yaml.Node) bool {
 	return n.Kind != 0 && n.Tag != "!!null"
 }
 
-// field returns the value node for a key in a mapping node, or nil if absent.
-func field(mapping *yaml.Node, name string) *yaml.Node {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == name {
-			return mapping.Content[i+1]
-		}
+func requireMapping(n *yaml.Node, what string) error {
+	// The tag check refuses a custom-tagged mapping, which yaml.v3 would
+	// otherwise construct happily and js-yaml's JSON_SCHEMA would reject.
+	if n.Kind != yaml.MappingNode || n.Tag != "!!map" {
+		return fmt.Errorf("%s must be a mapping", what)
 	}
 	return nil
+}
+
+// requireString refuses type coercion and custom tags. !!timestamp is allowed
+// because YAML resolves an unquoted RFC3339 first_seen/last_seen to it, and
+// those are the values we ourselves write.
+func requireString(n *yaml.Node, what string) (string, error) {
+	if n.Kind != yaml.ScalarNode || (n.Tag != "!!str" && n.Tag != "!!timestamp") {
+		return "", fmt.Errorf("%s must be a string", what)
+	}
+	return n.Value, nil
+}
+
+// MarshalYAML re-emits the known schema plus any fields this binary did not
+// recognise, so a round trip through an older client preserves a newer one's state.
+func (p *Pin) MarshalYAML() (interface{}, error) {
+	type known Pin // avoid recursing into this method
+	var node yaml.Node
+	if err := node.Encode(known(*p)); err != nil {
+		return nil, err
+	}
+	return appendUnknown(&node, p.unknown), nil
+}
+
+func (ps *PinStore) MarshalYAML() (interface{}, error) {
+	// Built field by field rather than via a struct alias, because PinStore
+	// carries a mutex that must not be copied.
+	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, field := range []struct {
+		name  string
+		value interface{}
+	}{{"pins", ps.Pins}, {"addresses", ps.Addresses}} {
+		var v yaml.Node
+		if err := v.Encode(field.value); err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: field.name}, &v)
+	}
+	return appendUnknown(node, ps.unknown), nil
+}
+
+// appendUnknown re-attaches preserved fields in a stable order, so a round trip
+// does not churn the file.
+func appendUnknown(node *yaml.Node, unknown map[string]*yaml.Node) *yaml.Node {
+	names := make([]string, 0, len(unknown))
+	for name := range unknown {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}, unknown[name])
+	}
+	return node
 }
 
 // Save writes the pin store to disk atomically. Creates parent
