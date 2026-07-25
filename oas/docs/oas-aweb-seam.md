@@ -428,16 +428,20 @@ protocol question if a concrete **non-OAS** abuse case established one.
 Anything reasoning about grant strength must distinguish them:
 
 **Hosted (AC)** — verified in `ac/backend/src/aweb_cloud/services/spawn.py`:
-`max_uses` defaults to **1** and must be ≥ 1; expiry defaults to **24h**
-(`DEFAULT_EXPIRES_IN_SECONDS`), minimum 60s, maximum 30 days
-(`MAX_EXPIRES_IN_SECONDS`); revocation exists (`revoked_at`); and consumption is
-transactional under `FOR UPDATE` (`:413`), so the use counter is race-safe.
+`max_uses` defaults to **1** and must be ≥ 1 (`:200-205`); expiry defaults to
+**24h** (`DEFAULT_EXPIRES_IN_SECONDS`, `:20`), minimum 60s and maximum 30 days
+(`MAX_EXPIRES_IN_SECONDS`, `:21`, enforced at `:207-216`); revocation exists
+(`revoked_at`, selected at `:410`); and consumption reads the row under
+`FOR UPDATE` inside the transaction (`:408-414`), so the use counter is
+race-safe.
 
 **Local controller / BYOIDT** — verified in `cli/go/awconfig/team_invites.go`:
-the `TeamInvite` record has **no expiry field and no use counter** at all. It is
-single-use only by convention — the consumer deletes the local pending file
-(`cli/go/cmd/aw/id_team.go:1389`). There is no server-side enforcement of either
-property.
+the `TeamInvite` record (`:15-24`) has exactly `invite_id`, `domain`,
+`team_name`, `ephemeral`, `secret`, `registry_url`, `aweb_url`, `created_at` —
+**no expiry field and no use counter** at all. It is single-use only by
+convention: the consumer deletes the local pending file
+(`cli/go/cmd/aw/id_team.go:1389`), and that deletion's failure is a *warning*,
+not an error. There is no server-side enforcement of either property.
 
 So a policy that relies on max-uses or expiry holds on the hosted path and does
 **not** hold on the local path. Do not reason about "the invite" as one thing.
@@ -445,10 +449,12 @@ So a policy that relies on max-uses or expiry holds on the hosted path and does
 ### Alias policy
 
 Alias derivation and uniqueness are a **capability** concern. The server's
-UNIQUE `(team_id, alias)` index is a **backstop**, not the mechanism: it rejects
-a duplicate cleanly, so the failure is availability rather than collision, but
-it cannot make names unique *by construction*. Note also that the index is
-partial on `deleted_at IS NULL`, so a soft-deleted workspace frees its alias.
+UNIQUE `(team_id, alias)` index — `idx_workspaces_active_alias`,
+`server/src/aweb/migrations/aweb/001_initial.sql:335-337` — is a **backstop**,
+not the mechanism: it rejects a duplicate cleanly, so the failure is
+availability rather than collision, but it cannot make names unique *by
+construction*. Note also that the index is partial on `WHERE deleted_at IS NULL`
+(`:337`), so a soft-deleted workspace frees its alias.
 
 ### Acquisition stays separate from onboarding
 
@@ -463,8 +469,9 @@ is the extension. An earlier revision of this document led with the resident,
 which is the exception — we built it first, and that ordering is corrected here.
 
 1. **Prompt separator** (`aaaa.1`). Delimit the task prompt after
-   capability-contributed launch arguments. Done; open upstream as
-   OAS-Framework PR 37.
+   capability-contributed launch arguments. Written and merged in our source;
+   **not finished** — it is open upstream as OAS-Framework PR 37, and until that
+   merges the defect stands for every consumer but us.
 2. **Lifecycle policy in the capability** (`aaaa.4`). The three binding modes;
    created resource, lifecycle and cleanup owner recorded at binding time;
    retire deleting only identities that are both disposable and OAS-owned.
@@ -479,17 +486,26 @@ which is the exception — we built it first, and that ordering is corrected her
    no attachment, only verification.
 5. **Throwaway Pi attach proof** (`aaaa.30`) — positive wake, reply, ordinary
    retire.
-6. **Explicit per-instance capability settings** and required-hook fatal
-   outcome with rollback.
+6. **Explicit per-instance capability settings** (`aaaa.31`) and required-hook
+   fatal outcome with rollback (`aaaa.2`).
 7. **Migrate the first durable resident** (`aaaa.19`), and not before.
 
-Each step above is a board task, and the dependency edges are recorded there:
-`.28` waits on `.4`, `.30` waits on `.29`, and `.19` waits on `.30`. The order
-in this document and the order on the board are the same order, so a step
-cannot be picked up early by reading only one of them.
+This numbering is the **intended work order**, not a dependency chain, and the
+distinction matters: steps 3 and 4 are independent of each other and either
+could run first without breaking anything. What the board records is narrower —
+five edges between still-open tasks: `.5` waits on `.4`; `.28` waits on both
+`.4` and `.5`; `.30` waits on `.29`; `.19` waits on `.30`. (`.4` and `.19` also
+carry satisfied edges to closed work.) Nothing on the board orders `.29` after
+`.28`, because nothing needs to. Step 6 is two tasks, `.2` for required-hook fatality and
+`.31` for per-instance settings. Step 1 is merged in our source and **still open
+as `.1`**, because what remains is upstream acceptance of PR 37, and the defect
+is unfixed for every consumer but us until that lands.
 
-**What is already delivered:** non-destruction in full, with no upstream change
-required — see *Proofs*.
+**What is already delivered:** the two bounded safety results below — ordinary
+retire of an attached instance preserves the principal (`.17`), and the attach
+path cannot register the disposable instance path, so the gone-workspace route
+is unreachable by construction (`.24`). Both required no upstream change. This
+is *not* non-destruction in full: see *What is NOT yet proven*.
 
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
@@ -498,10 +514,17 @@ and not valid for durable production principals. Returning deliberately broken
 launch arguments so the command dies in the window was considered and rejected
 as a dishonest hack.
 
-**Deferred, deliberately:** provision journal and provisioning authority,
-admission lease, true fencing, session start/end/resume, and resident GC. Each
-is real work and none of it is on the path to a first working resident; several
-would harden a mechanism whose positive capability is still unproven.
+**No longer deferred**, because the reframe put the provisioned worker on the
+mainstream path: the write-ahead provision journal is part of step 2 (`.4`), and
+the declared minting authority is `.5`, which step 3 waits on. An earlier
+revision of this list deferred both, which was correct when attach was the
+primary case and is wrong now.
+
+**Deferred, deliberately:** the provision crash-recovery proof (`.18`) until the
+ordinary journey passes, admission lease, true fencing, session start/end/resume,
+and resident GC. Each is real work and none is on the path to a first working
+resident; several would harden a mechanism whose positive capability is still
+unproven.
 
 ## Proofs
 
@@ -546,12 +569,25 @@ include one.
 So the established results are bounded **safety** results, and are exactly two:
 
 - ordinary `oas retire` of an attached instance neither altered nor deleted the
-  principal, and leaked no material into the instance (`.17`, harness
-  `scripts/e2e-oas-attached-principal-retire.sh`, merged at `46b684ad`);
+  principal, and leaked no material into the instance (`.17`). The harness
+  `scripts/e2e-oas-attached-principal-retire.sh` runs a throwaway principal on a
+  fresh loopback stack (`:282-317`), spawns a real attached instance (`:355`),
+  and re-asserts the principal unchanged at four boundaries — after spawn
+  (`:378`), after direct use from the instance (`:395`), after ordinary retire
+  (`:399-415`), and after an independent workspace's gone-workspace sweep
+  (`:417-437`). Merged at `46b684ad`.
 - the attach path cannot register the disposable instance path, so the
-  gone-workspace destruction route is unreachable by construction (`.24`,
-  request-surface guard `cli/go/cmd/aw/identity_home_test.go`, merged at
-  `affe23ac` and extended to headers and body at `2aec5f3e`).
+  gone-workspace destruction route is unreachable by construction (`.24`). This
+  is a **three-part composition**, and citing only one part understates it: the
+  real OAS attach spawn-and-retire wiring regression
+  (`oas/test/attach-binding.test.mjs:173-228`); the exact-wire request-surface
+  guard, which asserts the attached path emits exactly one
+  `GET /v1/agents/me/inbound-mode` and observes method, URI, body, headers and
+  path disclosure (`cli/go/cmd/aw/identity_home_test.go:26-115`, especially the
+  assertions at `:68-71,102`); and the server handler behind that route, which
+  is `SELECT`-only (`server/src/aweb/routes/agents.py:541-582`). Merged at
+  `affe23ac`; `2aec5f3e` added **headers** to the already-observed
+  method/URI/body surface.
 
 Neither establishes the absence of *every* harm — not provision-mode paths, not
 future code, not a route nobody has tested. Do not restate these as "cannot harm
