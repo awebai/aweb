@@ -38,7 +38,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.5.2",
     "bs58": "^6.0.0",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.3.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"

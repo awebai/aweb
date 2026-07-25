@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,13 +21,61 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+// guarded holds a value shared between a test goroutine and its httptest handler
+// goroutine. Reading a captured variable a handler can write — or writing one a
+// handler can read — is a data race even when the accesses look ordered in the
+// test's source: nothing establishes a happens-before edge between the two
+// goroutines, so the detector treats them as concurrent (default-aajc.15).
+type guarded[T any] struct {
+	mu sync.Mutex
+	v  T
+}
+
+func (g *guarded[T]) set(v T) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.v = v
+}
+
+func (g *guarded[T]) get() T {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.v
+}
+
+// append is for handlers that accumulate observations across requests.
+func (g *guarded[T]) appendTo(add func(T) T) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.v = add(g.v)
+}
+
 func newLocalHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	return newLocalHTTPServerWithURL(t, func(string) http.Handler { return handler })
+}
+
+// newLocalHTTPServerWithURL builds the handler with the server's final URL
+// already known, so a handler that needs to serve its own URL never has to have
+// it assigned into its closure after the server starts.
+//
+// That late assignment is a data race even when no request has arrived yet: the
+// test goroutine writes the captured variable and the server goroutine reads it
+// with no happens-before edge between them, so the detector correctly treats
+// them as concurrent. Passing the URL in makes the value immutable before any
+// reader exists, which needs no synchronisation at all rather than needing it
+// done right (default-aajc.15).
+func newLocalHTTPServerWithURL(t *testing.T, build func(url string) http.Handler) *httptest.Server {
 	t.Helper()
 
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	// Matches how httptest derives Server.URL for a non-TLS server, so the
+	// handler sees exactly the URL callers will use.
+	url := "http://" + l.Addr().String()
+	handler := build(url)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// aw probes for aweb by calling GET /v1/agents/heartbeat on candidate bases.
 		// Return any non-404 to indicate "endpoint exists" without side effects.
@@ -42,6 +91,9 @@ func newLocalHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
 		Config:   &http.Server{Handler: wrapped},
 	}
 	srv.Start()
+	if srv.URL != url {
+		t.Fatalf("server URL %q does not match the URL handed to the handler %q", srv.URL, url)
+	}
 	t.Cleanup(srv.Close)
 	return srv
 }
