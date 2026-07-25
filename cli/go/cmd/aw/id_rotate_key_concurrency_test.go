@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -137,6 +138,95 @@ func TestConcurrentRotationsClaimOnlyOneState(t *testing.T) {
 
 	if invalidClaims != 0 {
 		t.Errorf("%d of %d attempts did not have exactly one process claim the rotation", invalidClaims, attempts)
+	}
+}
+
+func TestConcurrentRotationReloadsWinnerStateBeforeNextTransaction(t *testing.T) {
+	oldPublic, oldPrivate, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPublic)
+	stableID := awid.ComputeStableID(oldPublic)
+
+	arrived := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	fixture := newCLIRotationRegistryFixture(t, stableID, oldDID, func(f *cliRotationRegistryFixture, w http.ResponseWriter, _ map[string]any) {
+		if f.putCalls == 1 {
+			arrived <- struct{}{}
+			<-gate
+			f.currentDID = f.proposedDID
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "rotation rejected", http.StatusConflict)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	dir := filepath.Join(tmp, "wt")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
+
+	type runningCommand struct {
+		done   <-chan error
+		output *bytes.Buffer
+	}
+	start := func() runningCommand {
+		cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+		cmd.Env = testCommandEnv(dir)
+		cmd.Dir = dir
+		output := new(bytes.Buffer)
+		cmd.Stdout = output
+		cmd.Stderr = output
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		return runningCommand{done: done, output: output}
+	}
+	first, second := start(), start()
+
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		close(gate)
+		t.Fatal("neither rotation reached the registry")
+	}
+	time.Sleep(200 * time.Millisecond)
+	firstFinished := rotationCommandFinished(t, "first", first.done)
+	secondFinished := rotationCommandFinished(t, "second", second.done)
+	close(gate)
+
+	var firstErr, secondErr error
+	if !firstFinished {
+		firstErr = <-first.done
+	}
+	if !secondFinished {
+		secondErr = <-second.done
+	}
+	if (firstErr == nil) == (secondErr == nil) {
+		t.Fatalf("rotation errors=(%v, %v), want one applied rotation and one clean conflict\nfirst:\n%s\nsecond:\n%s", firstErr, secondErr, first.output, second.output)
+	}
+	_, putCalls := fixture.snapshot()
+	if putCalls != 2 {
+		t.Errorf("registry rotation calls=%d, want 2 after the waiter reloads the winner state", putCalls)
+	}
+
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil {
+		t.Fatal(err)
+	} else if pending != nil {
+		t.Errorf("pending state retained after serialized success and conflict: %+v", pending)
+	}
+	if keys := pendingRotationKeyCount(t, filepath.Join(rotationDir, "pending")); keys != 0 {
+		t.Errorf("pending replacement keys=%d, want 0 after serialized cleanup", keys)
 	}
 }
 
