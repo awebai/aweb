@@ -311,6 +311,9 @@ func decryptChatEvent(client *awid.Client, ev *Event) error {
 		return err
 	}
 	ev.Body = plain.Body
+	// Verified means the encrypted-envelope signature is valid, not that the
+	// signer owns the claimed address. The inbound caller must immediately pass
+	// this result through Client.NormalizeSenderTrust.
 	ev.VerificationStatus = awid.Verified
 	return nil
 }

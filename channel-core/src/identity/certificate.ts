@@ -32,5 +32,7 @@ export async function loadTeamCertificate(path: string): Promise<TeamCertificate
 }
 
 export function encodeTeamCertificateHeader(cert: TeamCertificate): string {
+  // This transport envelope deliberately uses padded standard base64. The Go
+  // header decoder must use StdEncoding so certificates emitted here round-trip.
   return Buffer.from(JSON.stringify(cert), "utf-8").toString("base64");
 }

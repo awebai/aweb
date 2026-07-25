@@ -266,8 +266,9 @@ func SignArbitraryPayload(key ed25519.PrivateKey, payload map[string]any, timest
 // Returns Unverified if DID or signature is missing (legacy message).
 // Returns Failed if the DID is malformed, the signature doesn't verify,
 // or SigningKeyID disagrees with FromDID.
-// Returns Verified if the signature is valid.
-// Does not check TOFU pins or custody — callers handle those.
+// Returns Verified if the signature is valid. Verified does not prove that
+// FromDID owns the claimed sender address; every inbound path must pass the
+// result through Client.NormalizeSenderTrust for that binding decision.
 func VerifyMessage(env *MessageEnvelope) (VerificationStatus, error) {
 	if env.FromDID == "" || env.Signature == "" {
 		return Unverified, nil
