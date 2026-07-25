@@ -56,6 +56,8 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 				"did_aw":          recipientStableID,
 				"current_did_key": recipientDID,
 			})
+		case "/v1/messages/conversations/conv-1":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
 			t.Fatalf("unexpected aweb request %s %s", r.Method, r.URL.Path)
 		}
