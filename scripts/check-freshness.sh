@@ -7,6 +7,8 @@
 #      drift from their source (uv locks, cli reference, resource packs,
 #      reserved app ids, the claude-channel and pi bundles).
 #   2. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
+#   3. Every lock/reference/dist check passes a clean fixture and rejects the
+#      stale artifact it claims to detect (test-freshness-negative-fixtures.sh).
 #
 # WHAT IT CANNOT CHECK, and therefore what still requires human review: whether
 # documentation PROSE is true. A path can resolve while the sentence around it
@@ -30,13 +32,13 @@ section() { printf '\n=== %s ===\n' "$1"; }
 
 # 1. Python locks: an AWID version bump (or any dependency change) that the
 #    editable server/awid lock records must be reflected in the committed lock.
+#    --check is deliberately non-mutating: a verification gate must not repair
+#    the evidence before reporting it, and a clean run must leave git clean.
 section "python locks (awid, server)"
-(cd awid && uv lock) && (cd server && uv lock)
-if git diff --quiet -- awid/uv.lock server/uv.lock; then
+if scripts/check-python-locks.sh; then
   echo "locks are up to date"
 else
   echo "FAIL: uv.lock drift — run 'cd awid && uv lock' and 'cd server && uv lock', then commit"
-  git --no-pager diff --stat -- awid/uv.lock server/uv.lock
   status=1
 fi
 
@@ -73,7 +75,19 @@ else
   status=1
 fi
 
-# 5. Documentation path references. Deleted code must not be described as live;
+# 5. Negative controls for every non-documentation check above. Each self-test
+#    first accepts the clean artifact, then seeds the exact stale artifact and
+#    requires a diagnostic failure. Both directions matter: an always-red gate
+#    is no more trustworthy than an always-green one.
+section "freshness negative fixtures (clean pass + stale fail)"
+if scripts/test-freshness-negative-fixtures.sh; then
+  echo "freshness checks pass clean fixtures and reject stale fixtures"
+else
+  echo "FAIL: a freshness check did not prove both its positive and negative direction"
+  status=1
+fi
+
+# 6. Documentation path references. Deleted code must not be described as live;
 #    default-aajc.6 removed the channel shadow modules while the architecture
 #    map still documented them as existing. The self-test proves this check can
 #    still FAIL, so it cannot decay into an always-green no-op.

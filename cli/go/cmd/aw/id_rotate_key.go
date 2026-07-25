@@ -26,12 +26,47 @@ func init() {
 }
 
 func runIDRotateKey(cmd *cobra.Command, args []string) error {
+	lockIdentity, err := resolveIdentity()
+	if err != nil {
+		return err
+	}
+	lockSigningKey, err := resolveIdentitySigningKey(lockIdentity)
+	if err != nil {
+		return err
+	}
+	if err := requirePersistentSelfCustodialIdentity(lockIdentity, lockSigningKey); err != nil {
+		return err
+	}
+	rotationDir, err := rotationStateDirForIdentity(lockIdentity)
+	if err != nil {
+		return err
+	}
+	lockPath := pendingRotationStatePath(rotationDir, lockIdentity.StableID) + ".lock"
+	if err := preflightRotationFile(lockPath); err != nil {
+		return err
+	}
+	transactionLock, err := awconfig.LockExclusive(lockPath)
+	if err != nil {
+		return fmt.Errorf("lock identity key rotation: %w", err)
+	}
+	defer func() { _ = transactionLock.Close() }()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// A preceding lock holder may have completed a rotation while this process
+	// waited. Reload both the identity and its signing key inside the transaction
+	// so a waiter cannot create recovery state from the retired key.
 	identity, err := resolveIdentity()
 	if err != nil {
 		return err
+	}
+	currentRotationDir, err := rotationStateDirForIdentity(identity)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(identity.StableID) != strings.TrimSpace(lockIdentity.StableID) || filepath.Clean(currentRotationDir) != filepath.Clean(rotationDir) {
+		return fmt.Errorf("active identity changed while waiting for the rotation lock; retry the rotation")
 	}
 	signingKey, err := resolveIdentitySigningKey(identity)
 	if err != nil {
@@ -49,10 +84,6 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rotationDir, err := rotationStateDirForIdentity(identity)
-	if err != nil {
-		return err
-	}
 	if pending, err := loadPendingRotationState(rotationDir, identity.StableID); err != nil {
 		return err
 	} else if pending != nil {

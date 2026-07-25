@@ -5,10 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_FILE="$ROOT/docs/cli-command-reference.md"
 TMP_BIN="$(mktemp "${TMPDIR:-/tmp}/aw-cli-ref.XXXXXX")"
 TMP_OUT="$(mktemp "${TMPDIR:-/tmp}/aw-cli-ref-doc.XXXXXX")"
+TMP_FIXTURE="$(mktemp "${TMPDIR:-/tmp}/aw-cli-ref-fixture.XXXXXX")"
 MODE="write"
 
 cleanup() {
-  rm -f "$TMP_BIN" "$TMP_OUT"
+  rm -f "$TMP_BIN" "$TMP_OUT" "$TMP_FIXTURE"
 }
 trap cleanup EXIT
 
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
     --output)
       OUT_FILE="$2"
       shift 2
+      ;;
+    --self-test)
+      MODE="self-test"
+      shift
       ;;
     *)
       echo "unknown argument: $1" >&2
@@ -199,13 +204,56 @@ text = "\n".join(lines).rstrip() + "\n"
 out_path.write_text(text)
 PY
 
-if [[ "$MODE" == "check" ]]; then
-  if ! diff -u "$OUT_FILE" "$TMP_OUT"; then
+check_reference() {
+  local candidate="$1"
+  if ! diff -u "$candidate" "$TMP_OUT"; then
     echo "cli command reference is out of date; run scripts/regenerate-cli-reference.sh" >&2
-    exit 1
+    return 1
   fi
   echo "cli command reference is up to date"
-else
-  mv "$TMP_OUT" "$OUT_FILE"
-  echo "wrote $OUT_FILE"
-fi
+}
+
+self_test() {
+  local duplicate_heading out status
+  cp "$OUT_FILE" "$TMP_FIXTURE"
+  if ! check_reference "$TMP_FIXTURE" >/dev/null; then
+    echo "SELF-TEST FAIL: the clean committed CLI reference did not pass" >&2
+    return 1
+  fi
+
+  duplicate_heading="$(grep -m1 '^## `[^`][^`]*`$' "$TMP_OUT")"
+  if [[ -z "$duplicate_heading" ]]; then
+    echo "SELF-TEST FAIL: generated CLI reference has no command heading to duplicate" >&2
+    return 1
+  fi
+  printf '\n%s\n' "$duplicate_heading" >> "$TMP_FIXTURE"
+
+  set +e
+  out="$(check_reference "$TMP_FIXTURE" 2>&1)"
+  status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    echo "SELF-TEST FAIL: a duplicated generated CLI heading was accepted" >&2
+    return 1
+  fi
+  if ! grep -Fq "$duplicate_heading" <<<"$out" ||
+     ! grep -Fq "cli command reference is out of date" <<<"$out"; then
+    printf 'SELF-TEST INCONCLUSIVE: duplicate fixture failed for the wrong reason:\n%s\n' "$out" >&2
+    return 1
+  fi
+
+  echo "self-test passed: a clean CLI reference passes and a duplicate fails"
+}
+
+case "$MODE" in
+  check)
+    check_reference "$OUT_FILE"
+    ;;
+  self-test)
+    self_test
+    ;;
+  write)
+    mv "$TMP_OUT" "$OUT_FILE"
+    echo "wrote $OUT_FILE"
+    ;;
+esac
