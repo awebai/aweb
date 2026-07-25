@@ -10,7 +10,17 @@ from httpx import MockTransport, Response
 
 import awid.registry as registry_module
 from awid.did import generate_keypair
-from awid.registry import MAX_REGISTRY_RESPONSE_BYTES, CachedRegistryClient, RegistryClient
+from awid.registry import (
+    MAX_REGISTRY_ERROR_BYTES,
+    MAX_REGISTRY_RESPONSE_BYTES,
+    CachedRegistryClient,
+    RegistryClient,
+)
+
+
+def test_registry_http_bound_values_are_pinned():
+    assert MAX_REGISTRY_RESPONSE_BYTES == 10 * 1024 * 1024
+    assert MAX_REGISTRY_ERROR_BYTES == 64 * 1024
 
 
 @pytest.mark.asyncio

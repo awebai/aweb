@@ -127,10 +127,10 @@ func TestDirectTrustRequestsDoNotFollowRedirects(t *testing.T) {
 	}
 }
 
-func TestDirectTrustRequestsRejectOversizeResponses(t *testing.T) {
-	_, teamKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
+func TestDirectTrustRequestsEnforcePinnedBoundAndStrictJSON(t *testing.T) {
+	const pinnedTrustResponseLimit = 10 * 1024 * 1024
+	if awid.MaxResponseSize != pinnedTrustResponseLimit {
+		t.Fatalf("MaxResponseSize=%d, security policy requires %d", awid.MaxResponseSize, pinnedTrustResponseLimit)
 	}
 	tests := []struct {
 		name           string
@@ -155,25 +155,43 @@ func TestDirectTrustRequestsRejectOversizeResponses(t *testing.T) {
 			_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{LibraryURL: sourceURL, SourceBlueprintRef: "aweb.team", ProfileRef: "developer"})
 			return err
 		}},
-		{name: "local identity key replacement", invoke: func(sourceURL string) error {
-			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), sourceURL, "alice", localIdentityKeyReplacementRequest{TeamID: "default:example.com"}, teamKey)
-			return err
+	}
+	variants := []struct {
+		name      string
+		body      func(string) []byte
+		wantError bool
+	}{
+		{name: "exact limit", body: func(prefix string) []byte {
+			return append([]byte(prefix), bytes.Repeat([]byte(" "), pinnedTrustResponseLimit-len(prefix))...)
 		}},
+		{name: "limit plus one valid prefix", body: func(prefix string) []byte {
+			return append([]byte(prefix), bytes.Repeat([]byte(" "), pinnedTrustResponseLimit+1-len(prefix))...)
+		}, wantError: true},
+		{name: "trailing JSON document", body: func(prefix string) []byte {
+			return []byte(prefix + ` {}`)
+		}, wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				prefix := test.responsePrefix
-				if prefix == "" {
-					prefix = `{}`
-				}
-				_, _ = w.Write([]byte(prefix))
-				_, _ = w.Write(bytes.Repeat([]byte(" "), awid.MaxResponseSize+1-len(prefix)))
-			}))
-			t.Cleanup(server.Close)
-			if err := test.invoke(server.URL); err == nil {
-				t.Fatal("oversize response was accepted")
+			prefix := test.responsePrefix
+			if prefix == "" {
+				prefix = `{}`
+			}
+			for _, variant := range variants {
+				t.Run(variant.name, func(t *testing.T) {
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write(variant.body(prefix))
+					}))
+					t.Cleanup(server.Close)
+					err := test.invoke(server.URL)
+					if variant.wantError && err == nil {
+						t.Fatal("malicious response was accepted")
+					}
+					if !variant.wantError && err != nil {
+						t.Fatalf("exact-limit response was rejected: %v", err)
+					}
+				})
 			}
 		})
 	}

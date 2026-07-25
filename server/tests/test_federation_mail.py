@@ -11,7 +11,11 @@ from httpx import MockTransport, Response
 
 import aweb.federation.mail as federation_mail_module
 from aweb.federation.envelope import FederationEnvelope
-from aweb.federation.mail import MAX_FEDERATION_RESPONSE_BYTES, deliver_federated_message
+from aweb.federation.mail import (
+    MAX_FEDERATION_ERROR_BYTES,
+    MAX_FEDERATION_RESPONSE_BYTES,
+    deliver_federated_message,
+)
 
 
 def _envelope() -> FederationEnvelope:
@@ -28,6 +32,11 @@ def _envelope() -> FederationEnvelope:
         timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         signed_payload="{}",
     )
+
+
+def test_federation_http_bound_values_are_pinned():
+    assert MAX_FEDERATION_RESPONSE_BYTES == 10 * 1024 * 1024
+    assert MAX_FEDERATION_ERROR_BYTES == 64 * 1024
 
 
 @pytest.mark.asyncio

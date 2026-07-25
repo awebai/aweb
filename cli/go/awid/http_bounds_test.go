@@ -14,14 +14,26 @@ import (
 	"time"
 )
 
+func TestTrustHTTPBoundValuesArePinned(t *testing.T) {
+	const pinnedResponseLimit = 10 * 1024 * 1024
+	const pinnedErrorLimit = 64 * 1024
+	if MaxResponseSize != pinnedResponseLimit {
+		t.Fatalf("MaxResponseSize=%d, security policy requires %d", MaxResponseSize, pinnedResponseLimit)
+	}
+	if MaxErrorResponseSize != pinnedErrorLimit {
+		t.Fatalf("MaxErrorResponseSize=%d, security policy requires %d", MaxErrorResponseSize, pinnedErrorLimit)
+	}
+}
+
 func TestClientResponseLimitRejectsOversizeWithoutRejectingExactLimit(t *testing.T) {
+	const pinnedResponseLimit = 10 * 1024 * 1024
 	tests := []struct {
 		name      string
 		bodySize  int
 		wantError bool
 	}{
-		{name: "exact limit", bodySize: MaxResponseSize, wantError: false},
-		{name: "limit plus one", bodySize: MaxResponseSize + 1, wantError: true},
+		{name: "exact limit", bodySize: pinnedResponseLimit, wantError: false},
+		{name: "limit plus one", bodySize: pinnedResponseLimit + 1, wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
