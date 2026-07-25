@@ -88,9 +88,13 @@ Control events (type="control") are operational signals. On "pause", stop curren
     }),
     // On Claude the MCP notification IS the presentation of the mail to the
     // agent (Claude presents at the first tool boundary), so mail is marked read
-    // at presentation — matching the honest semantic "presented = read". A rare
-    // host-drop is recovered by reconnect catch-up, not by never acking; the
-    // withheld-ack policy caused a replay burst on reconnect (default-aajy).
+    // at presentation — matching the honest semantic "presented = read". If the
+    // transport send fails, the ack is skipped and reconnect re-fetches the still
+    // -unread message; if the send succeeds but the process dies before
+    // presentation, the message is already read and is reachable only via
+    // aw mail show / a read-inclusive view (default-aaka), not by unread-only
+    // reconnect. Never acking is not the fix: it left mail unread and caused a
+    // replay burst on reconnect (default-aajy).
     mailAcknowledgment: "delivery",
     onStreamState: (state) => {
       if (state.state === "connected") return;

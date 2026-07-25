@@ -772,13 +772,21 @@ the agent — never on transport-send alone, and never withheld under a
 never-ack policy.** Presentation is surface-specific but always concrete: the
 Claude MCP channel notification is the presentation (ack at notification); Pi
 acks after `pi.sendMessage` accepts the injection; native `aw run` acks after a
-successful provider run. The only honest failure mode is a rare host-drop
-between transport-send and presentation, recovered by reconnect catch-up plus a
-per-agent local delivery store. Acking before presentation (the original defect)
-risks silent message loss; never acking (manual-only) leaves mail unread so the
-server re-delivers it on every reconnect — the replay burst regression
-(default-aajy). `aw mail ack` is a courtesy read-receipt for the sender, not the
-mechanism that prevents redelivery.
+successful provider run. The failure mode is a rare host-drop between
+transport-send and presentation, and it splits into two sub-cases that recover
+differently. If the transport send itself fails, the ack is skipped, the message
+stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
+— auto-recovered. If the transport send succeeds and the ack fires but the
+process dies before the harness presents the message, the message is already
+read server-side, so an unread-only reconnect does NOT re-fetch it and it is
+absent from the unread inbox; its content is still on the server and reachable
+via `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+(Whether that second sub-case should be surfaced automatically on reconnect is
+tracked as default-aaka.) Acking before presentation (the original defect) risks
+silent message loss; never acking (manual-only) leaves mail unread so the server
+re-delivers it on every reconnect — the replay burst regression (default-aajy).
+`aw mail ack` is a courtesy read-receipt for the sender, not the mechanism that
+prevents redelivery.
 
 **Contacts** are stored per-identity in aweb. Contacts management:
 `POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may

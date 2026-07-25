@@ -79,14 +79,30 @@ surface-specific but always concrete: on Claude the MCP channel notification is
 the presentation and the plugin acks at that point; on Pi the ack follows
 `pi.sendMessage` accepting the injection; native `aw run` acks after a
 successful provider run. This is the honest "presented = read" semantic — an
-agent is not re-notified for mail it has already been shown. The only failure
-mode is a rare host-drop between transport-send and presentation, recovered by
-reconnect catch-up (and a per-agent local delivery store as belt-and-suspenders),
-not by a policy of never acking (which caused the reconnect replay burst,
-default-aajy). Replying with `aw mail reply <message_id> --body "..."` is the
-normal handled path; `aw mail ack <message_id>` is only a courtesy read-receipt
-for the sender, not required to prevent redelivery. Running `aw mail inbox`
-marks displayed unread mail as read. `aw mail show` is read-only.
+agent is not re-notified for mail it has already been shown.
+
+The failure mode is a rare host-drop between transport-send and presentation,
+and the two sub-cases recover differently:
+
+- **Transport send fails** (the notification never reaches the host): the ack is
+  skipped, so the message stays unread and the next reconnect re-fetches it (the
+  inbox pulls unread only). Auto-recovered.
+- **Transport send succeeds but the message is never presented** (the process
+  dies in the window between the stdio write plus ack and the harness presenting
+  at the next tool boundary): the ack has already fired, so the message is read
+  server-side. An unread-only reconnect does NOT re-fetch it and it is absent
+  from the unread inbox. Its content is still on the server, reachable via
+  `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+  (Auto-surfacing this case on reconnect is tracked as default-aaka.)
+
+The per-agent local delivery store is belt-and-suspenders against duplicate
+presentation, not a recovery mechanism for either sub-case. The correct fix for
+redelivery is presentation-ack, not a policy of never acking (which left mail
+unread and caused the reconnect replay burst, default-aajy). Replying with
+`aw mail reply <message_id> --body "..."` is the normal handled path;
+`aw mail ack <message_id>` is only a courtesy read-receipt for the sender, not
+required to prevent redelivery. Running `aw mail inbox` marks displayed unread
+mail as read. `aw mail show` is read-only.
 
 Event-stream health is separate from initial workspace connectivity. A stream
 failure changes the runtime status to events-down/retrying and emits one concise

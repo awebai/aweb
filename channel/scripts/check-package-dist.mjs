@@ -51,6 +51,11 @@ const securityCodeMarkers = [
   "stableIdentityStateHash",
   // aajc.3 DID-log verifier: rotation-operation authorization enforcement.
   "seq>1 requires rotate_key operation",
+  // aajc.3 DID-log verifier: did:aw must be the canonical derivation of the
+  // genesis key, so a forged head cannot claim an unrelated identity.
+  "did:aw not derived from genesis key",
+  // aajr DID-log verifier: full-log walk anchoring the head to genesis.
+  "verifyStableIdentityViaFullLog",
   // aajc.2 fail-closed trust pin store: present-but-empty rejects instead of
   // silently starting with a discarded store.
   "pin store is empty or has no document",
