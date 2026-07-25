@@ -3394,20 +3394,22 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var gotAuth string
-	var forceCert *awid.TeamCertificate
-	var encodedForceCert string
+	// Shared with the handler goroutine: gotAuth is written there and read here;
+	// forceCert/encodedForceCert are written here and read there.
+	var gotAuth guarded[string]
+	var forceCert guarded[*awid.TeamCertificate]
+	var encodedForceCert guarded[string]
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/") {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotAuth.set(strings.TrimSpace(r.Header.Get("Authorization")))
 		certificateID := strings.TrimPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/")
 		responseCert := cert
 		responseBlob := encodedCert
-		if forceCert != nil && certificateID == forceCert.CertificateID {
-			responseCert = forceCert
-			responseBlob = encodedForceCert
+		if forced := forceCert.get(); forced != nil && certificateID == forced.CertificateID {
+			responseCert = forced
+			responseBlob = encodedForceCert.get()
 		}
 		if certificateID != responseCert.CertificateID {
 			t.Fatalf("unexpected certificate fetch %s", certificateID)
@@ -3458,8 +3460,8 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 	if got["team_id"] != "backend:acme.com" {
 		t.Fatalf("team_id=%v", got["team_id"])
 	}
-	if !strings.Contains(gotAuth, memberDID) {
-		t.Fatalf("Authorization=%q", gotAuth)
+	if auth := gotAuth.get(); !strings.Contains(auth, memberDID) {
+		t.Fatalf("Authorization=%q", auth)
 	}
 
 	installed, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
@@ -3508,15 +3510,16 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 		t.Fatalf("overwrite error should mention --force:\n%s", string(overwriteOut))
 	}
 
-	forceCert = otherCert
-	encodedForceCert, err = awid.EncodeTeamCertificateHeader(forceCert)
+	encodedOther, err := awid.EncodeTeamCertificateHeader(otherCert)
 	if err != nil {
 		t.Fatal(err)
 	}
+	forceCert.set(otherCert)
+	encodedForceCert.set(encodedOther)
 	runForce := exec.CommandContext(ctx, bin, "id", "team", "fetch-cert",
 		"--team", "backend",
 		"--namespace", "acme.com",
-		"--cert-id", forceCert.CertificateID,
+		"--cert-id", otherCert.CertificateID,
 		"--force",
 		"--json")
 	runForce.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -3529,7 +3532,7 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load force-installed certificate: %v", err)
 	}
-	if installed.CertificateID != forceCert.CertificateID {
+	if installed.CertificateID != otherCert.CertificateID {
 		t.Fatalf("force-installed certificate_id=%q", installed.CertificateID)
 	}
 }

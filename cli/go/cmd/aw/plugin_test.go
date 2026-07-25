@@ -454,13 +454,15 @@ func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	home := filepath.Join(tmp, "home")
 
-	version := "1.0.0"
+	// Written here between CLI invocations, read on the handler goroutine.
+	var version guarded[string]
+	version.set("1.0.0")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/.well-known/aweb-app.json" {
 			t.Fatalf("unexpected manifest request %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"folio","version":"` + version + `","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"show","method":"GET","path":"/v1/documents/{slug}","input_schema":{"type":"object","properties":{"slug":{"type":"string"}}},"params":[{"name":"slug","in":"path"}],"body":{"mode":"json"},"mutation":false}]}`))
+		_, _ = w.Write([]byte(`{"manifest_version":1,"app":{"id":"folio","version":"` + version.get() + `","origin":"` + serverOriginForTest(r) + `"},"tools":[{"name":"show","method":"GET","path":"/v1/documents/{slug}","input_schema":{"type":"object","properties":{"slug":{"type":"string"}}},"params":[{"name":"slug","in":"path"}],"body":{"mode":"json"},"mutation":false}]}`))
 	}))
 	defer server.Close()
 
@@ -493,7 +495,7 @@ func TestPluginInstallFetchesWellKnownManifestAndUpdateRefreshes(t *testing.T) {
 		t.Fatalf("unexpected provenance: %#v", provenance)
 	}
 
-	version = "1.0.1"
+	version.set("1.0.1")
 	update := exec.CommandContext(ctx, bin, "plugin", "update", "folio")
 	update.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
 	if out, err := update.CombinedOutput(); err != nil {

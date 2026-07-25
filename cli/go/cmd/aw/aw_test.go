@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,35 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+// guarded holds a value shared between a test goroutine and its httptest handler
+// goroutine. Reading a captured variable a handler can write — or writing one a
+// handler can read — is a data race even when the accesses look ordered in the
+// test's source: nothing establishes a happens-before edge between the two
+// goroutines, so the detector treats them as concurrent (default-aajc.15).
+type guarded[T any] struct {
+	mu sync.Mutex
+	v  T
+}
+
+func (g *guarded[T]) set(v T) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.v = v
+}
+
+func (g *guarded[T]) get() T {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.v
+}
+
+// append is for handlers that accumulate observations across requests.
+func (g *guarded[T]) appendTo(add func(T) T) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.v = add(g.v)
+}
 
 func newLocalHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
