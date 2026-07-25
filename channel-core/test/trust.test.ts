@@ -4,6 +4,7 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import yaml from "js-yaml";
 import {
   computeDIDKey,
   PinStore,
@@ -290,6 +291,75 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("acme.com/alice")).toBe(newIdentity.did);
   });
 
+  test("authorized replacement cleanup cannot resurrect removed unknown pin fields", async () => {
+    const oldIdentity = await didFromSeed(32);
+    const newIdentity = await didFromSeed(33);
+    const controller = await didFromSeed(34);
+    const address = "acme.com/alice";
+    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    const signature = await ed.signAsync(
+      new TextEncoder().encode(
+        canonicalReplacementJSON(address, controller.did, oldIdentity.did, newIdentity.did, timestamp),
+      ),
+      controller.seed,
+    );
+    const announcement: ReplacementAnnouncement = {
+      address,
+      old_did: oldIdentity.did,
+      new_did: newIdentity.did,
+      controller_did: controller.did,
+      timestamp,
+      controller_signature: b64(signature),
+    };
+    const store = PinStore.fromYAML([
+      "pins:",
+      `  ${oldIdentity.did}:`,
+      `    address: ${address}`,
+      "    first_seen: 2026-02-22T10:00:00Z",
+      "    last_seen: 2026-02-22T11:00:00Z",
+      "    future_anti_rollback_anchor: {seq: 9, hash: abc}",
+      "addresses:",
+      `  ${address}: ${oldIdentity.did}`,
+      "",
+    ].join("\n"));
+    const trust = new SenderTrustManager(
+      { get: async () => ({}) } as never,
+      {
+        resolveIdentity: async () => ({
+          did: newIdentity.did,
+          stableID: "did:aw:newAlice",
+          address,
+          controllerDid: controller.did,
+          custody: "self",
+          identityScope: "global",
+        }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      store,
+      "verified",
+      address,
+      newIdentity.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      announcement,
+    );
+    expect(result.status).toBe("verified");
+    expect(store.addresses.get(address)).toBe(newIdentity.did);
+
+    store.removeAddress(address);
+    store.storePin(oldIdentity.did, address, "", "");
+    const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
+      pins: Record<string, Record<string, unknown>>;
+    };
+    expect(emitted.pins[oldIdentity.did].future_anti_rollback_anchor).toBeUndefined();
+  });
+
   test("pins the local namespace address when registry verification degrades for a public address", async () => {
     const { did } = await didFromSeed(9);
     const stableID = "did:aw:test";
@@ -331,6 +401,57 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("backend:acme.com/alice")).toBe(stableID);
     expect(store.addresses.has("acme.com/alice")).toBe(false);
     expect(store.pins.get(stableID)?.did_key).toBe(did);
+  });
+
+  test("stable-id migration preserves unknown per-pin fields", async () => {
+    const identity = await didFromSeed(35);
+    const stableID = "did:aw:stableAlice";
+    const address = "acme.com/alice";
+    const store = PinStore.fromYAML([
+      "pins:",
+      `  ${identity.did}:`,
+      `    address: ${address}`,
+      "    first_seen: 2026-02-22T10:00:00Z",
+      "    last_seen: 2026-02-22T11:00:00Z",
+      "    future_anti_rollback_anchor: {seq: 9, hash: abc}",
+      "addresses:",
+      `  ${address}: ${identity.did}`,
+      "",
+    ].join("\n"));
+    const trust = new SenderTrustManager(
+      { get: async () => ({}) } as never,
+      {
+        resolveIdentity: async () => ({
+          did: identity.did,
+          stableID,
+          address,
+          controllerDid: identity.did,
+          custody: "self",
+          identityScope: "global",
+        }),
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      store,
+      "verified",
+      address,
+      identity.did,
+      stableID,
+      undefined,
+      undefined,
+    );
+    expect(result.status).toBe("verified");
+    expect(store.addresses.get(address)).toBe(stableID);
+
+    const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
+      pins: Record<string, Record<string, unknown>>;
+    };
+    expect(emitted.pins[identity.did]).toBeUndefined();
+    expect(emitted.pins[stableID].future_anti_rollback_anchor).toEqual({ seq: 9, hash: "abc" });
   });
 
   test("updates a stable-id pin when registry verifies the current did:key", async () => {

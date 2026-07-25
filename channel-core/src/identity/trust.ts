@@ -295,13 +295,8 @@ export class SenderTrustManager {
       pinKey = fromStableID;
       const existingDID = store.addresses.get(trustAddress);
       if (existingDID === fromDID) {
-        const existingPin = store.pins.get(fromDID);
-        if (existingPin) {
-          store.pins.delete(fromDID);
-          existingPin.stable_id = fromStableID;
-          store.pins.set(fromStableID, existingPin);
-          store.addresses.set(trustAddress, fromStableID);
-        }
+        const existingPin = store.rekeyPin(fromDID, fromStableID);
+        if (existingPin) existingPin.stable_id = fromStableID;
       }
     }
 
@@ -383,7 +378,7 @@ export class SenderTrustManager {
           || this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pinnedKey, meta)
         ) {
           if (pinnedKey) {
-            store.pins.delete(pinnedKey);
+            store.deletePin(pinnedKey);
           }
           store.storePin(pinKey, trustAddress, "", "");
           if (fromStableID) {

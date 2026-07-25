@@ -39,10 +39,17 @@ export interface Pin {
 }
 
 export class PinStore {
-  pins: Map<string, Pin> = new Map();
+  private readonly mutablePins: Map<string, Pin> = new Map();
   addresses: Map<string, string> = new Map();
   private unknownRootFields: UnknownFields = new Map();
-  private unknownPinFields: Map<string, UnknownFields> = new Map();
+  // Object identity binds a pin to its preserved fields, so rekeying carries
+  // them without a second key-migration invariant. Pin membership stays private
+  // to prevent callers from replacing the object and silently losing that state.
+  private readonly unknownPinFields: WeakMap<Pin, UnknownFields> = new WeakMap();
+
+  get pins(): ReadonlyMap<string, Pin> {
+    return this.mutablePins;
+  }
 
   /** Check whether a DID matches the stored pin for a global address. */
   checkPin(address: string, did: string, identityScope: IdentityScope): PinResult {
@@ -62,7 +69,7 @@ export class PinStore {
     server: string,
   ): void {
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-    const existing = this.pins.get(did);
+    const existing = this.mutablePins.get(did);
 
     if (existing) {
       if (existing.address !== address) {
@@ -76,7 +83,7 @@ export class PinStore {
       return;
     }
 
-    this.pins.set(did, {
+    this.mutablePins.set(did, {
       address,
       handle,
       first_seen: now,
@@ -86,24 +93,43 @@ export class PinStore {
     this.addresses.set(address, did);
   }
 
+  rekeyPin(currentKey: string, nextKey: string): Pin | undefined {
+    const pin = this.mutablePins.get(currentKey);
+    if (!pin || currentKey === nextKey) return pin;
+
+    this.mutablePins.delete(currentKey);
+    this.mutablePins.set(nextKey, pin); // Preserve object identity for unknownPinFields.
+    for (const [address, pinKey] of this.addresses) {
+      if (pinKey === currentKey) this.addresses.set(address, nextKey);
+    }
+    return pin;
+  }
+
+  deletePin(key: string): boolean {
+    const removed = this.mutablePins.delete(key);
+    if (!removed) return false;
+    for (const [address, pinKey] of this.addresses) {
+      if (pinKey === key) this.addresses.delete(address);
+    }
+    return true;
+  }
+
   removeAddress(address: string): boolean {
     let removed = false;
 
     const pinnedDID = this.addresses.get(address);
     if (pinnedDID !== undefined) {
       this.addresses.delete(address);
-      const pin = this.pins.get(pinnedDID);
+      const pin = this.mutablePins.get(pinnedDID);
       if (pin?.address === address) {
-        this.pins.delete(pinnedDID);
-        this.unknownPinFields.delete(pinnedDID);
+        this.deletePin(pinnedDID);
       }
       removed = true;
     }
 
-    for (const [pinKey, pin] of this.pins) {
+    for (const [pinKey, pin] of this.mutablePins) {
       if (pin.address !== address) continue;
-      this.pins.delete(pinKey);
-      this.unknownPinFields.delete(pinKey);
+      this.deletePin(pinKey);
       if (this.addresses.get(address) === pinKey) {
         this.addresses.delete(address);
       }
@@ -137,8 +163,8 @@ export class PinStore {
   /** Serialize to YAML (compatible with Go's known_agents.yaml). */
   toYAML(): string {
     const pinsObj = emptyRecord();
-    for (const [key, pin] of this.pins) {
-      const pinObj = recordFromUnknown(this.unknownPinFields.get(key));
+    for (const [key, pin] of this.mutablePins) {
+      const pinObj = recordFromUnknown(this.unknownPinFields.get(pin));
       pinObj.address = pin.address;
       pinObj.handle = pin.handle;
       if (pin.stable_id !== undefined) pinObj.stable_id = pin.stable_id;
@@ -215,9 +241,10 @@ export class PinStore {
       }
       for (const [key, value] of Object.entries(root.pins as Record<string, unknown>)) {
         if (!key) throw new Error("pin store has an empty pin key");
-        store.pins.set(key, validatePin(key, value));
+        const pin = validatePin(key, value);
+        store.mutablePins.set(key, pin);
         const unknown = collectUnknownFields(value as Record<string, unknown>, PIN_FIELDS);
-        if (unknown.size > 0) store.unknownPinFields.set(key, unknown);
+        if (unknown.size > 0) store.unknownPinFields.set(pin, unknown);
       }
     }
 
@@ -237,7 +264,7 @@ export class PinStore {
     // Every address must resolve to a known pin, or the reverse index is
     // corrupt and identity-mismatch checks would silently misfire.
     for (const [address, pinKey] of store.addresses) {
-      if (!store.pins.has(pinKey)) {
+      if (!store.mutablePins.has(pinKey)) {
         throw new Error(`pin store address '${address}' references unknown pin`);
       }
     }

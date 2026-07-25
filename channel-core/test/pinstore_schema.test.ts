@@ -195,6 +195,7 @@ describe("PinStore.fromYAML schema validation", () => {
     ["anchor", "future: &future\n  nested: true\n"],
     ["alias", "future_base: &future [1, 2]\nfuture_alias: *future\n"],
     ["merge key", "future:\n  <<: {nested: true}\n  own: 1\n"],
+    ["quoted merge-like key", "future:\n  '<<': {nested: true}\n  own: 1\n"],
   ])("rejects YAML %s syntax", (_name, extra) => {
     const source = `pins: {}\naddresses: {}\n${extra}`;
     expect(() => PinStore.fromYAML(source)).toThrow(/anchor|alias|merge/i);
