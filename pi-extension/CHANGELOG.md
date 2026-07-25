@@ -16,6 +16,11 @@
 - DID-log verification is bound to genesis/rotation authority: a log not derived
   from genesis is rejected, and advancing `seq` requires a `rotate_key`
   operation.
+- **Anti-rollback checkpoint is now persisted, and it ADDS FIELDS TO YOUR PIN
+  FILE.** Each pin now records `log_seq` and `log_entry_hash`, so a truncated or
+  forked DID log served after a restart can no longer roll a pin back to a
+  retired key. If you diff your pin store and see these two new keys, that is
+  this change — they are written automatically and need no operator action.
 - Strict base64 parity on identity decoding (three lenient decoders closed),
   plus legacy-pin migration.
 
