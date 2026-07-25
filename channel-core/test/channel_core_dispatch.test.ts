@@ -124,6 +124,68 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
   });
 
+  test("skips and leaves unread only the inbox message whose verification throws", async () => {
+    const poisonMessage = {
+      message_id: "mail-poison",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: self.alias,
+      to_address: self.address,
+      subject: "poison",
+      body: "malformed transport record",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+      get signed_payload(): string {
+        throw new Error("unexpected per-message verification failure");
+      },
+    };
+    const onAwakening = vi.fn();
+    const log = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [poisonMessage, {
+          message_id: "mail-good",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "good",
+          body: "still delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:01Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield { type: "mail_message", message_id: "mail-poison" };
+    }
+
+    await consumeAgentEvents(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+      new Set(),
+      events(),
+      log,
+    );
+
+    expect(poisonMessage as Record<string, unknown>).toMatchObject({
+      verification_status: "failed",
+      verification_error: true,
+    });
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "still delivered",
+    }));
+    expect(client.post).not.toHaveBeenCalledWith("/v1/messages/mail-poison/ack");
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-good/ack");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("mail-poison"));
+    expect(log).toHaveBeenCalledWith(
+      "aweb: skipped verification for 1 inbox message; it remains unread",
+    );
+  });
+
   test("keeps mail unread while host injection is pending", async () => {
     let finishDelivery: (() => void) | undefined;
     const onAwakening = vi.fn(() => new Promise<void>((resolve) => {
