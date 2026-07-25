@@ -816,7 +816,7 @@ func TestResolveChatWakePendingDoesNotAckOmittedOlderPrefix(t *testing.T) {
 	}
 }
 
-func TestResolveChatWakeIncompleteHistoryNeverCreatesAcknowledgement(t *testing.T) {
+func TestResolveChatWakePendingIncompleteHistoryReturnsRetryableError(t *testing.T) {
 	deliveredIDsTestPath(t)
 	var readCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -842,24 +842,52 @@ func TestResolveChatWakeIncompleteHistoryNeverCreatesAcknowledgement(t *testing.
 	t.Cleanup(server.Close)
 
 	client := mustWebClient(t, server.URL)
-	resolved, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+	_, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "alice",
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing to acknowledge an omitted prefix") {
+		t.Fatalf("incomplete history error=%v", err)
+	}
+	if readCalls != 0 {
+		t.Fatalf("incomplete history marked %d times", readCalls)
+	}
+}
+
+func TestResolveChatWakeEventIncompleteHistoryReturnsRetryableError(t *testing.T) {
+	deliveredIDsTestPath(t)
+	var pendingCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			pendingCalls++
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			messages := make([]awid.ChatMessage, 100)
+			for i := range messages {
+				messages[i] = awid.ChatMessage{MessageID: fmt.Sprintf("suffix-%03d", i+21), FromAgent: "alice", Body: "suffix"}
+			}
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: messages})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	_, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
 		Type:        awid.AgentEventActionableChat,
 		SessionID:   "s1",
 		MessageID:   "suffix-120",
 		FromAlias:   "alice",
 		UnreadCount: 121,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "refusing to acknowledge an omitted prefix") {
+		t.Fatalf("incomplete event history error=%v", err)
 	}
-	if resolved.Skip || !strings.Contains(resolved.CycleContext, "newest summary") {
-		t.Fatalf("expected unacknowledged pending summary fallback, got %+v", resolved)
-	}
-	if resolved.AfterDelivery != nil {
-		t.Fatal("incomplete history created a watermark acknowledgement")
-	}
-	if readCalls != 0 {
-		t.Fatalf("incomplete history marked %d times", readCalls)
+	if pendingCalls != 1 {
+		t.Fatalf("safe pending fallback calls=%d, want 1", pendingCalls)
 	}
 }
 
@@ -1007,7 +1035,7 @@ func TestResolveChatWakePendingFallsBackToEventFromAddress(t *testing.T) {
 						LastMessage:   "hey",
 						LastFrom:      "carol",
 						SenderWaiting: true,
-						UnreadCount:   1,
+						UnreadCount:   0,
 					},
 				},
 			})

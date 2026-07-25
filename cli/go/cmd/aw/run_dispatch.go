@@ -138,6 +138,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil
 	}
 	messageID := strings.TrimSpace(evt.MessageID)
+	var incompleteHistoryErr error
 	if messageID != "" {
 		limit, err := unreadChatHistoryLimit(evt.UnreadCount)
 		if err != nil {
@@ -148,14 +149,18 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			UnreadOnly: true,
 			Limit:      limit,
 		})
-		if err == nil && requireCompleteUnreadChatHistory(evt.UnreadCount, limit, len(history.Messages)) == nil {
-			filtered := chat.FilterDeliveredMessages(history.Messages)
-			presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
-			if len(presented) > 0 {
-				return chatWakeResolution(client, sessionID, presented, evt), nil
-			}
-			if len(history.Messages) > 0 {
-				return runWakeResolution{Skip: true}, nil
+		if err == nil {
+			if completeErr := requireCompleteUnreadChatHistory(evt.UnreadCount, limit, len(history.Messages)); completeErr != nil {
+				incompleteHistoryErr = completeErr
+			} else {
+				filtered := chat.FilterDeliveredMessages(history.Messages)
+				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
+				if len(presented) > 0 {
+					return chatWakeResolution(client, sessionID, presented, evt), nil
+				}
+				if len(history.Messages) > 0 {
+					return runWakeResolution{Skip: true}, nil
+				}
 			}
 		}
 	}
@@ -180,15 +185,22 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			UnreadOnly: true,
 			Limit:      limit,
 		})
-		if historyErr == nil && histResp != nil && requireCompleteUnreadChatHistory(pending.UnreadCount, limit, len(histResp.Messages)) == nil {
-			filtered := chat.FilterDeliveredMessages(histResp.Messages)
-			presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
-			if len(presented) > 0 {
-				return chatWakeResolution(client, sessionID, presented, evt), nil
+		if historyErr == nil && histResp != nil {
+			if completeErr := requireCompleteUnreadChatHistory(pending.UnreadCount, limit, len(histResp.Messages)); completeErr != nil {
+				incompleteHistoryErr = completeErr
+			} else {
+				filtered := chat.FilterDeliveredMessages(histResp.Messages)
+				presented := incomingChatMessages(filtered, selfAlias, selfIdentityDIDs(client)...)
+				if len(presented) > 0 {
+					return chatWakeResolution(client, sessionID, presented, evt), nil
+				}
+				if len(histResp.Messages) > 0 {
+					return runWakeResolution{Skip: true}, nil
+				}
 			}
-			if len(histResp.Messages) > 0 {
-				return runWakeResolution{Skip: true}, nil
-			}
+		}
+		if incompleteHistoryErr != nil {
+			return runWakeResolution{}, fmt.Errorf("load complete unread chat history for wake %s: %w", sessionID, incompleteHistoryErr)
 		}
 		displayFromAddress := strings.TrimSpace(pending.LastFromAddress)
 		if displayFromAddress == "" {
@@ -225,6 +237,9 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				pending.LastMessage,
 			),
 		}, nil
+	}
+	if incompleteHistoryErr != nil {
+		return runWakeResolution{}, fmt.Errorf("load complete unread chat history for wake %s: %w", sessionID, incompleteHistoryErr)
 	}
 	return runWakeResolution{Skip: true}, nil
 }
